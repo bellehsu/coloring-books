@@ -6,10 +6,14 @@
    - 離圖邊 border_px 以內的端點不算（線條本來就可能延伸出畫面）。
    - 孤立的單一骨架像素（0 個鄰居）不算端點：那是實心小點（例如塗黑的瞳孔）骨架化後的殘留，
      不是斷掉的線；若算進去，眼睛裡的瞳孔會被誤判成缺口。
-2. 對每個端點沿骨架做 BFS（路徑長上限 3 × max_gap_px），在端點周圍半徑 max_gap_px 內，
-   找「不是沿著自己這條線走得到」的最近骨架像素；找得到就是缺口，標記放在兩點中點。
-   這同時涵蓋「兩個線頭距離小於 N px」與「線頭靠近另一條線」（T 字缺口）。
-3. 彼此距離 < max_gap_px 的標記只留一個（兩個面對面的線頭算一個缺口）。
+2. 第一階段（near-miss 候選）：對每個端點 e 沿骨架做 BFS（路徑長上限 3 × max_gap_px），
+   在 e 周圍半徑 max_gap_px 內找「不是沿著自己這條線走得到」的最近骨架像素 q → 候選 (e, q)。
+   涵蓋「兩個線頭距離小於 N px」與「線頭靠近另一條線」。
+3. 第二階段（漏色判定）：缺口必須真的會漏色，而不只是差一點接上（例如髮絲末端停在輪廓旁，
+   沒有圍住任何東西）。把所有候選橋一次畫上去，白色區域 4-連通標記；橋兩側屬於不同區域、
+   且兩區面積都 >= lineart_post 的 min_region_area 才算缺口。
+4. 彼此距離 < max_gap_px 的標記只留一個（兩個面對面的線頭算一個缺口）。
+   gap_count / gaps 只算會漏色的缺口；near_miss_count 為第一階段（合併後）的數量。
 
 距離以骨架計算：兩條線寬 w 的圓頭線，畫面上看到的白縫寬度約為骨架距離 − w。
 
@@ -55,10 +59,11 @@ class QAThresholds:
 class QAReport:
     errors: list[str]
     warnings: list[str]
-    gaps: list[tuple[float, float]]  # 缺口位置，相對座標 (x/w, y/h)
+    gaps: list[tuple[float, float]]  # 會漏色的缺口位置，相對座標 (x/w, y/h)
     dangling_count: int
     gap_count: int
     metrics: dict[str, Any] = field(default_factory=dict)
+    near_miss_count: int = 0  # 第一階段「差一點接上」的標記數（含不會漏色的），合併後
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +73,7 @@ class QAReport:
             "dangling_count": self.dangling_count,
             "gap_count": self.gap_count,
             "metrics": dict(self.metrics),
+            "near_miss_count": self.near_miss_count,
         }
 
     @classmethod
@@ -79,6 +85,7 @@ class QAReport:
             dangling_count=int(d["dangling_count"]),
             gap_count=int(d["gap_count"]),
             metrics=dict(d.get("metrics", {})),
+            near_miss_count=int(d.get("near_miss_count", 0)),
         )
 
 
@@ -121,15 +128,33 @@ def _reached_from(win: np.ndarray, sy: int, sx: int, limit: int) -> np.ndarray:
     return reached
 
 
-def find_gaps(skel: np.ndarray, endpoints: list[tuple[int, int]], max_gap_px: int) -> list[tuple[int, int]]:
-    """回傳缺口標記位置 [(x, y), ...]（像素座標），已合併彼此距離 < max_gap_px 的標記。"""
+Point = tuple[int, int]
+Pair = tuple[Point, Point]
+
+
+def _merge(marks: list[Point], min_dist: int) -> list[Point]:
+    """彼此距離 < min_dist 的標記只留第一個。"""
+    r2 = min_dist * min_dist
+    merged: list[Point] = []
+    for m in marks:
+        if all((m[0] - k[0]) ** 2 + (m[1] - k[1]) ** 2 >= r2 for k in merged):
+            merged.append(m)
+    return merged
+
+
+def _midpoint(e: Point, q: Point) -> Point:
+    return (e[0] + q[0]) // 2, (e[1] + q[1]) // 2
+
+
+def find_candidates(skel: np.ndarray, endpoints: list[Point], max_gap_px: int) -> list[Pair]:
+    """第一階段：回傳每個「差一點接上」的端點 e 與它最近的、沿自己線條走不到的骨架像素 q，[(e, q), ...]。"""
     if max_gap_px <= 0 or not endpoints:
         return []
     skel = np.asarray(skel, dtype=bool)
     h, w = skel.shape
     limit = 3 * max_gap_px  # BFS 路徑長上限；路徑長 <= limit 的像素一定落在 ±limit 的視窗內
     r2 = max_gap_px * max_gap_px
-    marks: list[tuple[int, int]] = []
+    pairs: list[Pair] = []
     for ex, ey in endpoints:
         x0, y0 = max(0, ex - limit), max(0, ey - limit)
         win = skel[y0:min(h, ey + limit + 1), x0:min(w, ex + limit + 1)]
@@ -147,25 +172,71 @@ def find_gaps(skel: np.ndarray, endpoints: list[tuple[int, int]], max_gap_px: in
         i = int(np.argmin(d2))
         if d2[i] > r2:
             continue
-        qx_abs, qy_abs = int(qx[i]) + x0, int(qy[i]) + y0
-        marks.append(((ex + qx_abs) // 2, (ey + qy_abs) // 2))
+        pairs.append(((ex, ey), (int(qx[i]) + x0, int(qy[i]) + y0)))
+    return pairs
 
-    merged: list[tuple[int, int]] = []
-    for m in marks:
-        if all((m[0] - k[0]) ** 2 + (m[1] - k[1]) ** 2 >= r2 for k in merged):
-            merged.append(m)
-    return merged
+
+def find_gaps(skel: np.ndarray, endpoints: list[Point], max_gap_px: int) -> list[Point]:
+    """第一階段標記（near-miss）：候選對的中點，已合併彼此距離 < max_gap_px 的標記。像素座標 (x, y)。"""
+    return _merge([_midpoint(e, q) for e, q in find_candidates(skel, endpoints, max_gap_px)], max_gap_px)
+
+
+def _side_label(labels: np.ndarray, x: float, y: float, nx: float, ny: float, start: int, span: int) -> int:
+    """從 (x, y) 沿 (nx, ny) 方向、距離 start..start+span 找第一個白色像素的標籤；找不到回傳 0。"""
+    h, w = labels.shape
+    for t in range(start, start + span + 1):
+        px, py = int(round(x + nx * t)), int(round(y + ny * t))
+        if not (0 <= px < w and 0 <= py < h):
+            return 0
+        lab = int(labels[py, px])
+        if lab:
+            return lab
+    return 0
+
+
+def find_leaks(ink: np.ndarray, candidates: list[Pair], line_width_px: int, min_region_area: int,
+               merge_px: int) -> list[Point]:
+    """第二階段：只保留真的會漏色的候選，回傳合併後的缺口標記（像素座標）。
+
+    把所有候選橋（e→q，粗細 = 線寬）一次畫上去，對白色區域做 4-連通標記；
+    在每座橋中點的兩側（垂直方向、距離約一個線寬，落在線上時再往外找）取樣，
+    兩側屬於不同白色區域、且兩區面積都 >= min_region_area 才算缺口
+    （補上這座橋才會把兩塊可塗色區域分開 → 現在顏色會從這裡漏過去）。
+    """
+    if not candidates:
+        return []
+    lw = max(1, int(line_width_px))
+    bridged = np.asarray(ink, dtype=bool).astype(np.uint8)
+    for e, q in candidates:
+        cv2.line(bridged, e, q, 1, lw)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats((bridged == 0).astype(np.uint8), connectivity=4)
+    area = stats[:, cv2.CC_STAT_AREA]
+    leaks: list[Point] = []
+    for e, q in candidates:
+        dx, dy = q[0] - e[0], q[1] - e[1]
+        length = float(np.hypot(dx, dy)) or 1.0
+        nx, ny = -dy / length, dx / length  # 垂直於橋的單位向量
+        mx, my = (e[0] + q[0]) / 2, (e[1] + q[1]) / 2
+        a = _side_label(labels, mx, my, nx, ny, lw, 2 * lw)
+        b = _side_label(labels, mx, my, -nx, -ny, lw, 2 * lw)
+        if a and b and a != b and area[a] >= min_region_area and area[b] >= min_region_area:
+            leaks.append(_midpoint(e, q))
+    return _merge(leaks, merge_px)
 
 
 def evaluate(ink: np.ndarray, line_width_px: int, thresholds: QAThresholds = QAThresholds()) -> QAReport:
     ink = np.asarray(ink, dtype=bool)
     h, w = ink.shape
+    params = LineartParams(line_width_px=line_width_px)
     skel, endpoints = find_endpoints(ink, thresholds.border_px)
-    gap_px = find_gaps(skel, endpoints, thresholds.max_gap_px)
+    candidates = find_candidates(skel, endpoints, thresholds.max_gap_px)
+    near_miss = _merge([_midpoint(e, q) for e, q in candidates], thresholds.max_gap_px)
+    gap_px = find_leaks(ink, candidates, line_width_px, params.min_region_area, thresholds.max_gap_px)
 
-    all_metrics = compute_metrics(ink, LineartParams(line_width_px=line_width_px))
+    all_metrics = compute_metrics(ink, params)
     metrics: dict[str, Any] = {k: all_metrics[k] for k in _METRIC_KEYS}
     metrics["gap_count"] = len(gap_px)
+    metrics["near_miss_count"] = len(near_miss)
     metrics["dangling_count"] = len(endpoints)
 
     errors = ["gaps"] if len(gap_px) >= thresholds.gap_error_min else []
@@ -184,4 +255,5 @@ def evaluate(ink: np.ndarray, line_width_px: int, thresholds: QAThresholds = QAT
         dangling_count=len(endpoints),
         gap_count=len(gap_px),
         metrics=metrics,
+        near_miss_count=len(near_miss),
     )

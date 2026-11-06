@@ -8,8 +8,10 @@ from app.services.qa import (
     QAReport,
     QAThresholds,
     evaluate,
+    find_candidates,
     find_endpoints,
     find_gaps,
+    find_leaks,
 )
 
 SIZE = 600
@@ -39,7 +41,7 @@ def test_closed_shape_has_no_gaps():
 
 def test_small_gap_flagged_once_at_gap_location():
     r = evaluate(ring(20), LW)
-    assert r.gap_count == 1 and r.errors == ["gaps"] and len(r.gaps) == 1
+    assert r.gap_count == 1 and r.errors == ["gaps"] and len(r.gaps) == 1 and r.near_miss_count == 1
     right_edge_rel = (CENTER + RADIUS) / SIZE
     x, y = r.gaps[0]
     assert abs(x - right_edge_rel) < 0.05 and abs(y - 0.5) < 0.05
@@ -47,19 +49,34 @@ def test_small_gap_flagged_once_at_gap_location():
 
 def test_wide_opening_is_not_a_gap():
     r = evaluate(ring(120), LW)  # 大於 max_gap_px 是刻意的開口
-    assert r.gap_count == 0 and r.errors == [] and r.dangling_count == 2
+    assert r.gap_count == 0 and r.near_miss_count == 0 and r.errors == [] and r.dangling_count == 2
 
 
-def test_line_ending_near_other_line_is_gap():
+def test_line_stopping_short_of_other_line_that_would_close_a_region_is_gap():
+    # U 形（左、下、右三邊；右邊往上多伸出一截），上邊從左上角往右畫，停在離右邊 15 px 處
     img = blank()
-    cv2.line(img, (100, 200), (500, 200), 1, LW)  # 橫線佔 y 194..206
-    cv2.line(img, (300, 228), (300, 450), 1, LW)  # 豎線頂端（圓頭）在 y 222 → 離橫線 15 px
+    cv2.line(img, (150, 150), (150, 450), 1, LW)
+    cv2.line(img, (150, 450), (450, 450), 1, LW)
+    cv2.line(img, (450, 100), (450, 450), 1, LW)  # 右邊佔 x 444..456
+    cv2.line(img, (150, 150), (422, 150), 1, LW)  # 上邊圓頭在 x 428 → 離右邊 15 px
     ink = img.astype(bool)
-    assert ink[206, 300] and not ink[207:222, 300].any() and ink[222, 300]
+    assert ink[150, 428] and not ink[150, 429:444].any() and ink[150, 444]
     r = evaluate(ink, LW)
-    assert r.gap_count == 1 and r.errors == ["gaps"]
+    assert r.gap_count == 1 and r.near_miss_count == 1 and r.errors == ["gaps"]
     x, y = r.gaps[0]
-    assert abs(x * SIZE - 300) < 10 and 195 < y * SIZE < 235
+    assert abs(x * SIZE - 436) < 10 and abs(y * SIZE - 150) < 10
+
+
+def test_strand_nearly_touching_outline_is_near_miss_not_gap():
+    # 封閉的圓裡有一條自由端的髮絲，末端離圓 15 px：沒有封住任何區域 → 不會漏色
+    img = blank()
+    cv2.circle(img, (CENTER, CENTER), RADIUS, 1, LW)  # 圓內緣約 x = 300 + 194
+    cv2.line(img, (300, 300), (472, 300), 1, LW)  # 圓頭在 x 478 → 離圓內緣約 15 px
+    ink = img.astype(bool)
+    assert ink[300, 478] and not ink[300, 479:494].any() and ink[300, 494]
+    r = evaluate(ink, LW)
+    assert r.near_miss_count >= 1 and r.gap_count == 0 and r.gaps == [] and r.errors == []
+    assert r.metrics["near_miss_count"] == r.near_miss_count
 
 
 def test_free_line_end_is_dangling_not_gap():
@@ -109,6 +126,24 @@ def test_find_gaps_ignores_own_line_within_path_limit():
     assert find_gaps(skel, [(20, 100), (179, 100)], 40) == []
 
 
+def test_find_candidates_returns_endpoint_pairs():
+    skel = np.zeros((200, 200), bool)
+    skel[100, 20:90] = True
+    skel[100, 110:180] = True
+    pairs = find_candidates(skel, [(20, 100), (89, 100), (110, 100), (179, 100)], 40)
+    assert pairs == [((89, 100), (110, 100)), ((110, 100), (89, 100))]
+
+
+def test_find_leaks_requires_both_sides_to_be_large_regions():
+    ink = ring(20)
+    skel, endpoints = find_endpoints(ink)
+    pairs = find_candidates(skel, endpoints, 40)
+    assert len(pairs) == 2
+    assert len(find_leaks(ink, pairs, LW, 3000, 40)) == 1
+    # 圓內面積約 12 萬 px：門檻調到 20 萬時圓內不算「可塗色區域」→ 不算漏色
+    assert find_leaks(ink, pairs, LW, 200_000, 40) == []
+
+
 def test_warnings_from_metrics():
     img = blank()
     img[200:400, 200:400] = 1
@@ -120,10 +155,11 @@ def test_warnings_from_metrics():
 def test_metrics_contents():
     r = evaluate(ring(20), LW)
     for k in ("region_count", "closed_region_count", "tiny_region_count", "fragment_count",
-              "black_fill_ratio", "gap_count", "dangling_count"):
+              "black_fill_ratio", "gap_count", "dangling_count", "near_miss_count"):
         assert k in r.metrics
     assert r.metrics["gap_count"] == r.gap_count == 1
     assert r.metrics["dangling_count"] == r.dangling_count == 2
+    assert r.metrics["near_miss_count"] == r.near_miss_count == 1
 
 
 def test_thresholds_defaults_and_custom():
@@ -143,5 +179,6 @@ def test_messages():
 def test_report_roundtrip():
     r = evaluate(ring(20), LW)
     d = r.to_dict()
+    assert d["near_miss_count"] == 1
     assert QAReport.from_dict(json.loads(json.dumps(d))) == r
     assert QAReport.from_dict(d) == r
