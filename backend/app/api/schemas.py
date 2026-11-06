@@ -1,12 +1,15 @@
 """API 輸入／輸出結構。"""
 
+import json
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-from app.models import Book, Generation, GenKind, GenStatus, Page, PageStatus
+from app.models import Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
 from app.services.layout import PaperSize, PrintMode, compute_layout
+from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
+from app.services.qa import QA_MESSAGES, QAReport
 
 
 # 去除前後空白後再檢查長度，避免純空白字串通過
@@ -139,6 +142,8 @@ class PageCreate(BaseModel):
 class PageUpdate(BaseModel):
     scene_prompt: ScenePromptStr | None = None
     controlnet_strength: float | None = Field(default=None, ge=0.0, le=0.6)
+    line_detail: LineDetail | None = None
+    line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
 
 
 class PageCandidatesCreate(BaseModel):
@@ -154,6 +159,15 @@ class SelectGeneration(BaseModel):
     generation_id: int
 
 
+def lineart_url(page_id: int, key: str | None) -> str:
+    return f"/api/pages/{page_id}/lineart" + (f"?v={key}" if key else "")
+
+
+def _version(dt: datetime) -> int:
+    """防快取用的版本號：微秒時間戳。"""
+    return round(dt.timestamp() * 1_000_000)
+
+
 class PageOut(BaseModel):
     id: int
     book_id: int
@@ -163,20 +177,139 @@ class PageOut(BaseModel):
     sketch_url: str | None
     selected_generation_id: int | None
     status: PageStatus
+    line_detail: LineDetail
+    line_width_px: int
+    character_check: CharacterCheck | None
+    lineart_url: str | None  # 有選圖才有；?v= 為目前輸入對應的線稿 key
+    needs_fix: bool | None  # 目前線稿的 QA 有錯誤；還沒算過（或參數已改、尚未重算）為 None
+    aspect_mismatch: bool  # 選定圖的寬高 ≠ 繪本目前的 generation_size
     created_at: datetime
     updated_at: datetime
 
     @classmethod
-    def from_page(cls, page: Page) -> "PageOut":
+    def from_page(
+        cls,
+        page: Page,
+        *,
+        current_lineart_key: str | None = None,
+        aspect_mismatch: bool = False,
+    ) -> "PageOut":
+        """current_lineart_key：依目前選圖／參數／修改圖層算出的 key（pages.page_outs 會給）。
+        沒給時退回頁面上快取的 key，needs_fix 直接看 qa_json。"""
+        selected = page.selected_generation_id is not None
+        key = current_lineart_key or page.lineart_key
+        needs_fix: bool | None = None
+        if selected and page.qa_json and (
+            current_lineart_key is None or page.lineart_key == current_lineart_key
+        ):
+            needs_fix = bool(json.loads(page.qa_json).get("errors"))
         return cls(
             id=page.id,
             book_id=page.book_id,
             position=page.position,
             scene_prompt=page.scene_prompt,
             controlnet_strength=page.controlnet_strength,
-            sketch_url=f"/api/pages/{page.id}/sketch" if page.sketch_path else None,
+            sketch_url=(
+                f"/api/pages/{page.id}/sketch?v={_version(page.updated_at)}"
+                if page.sketch_path
+                else None
+            ),
             selected_generation_id=page.selected_generation_id,
             status=page.status,
+            line_detail=page.line_detail,
+            line_width_px=page.line_width_px,
+            character_check=page.character_check,
+            lineart_url=lineart_url(page.id, key) if selected else None,
+            needs_fix=needs_fix,
+            aspect_mismatch=aspect_mismatch if selected else False,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )
+
+
+# ---- 修改圖層與 QA ---------------------------------------------------------------
+
+STROKE_WIDTH_MIN, STROKE_WIDTH_MAX = 2, 64
+MAX_STROKE_POINTS = 2000
+MAX_STROKES = 500
+MAX_TOTAL_POINTS = 20000
+
+# 相對座標：有限浮點數、落在 [0, 1]（"NaN"/"inf" 字串也會被 float 接受，所以明確拒絕非有限值）
+UnitFloat = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
+
+
+class StrokeIn(BaseModel):
+    op: Literal["draw", "erase"]
+    width_px: float = Field(ge=STROKE_WIDTH_MIN, le=STROKE_WIDTH_MAX, allow_inf_nan=False)
+    points: list[tuple[UnitFloat, UnitFloat]] = Field(min_length=1, max_length=MAX_STROKE_POINTS)
+
+
+class EditsIn(BaseModel):
+    generation_id: int
+    strokes: list[StrokeIn] = Field(max_length=MAX_STROKES)
+
+    @model_validator(mode="after")
+    def _total_points(self) -> "EditsIn":
+        total = sum(len(s.points) for s in self.strokes)
+        if total > MAX_TOTAL_POINTS:
+            raise ValueError(f"修改圖層全部最多 {MAX_TOTAL_POINTS} 點，收到 {total}")
+        return self
+
+
+class StrokeOut(BaseModel):
+    op: Literal["draw", "erase"]
+    width_px: float
+    points: list[tuple[float, float]]
+
+
+class EditsOut(BaseModel):
+    generation_id: int
+    strokes: list[StrokeOut]
+
+
+class AutofixIn(BaseModel):
+    generation_id: int
+
+
+class QAMessage(BaseModel):
+    code: str
+    message: str
+
+
+def _messages(codes: list[str]) -> list[QAMessage]:
+    return [QAMessage(code=c, message=QA_MESSAGES.get(c, c)) for c in codes]
+
+
+class QAOut(BaseModel):
+    status: PageStatus
+    errors: list[QAMessage]
+    warnings: list[QAMessage]
+    gaps: list[tuple[float, float]]  # 相對座標 (x/w, y/h)
+    gap_count: int
+    dangling_count: int
+    metrics: dict[str, Any]
+    character_check: CharacterCheck | None
+    qa_note: str
+    forced_pass_reason: str | None
+    lineart_url: str
+
+    @classmethod
+    def build(cls, page: Page, qa: QAReport, key: str, **extra: Any) -> "QAOut":
+        return cls(
+            status=page.status,
+            errors=_messages(qa.errors),
+            warnings=_messages(qa.warnings),
+            gaps=list(qa.gaps),
+            gap_count=qa.gap_count,
+            dangling_count=qa.dangling_count,
+            metrics=qa.metrics,
+            character_check=page.character_check,
+            qa_note=page.qa_note,
+            forced_pass_reason=page.forced_pass_reason,
+            lineart_url=lineart_url(page.id, key),
+            **extra,
+        )
+
+
+class AutofixOut(QAOut):
+    autofix_added: int
