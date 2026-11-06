@@ -1,8 +1,9 @@
 """繪本與角色端點。"""
 
+import logging
 import random
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlmodel import Session, col, select, update
 
 from app.api.deps import get_session, get_worker
@@ -14,10 +15,13 @@ from app.api.schemas import (
     CharacterSelect,
     GenerationOut,
 )
-from app.models import Book, Generation, GenKind, GenStatus, utcnow
+from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
+from app.services.layout import PaperSize, ratio_group
+from app.services.page_lineart import ensure_page_lineart
 from app.services.prompts import CHARACTER_NEGATIVE, character_prompt
 from app.services.worker import GenerationWorker, encode_request
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/books", tags=["books"])
 
 CHARACTER_SIZE = (832, 1216)
@@ -50,13 +54,55 @@ def get_book(book_id: int, session: Session = Depends(get_session)) -> BookOut:
     return BookOut.from_book(_book_or_404(session, book_id))
 
 
+def _recompute_book_lineart(sessions, storage, book_id: int) -> None:
+    """改尺寸／列印方式後，背景重算每個有選圖頁面的線稿（單頁失敗只記 log）。"""
+    with sessions() as session:
+        ids = session.exec(
+            select(Page.id)
+            .where(col(Page.book_id) == book_id, col(Page.selected_generation_id).is_not(None))
+            .order_by(col(Page.id))
+        ).all()
+        for page_id in ids:
+            try:
+                ensure_page_lineart(session, storage, page_id)
+            except Exception:
+                session.rollback()
+                log.warning("book %s page %s 線稿重算失敗", book_id, page_id, exc_info=True)
+
+
 @router.patch("/{book_id}", response_model=BookOut)
-def update_book(book_id: int, body: BookUpdate, session: Session = Depends(get_session)) -> BookOut:
+def update_book(
+    book_id: int,
+    body: BookUpdate,
+    request: Request,
+    background: BackgroundTasks,
+    session: Session = Depends(get_session),
+) -> BookOut:
     book = _book_or_404(session, book_id)
-    book.title = body.title
-    book.updated_at = utcnow()
-    session.add(book)
-    session.commit()
+    if body.paper_size is not None and ratio_group(body.paper_size) != ratio_group(book.paper_size):
+        same = "、".join(
+            s.name if s.name[0] != "S" else s.value
+            for s in PaperSize
+            if ratio_group(s) == ratio_group(book.paper_size)
+        )
+        raise HTTPException(422, f"只能改成同比例的紙張尺寸（{same}）")
+    changed = False
+    if body.title is not None:
+        book.title = body.title
+    if body.paper_size is not None and body.paper_size != book.paper_size:
+        book.paper_size = body.paper_size
+        changed = True
+    if body.print_mode is not None and body.print_mode != book.print_mode:
+        book.print_mode = body.print_mode
+        changed = True
+    if body.title is not None or changed:
+        book.updated_at = utcnow()
+        session.add(book)
+        session.commit()
+    if changed:
+        background.add_task(
+            _recompute_book_lineart, request.app.state.sessions, request.app.state.storage, book_id
+        )
     return BookOut.from_book(book)
 
 

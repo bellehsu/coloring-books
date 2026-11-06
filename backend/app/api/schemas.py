@@ -25,7 +25,9 @@ class BookCreate(BaseModel):
 
 
 class BookUpdate(BaseModel):
-    title: TitleStr
+    title: TitleStr | None = None
+    paper_size: PaperSize | None = None
+    print_mode: PrintMode | None = None
 
 
 class LayoutOut(BaseModel):

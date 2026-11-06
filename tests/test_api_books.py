@@ -261,3 +261,20 @@ def test_set_character_cancels_other_queued_candidates(client, app):
     assert not client.portal.call(app.state.worker.run_once)
     with app.state.sessions() as s:
         assert s.get(Generation, gens[1]["id"]).finished_at is not None
+
+
+def test_change_size_same_group_only(client):
+    b = new_book(client, paper_size="a4", print_mode="home")
+    url = f"/api/books/{b['id']}"
+    r = client.patch(url, json={"paper_size": "a5"})
+    assert r.status_code == 200 and r.json()["paper_size"] == "a5"
+    assert r.json()["title"] == b["title"]
+    r = client.patch(url, json={"paper_size": "letter"})
+    assert r.status_code == 422
+    assert "只能改成同比例的紙張尺寸（A4、A5、B5）" in r.json()["detail"]
+    assert client.get(url).json()["paper_size"] == "a5"
+    r = client.patch(url, json={"print_mode": "print_shop"})
+    assert r.status_code == 200 and r.json()["print_mode"] == "print_shop"
+    assert client.patch(url, json={}).status_code == 200
+    assert client.patch(url, json={"paper_size": "A0"}).status_code == 422
+    assert client.patch(url, json={"title": "  "}).status_code == 422

@@ -486,3 +486,47 @@ def test_page_out_aspect_and_sketch_version(client, app):
     r2 = upload(client, p["id"], make_png((256, 256))).json()
     assert r2["sketch_url"] != r1["sketch_url"]
     assert client.get(r2["sketch_url"]).status_code == 200
+
+
+def test_change_size_recomputes_and_demotes(client, app, monkeypatch):
+    from app.services import page_lineart
+    from app.services.layout import PaperSize, compute_layout
+
+    b, p1, ids1 = selected_page(client, app)
+    p2 = new_page(client, b["id"])
+    g2 = client.post(f"/api/pages/{p2['id']}/candidates", json={"count": 1}).json()[0]["id"]
+    run_jobs(client, app, 1)
+    assert client.post(f"/api/pages/{p2['id']}/select", json={"generation_id": g2}).status_code == 200
+
+    # 第一頁有一筆修線（相對座標 y=0.05，在方塊外的空白處）
+    mark = {"op": "draw", "width_px": 12, "points": [[0.2, 0.05], [0.8, 0.05]]}
+    assert client.put(f"/api/pages/{p1['id']}/lineart/edits",
+                      json=edits_body(ids1[0], [mark])).status_code == 200
+    for pid in (p1["id"], p2["id"]):
+        make_passed(app, pid)
+
+    new_px = compute_layout(PaperSize.A5, PrintMode.PRINT_SHOP).content_px
+    assert list(new_px) != b["layout"]["content_px"]
+    real = page_lineart.evaluate
+
+    def fake_evaluate(ink, line_width_px, *a, **kw):
+        report = real(ink, line_width_px, *a, **kw)
+        h, w = ink.shape
+        if (w, h) == tuple(new_px) and ink[round(0.05 * (h - 1)), w // 2]:
+            report.errors = ["gap"]  # 只有帶著修線的頁在新尺寸下出現缺口
+        return report
+
+    monkeypatch.setattr(page_lineart, "evaluate", fake_evaluate)
+    r = client.patch(f"/api/books/{b['id']}", json={"print_mode": "print_shop"})
+    assert r.status_code == 200 and r.json()["layout"]["content_px"] == list(new_px)
+
+    assert get_page(app, p1["id"]).status == PageStatus.DRAFT
+    assert get_page(app, p2["id"]).status == PageStatus.PASSED
+    for pid in (p1["id"], p2["id"]):
+        assert list(png(client.get(f"/api/pages/{pid}/lineart")).size) == list(new_px)
+    # 修線以相對座標保存，不變；且落在新圖縮放後的位置
+    assert client.get(f"/api/pages/{p1['id']}/lineart/edits").json()["strokes"] == [mark]
+    im = png(client.get(f"/api/pages/{p1['id']}/lineart"))
+    w, h = im.size
+    assert im.getpixel((w // 2, round(0.05 * (h - 1)))) == 0
+    assert im.getpixel((w // 2, round(0.12 * (h - 1)))) == 255
