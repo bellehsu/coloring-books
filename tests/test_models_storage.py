@@ -151,5 +151,5 @@ def test_page_phase3_defaults_and_lineart_edit(tmp_path):
 
 def test_storage_lineart_and_preview_paths(tmp_path):
     st = Storage(tmp_path)
-    assert st.lineart(3, 4) == "books/3/pages/4/lineart.png"
+    assert st.lineart(3, 4, "abc") == "books/3/pages/4/lineart_abc.png"
     assert st.preview(9, "qa") == "cache/previews/9_qa.png"

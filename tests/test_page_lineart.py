@@ -157,3 +157,55 @@ def test_render_preview_cached(env):
         rel = page_lineart.render_preview(storage, gen, (300, 400), "standard", 11)
         assert storage.abs(rel).exists()
         assert page_lineart.render_preview(storage, gen, (300, 400), "standard", 11) == rel
+
+
+def test_qa_version_in_key_forces_rerender(env, monkeypatch):
+    from app.services import qa as qa_mod
+    make, storage, pid, gid = env
+    calls = []
+    orig = page_lineart.render_base
+    monkeypatch.setattr(page_lineart, "render_base",
+                        lambda *a, **k: (calls.append(1), orig(*a, **k))[1])
+    with make() as s:
+        r1 = page_lineart.ensure_page_lineart(s, storage, pid)
+        monkeypatch.setattr(qa_mod, "QA_VERSION", qa_mod.QA_VERSION + 1)
+        r2 = page_lineart.ensure_page_lineart(s, storage, pid)
+    assert r1.key != r2.key and len(calls) == 2
+
+
+def test_lineart_path_is_keyed_and_old_file_deleted(env):
+    make, storage, pid, gid = env
+    with make() as s:
+        r1 = page_lineart.ensure_page_lineart(s, storage, pid)
+        assert r1.path.endswith(f"lineart_{r1.key}.png")
+        page = s.get(Page, pid)
+        page.line_width_px = 9
+        s.add(page)
+        s.commit()
+        r2 = page_lineart.ensure_page_lineart(s, storage, pid)
+    assert r2.path != r1.path
+    assert storage.abs(r2.path).exists() and not storage.abs(r1.path).exists()
+
+
+def test_lost_race_deletes_own_file(env, monkeypatch):
+    make, storage, pid, gid = env
+    orig = page_lineart.evaluate
+    state = {"n": 0}
+
+    def racing(ink, w):
+        state["n"] += 1
+        if state["n"] == 1:  # 第一次算到一半，頁面被改走
+            with make() as s2:
+                pg = s2.get(Page, pid)
+                pg.line_width_px = 9
+                s2.add(pg)
+                s2.commit()
+        return orig(ink, w)
+
+    monkeypatch.setattr(page_lineart, "evaluate", racing)
+    with make() as s:
+        r = page_lineart.ensure_page_lineart(s, storage, pid)
+        pg = s.get(Page, pid)
+        assert pg.lineart_path == r.path
+    files = list(storage.abs(r.path).parent.glob("lineart_*.png"))
+    assert files == [storage.abs(r.path)]

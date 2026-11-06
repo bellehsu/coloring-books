@@ -195,3 +195,13 @@ def test_report_roundtrip():
     assert d["near_miss_count"] == 1 and len(d["bridges"]) == 1
     assert QAReport.from_dict(json.loads(json.dumps(d))) == r
     assert QAReport.from_dict(d) == r
+
+
+def test_bridge_to_tiny_region_is_near_miss_not_leak():
+    """近乎封閉的小圈（內部 < min_region_area）畫在空地：橋一邊是小區域，不算會漏色的缺口。"""
+    img = blank()
+    cv2.circle(img, (CENTER, CENTER), 35, 1, LW)  # 內部面積約 2000 px < 3000
+    img[CENTER - 5:CENTER + 6, CENTER + 24:CENTER + 46] = 0  # 右側挖一個窄縫
+    r = evaluate(img.astype(bool), LW)
+    assert r.near_miss_count >= 1
+    assert r.gap_count == 0 and r.errors == []

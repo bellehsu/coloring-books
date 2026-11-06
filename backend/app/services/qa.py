@@ -31,6 +31,9 @@ from skimage.morphology import skeletonize
 
 from app.services.lineart_post import LineartParams, compute_metrics
 
+# QA 演算法或 QAThresholds 預設值有任何改動時都要加 1；它會進入線稿快取 key，讓舊的 QA 結果失效重算。
+QA_VERSION = 1
+
 QA_MESSAGES: dict[str, str] = {
     "gaps": "線條有缺口，塗色會漏出去，需要修線",
     "black_fill": "有大片黑色色塊",

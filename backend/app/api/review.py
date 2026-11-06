@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, StringConstraints
+from sqlalchemy import case, literal
 from sqlmodel import Session, col, update
 
 from app.api.deps import get_session, get_storage
@@ -16,15 +17,17 @@ from app.storage import Storage
 router = APIRouter(prefix="/api", tags=["review"])
 
 NoteStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
-ReasonStr = Annotated[str, StringConstraints(strip_whitespace=True)]
+ReasonStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 
 NO_SELECTION = "這一頁還沒有選定圖片"
 CHARACTER_NOT_CONFIRMED = "請先確認角色外型與設定一致"
 HAS_ERRORS = "自動檢查有錯誤，修線後再通過，或填寫原因強制通過"
 CHANGED = "頁面剛被修改，請重新檢查"
+STALE_CHECK = "選定的圖片已更換，請重新檢查"
 
 
 class CharacterCheckIn(BaseModel):
+    generation_id: int
     result: CharacterCheck
     note: NoteStr = ""
 
@@ -38,14 +41,19 @@ def character_check(
     page_id: int, body: CharacterCheckIn, session: Session = Depends(get_session)
 ) -> PageOut:
     page = _page_or_404(session, page_id)
-    page.character_check = body.result
-    page.qa_note = body.note
-    if body.result == CharacterCheck.INCONSISTENT and page.status == PageStatus.PASSED:
-        page.status = PageStatus.DRAFT
-        page.passed_at = None
-    page.updated_at = utcnow()
-    session.add(page)
+    values: dict = {"character_check": body.result, "qa_note": body.note, "updated_at": utcnow()}
+    if body.result == CharacterCheck.INCONSISTENT:
+        passed = col(Page.status) == PageStatus.PASSED
+        values["status"] = case((passed, literal(PageStatus.DRAFT, Page.__table__.c.status.type)), else_=col(Page.status))
+        values["passed_at"] = case((passed, None), else_=col(Page.passed_at))
+    res = session.exec(
+        update(Page)
+        .where(col(Page.id) == page_id, col(Page.selected_generation_id) == body.generation_id)
+        .values(**values)
+    )
     session.commit()
+    if not res.rowcount:
+        raise HTTPException(409, STALE_CHECK)
     session.refresh(page)
     return page_out(session, page)
 

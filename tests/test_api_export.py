@@ -97,3 +97,45 @@ def test_print_png(client, app):
     assert im.mode == "1" and round(im.info["dpi"][0]) == 300
     new = new_page(client, b["id"])
     assert client.get(f"/api/pages/{new['id']}/print.png").status_code == 409
+
+
+def test_export_skips_page_demoted_by_rerender(client, app, monkeypatch):
+    from app.services import page_lineart
+    from app.services.qa import QAReport
+    b, ps = book_pages(client, app, n=2)
+    for p in ps:
+        make_passed(app, p["id"])
+    orig = page_lineart.evaluate
+
+    def bad_for_first(ink, w):
+        r = orig(ink, w)
+        if not hasattr(bad_for_first, "done"):
+            bad_for_first.done = True
+            return QAReport(errors=["gaps"], warnings=[], gaps=[], dangling_count=0, gap_count=1)
+        return r
+
+    monkeypatch.setattr(page_lineart, "evaluate", bad_for_first)
+    r = client.get(f"/api/books/{b['id']}/export.pdf")
+    assert r.status_code == 200 and npages(r.content) == 1
+    assert get_page(app, ps[0]["id"]).status == PageStatus.DRAFT
+    # 全部被退回時回 409
+    monkeypatch.setattr(page_lineart, "evaluate",
+                        lambda ink, w: QAReport(errors=["gaps"], warnings=[], gaps=[],
+                                                dangling_count=0, gap_count=1))
+    make_passed(app, ps[1]["id"])
+    set_page(app, ps[1]["id"], lineart_key=None)
+    r = client.get(f"/api/books/{b['id']}/export.pdf")
+    assert r.status_code == 409 and r.json()["detail"] == "沒有可匯出的頁面（需要先通過 QA）"
+
+
+def test_summary_counts_after_rerender(client, app, monkeypatch):
+    from app.services import page_lineart
+    from app.services.qa import QAReport
+    b, ps = book_pages(client, app, n=1)
+    make_passed(app, ps[0]["id"])
+    monkeypatch.setattr(page_lineart, "evaluate",
+                        lambda ink, w: QAReport(errors=["gaps"], warnings=[], gaps=[],
+                                                dangling_count=0, gap_count=1))
+    set_page(app, ps[0]["id"], lineart_key=None)
+    d = client.get(f"/api/books/{b['id']}/export/summary").json()
+    assert d["passed"] == 0 and d["skipped"][0]["reason"] == "not_passed"

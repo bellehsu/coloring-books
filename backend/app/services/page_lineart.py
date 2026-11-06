@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 
 from sqlalchemy import update
-from sqlmodel import Session, col
+from sqlmodel import Session, col, select
 
 from app.models import Book, Generation, LineartEdit, Page, PageStatus, utcnow
 from app.services import lineart_post
@@ -15,6 +15,7 @@ from app.services.layout import compute_layout
 from app.services.lineart_render import (
     RENDER_VERSION, Stroke, apply_strokes, ink_to_png, render_base,
 )
+from app.services import qa as qa_mod
 from app.services.qa import QAReport, evaluate
 from app.storage import Storage
 
@@ -79,7 +80,7 @@ def _digest(*parts) -> str:
 
 
 def lineart_key(gen: Generation, page: Page, content_px, strokes_json: str) -> str:
-    return _digest(RENDER_VERSION, gen.id, gen.image_path, str(getattr(page.line_detail, "value", page.line_detail)),
+    return _digest(RENDER_VERSION, qa_mod.QA_VERSION, gen.id, gen.image_path, str(getattr(page.line_detail, "value", page.line_detail)),
                    page.line_width_px, list(content_px), strokes_json)
 
 
@@ -106,7 +107,7 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int) -> Pag
         content_px = compute_layout(book.paper_size, book.print_mode).content_px
         sj = _strokes_json(session, gen.id)
         key = lineart_key(gen, page, content_px, sj)
-        rel = storage.lineart(page.book_id, page.id)
+        rel = storage.lineart(page.book_id, page.id, key)
         if (page.lineart_key == key and page.lineart_path == rel and page.qa_json
                 and storage.abs(rel).exists()):
             return PageLineart(rel, key, QAReport.from_dict(json.loads(page.qa_json)))
@@ -119,6 +120,7 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int) -> Pag
         qa = evaluate(ink, page.line_width_px)
         storage.write(rel, ink_to_png(ink))
 
+        old_path = page.lineart_path
         values = {"lineart_key": key, "lineart_path": rel, "qa_json": _dumps(qa.to_dict())}
         demote = page.status == PageStatus.PASSED and bool(qa.errors)
         if demote:
@@ -132,7 +134,13 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int) -> Pag
         )
         session.commit()
         if res.rowcount:
+            if old_path and old_path != rel:
+                storage.delete(old_path)
             return PageLineart(rel, key, qa)
+        # 輸了競爭：自己寫的檔案若不是 DB 目前指的那個就刪掉
+        current = session.exec(select(Page.lineart_path).where(col(Page.id) == page_id)).first()
+        if current != rel:
+            storage.delete(rel)
     raise LineartUnavailable("線稿產生時頁面一直被更動，請稍後再試")
 
 

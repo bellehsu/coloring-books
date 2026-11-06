@@ -41,11 +41,22 @@ def _composed(session: Session, storage: Storage, book: Book, page: Page):
 
 
 @router.get("/books/{book_id}/export/summary")
-def export_summary(book_id: int, session: Session = Depends(get_session)) -> dict:
+def export_summary(
+    book_id: int,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+) -> dict:
     _book_or_404(session, book_id)
     pages = _ordered_pages(session, book_id)
     exportable, skipped = [], []
     for p in pages:
+        if p.selected_generation_id is not None and p.status == PageStatus.PASSED:
+            # 先確保線稿是最新的（可能因此退回草稿），再依目前狀態計數
+            try:
+                ensure_page_lineart(session, storage, p.id)
+            except LineartUnavailable:
+                pass
+            session.refresh(p)
         if p.selected_generation_id is None:
             skipped.append({"page_id": p.id, "position": p.position, "reason": "no_selection"})
         elif p.status != PageStatus.PASSED:
@@ -64,14 +75,22 @@ def export_pdf(
     storage: Storage = Depends(get_storage),
 ) -> Response:
     book = _book_or_404(session, book_id)
-    pages = [
+    candidates = [
         p for p in _ordered_pages(session, book_id)
         if p.selected_generation_id is not None
         and (include == "all" or p.status == PageStatus.PASSED)
     ]
-    if not pages:
+    images = []
+    for p in candidates:
+        img = _composed(session, storage, book, p)
+        # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍通過的頁面
+        session.refresh(p)
+        if include == "passed" and p.status != PageStatus.PASSED:
+            continue
+        images.append(img)
+    if not images:
         raise HTTPException(409, NOTHING_TO_EXPORT)
-    pdf = build_pdf([_composed(session, storage, book, p) for p in pages])
+    pdf = build_pdf(images)
     disp = f'attachment; filename="book-{book_id}.pdf"; filename*=UTF-8\'\'{quote(book.title)}.pdf'
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": disp})

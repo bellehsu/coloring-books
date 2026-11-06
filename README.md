@@ -102,7 +102,7 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
 | POST | `/pages/{page_id}/lineart/autofix` | 自動補線縫（最多 3 輪） |
 | GET | `/generations/{gen_id}/lineart-preview` | 以指定細緻度／線寬預覽某張生成圖的線稿 |
 | POST | `/books/{book_id}/reference-sketch` | 由圖片擷取參考草圖 |
-| POST | `/pages/{page_id}/character-check` | 標記角色是否一致 |
+| POST | `/pages/{page_id}/character-check` | 標記角色是否一致（需帶 `generation_id`，選定圖片已更換則 409） |
 | POST | `/pages/{page_id}/pass` | 通過頁面（可帶 `force_reason` 強制通過） |
 | POST | `/pages/{page_id}/unpass` | 取消通過 |
 | GET | `/books/{book_id}/export/summary` | 匯出摘要（可匯出頁、略過原因） |
