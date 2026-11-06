@@ -140,3 +140,71 @@ def test_set_character_rejects_invalid(client, app):
         assert r.json()["detail"]
     assert client.post(f"/api/books/{b['id']}/character", json={"generation_id": 9999}).status_code == 404
     assert client.get(f"/api/books/{b['id']}").json()["character_generation_id"] is None
+
+
+def test_set_character_is_atomic_under_race(client, app, monkeypatch):
+    from app.api import books as books_mod
+
+    b = new_book(client)
+    gens = candidates(client, b["id"], seed=1, count=2).json()
+    run_jobs(client, app, 2)
+    real = books_mod._book_or_404
+
+    def racing(session, book_id):
+        book = real(session, book_id)  # 驗證時角色尚未設定
+        with app.state.sessions() as other:  # 驗證後、寫入前，另一請求搶先設定
+            from app.models import Book
+            row = other.get(Book, book_id)
+            row.character_generation_id = gens[1]["id"]
+            row.character_description = "先到者"
+            other.add(row)
+            other.commit()
+        return book
+
+    monkeypatch.setattr(books_mod, "_book_or_404", racing)
+    r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gens[0]["id"]})
+    assert r.status_code == 409
+    monkeypatch.undo()
+    got = client.get(f"/api/books/{b['id']}").json()
+    assert got["character_generation_id"] == gens[1]["id"]
+    assert got["character_description"] == "先到者"
+
+
+def test_candidates_blocked_by_racing_set_character(client, app, monkeypatch):
+    from app.api import books as books_mod
+    from app.models import Book
+
+    b = new_book(client)
+    real = books_mod._book_or_404
+
+    def racing(session, book_id):
+        book = real(session, book_id)
+        with app.state.sessions() as other:
+            row = other.get(Book, book_id)
+            row.character_generation_id = 1
+            other.add(row)
+            other.commit()
+        return book
+
+    monkeypatch.setattr(books_mod, "_book_or_404", racing)
+    assert candidates(client, b["id"]).status_code == 409
+    with app.state.sessions() as s:
+        assert s.exec(select(Generation)).all() == []
+
+
+def test_candidates_seed_range(client):
+    b = new_book(client)
+    top = 2**32 - 1
+    r = candidates(client, b["id"], seed=top - 3, count=4)
+    assert r.status_code == 202
+    assert [g["seed"] for g in r.json()][-1] == top
+    r = candidates(client, new_book(client)["id"], seed=top - 2, count=4)
+    assert r.status_code == 422 and "seed" in r.json()["detail"]
+    assert candidates(client, b["id"], seed=top + 1).status_code == 422
+
+
+def test_candidates_notify_worker(client, app, monkeypatch):
+    calls = []
+    monkeypatch.setattr(app.state.worker, "notify", lambda: calls.append(1))
+    candidates(client, new_book(client)["id"])
+    assert calls == [1]

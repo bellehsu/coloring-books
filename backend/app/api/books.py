@@ -3,7 +3,7 @@
 import random
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, select, update
 
 from app.api.deps import get_session, get_worker
 from app.api.schemas import (
@@ -21,6 +21,7 @@ from app.services.worker import GenerationWorker, encode_request
 router = APIRouter(prefix="/api/books", tags=["books"])
 
 CHARACTER_SIZE = (832, 1216)
+MAX_SEED = 2**32 - 1
 
 
 def _book_or_404(session: Session, book_id: int) -> Book:
@@ -69,7 +70,11 @@ def create_character_candidates(
     book = _book_or_404(session, book_id)
     if book.character_generation_id is not None:
         raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
-    base = body.seed if body.seed is not None else random.randint(0, 2**32 - body.count)
+    if body.seed is not None and body.seed + body.count - 1 > MAX_SEED:
+        raise HTTPException(
+            422, f"seed 加上候選數量不可超過 {MAX_SEED}（seed 最大為 {MAX_SEED - body.count + 1}）"
+        )
+    base = body.seed if body.seed is not None else random.randint(0, MAX_SEED + 1 - body.count)
     prompt = character_prompt(body.description)
     width, height = CHARACTER_SIZE
     gens = [
@@ -93,6 +98,15 @@ def create_character_candidates(
         )
         for i in range(body.count)
     ]
+    # 先以條件式 UPDATE 取得寫入鎖並確認角色仍未設定，與 set_character 互斥
+    res = session.exec(
+        update(Book)
+        .where(col(Book.id) == book_id, col(Book.character_generation_id).is_(None))
+        .values(updated_at=utcnow())
+    )
+    if res.rowcount == 0:
+        session.rollback()
+        raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
     session.add_all(gens)
     session.commit()
     worker.notify()
@@ -122,9 +136,17 @@ def set_character(
         raise HTTPException(409, "這張候選圖尚未成功生成")
     if gen.discarded:
         raise HTTPException(409, "這張候選圖已被捨棄")
-    book.character_generation_id = gen.id
-    book.character_description = gen.user_text
-    book.updated_at = utcnow()
-    session.add(book)
+    res = session.exec(
+        update(Book)
+        .where(col(Book.id) == book_id, col(Book.character_generation_id).is_(None))
+        .values(
+            character_generation_id=gen.id,
+            character_description=gen.user_text,
+            updated_at=utcnow(),
+        )
+    )
     session.commit()
+    if res.rowcount == 0:
+        raise HTTPException(409, "這本繪本的角色已經設定")
+    session.refresh(book)
     return BookOut.from_book(book)
