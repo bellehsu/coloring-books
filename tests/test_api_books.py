@@ -42,6 +42,10 @@ def test_create_and_get_book_with_layout(client):
     b = new_book(client)
     assert b["layout"]["generation_size"] == [864, 1216]
     assert b["layout"]["content_px"] == [2551, 3579]
+    assert b["layout"]["page_px"] == [2551, 3579]
+    assert b["layout"]["trim_box_px"] == [35, 35, 2515, 3543]
+    assert b["layout"]["safe_box_px"] == [94, 94, 2456, 3484]
+    assert b["layout"]["ratio_group"] == "iso"
     assert client.get(f"/api/books/{b['id']}").json() == b
     assert client.post("/api/books", json={"title": "x", "paper_size": "A0",
                                            "print_mode": "home"}).status_code == 422

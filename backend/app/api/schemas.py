@@ -26,10 +26,16 @@ class BookUpdate(BaseModel):
 
 
 class LayoutOut(BaseModel):
+    paper_mm: tuple[float, float]
     content_mm: tuple[float, float]
     content_px: tuple[int, int]
     generation_size: tuple[int, int]
     safe_inset_mm: float | None
+    page_px: tuple[int, int]
+    content_offset_px: tuple[int, int]
+    trim_box_px: tuple[int, int, int, int] | None
+    safe_box_px: tuple[int, int, int, int] | None
+    ratio_group: str
 
 
 class BookOut(BaseModel):
@@ -54,10 +60,16 @@ class BookOut(BaseModel):
             character_description=book.character_description,
             character_generation_id=book.character_generation_id,
             layout=LayoutOut(
+                paper_mm=lay.paper_mm,
                 content_mm=lay.content_mm,
                 content_px=lay.content_px,
                 generation_size=lay.generation_size,
                 safe_inset_mm=lay.safe_inset_mm,
+                page_px=lay.page_px,
+                content_offset_px=lay.content_offset_px,
+                trim_box_px=lay.trim_box_px,
+                safe_box_px=lay.safe_box_px,
+                ratio_group=lay.ratio_group,
             ),
             created_at=book.created_at,
             updated_at=book.updated_at,
