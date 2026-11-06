@@ -141,9 +141,8 @@ def test_repo_route_a_loads():
     assert built.params["controlnet_type"] == "canny/lineart/anime_lineart/mlsd"
 
 
-def test_repo_route_b_manifest_valid_but_waiting_for_workflow():
+def test_repo_registry_has_no_retired_routes():
     reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    b = reg.get("route_b_qwen_edit_2511_gguf")
-    assert not any("schema" in e for e in b.errors), b.errors
-    if not (REPO / "comfy_workflows" / "route_b_qwen_edit_2511_gguf" / "workflow_api.json").exists():
-        assert b.errors == ["缺少 workflow 檔 workflow_api.json"]
+    assert "route_b_qwen_edit_2511_gguf" not in reg.entries
+    assert "sdxl_text2img" in reg.entries
+    assert "route_a_sdxl_ipadapter_cn" in reg.entries

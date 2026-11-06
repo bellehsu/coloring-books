@@ -176,10 +176,9 @@ def test_missing_image_is_a_cell_error(env):
 def test_example_config_expands():
     cfg = rm.load_config(REPO / "experiments" / "configs" / "phase1_example.yaml")
     cells = rm.expand_cells(cfg)
-    assert len(cells) == 2 * 2 * 2 * 3
-    b = [c for c in cells if c.route == "B" and c.lineart == "sketch_guided"][0]
-    assert b.params["prompt"].startswith("Redraw the character from image 1")
-    assert "{" not in b.params["prompt"]
+    assert len(cells) == 1 * 2 * 2 * 3  # 只剩 Route A：2 線稿方式 × 2 場景 × 3 seeds
+    assert {c.route for c in cells} == {"A"}
+    assert all("{" not in str(v) for c in cells for v in c.params.values())
 
 
 def test_preflight_only_checks_selected_routes(env, capsys):
