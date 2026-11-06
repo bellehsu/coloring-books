@@ -113,3 +113,13 @@ $PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml
 $PY experiments/run_matrix.py summarize experiments/results/<run_dir>
 APP_COMFY__URL=http://127.0.0.1:8190 $VENV_ROOT/coloring-books/bin/uvicorn app.main:app --app-dir backend --port 8000
 ```
+
+## 資料庫結構變更
+
+資料表結構由 Alembic 管理（`backend/migrations/`，資料庫位置來自 `config/settings.yaml`）。
+
+1. 修改 `backend/app/models.py`。
+2. 產生 migration：`cd backend && alembic revision --autogenerate -m "說明"`，並檢查 `migrations/versions/` 裡新產生的檔案（SQLite 以 batch 模式修改資料表）。
+3. 後端啟動（`init_db`）時自動升級到最新版；Phase 2 建立的舊資料庫會先標記為 baseline（`0001`）再升級，資料不會遺失。
+
+`tests/test_migrations.py::test_schema_matches_models` 會在忘記產生 migration 時失敗。
