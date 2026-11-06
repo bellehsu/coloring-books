@@ -250,3 +250,16 @@ def test_select_blocked_by_racing_discard(client, app):
         event.remove(app.state.db, "before_cursor_execute", discard_before_update)
     assert fired and r.status_code == 409
     assert client.get(f"/api/books/{b['id']}/pages").json()[0]["selected_generation_id"] is None
+
+
+def test_page_candidates_fail_when_sketch_file_missing(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    upload(client, p["id"], make_png((128, 128)))
+    for f in sketch_files(app):
+        f.unlink()
+    r = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 2})
+    assert r.status_code == 409 and r.json()["detail"] == "草圖檔案遺失，請重新上傳"
+    with app.state.sessions() as s:
+        assert s.exec(select(Generation).where(Generation.kind == GenKind.PAGE)).all() == []
+    assert sketch_files(app) == []

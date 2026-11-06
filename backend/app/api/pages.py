@@ -171,8 +171,8 @@ def create_page_candidates(
     if page.sketch_path:
         try:
             sketch_bytes = storage.abs(page.sketch_path).read_bytes()
-        except FileNotFoundError:
-            sketch_bytes = None  # 檔案遺失視同沒有草圖
+        except (FileNotFoundError, ValueError) as e:
+            raise HTTPException(409, "草圖檔案遺失，請重新上傳") from e
     gens = [
         Generation(
             book_id=book.id,
