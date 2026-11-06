@@ -1,0 +1,102 @@
+# Phase 1 Route C 第二輪（C2）：場景背景 × 姿勢控制。
+# C1 結論（experiments/results/phase1_route_c1_20261105_164704/NOTES.md）：
+#   IP-Adapter 0.55 / end_at 0.6 + luma 最好；但 (a) 夜景與場景背景出不來，(b) 角色永遠正面站姿、動作沒出來。
+# 本輪固定 IP-Adapter 0.55 / 0.6、擷取 luma 與 xdog，比較兩個因素：
+#   背景：white（C1 的 plain white background） vs scene（拿掉白底、要求完整場景、負向加 plain/empty background）
+#   姿勢：none（ControlNet 0） vs cn05（scribble 0.5，前 50%） vs cn07（scribble 0.7，前 70%）
+# 姿勢草圖：experiments/samples/pose/*.png（experiments/pose_sketches.py 產生，白底黑線，workflow 內會反相）。
+# 場景提示詞改成與草圖一致的動作，所以 white_none 不完全等於 C1，只當本輪的組內對照。
+# 2 背景 × 3 姿勢 × 3 場景 × 3 seeds = 54 張生成；× 2 擷取 = 108 格。
+
+name: phase1_route_c2
+
+character:
+  name: momo
+  description: "a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes"
+  reference_image: experiments/samples/character_ref.png
+
+seeds: [101, 202, 303]
+
+postprocess:
+  target_width: 2480
+  target_height: 3508
+  line_width_px: 11
+  min_fragment_area: 64
+  close_kernel: 7
+
+routes:
+  C:
+    workflow: route_a_sdxl_ipadapter_cn
+    params:
+      character_image: "{character_image}"
+      prompt: "{character}, {scene}, {lineart}"
+      negative_prompt: "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
+      ipadapter_weight: 0.55
+      ipadapter_end_at: 0.6
+      controlnet_type: "hed/pidi/scribble/ted"
+      controlnet_strength: 0.0
+
+lineart_methods:
+  # ---- 背景 white ----
+  white_none_luma:
+    prompt: &p_white "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background"
+    params: &white_none {controlnet_strength: 0.0}
+    extract: &luma {method: luma, threshold: 90}
+  white_none_xdog:
+    prompt: *p_white
+    params: *white_none
+    extract: &xdog {method: xdog, sigma: 0.8, k: 1.6, p: 20.0, eps: 0.02, phi: 10.0}
+  white_cn05_luma:
+    prompt: *p_white
+    params: &white_cn05 {controlnet_strength: 0.5, controlnet_end_percent: 0.5}
+    extract: *luma
+  white_cn05_xdog:
+    prompt: *p_white
+    params: *white_cn05
+    extract: *xdog
+  white_cn07_luma:
+    prompt: *p_white
+    params: &white_cn07 {controlnet_strength: 0.7, controlnet_end_percent: 0.7}
+    extract: *luma
+  white_cn07_xdog:
+    prompt: *p_white
+    params: *white_cn07
+    extract: *xdog
+  # ---- 背景 scene ----
+  scene_none_luma:
+    prompt: &p_scene "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, full detailed background scene"
+    params: &scene_none
+      controlnet_strength: 0.0
+      negative_prompt: &neg_scene "plain background, empty background, white background, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
+    extract: *luma
+  scene_none_xdog:
+    prompt: *p_scene
+    params: *scene_none
+    extract: *xdog
+  scene_cn05_luma:
+    prompt: *p_scene
+    params: &scene_cn05 {controlnet_strength: 0.5, controlnet_end_percent: 0.5, negative_prompt: *neg_scene}
+    extract: *luma
+  scene_cn05_xdog:
+    prompt: *p_scene
+    params: *scene_cn05
+    extract: *xdog
+  scene_cn07_luma:
+    prompt: *p_scene
+    params: &scene_cn07 {controlnet_strength: 0.7, controlnet_end_percent: 0.7, negative_prompt: *neg_scene}
+    extract: *luma
+  scene_cn07_xdog:
+    prompt: *p_scene
+    params: *scene_cn07
+    extract: *xdog
+
+scenes:
+  park:
+    prompt: "sitting on a swing and holding the ropes, in a sunny park with trees"
+    params: {structure_image: experiments/samples/pose/park_swing.png}
+  kitchen:
+    prompt: "holding a tray of freshly baked cookies next to the oven in a cozy kitchen"
+    params: {structure_image: experiments/samples/pose/kitchen_baking.png}
+  bedroom:
+    prompt: "sitting in bed reading an open picture book at night, a small bedside lamp, moon and stars in the dark window"
+    params: {structure_image: experiments/samples/pose/bedroom_reading.png}

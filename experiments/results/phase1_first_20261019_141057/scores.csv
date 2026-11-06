@@ -1,0 +1,13 @@
+﻿cell_id,consistency_score,notes
+park__A__prompt_only__s101,4,
+park__A__prompt_only__s202,3,
+park__A__prompt_only__s303,4,
+park__A__sketch_guided__s101,1,
+park__A__sketch_guided__s202,1,
+park__A__sketch_guided__s303,1,
+kitchen__A__prompt_only__s101,4,
+kitchen__A__prompt_only__s202,3,
+kitchen__A__prompt_only__s303,2,
+kitchen__A__sketch_guided__s101,1,
+kitchen__A__sketch_guided__s202,1,
+kitchen__A__sketch_guided__s303,1,

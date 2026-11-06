@@ -1,0 +1,20 @@
+# Phase 1 Route C0：對 Route A 第二輪（phase1_route_a_r2_20261019_145853）的原始彩色輸出重新擷取線稿。
+# 不重新生成，原圖完全相同，只比較「擷取方式」。none = Route A 原本的做法（彩色圖直接進後處理），當對照組。
+# 用法：python experiments/run_matrix.py reextract experiments/results/phase1_route_a_r2_20261019_145853 \
+#         --config experiments/configs/phase1_route_c0_reextract.yaml
+
+name: phase1_route_c0_reextract
+route: C0
+
+postprocess:   # 與 Route A 第二輪相同
+  target_width: 2480
+  target_height: 3508
+  line_width_px: 11
+  min_fragment_area: 64
+  close_kernel: 7
+
+extract_methods:
+  none: {method: none}
+  luma: {method: luma, threshold: 90}
+  xdog: {method: xdog, sigma: 0.8, k: 1.6, p: 20.0, eps: 0.02, phi: 10.0}
+  color_edges: {method: color_edges}

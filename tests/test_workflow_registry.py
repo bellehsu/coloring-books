@@ -1,0 +1,149 @@
+import copy
+import json
+
+import pytest
+
+from app.services.workflow_registry import (
+    ParameterError,
+    WorkflowNotReady,
+    WorkflowRegistry,
+    load_workflow_dir,
+)
+from tests.conftest import REPO, TINY_MANIFEST, TINY_WORKFLOW, write_workflow
+
+
+def test_load_ok_and_hashes(workflows_dir):
+    reg = WorkflowRegistry(workflows_dir).load()
+    e = reg.get("tiny")
+    assert e.ok, e.errors
+    assert len(e.workflow_hash) == 64 and len(e.version) == 12
+    assert e.class_types() >= {"KSampler", "SaveImage"}
+
+
+def test_version_changes_when_files_change(workflows_dir):
+    v1 = load_workflow_dir(workflows_dir / "tiny").version
+    wf = copy.deepcopy(TINY_WORKFLOW)
+    wf["5"]["inputs"]["denoise"] = 0.9
+    (workflows_dir / "tiny" / "workflow_api.json").write_text(json.dumps(wf))
+    assert load_workflow_dir(workflows_dir / "tiny").version != v1
+
+
+def test_build_prompt_applies_whitelisted_params(workflows_dir):
+    e = WorkflowRegistry(workflows_dir).load().get("tiny")
+    built = e.build_prompt({"prompt": "a cat", "seed": 7, "size": 640, "ref_image": "coloring_books/r.png"})
+    p = built.prompt
+    assert p["2"]["inputs"]["text"] == "a cat"
+    assert p["5"]["inputs"]["seed"] == 7
+    assert p["5"]["inputs"]["steps"] == 10  # default
+    assert p["4"]["inputs"]["width"] == p["4"]["inputs"]["height"] == 640  # 多 target
+    assert p["2"]["inputs"]["clip"] == ["1", 1]  # 連線不受影響
+    # 沒提供也沒有 default 的選填參數：沿用 workflow 原值並記錄
+    assert built.params["negative_prompt"] == ""
+    assert built.params["cfg"] == 5.0 and built.params["seed"] == 7
+    assert built.models == ["base.safetensors"]
+    assert built.output_node_ids == ["8"]
+    # 原始 workflow 不被修改
+    assert e.workflow["2"]["inputs"]["text"] == "hello"
+
+
+def test_build_prompt_rejects_unknown_and_invalid(workflows_dir):
+    e = WorkflowRegistry(workflows_dir).load().get("tiny")
+    with pytest.raises(ParameterError) as ei:
+        e.build_prompt({"prompt": "x" * 101, "seed": -1, "steps": True, "cfg": "high",
+                        "sampler_name": "bogus", "ref_image": "../etc/passwd", "denoise": 0.5})
+    probs = " ".join(ei.value.problems)
+    for word in ("denoise", "prompt", "seed", "steps", "cfg", "sampler_name", "ref_image"):
+        assert word in probs
+    with pytest.raises(ParameterError, match="必填"):
+        e.build_prompt({"prompt": "x", "ref_image": "a.png"})
+
+
+def test_int_accepts_integral_float(workflows_dir):
+    e = WorkflowRegistry(workflows_dir).load().get("tiny")
+    built = e.build_prompt({"prompt": "x", "seed": 3.0, "ref_image": "a.png"})
+    assert built.prompt["5"]["inputs"]["seed"] == 3 and isinstance(built.prompt["5"]["inputs"]["seed"], int)
+
+
+@pytest.mark.parametrize("mutate, expected", [
+    (lambda m, w: m["parameters"]["prompt"]["targets"].__setitem__(0, {"title": "NOPE", "input": "text"}),
+     "找不到 title"),
+    (lambda m, w: w["3"]["_meta"].__setitem__("title", "POSITIVE"), "重複"),
+    (lambda m, w: m["parameters"]["prompt"]["targets"].__setitem__(0, {"title": "POSITIVE", "input": "clip"}),
+     "是連線"),
+    (lambda m, w: m["parameters"]["prompt"]["targets"].__setitem__(0, {"title": "POSITIVE", "input": "zzz"}),
+     "沒有輸入欄位"),
+    (lambda m, w: m["parameters"]["steps"].__setitem__("default", 99), "預設值不合法"),
+    (lambda m, w: m["models"][0].__setitem__("filename", "other.safetensors"), "不一致"),
+    (lambda m, w: m["parameters"]["negative_prompt"].__setitem__(
+        "targets", [{"title": "POSITIVE", "input": "text"}]), "同一個輸入"),
+    (lambda m, w: m["outputs"].__setitem__(0, {"title": "MISSING"}), "outputs"),
+])
+def test_semantic_validation(tmp_path, mutate, expected):
+    m, w = copy.deepcopy(TINY_MANIFEST), copy.deepcopy(TINY_WORKFLOW)
+    mutate(m, w)
+    e = load_workflow_dir(write_workflow(tmp_path, "tiny", w, m))
+    assert not e.ok
+    assert any(expected in err for err in e.errors), e.errors
+
+
+@pytest.mark.parametrize("mutate, expected", [
+    (lambda m: m.pop("outputs"), "outputs"),
+    (lambda m: m["parameters"]["seed"].pop("max"), "max"),
+    (lambda m: m["parameters"]["sampler_name"].pop("choices"), "choices"),
+    (lambda m: m["parameters"]["seed"].__setitem__("type", "number"), "number"),
+    (lambda m: m["parameters"]["seed"].__setitem__("evil", 1), "evil"),
+])
+def test_schema_validation(tmp_path, mutate, expected):
+    m = copy.deepcopy(TINY_MANIFEST)
+    mutate(m)
+    e = load_workflow_dir(write_workflow(tmp_path, "tiny", None, m))
+    assert not e.ok
+    assert any("schema" in err and expected in err for err in e.errors), e.errors
+
+
+def test_missing_workflow_file_and_ui_format(tmp_path):
+    e = load_workflow_dir(write_workflow(tmp_path, "a", False))
+    assert any("缺少 workflow 檔" in x for x in e.errors)
+    with pytest.raises(WorkflowNotReady):
+        e.build_prompt({})
+    d = write_workflow(tmp_path, "b")
+    (d / "workflow_api.json").write_text(json.dumps({"nodes": [], "links": []}))
+    assert any("UI 格式" in x for x in load_workflow_dir(d).errors)
+
+
+def test_name_must_match_folder(tmp_path):
+    d = write_workflow(tmp_path, "tiny")
+    (d.parent / "renamed").mkdir()
+    for f in d.iterdir():
+        (d.parent / "renamed" / f.name).write_bytes(f.read_bytes())
+    e = load_workflow_dir(d.parent / "renamed")
+    assert any("資料夾名稱" in x for x in e.errors)
+
+
+def test_one_bad_workflow_does_not_block_others(tmp_path):
+    write_workflow(tmp_path, "good")
+    (tmp_path / "bad").mkdir()
+    (tmp_path / "bad" / "manifest.yaml").write_text("{ not: [valid")
+    reg = WorkflowRegistry(tmp_path).load()
+    assert reg.get("good").ok
+    assert not reg.get("bad").ok
+    with pytest.raises(KeyError, match="可用"):
+        reg.get("nope")
+
+
+# ---- 專案內真正的 workflow --------------------------------------------------------
+
+def test_repo_route_a_loads():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    a = reg.get("route_a_sdxl_ipadapter_cn")
+    assert a.ok, a.errors
+    built = a.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png", "structure_image": "s.png"})
+    assert built.params["controlnet_type"] == "canny/lineart/anime_lineart/mlsd"
+
+
+def test_repo_route_b_manifest_valid_but_waiting_for_workflow():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    b = reg.get("route_b_qwen_edit_2511_gguf")
+    assert not any("schema" in e for e in b.errors), b.errors
+    if not (REPO / "comfy_workflows" / "route_b_qwen_edit_2511_gguf" / "workflow_api.json").exists():
+        assert b.errors == ["缺少 workflow 檔 workflow_api.json"]

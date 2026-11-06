@@ -1,0 +1,27 @@
+# 複製成 config/settings.yaml 後修改。settings.yaml 不進版控。
+#
+# 所有路徑的唯一來源。相對路徑以「專案根目錄」（本檔所在 config/ 的上一層）為基準。
+# 每個欄位都可以用環境變數覆寫：前綴 APP_，巢狀用兩個底線，例如
+#   APP_COMFY__URL=http://127.0.0.1:8190
+#   APP_PATHS__STORAGE_DIR=/ai-data/projects-data/coloring-books/storage
+# 要改讀其他設定檔：APP_SETTINGS_FILE=/path/to/settings.yaml
+
+comfy:
+  # ComfyUI HTTP 位址（WebSocket 位址自動由此推導）
+  url: http://127.0.0.1:8188
+  # 模型根目錄；底下放 checkpoints/ loras/ controlnet/ ... 子資料夾
+  models_root: /ai-data/models/comfy
+  # 選填：ComfyUI 安裝目錄（含 main.py）。sync_comfy_model_paths.py 會寫入這裡的 extra_model_paths.yaml
+  install_dir: null
+  # HTTP 請求逾時（秒）
+  request_timeout_s: 30
+  # 單一 prompt 從送出到完成的最長等待時間（秒）
+  run_timeout_s: 900
+
+paths:
+  # workflow 資料夾（每個子資料夾含 workflow_api.json + manifest.yaml）
+  workflows_dir: comfy_workflows
+  # 生成結果、上傳圖片等檔案
+  storage_dir: storage
+  # SQLite 資料庫檔案（父資料夾必須存在）
+  database: storage/app.db

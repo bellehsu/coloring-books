@@ -1,0 +1,73 @@
+# Phase 1 Route C 第四輪（C4）：依年齡層調整提示詞的複雜度。
+# 生成沿用 Route C 預設（使用者 2026-11-06 接受）：IP-Adapter 0.55 / 0.6、只畫道具的草圖 ControlNet scribble 0.4 / 前 50%、
+# 擷取 xdog sigma 1.2。角色描述（含條紋吊帶褲）不變，以維持一致性。
+# 比較三種提示詞：
+#   base   = C3 props04 的提示詞（對照組）
+#   age2_6 = 2–6 歲幼兒著色本：大形狀、少細節、背景物件少；負向壓制細碎圖樣與雜亂背景
+#   age6_12 = 6–12 歲兒童著色本：中等細節、完整場景
+# age2_6 另有一個擷取變體（共用同一張彩圖）：xdog 1.5、線寬 16 px、碎片門檻 200 —— 幼兒用的粗線版。
+# 3 提示詞 × 3 場景 × 3 seeds = 27 張生成；共 36 格。
+
+name: phase1_route_c4_age
+
+character:
+  name: momo
+  description: "a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes"
+  reference_image: experiments/samples/character_ref.png
+
+seeds: [101, 202, 303]
+
+postprocess:
+  target_width: 2480
+  target_height: 3508
+  line_width_px: 11
+  min_fragment_area: 64
+  close_kernel: 7
+
+routes:
+  C:
+    workflow: route_a_sdxl_ipadapter_cn
+    params:
+      character_image: "{character_image}"
+      prompt: "{character}, {scene}, {lineart}"
+      ipadapter_weight: 0.55
+      ipadapter_end_at: 0.6
+      controlnet_type: "hed/pidi/scribble/ted"
+      controlnet_strength: 0.4
+      controlnet_end_percent: 0.5
+      negative_prompt: &neg_base "plain background, empty background, white background, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
+
+lineart_methods:
+  base:
+    prompt: "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, full detailed background scene"
+    extract: &xdog12 {method: xdog, sigma: 1.2}
+
+  age2_6:
+    prompt: &p_2_6 "coloring book page for toddlers aged 2 to 6, very simple cute cartoon, big simple rounded shapes, large flat color areas, very thick bold black outlines, minimal details, simple uncluttered background with only a few large objects"
+    params: &neg_2_6
+      negative_prompt: "intricate details, fine lines, small details, tiny objects, many small objects, cluttered background, busy background, complex patterns, hair strands, sparkles, confetti, hatching, plain background, empty background, white background, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
+    extract: *xdog12
+
+  # 同一張彩圖，幼兒用粗線版
+  age2_6_bold:
+    prompt: *p_2_6
+    params: *neg_2_6
+    extract: {method: xdog, sigma: 1.5}
+    postprocess: {line_width_px: 16, min_fragment_area: 200}
+
+  age6_12:
+    prompt: "coloring book page for kids aged 6 to 12, cute detailed cartoon illustration, flat colors, clean black outlines, moderate amount of detail, full background scene with several objects"
+    params:
+      negative_prompt: "messy lines, sketchy, hatching, crosshatching, shading lines, plain background, empty background, white background, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
+    extract: *xdog12
+
+scenes:
+  park:
+    prompt: "sitting on a swing and holding the ropes, in a sunny park with trees"
+    params: {structure_image: experiments/samples/pose/park_swing_props.png}
+  kitchen:
+    prompt: "holding a tray of freshly baked cookies next to the oven in a cozy kitchen"
+    params: {structure_image: experiments/samples/pose/kitchen_baking_props.png}
+  bedroom:
+    prompt: "sitting in bed reading an open picture book at night, a small bedside lamp, moon and stars in the dark window"
+    params: {structure_image: experiments/samples/pose/bedroom_reading_props.png}

@@ -1,0 +1,20 @@
+# Phase 1 Route C3（C 部分）：對 C2（phase1_route_c2_20261105_170021）的 54 張彩色原圖重新擷取，
+# 比較 luma、xdog 與新的 hybrid（luma 為主；深色區用 xdog；大片空白處補回 xdog 長線）。不重新生成。
+# 用法：python experiments/run_matrix.py reextract experiments/results/phase1_route_c2_20261105_170021 \
+#         --config experiments/configs/phase1_route_c3_reextract.yaml
+# 注意：C2 的 lineart 名稱帶有原本的擷取方式（例如 white_cn05_luma），本輪只取 *_luma 的原圖（與 *_xdog 是同一張）。
+
+name: phase1_route_c3_reextract
+route: C3x
+
+postprocess:
+  target_width: 2480
+  target_height: 3508
+  line_width_px: 11
+  min_fragment_area: 64
+  close_kernel: 7
+
+extract_methods:
+  luma: {method: luma, threshold: 90}
+  xdog: {method: xdog, sigma: 0.8, k: 1.6, p: 20.0, eps: 0.02, phi: 10.0}
+  hybrid: {method: hybrid}

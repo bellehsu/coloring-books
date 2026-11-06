@@ -1,0 +1,15 @@
+# 收斂用比較：對 C3（phase1_route_c3_20261105_172046）原圖比較 hybrid 與不同粗細程度的 xdog。
+# 目的：找「細節多、沒有大片黑色塊、線條完整」的擷取方式。xdog sigma 越大，細碎線越少。
+name: phase1_route_c3_final_compare
+route: C3f
+postprocess:
+  target_width: 2480
+  target_height: 3508
+  line_width_px: 11
+  min_fragment_area: 64
+  close_kernel: 7
+extract_methods:
+  hybrid: {method: hybrid}
+  xdog08: {method: xdog, sigma: 0.8}
+  xdog12: {method: xdog, sigma: 1.2}
+  xdog15: {method: xdog, sigma: 1.5}

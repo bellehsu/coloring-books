@@ -1,0 +1,66 @@
+# Phase 1 第一次測試矩陣：路線 × 線稿方式 × 場景 × seeds
+#
+# 參數合併順序（後者覆蓋前者）：
+#   routes.<R>.params → lineart_methods.<L>.params → lineart_methods.<L>.route_params.<R>
+#   → scenes.<S>.params → scenes.<S>.route_params.<R> → seed
+# 字串中可用佔位符：{character} {character_image} {scene} {lineart}
+# image 型別參數填本機路徑（相對於專案根目錄），執行時會自動上傳到 ComfyUI。
+# 執行順序：路線最外層，減少模型切換。
+
+name: phase1_first
+# comfy_url: http://127.0.0.1:8188   # 選填：覆寫 settings
+# output_dir: experiments/results    # 選填：預設 experiments/results
+
+character:
+  name: momo
+  description: "a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes"
+  reference_image: experiments/samples/character_ref.png   # ← 換成你的角色參考圖
+
+seeds: [101, 202, 303]
+
+# 全域後處理參數（LineartParams；見 backend/app/services/lineart_post.py）
+postprocess:
+  target_width: 2480
+  target_height: 3508
+  line_width_px: 11
+  min_fragment_area: 64
+  close_kernel: 7
+
+routes:
+  A:
+    workflow: route_a_sdxl_ipadapter_cn
+    params:
+      character_image: "{character_image}"
+      prompt: "{character}, {scene}, {lineart}"
+      ipadapter_weight: 0.8
+  B:
+    workflow: route_b_qwen_edit_2511_gguf
+    params:
+      character_image: "{character_image}"
+      prompt: "Keep the character from image 1 exactly the same (face, ears, outfit). {scene}. {lineart}"
+
+lineart_methods:
+  # 只靠提示詞要求線稿；結構圖給全白圖、ControlNet 關閉
+  prompt_only:
+    prompt: "black and white coloring book page for children, clean bold uniform outlines, pure white background, no shading, no gray, no color"
+    params:
+      structure_image: experiments/samples/blank_white.png
+    route_params:
+      A: {controlnet_strength: 0.0}
+  # 用結構草圖控制構圖（Route A：ControlNet lineart；Route B：image2）
+  sketch_guided:
+    prompt: "black and white coloring book page for children, clean bold uniform outlines, pure white background, no shading, no gray, no color"
+    params:
+      structure_image: experiments/samples/structure_sketch.png
+    route_params:
+      A: {controlnet_strength: 0.6, controlnet_end_percent: 0.8}
+      B:
+        prompt: "Redraw the character from image 1 following the pose and layout of the sketch in image 2. {scene}. {lineart}"
+    postprocess:
+      close_kernel: 9
+
+scenes:
+  park:
+    prompt: "playing on a swing in a sunny park with trees"
+  kitchen:
+    prompt: "baking cookies in a cozy kitchen"

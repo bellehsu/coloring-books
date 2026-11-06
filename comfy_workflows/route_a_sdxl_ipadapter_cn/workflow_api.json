@@ -1,0 +1,119 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"},
+    "_meta": {"title": "CKPT"}
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "a cute character, black and white coloring book page, clean bold outlines",
+      "clip": ["1", 1]
+    },
+    "_meta": {"title": "POSITIVE"}
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "color, colored, shading, gray, gradient, shadow, hatching, texture, photo, realistic, text, watermark, signature, blurry",
+      "clip": ["1", 1]
+    },
+    "_meta": {"title": "NEGATIVE"}
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "inputs": {"image": "example.png"},
+    "_meta": {"title": "CHARACTER_REF"}
+  },
+  "5": {
+    "class_type": "IPAdapterModelLoader",
+    "inputs": {"ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"},
+    "_meta": {"title": "IPADAPTER_MODEL"}
+  },
+  "6": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {"clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"},
+    "_meta": {"title": "CLIP_VISION"}
+  },
+  "7": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "model": ["1", 0],
+      "ipadapter": ["5", 0],
+      "image": ["4", 0],
+      "clip_vision": ["6", 0],
+      "weight": 0.8,
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0.0,
+      "end_at": 1.0,
+      "embeds_scaling": "V only"
+    },
+    "_meta": {"title": "IPADAPTER"}
+  },
+  "8": {
+    "class_type": "LoadImage",
+    "inputs": {"image": "example.png"},
+    "_meta": {"title": "STRUCTURE_IMAGE"}
+  },
+  "9": {
+    "class_type": "ImageInvert",
+    "inputs": {"image": ["8", 0]},
+    "_meta": {"title": "INVERT_STRUCTURE"}
+  },
+  "10": {
+    "class_type": "ControlNetLoader",
+    "inputs": {"control_net_name": "controlnet-union-sdxl-1.0-promax.safetensors"},
+    "_meta": {"title": "CONTROLNET"}
+  },
+  "11": {
+    "class_type": "SetUnionControlNetType",
+    "inputs": {"control_net": ["10", 0], "type": "canny/lineart/anime_lineart/mlsd"},
+    "_meta": {"title": "UNION_TYPE"}
+  },
+  "12": {
+    "class_type": "ControlNetApplyAdvanced",
+    "inputs": {
+      "positive": ["2", 0],
+      "negative": ["3", 0],
+      "control_net": ["11", 0],
+      "image": ["9", 0],
+      "vae": ["1", 2],
+      "strength": 0.6,
+      "start_percent": 0.0,
+      "end_percent": 0.8
+    },
+    "_meta": {"title": "APPLY_CONTROLNET"}
+  },
+  "13": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {"width": 832, "height": 1216, "batch_size": 1},
+    "_meta": {"title": "LATENT"}
+  },
+  "14": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["7", 0],
+      "positive": ["12", 0],
+      "negative": ["12", 1],
+      "latent_image": ["13", 0],
+      "seed": 0,
+      "steps": 30,
+      "cfg": 6.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1.0
+    },
+    "_meta": {"title": "SAMPLER"}
+  },
+  "15": {
+    "class_type": "VAEDecode",
+    "inputs": {"samples": ["14", 0], "vae": ["1", 2]},
+    "_meta": {"title": "DECODE"}
+  },
+  "16": {
+    "class_type": "SaveImage",
+    "inputs": {"images": ["15", 0], "filename_prefix": "coloring_books/route_a"},
+    "_meta": {"title": "OUTPUT"}
+  }
+}

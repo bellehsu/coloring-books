@@ -1,0 +1,5 @@
+route,lineart,n,n_ok,success_rate,gray_pixel_ratio_mean,gray_pixel_ratio_std,fragment_count_mean,fragment_count_std,black_fill_ratio_mean,black_fill_ratio_std,region_count_mean,region_count_std,closed_region_count_mean,closed_region_count_std,tiny_region_count_mean,tiny_region_count_std,black_pixel_ratio_mean,black_pixel_ratio_std,elapsed_s_mean,elapsed_s_std,failures
+A,baseline,6,0,0.0,,,,,,,,,,,,,,,,,ComfyConnectionError: 無法連線 ComfyUI（http://127.0.0.1:8188）：All connection attempts failed
+A,ip_weak,6,0,0.0,,,,,,,,,,,,,,,,,ComfyConnectionError: 無法連線 ComfyUI（http://127.0.0.1:8188）：All connection attempts failed
+A,ip_weak_neg,6,0,0.0,,,,,,,,,,,,,,,,,ComfyConnectionError: 無法連線 ComfyUI（http://127.0.0.1:8188）：All connection attempts failed
+A,ref_lineart,6,0,0.0,,,,,,,,,,,,,,,,,ComfyConnectionError: 無法連線 ComfyUI（http://127.0.0.1:8188）：All connection attempts failed

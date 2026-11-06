@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "coloring-books/manifest.schema.json",
+  "title": "Workflow manifest",
+  "description": "說明見 comfy_workflows/README.md。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "route", "parameters", "outputs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]*$"},
+    "display_name": {"type": "string"},
+    "route": {"type": "string", "minLength": 1},
+    "description": {"type": "string"},
+    "workflow_file": {"type": "string", "default": "workflow_api.json"},
+    "status": {"enum": ["draft", "ready"], "default": "draft"},
+    "parameters": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"$ref": "#/$defs/parameter"}
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["image"], "default": "image"}
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/model"}
+    },
+    "custom_nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "repo", "provides"],
+        "properties": {
+          "name": {"type": "string"},
+          "repo": {"type": "string"},
+          "provides": {"type": "array", "items": {"type": "string"}},
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "notes": {"type": "string"}
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "input"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "description": "節點的 _meta.title，必須在 workflow 內唯一"},
+        "input": {"type": "string", "minLength": 1}
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "targets"],
+      "properties": {
+        "type": {"enum": ["int", "float", "string", "bool", "enum", "image"]},
+        "description": {"type": "string"},
+        "targets": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/target"}},
+        "default": {},
+        "required": {"type": "boolean", "default": false},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "max_length": {"type": "integer", "minimum": 1},
+        "choices": {"type": "array", "minItems": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "enum"}}},
+          "then": {"required": ["choices"]}
+        },
+        {
+          "if": {"properties": {"type": {"enum": ["int", "float"]}}},
+          "then": {"required": ["min", "max"]}
+        }
+      ]
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "filename", "folder"],
+      "properties": {
+        "id": {"type": "string"},
+        "filename": {"type": "string", "description": "ComfyUI 看到的檔名（可含子資料夾，例如 sdxl/x.safetensors）"},
+        "folder": {"type": "string", "description": "models_root 底下應放置的子資料夾"},
+        "comfy_folder": {"type": "string", "description": "ComfyUI 的資料夾類型（GET /models/<type>）；與 folder 不同時填寫，例如 GGUF 的 unet_gguf"},
+        "source": {"type": "string", "description": "Hugging Face 頁面或下載 URL"},
+        "source_file": {"type": "string", "description": "來源檔名（下載後需改名時填寫）"},
+        "size_gb": {"type": "number"},
+        "loader": {"$ref": "#/$defs/target", "description": "載入此模型的節點；preflight 優先用該節點在 /object_info 的選項清單檢查"},
+        "note": {"type": "string"}
+      }
+    }
+  }
+}

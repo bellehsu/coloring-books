@@ -1,0 +1,152 @@
+schema_version: 1
+name: route_a_sdxl_ipadapter_cn
+display_name: "Route A：SDXL Base + IP-Adapter Plus + ControlNet Union"
+route: A
+status: draft
+description: >
+  SDXL Base 1.0 生成；IP-Adapter Plus（ViT-H）以角色參考圖維持一致性；
+  ControlNet Union（xinsir promax，lineart 模式）以結構圖控制構圖。
+  結構圖請用「白底黑線」（與著色頁相同），workflow 內會反相成 ControlNet 需要的黑底白線。
+  不需要結構控制時傳一張全白圖並把 controlnet_strength 設 0。
+workflow_file: workflow_api.json
+notes: >
+  所有節點類別與輸入欄位已用 ComfyUI 0.36.0 的 /object_info 驗證
+  （IPAdapter 節點：ComfyUI_IPAdapter_plus @ a0f451a）。
+  寬高建議為 8 的倍數、總像素約 1MP（SDXL 訓練解析度）。
+
+parameters:
+  prompt:
+    type: string
+    required: true
+    max_length: 2000
+    description: 正向提示詞
+    targets: [{title: POSITIVE, input: text}]
+  negative_prompt:
+    type: string
+    max_length: 2000
+    default: "color, colored, shading, gray, gradient, shadow, hatching, texture, photo, realistic, text, watermark, signature, blurry"
+    targets: [{title: NEGATIVE, input: text}]
+  character_image:
+    type: image
+    required: true
+    description: 角色參考圖（已上傳到 ComfyUI 的名稱）
+    targets: [{title: CHARACTER_REF, input: image}]
+  structure_image:
+    type: image
+    required: true
+    description: 結構圖（白底黑線）；不使用時傳全白圖並把 controlnet_strength 設 0
+    targets: [{title: STRUCTURE_IMAGE, input: image}]
+  ipadapter_weight:
+    type: float
+    min: 0.0
+    max: 2.0
+    default: 0.8
+    targets: [{title: IPADAPTER, input: weight}]
+  ipadapter_weight_type:
+    type: enum
+    choices: [linear, ease in-out, style transfer, composition, strong style transfer, style and composition]
+    default: linear
+    targets: [{title: IPADAPTER, input: weight_type}]
+  ipadapter_end_at:
+    type: float
+    min: 0.0
+    max: 1.0
+    default: 1.0
+    targets: [{title: IPADAPTER, input: end_at}]
+  controlnet_strength:
+    type: float
+    min: 0.0
+    max: 2.0
+    default: 0.6
+    targets: [{title: APPLY_CONTROLNET, input: strength}]
+  controlnet_end_percent:
+    type: float
+    min: 0.0
+    max: 1.0
+    default: 0.8
+    targets: [{title: APPLY_CONTROLNET, input: end_percent}]
+  controlnet_type:
+    type: enum
+    choices: ["canny/lineart/anime_lineart/mlsd", "hed/pidi/scribble/ted", "openpose", "depth", "auto"]
+    default: "canny/lineart/anime_lineart/mlsd"
+    targets: [{title: UNION_TYPE, input: type}]
+  width:
+    type: int
+    min: 512
+    max: 1536
+    default: 832
+    targets: [{title: LATENT, input: width}]
+  height:
+    type: int
+    min: 512
+    max: 1536
+    default: 1216
+    targets: [{title: LATENT, input: height}]
+  seed:
+    type: int
+    min: 0
+    max: 4294967295
+    required: true
+    targets: [{title: SAMPLER, input: seed}]
+  steps:
+    type: int
+    min: 10
+    max: 60
+    default: 30
+    targets: [{title: SAMPLER, input: steps}]
+  cfg:
+    type: float
+    min: 1.0
+    max: 12.0
+    default: 6.0
+    targets: [{title: SAMPLER, input: cfg}]
+  sampler_name:
+    type: enum
+    choices: [dpmpp_2m, dpmpp_2m_sde, euler, euler_ancestral]
+    default: dpmpp_2m
+    targets: [{title: SAMPLER, input: sampler_name}]
+  scheduler:
+    type: enum
+    choices: [karras, normal, simple, sgm_uniform]
+    default: karras
+    targets: [{title: SAMPLER, input: scheduler}]
+
+outputs:
+  - title: OUTPUT
+    kind: image
+
+models:
+  - id: sdxl_base
+    filename: sd_xl_base_1.0.safetensors
+    folder: checkpoints
+    source: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+    size_gb: 6.94
+    loader: {title: CKPT, input: ckpt_name}
+  - id: ipadapter_plus_sdxl
+    filename: ip-adapter-plus_sdxl_vit-h.safetensors
+    folder: ipadapter
+    source: https://huggingface.co/h94/IP-Adapter/blob/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors
+    size_gb: 0.85
+    loader: {title: IPADAPTER_MODEL, input: ipadapter_file}
+  - id: clip_vision_vit_h
+    filename: CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors
+    folder: clip_vision
+    source: https://huggingface.co/h94/IP-Adapter/blob/main/models/image_encoder/model.safetensors
+    source_file: models/image_encoder/model.safetensors
+    size_gb: 2.53
+    loader: {title: CLIP_VISION, input: clip_name}
+    note: 下載後改名為 CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors（IPAdapter_plus 慣用名稱）
+  - id: controlnet_union_promax
+    filename: controlnet-union-sdxl-1.0-promax.safetensors
+    folder: controlnet
+    source: https://huggingface.co/xinsir/controlnet-union-sdxl-1.0/blob/main/diffusion_pytorch_model_promax.safetensors
+    source_file: diffusion_pytorch_model_promax.safetensors
+    size_gb: 2.51
+    loader: {title: CONTROLNET, input: control_net_name}
+    note: 下載後改名為 controlnet-union-sdxl-1.0-promax.safetensors
+
+custom_nodes:
+  - name: ComfyUI_IPAdapter_plus
+    repo: https://github.com/cubiq/ComfyUI_IPAdapter_plus
+    provides: [IPAdapterModelLoader, IPAdapterAdvanced]
+    note: 作者已停止開發（僅維護）；以 a0f451a（2025-04-14）驗證
