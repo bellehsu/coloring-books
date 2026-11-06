@@ -68,3 +68,10 @@ def test_missing_file_and_bad_values(tmp_path: Path):
 def test_example_settings_is_valid_schema():
     s = load_settings(PROJECT_ROOT / "config" / "settings.example.yaml", check_paths=False)
     assert s.comfy.url.startswith("http")
+
+
+def test_queue_defaults_and_env_override(settings_file: Path, monkeypatch):
+    # 舊設定檔（沒有 queue 段落）仍可載入，使用預設值
+    assert load_settings(settings_file).queue.retry_backoff_s == 10.0
+    monkeypatch.setenv("APP_QUEUE__RETRY_BACKOFF_S", "0")
+    assert load_settings(settings_file).queue.retry_backoff_s == 0.0
