@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.models import Book, Generation, GenKind, GenStatus
+from app.models import Book, Generation, GenKind, GenStatus, Page, PageStatus
 from app.services.layout import PaperSize, PrintMode, compute_layout
 
 
@@ -110,4 +110,54 @@ class GenerationOut(BaseModel):
             queue_position=queue_position,
             progress=progress,
             created_at=gen.created_at,
+        )
+
+
+class PageCreate(BaseModel):
+    scene_prompt: str = Field(default="", max_length=800)
+
+
+class PageUpdate(BaseModel):
+    scene_prompt: str | None = Field(default=None, max_length=800)
+    controlnet_strength: float | None = Field(default=None, ge=0.0, le=0.6)
+
+
+class PageCandidatesCreate(BaseModel):
+    count: int = Field(default=4, ge=1, le=8)
+    seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
+
+
+class PageOrder(BaseModel):
+    page_ids: list[int]
+
+
+class SelectGeneration(BaseModel):
+    generation_id: int
+
+
+class PageOut(BaseModel):
+    id: int
+    book_id: int
+    position: int
+    scene_prompt: str
+    controlnet_strength: float
+    sketch_url: str | None
+    selected_generation_id: int | None
+    status: PageStatus
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_page(cls, page: Page) -> "PageOut":
+        return cls(
+            id=page.id,
+            book_id=page.book_id,
+            position=page.position,
+            scene_prompt=page.scene_prompt,
+            controlnet_strength=page.controlnet_strength,
+            sketch_url=f"/api/pages/{page.id}/sketch" if page.sketch_path else None,
+            selected_generation_id=page.selected_generation_id,
+            status=page.status,
+            created_at=page.created_at,
+            updated_at=page.updated_at,
         )
