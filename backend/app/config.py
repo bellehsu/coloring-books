@@ -51,6 +51,11 @@ class ComfySettings(BaseModel):
         return "ws" + self.url[len("http"):] + "/ws"
 
 
+class QueueSettings(BaseModel):
+    # worker 遇到 ComfyUI 無法連線時，重試前等待的秒數（0 代表立即重試）
+    retry_backoff_s: float = Field(10.0, ge=0)
+
+
 class PathSettings(BaseModel):
     workflows_dir: Path
     storage_dir: Path
@@ -66,6 +71,7 @@ class Settings(BaseSettings):
 
     comfy: ComfySettings
     paths: PathSettings
+    queue: QueueSettings = QueueSettings()
 
     @classmethod
     def settings_customise_sources(

@@ -25,3 +25,7 @@ paths:
   storage_dir: storage
   # SQLite 資料庫檔案（父資料夾必須存在）
   database: storage/app.db
+
+queue:
+  # 生成 worker 遇到 ComfyUI 無法連線時，重試前等待的秒數（0 代表立即重試）
+  retry_backoff_s: 10
