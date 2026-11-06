@@ -96,6 +96,7 @@ class GenerationWorker:
         self.progress: dict[int, tuple[int, int]] = {}
         self._wakeup = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self._event_loop: asyncio.AbstractEventLoop | None = None
 
     # ---- 生命週期 ----
     async def start(self) -> None:
@@ -103,6 +104,7 @@ class GenerationWorker:
             return
         self.requeue_interrupted()
         self.state = WorkerState.IDLE
+        self._event_loop = asyncio.get_running_loop()
         self._wakeup.set()
         self._task = asyncio.create_task(self._loop(), name="generation-worker")
 
@@ -117,6 +119,16 @@ class GenerationWorker:
         self.state = WorkerState.STOPPED
 
     def notify(self) -> None:
+        """喚醒背景迴圈；可從其他執行緒（例如 FastAPI 的同步 handler）安全呼叫。"""
+        loop = self._event_loop
+        if loop is not None and not loop.is_closed():
+            try:
+                on_loop = asyncio.get_running_loop() is loop
+            except RuntimeError:
+                on_loop = False
+            if not on_loop:
+                loop.call_soon_threadsafe(self._wakeup.set)
+                return
         self._wakeup.set()
 
     # ---- 資料庫操作（同步，每次新 session）----
@@ -240,11 +252,13 @@ class GenerationWorker:
                 self.state = WorkerState.IDLE
                 await self._wait(self.retry_backoff_s)
                 continue
-            if self.state == WorkerState.ENGINE_UNAVAILABLE:
-                await self._wait(self.retry_backoff_s)
-            elif not did:
+            if not did:
+                # 佇列已空：不再有待重試的任務，回到 IDLE 並無限期等待 notify()
                 self.state = WorkerState.IDLE
+                self.last_error = None
                 await self._wakeup.wait()
+            elif self.state == WorkerState.ENGINE_UNAVAILABLE:
+                await self._wait(self.retry_backoff_s)
 
     async def _wait(self, timeout: float) -> None:
         try:

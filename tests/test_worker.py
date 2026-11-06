@@ -229,16 +229,78 @@ async def test_background_loop_processes_after_notify(env):
     assert worker.state == WorkerState.STOPPED
 
 
-async def test_notify_during_job_is_not_lost(env):
-    worker, engine, sessions, _ = env
-    engine.delay_s = 0.1
-    first = add_gen(sessions)
+async def test_notify_between_empty_poll_and_wait_is_not_lost(env):
+    worker, _, sessions, _ = env
+    real = worker.run_once
+    calls = []
+    added = []
+
+    async def racy():
+        if not calls:
+            calls.append(1)
+            result = await real()  # 空佇列，回 False
+            added.append(add_gen(sessions))  # 之後才有新任務到達並 notify
+            worker.notify()
+            return result
+        return await real()
+
+    worker.run_once = racy
     await worker.start()
     try:
-        await _wait_status(sessions, first, GenStatus.RUNNING)
-        second = add_gen(sessions)
-        worker.notify()
-        await _wait_status(sessions, second, GenStatus.SUCCEEDED, timeout=3)
+        async def until_added():
+            while not added:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(until_added(), 2)
+        await _wait_status(sessions, added[0], GenStatus.SUCCEEDED)
+    finally:
+        await worker.stop()
+
+
+async def test_returns_to_idle_when_queue_empties_after_outage(env):
+    worker, engine, sessions, _ = env
+    worker.retry_backoff_s = 0.2
+    engine.error = EngineUnavailable("down")
+    gid = add_gen(sessions)
+    calls = 0
+    real = worker.run_once
+
+    async def counting():
+        nonlocal calls
+        calls += 1
+        return await real()
+
+    worker.run_once = counting
+    await worker.start()
+    try:
+        async def until_unavailable():
+            while worker.state != WorkerState.ENGINE_UNAVAILABLE:
+                await asyncio.sleep(0.005)
+
+        await asyncio.wait_for(until_unavailable(), 2)
+        with sessions() as s:
+            g = s.get(Generation, gid)
+            g.status = GenStatus.CANCELLED
+            s.add(g)
+            s.commit()
+        engine.error = None
+        await asyncio.sleep(0.5)  # 下一次重試後佇列為空
+        assert worker.state == WorkerState.IDLE and worker.last_error is None
+        settled = calls
+        await asyncio.sleep(0.6)  # 閒置時不可再輪詢
+        assert calls == settled
+    finally:
+        await worker.stop()
+
+
+async def test_notify_from_other_thread_wakes_loop(env):
+    worker, _, sessions, _ = env
+    await worker.start()
+    try:
+        await asyncio.sleep(0.05)
+        gid = add_gen(sessions)
+        await asyncio.to_thread(worker.notify)
+        await _wait_status(sessions, gid, GenStatus.SUCCEEDED)
     finally:
         await worker.stop()
 
