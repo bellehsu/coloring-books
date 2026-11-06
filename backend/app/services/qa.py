@@ -64,6 +64,9 @@ class QAReport:
     gap_count: int
     metrics: dict[str, Any] = field(default_factory=dict)
     near_miss_count: int = 0  # 第一階段「差一點接上」的標記數（含不會漏色的），合併後
+    # 每個缺口對應的補線線段 (e, q)，相對座標；順序與 gaps 相同，len(bridges) == gap_count。
+    # 用來自動補線：在使用者修改圖層加一筆 draw stroke。
+    bridges: list[tuple[tuple[float, float], tuple[float, float]]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +77,7 @@ class QAReport:
             "gap_count": self.gap_count,
             "metrics": dict(self.metrics),
             "near_miss_count": self.near_miss_count,
+            "bridges": [[[ex, ey], [qx, qy]] for (ex, ey), (qx, qy) in self.bridges],
         }
 
     @classmethod
@@ -86,6 +90,8 @@ class QAReport:
             gap_count=int(d["gap_count"]),
             metrics=dict(d.get("metrics", {})),
             near_miss_count=int(d.get("near_miss_count", 0)),
+            bridges=[((float(ex), float(ey)), (float(qx), float(qy)))
+                     for (ex, ey), (qx, qy) in d.get("bridges", [])],
         )
 
 
@@ -194,9 +200,22 @@ def _side_label(labels: np.ndarray, x: float, y: float, nx: float, ny: float, st
     return 0
 
 
+def _merge_pairs(pairs: list[Pair], min_dist: int) -> list[Pair]:
+    """以中點合併：中點彼此距離 < min_dist 的候選對只留第一個（與 _merge 規則相同）。"""
+    r2 = min_dist * min_dist
+    kept: list[Pair] = []
+    kept_mid: list[Point] = []
+    for e, q in pairs:
+        m = _midpoint(e, q)
+        if all((m[0] - k[0]) ** 2 + (m[1] - k[1]) ** 2 >= r2 for k in kept_mid):
+            kept.append((e, q))
+            kept_mid.append(m)
+    return kept
+
+
 def find_leaks(ink: np.ndarray, candidates: list[Pair], line_width_px: int, min_region_area: int,
-               merge_px: int) -> list[Point]:
-    """第二階段：只保留真的會漏色的候選，回傳合併後的缺口標記（像素座標）。
+               merge_px: int) -> list[Pair]:
+    """第二階段：只保留真的會漏色的候選，回傳合併後的 (e, q) 線段（像素座標）；缺口標記為其中點。
 
     把所有候選橋（e→q，粗細 = 線寬）一次畫上去，對白色區域做 4-連通標記；
     在每座橋中點的兩側（垂直方向、距離約一個線寬，落在線上時再往外找）取樣，
@@ -211,7 +230,7 @@ def find_leaks(ink: np.ndarray, candidates: list[Pair], line_width_px: int, min_
         cv2.line(bridged, e, q, 1, lw)
     n, labels, stats, _ = cv2.connectedComponentsWithStats((bridged == 0).astype(np.uint8), connectivity=4)
     area = stats[:, cv2.CC_STAT_AREA]
-    leaks: list[Point] = []
+    leaks: list[Pair] = []
     for e, q in candidates:
         dx, dy = q[0] - e[0], q[1] - e[1]
         length = float(np.hypot(dx, dy)) or 1.0
@@ -220,8 +239,8 @@ def find_leaks(ink: np.ndarray, candidates: list[Pair], line_width_px: int, min_
         a = _side_label(labels, mx, my, nx, ny, lw, 2 * lw)
         b = _side_label(labels, mx, my, -nx, -ny, lw, 2 * lw)
         if a and b and a != b and area[a] >= min_region_area and area[b] >= min_region_area:
-            leaks.append(_midpoint(e, q))
-    return _merge(leaks, merge_px)
+            leaks.append((e, q))
+    return _merge_pairs(leaks, merge_px)
 
 
 def evaluate(ink: np.ndarray, line_width_px: int, thresholds: QAThresholds = QAThresholds()) -> QAReport:
@@ -231,7 +250,8 @@ def evaluate(ink: np.ndarray, line_width_px: int, thresholds: QAThresholds = QAT
     skel, endpoints = find_endpoints(ink, thresholds.border_px)
     candidates = find_candidates(skel, endpoints, thresholds.max_gap_px)
     near_miss = _merge([_midpoint(e, q) for e, q in candidates], thresholds.max_gap_px)
-    gap_px = find_leaks(ink, candidates, line_width_px, params.min_region_area, thresholds.max_gap_px)
+    leak_pairs = find_leaks(ink, candidates, line_width_px, params.min_region_area, thresholds.max_gap_px)
+    gap_px = [_midpoint(e, q) for e, q in leak_pairs]
 
     all_metrics = compute_metrics(ink, params)
     metrics: dict[str, Any] = {k: all_metrics[k] for k in _METRIC_KEYS}
@@ -256,4 +276,5 @@ def evaluate(ink: np.ndarray, line_width_px: int, thresholds: QAThresholds = QAT
         gap_count=len(gap_px),
         metrics=metrics,
         near_miss_count=len(near_miss),
+        bridges=[((ex / w, ey / h), (qx / w, qy / h)) for (ex, ey), (qx, qy) in leak_pairs],
     )

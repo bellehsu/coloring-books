@@ -13,6 +13,7 @@ from app.services.qa import (
     find_gaps,
     find_leaks,
 )
+from app.services.lineart_render import Stroke, apply_strokes
 
 SIZE = 600
 CENTER = 300
@@ -45,6 +46,18 @@ def test_small_gap_flagged_once_at_gap_location():
     right_edge_rel = (CENTER + RADIUS) / SIZE
     x, y = r.gaps[0]
     assert abs(x - right_edge_rel) < 0.05 and abs(y - 0.5) < 0.05
+
+
+def test_bridges_close_the_reported_leaks():
+    ink = ring(20)
+    r = evaluate(ink, LW)
+    assert r.gap_count == 1 and len(r.bridges) == r.gap_count == len(r.gaps)
+    (ex, ey), (qx, qy) = r.bridges[0]
+    gx, gy = r.gaps[0]
+    assert abs((ex + qx) / 2 - gx) < 0.01 and abs((ey + qy) / 2 - gy) < 0.01
+    fixed = apply_strokes(ink, [Stroke("draw", 11, r.bridges[0])])
+    r2 = evaluate(fixed, LW)
+    assert r2.gap_count == 0 and r2.bridges == [] and r2.errors == []
 
 
 def test_wide_opening_is_not_a_gap():
@@ -179,6 +192,6 @@ def test_messages():
 def test_report_roundtrip():
     r = evaluate(ring(20), LW)
     d = r.to_dict()
-    assert d["near_miss_count"] == 1
+    assert d["near_miss_count"] == 1 and len(d["bridges"]) == 1
     assert QAReport.from_dict(json.loads(json.dumps(d))) == r
     assert QAReport.from_dict(d) == r
