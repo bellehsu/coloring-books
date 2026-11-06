@@ -189,7 +189,7 @@ def test_ink_to_png_is_1bit_300dpi():
   - `@dataclass(frozen=True) class QAThresholds`: `max_gap_px: int = 40`、`border_px: int = 12`、`gap_error_min: int = 1`、`black_fill_warn: float = 0.005`、`tiny_region_warn: int = 150`、`fragment_warn: int = 80`（數值在 Task 12 校正）
   - `def find_endpoints(ink) -> tuple[np.ndarray, list[tuple[int,int]]]`：(骨架, 端點 (x,y))，離圖邊 `border_px` 內的端點不算
   - `def find_gaps(skel, endpoints, max_gap_px) -> list[tuple[int,int]]`
-  - `@dataclass class QAReport`: `errors: list[str]`、`warnings: list[str]`、`gaps: list[tuple[float,float]]`（相對座標）、`dangling_count: int`、`gap_count: int`、`metrics: dict`；`to_dict()` / `from_dict()`
+  - `@dataclass class QAReport`: `errors: list[str]`、`warnings: list[str]`、`gaps: list[tuple[float,float]]`（相對座標）、`bridges`（每個缺口的補線線段，相對座標）、`dangling_count: int`、`gap_count: int`、`near_miss_count: int`、`metrics: dict`。（ruling 2026-11-06：缺口＝補起來會把兩塊 ≥ 3000 px 的白色區域分開的「會漏色」缺口；只是靠近但不封閉的計入 near_miss_count）；`to_dict()` / `from_dict()`
   - `QA_MESSAGES: dict[str, str]`：`"gaps": "線條有缺口，塗色會漏出去，需要修線"`、`"black_fill": "有大片黑色色塊"`、`"tiny_regions": "太多過小的區域，小孩塗不進去"`、`"fragments": "雜點或斷筆偏多"`
   - `def evaluate(ink, line_width_px: int, thresholds: QAThresholds = QAThresholds()) -> QAReport`
 
@@ -293,13 +293,14 @@ def test_missing_image_raises(...)           # 刪掉圖片檔 → LineartUnavai
 - `GET /api/pages/{id}/qa` → `QAOut`：`status`、`errors / warnings: list[{code, message}]`、`gaps: list[[x,y]]`、`gap_count`、`dangling_count`、`metrics`、`character_check`、`qa_note`、`forced_pass_reason`、`lineart_url`（帶 `?v={key}`）
 - `GET /api/pages/{id}/qa/overlay.png` → RGB：線稿 + 每個缺口紅色空心圓（半徑 40 px、線寬 6）；印刷廠模式再畫裁切框（藍、4 px）與安全區（綠、4 px）
 - `GET /api/pages/{id}/lineart/edits` → `{generation_id, strokes}`；`PUT` 同樣格式 → 回 `QAOut`
+- `POST /api/pages/{id}/lineart/autofix` `{generation_id}` → 對目前 QA 的每個 `bridges` 線段，在該圖的修改圖層**最後面**加一筆 `draw`（`width_px`＝頁面 `line_width_px`），重算 QA；重複最多 `AUTOFIX_MAX_PASSES = 3` 輪，直到沒有缺口或某輪缺口數沒減少（實測一輪只能從 60→4、113→33，因為補線會讓別的近缺口變成缺口）；全部筆畫一次存檔，回 `QAOut`（加 `autofix_added: int`）；generation_id 不是目前選定 → 409；沒有缺口 → 200 且不新增筆畫（ruling 2026-11-06：實測每頁 13–113 個真缺口，全靠手動修不可行；筆畫進修改圖層，使用者可以復原或擦掉）
 - `GET /api/generations/{id}/lineart-preview?detail=standard&line_width_px=11` → PNG（角色或頁面候選都可；未成功 → 404）
 - `POST /api/books/{id}/reference-sketch`（上傳檔案）→ PNG：xdog sigma 1.2 擷取、以 `contain` 放進該書 `generation_size`、白底黑線；給前端放進畫板，不存檔
 - `PATCH /api/pages/{id}` 加 `line_detail`、`line_width_px`（`ge=8, le=16`）
 - `PageOut` 加：`line_detail`、`line_width_px`、`character_check`、`lineart_url`（有選圖才有）、`needs_fix: bool | None`（`qa_json` 有錯誤；沒算過為 None）、`aspect_mismatch: bool`（選定圖寬高 ≠ 繪本目前 `generation_size`）；`sketch_url` 加 `?v={updated_at 時間戳}` 防快取
 - 修改圖層驗證（Pydantic）：`op` 只允許 draw/erase；`width_px` 2–64；每點兩個有限浮點數且在 [0, 1]；每筆 1–2000 點；最多 500 筆；全部最多 20000 點
 
-**狀態規則（spec §7、作者決定）：** 改 `line_detail / line_width_px` 或 PUT 修改圖層 → `passed` 退回 `draft`（`character_check` 保留，彩圖沒變）。`select_generation` 換了圖 → 退回 `draft` 並清掉 `character_check`、`forced_pass_reason`。
+**狀態規則（spec §7、作者決定）：** 改 `line_detail / line_width_px`、PUT 修改圖層或 autofix → `passed` 退回 `draft`（`character_check` 保留，彩圖沒變）。`select_generation` 換了圖 → 退回 `draft` 並清掉 `character_check`、`forced_pass_reason`。
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -312,6 +313,7 @@ def test_edits_roundtrip_and_apply(...)           # PUT 一筆 draw → GET edit
 def test_edits_reject_stale_generation(...)       # generation_id 不是目前選定 → 409，LineartEdit 沒有新列
 def test_edits_validation(...)                    # 座標 1.5、NaN（以字串 "NaN" 送）、20001 點、op "fill" → 422
 def test_edits_follow_generation(...)             # 圖 A 修線 → 選圖 B（沒有修線）→ 選回 A，修線還在
+def test_autofix_appends_bridges(...)              # 線稿有缺口（monkeypatch evaluate 或用有缺口的圖）→ autofix 後筆畫數 += gap 數、gap_count 變 0；stale generation_id → 409
 def test_select_resets_character_check(...)
 def test_overlay_png(...)                          # RGB、尺寸＝content_px
 def test_generation_preview(client, app)           # 角色候選可預覽；排隊中 → 404
