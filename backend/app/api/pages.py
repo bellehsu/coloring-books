@@ -4,6 +4,7 @@ import random
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy import case, literal, null
 from sqlmodel import Session, col, func, select, update
 
 from app.api.books import MAX_SEED, _book_or_404
@@ -17,8 +18,9 @@ from app.api.schemas import (
     PageUpdate,
     SelectGeneration,
 )
-from app.models import Generation, GenKind, GenStatus, Page, utcnow
+from app.models import Book, Generation, GenKind, GenStatus, LineartEdit, Page, PageStatus, utcnow
 from app.services.layout import compute_layout
+from app.services.page_lineart import lineart_key
 from app.services.prompts import PAGE_NEGATIVE, page_prompt
 from app.services.worker import GenerationWorker, encode_request
 from app.storage import ImageRejected, Storage, normalize_png
@@ -35,6 +37,49 @@ def _page_or_404(session: Session, page_id: int) -> Page:
     return page
 
 
+def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
+    """PageOut 需要繪本版面、選定圖與它的修改圖層；一次查完（頁數不多）。"""
+    if not pages:
+        return []
+    book_ids = {p.book_id for p in pages}
+    gen_ids = {p.selected_generation_id for p in pages if p.selected_generation_id is not None}
+    books = {b.id: b for b in session.exec(select(Book).where(col(Book.id).in_(book_ids))).all()}
+    gens = (
+        {g.id: g for g in session.exec(select(Generation).where(col(Generation.id).in_(gen_ids))).all()}
+        if gen_ids
+        else {}
+    )
+    edits = (
+        {
+            e.generation_id: e.strokes_json
+            for e in session.exec(
+                select(LineartEdit).where(col(LineartEdit.generation_id).in_(gen_ids))
+            ).all()
+        }
+        if gen_ids
+        else {}
+    )
+    layouts = {bid: compute_layout(b.paper_size, b.print_mode) for bid, b in books.items()}
+    out = []
+    for page in pages:
+        gen = gens.get(page.selected_generation_id)
+        lay = layouts[page.book_id]
+        if gen is None:
+            out.append(PageOut.from_page(page))
+            continue
+        key = lineart_key(gen, page, lay.content_px, edits.get(gen.id, "[]"))
+        out.append(PageOut.from_page(
+            page,
+            current_lineart_key=key,
+            aspect_mismatch=(gen.width, gen.height) != tuple(lay.generation_size),
+        ))
+    return out
+
+
+def page_out(session: Session, page: Page) -> PageOut:
+    return page_outs(session, [page])[0]
+
+
 @router.post("/books/{book_id}/pages", status_code=201, response_model=PageOut)
 def create_page(
     book_id: int, body: PageCreate, session: Session = Depends(get_session)
@@ -44,7 +89,7 @@ def create_page(
     page = Page(book_id=book_id, position=0 if top is None else top + 1, scene_prompt=body.scene_prompt)
     session.add(page)
     session.commit()
-    return PageOut.from_page(page)
+    return page_out(session, page)
 
 
 @router.get("/books/{book_id}/pages", response_model=list[PageOut])
@@ -53,7 +98,7 @@ def list_pages(book_id: int, session: Session = Depends(get_session)) -> list[Pa
     pages = session.exec(
         select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
     ).all()
-    return [PageOut.from_page(p) for p in pages]
+    return page_outs(session, list(pages))
 
 
 @router.post("/books/{book_id}/pages/order", response_model=list[PageOut])
@@ -72,7 +117,7 @@ def reorder_pages(
         pages[pid].updated_at = now
         session.add(pages[pid])
     session.commit()
-    return [PageOut.from_page(pages[pid]) for pid in body.page_ids]
+    return page_outs(session, [pages[pid] for pid in body.page_ids])
 
 
 @router.patch("/pages/{page_id}", response_model=PageOut)
@@ -84,10 +129,21 @@ def update_page(
         page.scene_prompt = body.scene_prompt
     if body.controlnet_strength is not None:
         page.controlnet_strength = body.controlnet_strength
+    lines_changed = False
+    if body.line_detail is not None and body.line_detail != page.line_detail:
+        page.line_detail = body.line_detail
+        lines_changed = True
+    if body.line_width_px is not None and body.line_width_px != page.line_width_px:
+        page.line_width_px = body.line_width_px
+        lines_changed = True
+    if lines_changed and page.status == PageStatus.PASSED:
+        # 線稿變了要重新檢查；彩圖沒變，所以角色檢查保留
+        page.status = PageStatus.DRAFT
+        page.passed_at = None
     page.updated_at = utcnow()
     session.add(page)
     session.commit()
-    return PageOut.from_page(page)
+    return page_out(session, page)
 
 
 @router.put("/pages/{page_id}/sketch", response_model=PageOut)
@@ -111,7 +167,7 @@ def upload_sketch(
     page.updated_at = utcnow()
     session.add(page)
     session.commit()
-    return PageOut.from_page(page)
+    return page_out(session, page)
 
 
 @router.delete("/pages/{page_id}/sketch", response_model=PageOut)
@@ -128,7 +184,7 @@ def delete_sketch(
     session.commit()
     if old:
         storage.delete(old)
-    return PageOut.from_page(page)
+    return page_out(session, page)
 
 
 @router.get("/pages/{page_id}/sketch")
@@ -251,13 +307,25 @@ def select_generation(
         )
         .exists()
     )
+    # 換了圖（以寫入當下的舊值判斷）→ 退回草稿，角色檢查與強制通過原因作廢
+    changed = col(Page.selected_generation_id).is_distinct_from(gen.id)
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, still_valid)
-        .values(selected_generation_id=gen.id, updated_at=utcnow())
+        .values(
+            selected_generation_id=gen.id,
+            updated_at=utcnow(),
+            status=case(
+                (changed, literal(PageStatus.DRAFT, Page.__table__.c.status.type)),
+                else_=col(Page.status),
+            ),
+            passed_at=case((changed, null()), else_=col(Page.passed_at)),
+            character_check=case((changed, null()), else_=col(Page.character_check)),
+            forced_pass_reason=case((changed, null()), else_=col(Page.forced_pass_reason)),
+        )
     )
     session.commit()
     if res.rowcount == 0:
         raise HTTPException(409, "這張候選圖已無法選擇（可能剛被捨棄）")
     session.refresh(page)
-    return PageOut.from_page(page)
+    return page_out(session, page)

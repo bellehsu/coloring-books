@@ -33,11 +33,6 @@ routes:
       character_image: "{character_image}"
       prompt: "{character}, {scene}, {lineart}"
       ipadapter_weight: 0.8
-  B:
-    workflow: route_b_qwen_edit_2511_gguf
-    params:
-      character_image: "{character_image}"
-      prompt: "Keep the character from image 1 exactly the same (face, ears, outfit). {scene}. {lineart}"
 
 lineart_methods:
   # 只靠提示詞要求線稿；結構圖給全白圖、ControlNet 關閉
@@ -47,15 +42,13 @@ lineart_methods:
       structure_image: experiments/samples/blank_white.png
     route_params:
       A: {controlnet_strength: 0.0}
-  # 用結構草圖控制構圖（Route A：ControlNet lineart；Route B：image2）
+  # 用結構草圖控制構圖（Route A：ControlNet lineart）
   sketch_guided:
     prompt: "black and white coloring book page for children, clean bold uniform outlines, pure white background, no shading, no gray, no color"
     params:
       structure_image: experiments/samples/structure_sketch.png
     route_params:
       A: {controlnet_strength: 0.6, controlnet_end_percent: 0.8}
-      B:
-        prompt: "Redraw the character from image 1 following the pose and layout of the sketch in image 2. {scene}. {lineart}"
     postprocess:
       close_kernel: 9
 

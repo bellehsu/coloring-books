@@ -26,6 +26,12 @@ class Storage:
     def sketch_snapshot(self, book_id: int, page_id: int, gen_id: int) -> str:
         return f"books/{book_id}/pages/{page_id}/sketch_{gen_id}.png"
 
+    def lineart(self, book_id: int, page_id: int, key: str) -> str:
+        return f"books/{book_id}/pages/{page_id}/lineart_{key}.png"
+
+    def preview(self, gen_id: int, key: str) -> str:
+        return f"cache/previews/{gen_id}_{key}.png"
+
     def abs(self, rel: str) -> Path:
         """相對路徑轉絕對路徑；解析後若跳出 root（.. 或絕對路徑）則丟 ValueError。"""
         root = self.root.resolve()

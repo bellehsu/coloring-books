@@ -12,6 +12,7 @@ from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, SQLModel
 
 from app.services.layout import PaperSize, PrintMode
+from app.services.lineart_render import LineDetail
 
 
 def utcnow() -> datetime:
@@ -57,6 +58,11 @@ class PageStatus(str, Enum):
     PASSED = "passed"  # Phase 3 使用
 
 
+class CharacterCheck(str, Enum):
+    CONSISTENT = "consistent"
+    INCONSISTENT = "inconsistent"
+
+
 class Book(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     title: str
@@ -77,6 +83,15 @@ class Page(SQLModel, table=True):
     sketch_path: str | None = None
     selected_generation_id: int | None = None
     status: PageStatus = PageStatus.DRAFT
+    line_detail: LineDetail = LineDetail.STANDARD
+    line_width_px: int = 11
+    character_check: CharacterCheck | None = None
+    qa_note: str = ""
+    forced_pass_reason: str | None = None
+    passed_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))
+    lineart_key: str | None = None
+    lineart_path: str | None = None
+    qa_json: str | None = None
     created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
 
@@ -107,3 +122,12 @@ class Generation(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
     started_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))
     finished_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))
+
+
+class LineartEdit(SQLModel, table=True):
+    """修線圖層跟著生成圖走：換回舊候選圖時，它的修線也回來。"""
+
+    generation_id: int = Field(primary_key=True, foreign_key="generation.id")
+    page_id: int = Field(foreign_key="page.id", index=True)
+    strokes_json: str = "[]"
+    updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())

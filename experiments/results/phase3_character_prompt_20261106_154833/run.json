@@ -1,0 +1,362 @@
+[
+ {
+  "variant": "v0_current",
+  "char": "momo",
+  "seed": 11,
+  "prompt": "character reference, single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 11.7,
+  "file": "v0_current__momo__s11.png"
+ },
+ {
+  "variant": "v0_current",
+  "char": "momo",
+  "seed": 22,
+  "prompt": "character reference, single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v0_current__momo__s22.png"
+ },
+ {
+  "variant": "v0_current",
+  "char": "momo",
+  "seed": 33,
+  "prompt": "character reference, single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.6,
+  "file": "v0_current__momo__s33.png"
+ },
+ {
+  "variant": "v0_current",
+  "char": "momo",
+  "seed": 44,
+  "prompt": "character reference, single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.4,
+  "file": "v0_current__momo__s44.png"
+ },
+ {
+  "variant": "v0_current",
+  "char": "bear",
+  "seed": 11,
+  "prompt": "character reference, single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.6,
+  "file": "v0_current__bear__s11.png"
+ },
+ {
+  "variant": "v0_current",
+  "char": "bear",
+  "seed": 22,
+  "prompt": "character reference, single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.4,
+  "file": "v0_current__bear__s22.png"
+ },
+ {
+  "variant": "v0_current",
+  "char": "bear",
+  "seed": 33,
+  "prompt": "character reference, single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v0_current__bear__s33.png"
+ },
+ {
+  "variant": "v0_current",
+  "char": "bear",
+  "seed": 44,
+  "prompt": "character reference, single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.4,
+  "file": "v0_current__bear__s44.png"
+ },
+ {
+  "variant": "v1_headtoe",
+  "char": "momo",
+  "seed": 11,
+  "prompt": "full body character reference of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.9,
+  "file": "v1_headtoe__momo__s11.png"
+ },
+ {
+  "variant": "v1_headtoe",
+  "char": "momo",
+  "seed": 22,
+  "prompt": "full body character reference of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v1_headtoe__momo__s22.png"
+ },
+ {
+  "variant": "v1_headtoe",
+  "char": "momo",
+  "seed": 33,
+  "prompt": "full body character reference of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.7,
+  "file": "v1_headtoe__momo__s33.png"
+ },
+ {
+  "variant": "v1_headtoe",
+  "char": "momo",
+  "seed": 44,
+  "prompt": "full body character reference of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v1_headtoe__momo__s44.png"
+ },
+ {
+  "variant": "v1_headtoe",
+  "char": "bear",
+  "seed": 11,
+  "prompt": "full body character reference of a little brown bear boy wearing a red hat and a yellow raincoat, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v1_headtoe__bear__s11.png"
+ },
+ {
+  "variant": "v1_headtoe",
+  "char": "bear",
+  "seed": 22,
+  "prompt": "full body character reference of a little brown bear boy wearing a red hat and a yellow raincoat, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v1_headtoe__bear__s22.png"
+ },
+ {
+  "variant": "v1_headtoe",
+  "char": "bear",
+  "seed": 33,
+  "prompt": "full body character reference of a little brown bear boy wearing a red hat and a yellow raincoat, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v1_headtoe__bear__s33.png"
+ },
+ {
+  "variant": "v1_headtoe",
+  "char": "bear",
+  "seed": 44,
+  "prompt": "full body character reference of a little brown bear boy wearing a red hat and a yellow raincoat, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, plain white background, centered, whole body visible",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.7,
+  "file": "v1_headtoe__bear__s44.png"
+ },
+ {
+  "variant": "v2_weighted",
+  "char": "momo",
+  "seed": 11,
+  "prompt": "(full body:1.3), (white background:1.2), character reference of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, centered, small character with empty space around",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.9,
+  "file": "v2_weighted__momo__s11.png"
+ },
+ {
+  "variant": "v2_weighted",
+  "char": "momo",
+  "seed": 22,
+  "prompt": "(full body:1.3), (white background:1.2), character reference of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, centered, small character with empty space around",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v2_weighted__momo__s22.png"
+ },
+ {
+  "variant": "v2_weighted",
+  "char": "momo",
+  "seed": 33,
+  "prompt": "(full body:1.3), (white background:1.2), character reference of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, centered, small character with empty space around",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.7,
+  "file": "v2_weighted__momo__s33.png"
+ },
+ {
+  "variant": "v2_weighted",
+  "char": "momo",
+  "seed": 44,
+  "prompt": "(full body:1.3), (white background:1.2), character reference of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, centered, small character with empty space around",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v2_weighted__momo__s44.png"
+ },
+ {
+  "variant": "v2_weighted",
+  "char": "bear",
+  "seed": 11,
+  "prompt": "(full body:1.3), (white background:1.2), character reference of a little brown bear boy wearing a red hat and a yellow raincoat, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, centered, small character with empty space around",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v2_weighted__bear__s11.png"
+ },
+ {
+  "variant": "v2_weighted",
+  "char": "bear",
+  "seed": 22,
+  "prompt": "(full body:1.3), (white background:1.2), character reference of a little brown bear boy wearing a red hat and a yellow raincoat, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, centered, small character with empty space around",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v2_weighted__bear__s22.png"
+ },
+ {
+  "variant": "v2_weighted",
+  "char": "bear",
+  "seed": 33,
+  "prompt": "(full body:1.3), (white background:1.2), character reference of a little brown bear boy wearing a red hat and a yellow raincoat, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, centered, small character with empty space around",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v2_weighted__bear__s33.png"
+ },
+ {
+  "variant": "v2_weighted",
+  "char": "bear",
+  "seed": 44,
+  "prompt": "(full body:1.3), (white background:1.2), character reference of a little brown bear boy wearing a red hat and a yellow raincoat, standing, front view, head to toe, feet visible, single character, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, centered, small character with empty space around",
+  "negative": "close-up, portrait, upper body, half body, cropped, out of frame, cut off feet, colored background, beige background, gradient background, scenery, background objects, shadow, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.7,
+  "file": "v2_weighted__bear__s44.png"
+ },
+ {
+  "variant": "v3_isolated",
+  "char": "momo",
+  "seed": 11,
+  "prompt": "single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, isolated on pure white background, centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 6.2,
+  "file": "v3_isolated__momo__s11.png"
+ },
+ {
+  "variant": "v3_isolated",
+  "char": "momo",
+  "seed": 22,
+  "prompt": "single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, isolated on pure white background, centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.6,
+  "file": "v3_isolated__momo__s22.png"
+ },
+ {
+  "variant": "v3_isolated",
+  "char": "momo",
+  "seed": 33,
+  "prompt": "single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, isolated on pure white background, centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.9,
+  "file": "v3_isolated__momo__s33.png"
+ },
+ {
+  "variant": "v3_isolated",
+  "char": "momo",
+  "seed": 44,
+  "prompt": "single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, isolated on pure white background, centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v3_isolated__momo__s44.png"
+ },
+ {
+  "variant": "v3_isolated",
+  "char": "bear",
+  "seed": 11,
+  "prompt": "single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, isolated on pure white background, centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v3_isolated__bear__s11.png"
+ },
+ {
+  "variant": "v3_isolated",
+  "char": "bear",
+  "seed": 22,
+  "prompt": "single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, isolated on pure white background, centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.6,
+  "file": "v3_isolated__bear__s22.png"
+ },
+ {
+  "variant": "v3_isolated",
+  "char": "bear",
+  "seed": 33,
+  "prompt": "single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, isolated on pure white background, centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v3_isolated__bear__s33.png"
+ },
+ {
+  "variant": "v3_isolated",
+  "char": "bear",
+  "seed": 44,
+  "prompt": "single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, isolated on pure white background, centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v3_isolated__bear__s44.png"
+ },
+ {
+  "variant": "v4_isolated_w",
+  "char": "momo",
+  "seed": 11,
+  "prompt": "single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, (isolated on pure white background:1.3), centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v4_isolated_w__momo__s11.png"
+ },
+ {
+  "variant": "v4_isolated_w",
+  "char": "momo",
+  "seed": 22,
+  "prompt": "single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, (isolated on pure white background:1.3), centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v4_isolated_w__momo__s22.png"
+ },
+ {
+  "variant": "v4_isolated_w",
+  "char": "momo",
+  "seed": 33,
+  "prompt": "single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, (isolated on pure white background:1.3), centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.8,
+  "file": "v4_isolated_w__momo__s33.png"
+ },
+ {
+  "variant": "v4_isolated_w",
+  "char": "momo",
+  "seed": 44,
+  "prompt": "single full body front view of a cute small bunny girl with long upright blue bunny ears, blue bob hair, big round eyes, blue and white striped overalls, blue shoes, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, (isolated on pure white background:1.3), centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.7,
+  "file": "v4_isolated_w__momo__s44.png"
+ },
+ {
+  "variant": "v4_isolated_w",
+  "char": "bear",
+  "seed": 11,
+  "prompt": "single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, (isolated on pure white background:1.3), centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 6.0,
+  "file": "v4_isolated_w__bear__s11.png"
+ },
+ {
+  "variant": "v4_isolated_w",
+  "char": "bear",
+  "seed": 22,
+  "prompt": "single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, (isolated on pure white background:1.3), centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.6,
+  "file": "v4_isolated_w__bear__s22.png"
+ },
+ {
+  "variant": "v4_isolated_w",
+  "char": "bear",
+  "seed": 33,
+  "prompt": "single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, (isolated on pure white background:1.3), centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.9,
+  "file": "v4_isolated_w__bear__s33.png"
+ },
+ {
+  "variant": "v4_isolated_w",
+  "char": "bear",
+  "seed": 44,
+  "prompt": "single full body front view of a little brown bear boy wearing a red hat and a yellow raincoat, standing, children's picture book illustration, flat colors, thick clean black outlines, simple shapes, (isolated on pure white background:1.3), centered, whole body visible from head to feet",
+  "negative": "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped",
+  "elapsed_s": 5.5,
+  "file": "v4_isolated_w__bear__s44.png"
+ }
+]

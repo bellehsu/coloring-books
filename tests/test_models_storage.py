@@ -109,3 +109,47 @@ def test_normalize_png_composites_alpha_on_white():
     assert out.mode == "RGB"
     assert out.getpixel((0, 0)) == (255, 255, 255)
     assert out.getpixel((50, 50)) == (0, 0, 0)
+
+
+def test_page_phase3_defaults_and_lineart_edit(tmp_path):
+    from app.models import CharacterCheck, LineartEdit
+    from app.services.lineart_render import LineDetail
+
+    engine = make_engine(tmp_path / "t.db")
+    init_db(engine)
+    make = session_factory(engine)
+    with make() as s:
+        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME)
+        s.add(book)
+        s.commit()
+        page = Page(book_id=book.id, position=1)
+        gen = Generation(
+            book_id=book.id, kind=GenKind.PAGE, user_text="u", prompt="p",
+            negative_prompt="n", seed=1, width=64, height=64, request_json="{}",
+        )
+        s.add(page)
+        s.add(gen)
+        s.commit()
+        s.add(LineartEdit(generation_id=gen.id, page_id=page.id, strokes_json='[{"a":1}]'))
+        page.passed_at = datetime(2026, 11, 6, tzinfo=timezone.utc)
+        page.character_check = CharacterCheck.CONSISTENT
+        s.add(page)
+        s.commit()
+        pid, gid = page.id, gen.id
+    with make() as s:
+        page = s.get(Page, pid)
+        assert page.line_detail is LineDetail.STANDARD
+        assert page.line_width_px == 11
+        assert page.qa_note == ""
+        assert page.forced_pass_reason is None and page.lineart_path is None
+        assert page.character_check is CharacterCheck.CONSISTENT
+        assert page.passed_at.tzinfo is not None
+        edit = s.get(LineartEdit, gid)
+        assert edit.strokes_json == '[{"a":1}]' and edit.updated_at.tzinfo is not None
+        assert LineartEdit(generation_id=1, page_id=1).strokes_json == "[]"
+
+
+def test_storage_lineart_and_preview_paths(tmp_path):
+    st = Storage(tmp_path)
+    assert st.lineart(3, 4, "abc") == "books/3/pages/4/lineart_abc.png"
+    assert st.preview(9, "qa") == "cache/previews/9_qa.png"
