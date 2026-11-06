@@ -1,4 +1,5 @@
 import io
+from datetime import datetime, timezone
 
 import pytest
 from PIL import Image
@@ -36,8 +37,10 @@ def test_tables_roundtrip(tmp_path):
         book = s.get(Book, bid)
         assert isinstance(book.paper_size, PaperSize)
         assert isinstance(book.print_mode, PrintMode)
-        assert book.created_at is not None
+        assert book.created_at.tzinfo is not None
+        assert book.created_at.utcoffset().total_seconds() == 0
         assert book.print_mode is PrintMode.HOME
+        assert book.created_at.utcoffset().total_seconds() == 0
         page = s.get(Page, pid)
         assert page.controlnet_strength == 0.4
         assert page.status is PageStatus.DRAFT
@@ -45,6 +48,16 @@ def test_tables_roundtrip(tmp_path):
         assert gen.status is GenStatus.QUEUED
         assert gen.kind is GenKind.PAGE
         assert gen.discarded is False
+        assert gen.created_at.tzinfo is not None
+        gen.started_at = datetime.now(timezone.utc)
+        gen.finished_at = datetime.now(timezone.utc)
+        s.add(gen)
+        s.commit()
+    with make() as s:
+        gen = s.get(Generation, gid)
+        assert gen.started_at.utcoffset().total_seconds() == 0
+        assert (gen.finished_at - gen.started_at).total_seconds() >= 0
+        assert (datetime.now(timezone.utc) - gen.finished_at).total_seconds() >= 0
 
 
 def test_storage_paths_and_write(tmp_path):
@@ -71,3 +84,28 @@ def test_normalize_png_rejects():
     data, size = normalize_png(_img_bytes((128, 96), "JPEG"))
     assert data.startswith(b"\x89PNG")
     assert size == (128, 96)
+
+
+def test_storage_rejects_escape(tmp_path):
+    st = Storage(tmp_path / "root")
+    for bad in ("../evil.png", "a/../../evil.png", "/etc/passwd"):
+        with pytest.raises(ValueError):
+            st.abs(bad)
+        with pytest.raises(ValueError):
+            st.write(bad, b"x")
+        with pytest.raises(ValueError):
+            st.delete(bad)
+    assert not (tmp_path / "evil.png").exists()
+
+
+def test_normalize_png_composites_alpha_on_white():
+    im = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    for x in range(100):
+        im.putpixel((x, 50), (0, 0, 0, 255))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    data, size = normalize_png(buf.getvalue())
+    out = Image.open(io.BytesIO(data))
+    assert out.mode == "RGB"
+    assert out.getpixel((0, 0)) == (255, 255, 255)
+    assert out.getpixel((50, 50)) == (0, 0, 0)

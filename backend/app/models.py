@@ -7,6 +7,8 @@
 from datetime import datetime, timezone
 from enum import Enum
 
+from sqlalchemy import Column, DateTime
+from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, SQLModel
 
 from app.services.layout import PaperSize, PrintMode
@@ -14,6 +16,27 @@ from app.services.layout import PaperSize, PrintMode
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator):
+    """SQLite 不保存時區；存入時轉 UTC，讀出時補回 tzinfo=UTC。"""
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("datetime 必須帶時區（UTC）")
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+    def process_result_value(self, value, dialect):
+        return None if value is None else value.replace(tzinfo=timezone.utc)
+
+
+def _utc_col() -> Column:
+    return Column(UTCDateTime(), nullable=False)
 
 
 class GenKind(str, Enum):
@@ -41,8 +64,8 @@ class Book(SQLModel, table=True):
     print_mode: PrintMode
     character_description: str | None = None
     character_generation_id: int | None = None
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+    updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
 
 
 class Page(SQLModel, table=True):
@@ -54,8 +77,8 @@ class Page(SQLModel, table=True):
     sketch_path: str | None = None
     selected_generation_id: int | None = None
     status: PageStatus = PageStatus.DRAFT
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+    updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
 
 
 class Generation(SQLModel, table=True):
@@ -81,6 +104,6 @@ class Generation(SQLModel, table=True):
     image_path: str | None = None
     elapsed_s: float | None = None
     error: str | None = None
-    created_at: datetime = Field(default_factory=utcnow)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+    started_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))
+    finished_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))

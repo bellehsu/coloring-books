@@ -4,7 +4,7 @@ import io
 import os
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 MIN_SIDE = 64
 
@@ -24,7 +24,12 @@ class Storage:
         return f"books/{book_id}/pages/{page_id}/sketch.png"
 
     def abs(self, rel: str) -> Path:
-        return self.root / rel
+        """相對路徑轉絕對路徑；解析後若跳出 root（.. 或絕對路徑）則丟 ValueError。"""
+        root = self.root.resolve()
+        path = (root / rel).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError(f"路徑超出儲存根目錄：{rel!r}")
+        return path
 
     def write(self, rel: str, data: bytes) -> Path:
         """先寫暫存檔再 rename，避免讀到寫一半的檔案。"""
@@ -54,7 +59,17 @@ def normalize_png(
                 raise ImageRejected(f"圖片太小：{w}x{h}，最短邊至少 {MIN_SIDE}px")
             if max(w, h) > max_side:
                 raise ImageRejected(f"圖片太大：{w}x{h}，最長邊上限 {max_side}px")
-            rgb = im.convert("RGB")
+            im = ImageOps.exif_transpose(im)
+            w, h = im.size
+            has_alpha = im.mode in ("RGBA", "LA", "PA") or (
+                im.mode == "P" and "transparency" in im.info
+            )
+            if has_alpha:
+                rgba = im.convert("RGBA")
+                bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                rgb = Image.alpha_composite(bg, rgba).convert("RGB")
+            else:
+                rgb = im.convert("RGB")
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as e:
         raise ImageRejected(f"無法解析為圖片：{e}") from e
     buf = io.BytesIO()
