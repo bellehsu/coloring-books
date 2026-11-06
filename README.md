@@ -77,14 +77,14 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
 | POST | `/books` | 建立繪本 |
 | GET | `/books` | 列出繪本 |
 | GET | `/books/{book_id}` | 取得單一繪本 |
-| PATCH | `/books/{book_id}` | 更新繪本標題 |
+| PATCH | `/books/{book_id}` | 更新繪本標題、紙張尺寸、列印方式（改尺寸規則見「線稿與 QA」） |
 | POST | `/books/{book_id}/character/candidates` | 產生角色候選（非同步，202） |
 | POST | `/books/{book_id}/character` | 設定繪本角色 |
 | POST | `/books/{book_id}/pages` | 建立頁面 |
 | GET | `/books/{book_id}/pages` | 列出頁面 |
 | POST | `/books/{book_id}/pages/order` | 調整頁面順序 |
 | GET | `/books/{book_id}/generations` | 列出繪本的生成紀錄 |
-| PATCH | `/pages/{page_id}` | 更新頁面的 `scene_prompt` 與 `controlnet_strength` |
+| PATCH | `/pages/{page_id}` | 更新頁面的 `scene_prompt`、`controlnet_strength`、`line_detail`、`line_width_px` |
 | PUT | `/pages/{page_id}/sketch` | 上傳頁面構圖草圖（構圖草圖來源） |
 | DELETE | `/pages/{page_id}/sketch` | 移除頁面構圖草圖 |
 | GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
@@ -94,8 +94,31 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
 | GET | `/generations/{gen_id}/image` | 下載生成圖 |
 | PATCH | `/generations/{gen_id}` | 捨棄或還原生成結果（使用中的不可捨棄；捨棄排隊中的任務同時會取消它） |
 | POST | `/generations/{gen_id}/cancel` | 取消排隊中的任務 |
+| GET | `/pages/{page_id}/lineart` | 取得頁面線稿（內容大小 1-bit PNG，有快取） |
+| GET | `/pages/{page_id}/qa` | 取得線稿 QA 結果 |
+| GET | `/pages/{page_id}/qa/overlay.png` | QA 問題標示疊圖 |
+| GET | `/pages/{page_id}/lineart/edits` | 取得修改圖層 |
+| PUT | `/pages/{page_id}/lineart/edits` | 儲存修改圖層並重算 QA（已通過的頁面會退回草稿） |
+| POST | `/pages/{page_id}/lineart/autofix` | 自動補線縫（最多 3 輪） |
+| GET | `/generations/{gen_id}/lineart-preview` | 以指定細緻度／線寬預覽某張生成圖的線稿 |
+| POST | `/books/{book_id}/reference-sketch` | 由圖片擷取參考草圖 |
+| POST | `/pages/{page_id}/character-check` | 標記角色是否一致 |
+| POST | `/pages/{page_id}/pass` | 通過頁面（可帶 `force_reason` 強制通過） |
+| POST | `/pages/{page_id}/unpass` | 取消通過 |
+| GET | `/books/{book_id}/export/summary` | 匯出摘要（可匯出頁、略過原因） |
+| GET | `/books/{book_id}/export.pdf` | 匯出書本 PDF（`include=passed|all`） |
+| GET | `/pages/{page_id}/print.png` | 單頁完整版面 1-bit PNG（300 DPI） |
 | GET | `/system/queue` | 佇列狀態（worker 狀態、排隊數、執行中任務） |
 | GET | `/system/preflight` | ComfyUI 連線、模型與節點檢查 |
+
+## 線稿與 QA
+
+- **細緻度與線寬**：每頁有 `line_detail`（`simple`／`standard`／`detailed`，對應 xdog sigma 1.5／1.2／0.8）與 `line_width_px`（300 DPI 像素，8–16，預設 11）。
+- **修改圖層**：存在選定生成圖上，格式為筆畫陣列 `{op, width_px, points}`。`op` 為 `draw`（畫黑線）或 `erase`（擦除）；`points` 用相對座標（0–1，相對於線稿內容大小）；`width_px` 以 300 DPI 像素計。換選別張圖就是另一份修改圖層。
+- **自動補線**：`POST /pages/{id}/lineart/autofix` 對每個缺口補一筆 `draw`，重算 QA，最多 3 輪；某輪缺口數沒有減少就停止並捨棄該輪。
+- **通過規則**：必須已選圖、角色確認為「一致」，且 QA 沒有錯誤；有錯誤時需填 `force_reason` 才能強制通過。修改圖層、細緻度或線寬、換圖、改紙張都會讓已通過的頁面退回草稿；角色標記為不一致也會退回。
+- **PDF 版面**：頁面依 `position` 排序，預設只匯出已通過的頁（`include=all` 為所有已選圖的頁）。家用（`home`）每頁就是紙張大小，四周留 10 mm 白邊；印刷廠（`print_shop`）每頁為紙張加每邊 3 mm 出血，裁切框在出血內側，安全區再內縮 5 mm。輸出為 1-bit、300 DPI。
+- **改尺寸規則**：`PATCH /books/{id}` 只能改成同比例群組的紙張（A4／A5／B5 同組；Letter 與 SQUARE_21 各自獨立），否則 422。改紙張或列印方式後，背景會重算所有已選圖頁面的線稿，修改圖層（相對座標）沿用。
 
 ## 常用指令
 
