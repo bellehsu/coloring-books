@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import case, literal
 from sqlmodel import Session, col, func, select, update
 
 from app.api.books import _book_or_404
@@ -99,7 +100,21 @@ def update_generation(
             | select(Book.id).where(col(Book.character_generation_id) == gen_id).exists()
         )
         guard = guard & ~in_use
-    res = session.exec(update(Generation).where(guard).values(discarded=body.discarded))
+    values: dict = {"discarded": body.discarded}
+    if body.discarded:
+        # 捨棄排隊中的任務等於取消它，避免 worker 之後仍去執行
+        values["status"] = case(
+            (
+                col(Generation.status) == GenStatus.QUEUED,
+                literal(GenStatus.CANCELLED, Generation.__table__.c.status.type),
+            ),
+            else_=col(Generation.status),
+        )
+        values["finished_at"] = case(
+            (col(Generation.status) == GenStatus.QUEUED, utcnow()),
+            else_=col(Generation.finished_at),
+        )
+    res = session.exec(update(Generation).where(guard).values(**values))
     session.commit()
     if res.rowcount == 0:
         raise HTTPException(409, "這筆生成紀錄正被頁面選定或作為角色，無法捨棄")

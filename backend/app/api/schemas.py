@@ -1,21 +1,28 @@
 """API 輸入／輸出結構。"""
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.models import Book, Generation, GenKind, GenStatus, Page, PageStatus
 from app.services.layout import PaperSize, PrintMode, compute_layout
 
 
+# 去除前後空白後再檢查長度，避免純空白字串通過
+TitleStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+DescriptionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=800)]
+ScenePromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=800)]
+
+
 class BookCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: TitleStr
     paper_size: PaperSize
     print_mode: PrintMode
 
 
 class BookUpdate(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: TitleStr
 
 
 class LayoutOut(BaseModel):
@@ -58,7 +65,7 @@ class BookOut(BaseModel):
 
 
 class CharacterCandidatesCreate(BaseModel):
-    description: str = Field(min_length=1, max_length=800)
+    description: DescriptionStr
     count: int = Field(default=4, ge=1, le=8)
     seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
@@ -114,11 +121,11 @@ class GenerationOut(BaseModel):
 
 
 class PageCreate(BaseModel):
-    scene_prompt: str = Field(default="", max_length=800)
+    scene_prompt: ScenePromptStr = ""
 
 
 class PageUpdate(BaseModel):
-    scene_prompt: str | None = Field(default=None, max_length=800)
+    scene_prompt: ScenePromptStr | None = None
     controlnet_strength: float | None = Field(default=None, ge=0.0, le=0.6)
 
 

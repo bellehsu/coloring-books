@@ -98,3 +98,13 @@ def test_queue_status_reports_engine_unavailable(client, app, engine):
     q = client.get("/api/system/queue").json()
     assert q["state"] == "engine_unavailable" and q["last_error"]
     assert q["queued"] == 2 and q["running_id"] is None
+
+
+def test_discard_queued_also_cancels(client, app, engine):
+    b = new_book(client)
+    g = candidates(client, b["id"], seed=1, count=1).json()[0]
+    r = client.patch(f"/api/generations/{g['id']}", json={"discarded": True})
+    assert r.status_code == 200
+    assert r.json()["status"] == "cancelled" and r.json()["discarded"] is True
+    assert not client.portal.call(app.state.worker.run_once)
+    assert engine.requests == []

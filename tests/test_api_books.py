@@ -208,3 +208,52 @@ def test_candidates_notify_worker(client, app, monkeypatch):
     monkeypatch.setattr(app.state.worker, "notify", lambda: calls.append(1))
     candidates(client, new_book(client)["id"])
     assert calls == [1]
+
+
+def test_blank_text_rejected_and_stripped(client, app):
+    bad = client.post("/api/books", json={"title": "   ", "paper_size": "a4", "print_mode": "print_shop"})
+    assert bad.status_code == 422
+    b = new_book(client, title="  小熊  ")
+    assert b["title"] == "小熊"
+    assert client.patch(f"/api/books/{b['id']}", json={"title": "  "}).status_code == 422
+    assert client.patch(f"/api/books/{b['id']}", json={"title": " 新名 "}).json()["title"] == "新名"
+    assert candidates(client, b["id"], description="   ").status_code == 422
+    g = candidates(client, b["id"], description="  小熊  ", seed=1, count=1).json()[0]
+    with app.state.sessions() as s:
+        assert s.get(Generation, g["id"]).user_text == "小熊"
+
+
+def test_set_character_blocked_by_racing_discard(client, app, monkeypatch):
+    from app.api import books as books_mod
+
+    b = new_book(client)
+    gens = candidates(client, b["id"], seed=1, count=2).json()
+    run_jobs(client, app, 2)
+    real = books_mod.utcnow
+
+    def racing():
+        with app.state.sessions() as other:  # 驗證後、UPDATE 前，另一請求捨棄該候選圖
+            row = other.get(Generation, gens[0]["id"])
+            row.discarded = True
+            other.add(row)
+            other.commit()
+        return real()
+
+    monkeypatch.setattr(books_mod, "utcnow", racing)
+    r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gens[0]["id"]})
+    assert r.status_code == 409
+    monkeypatch.undo()
+    assert client.get(f"/api/books/{b['id']}").json()["character_generation_id"] is None
+
+
+def test_set_character_cancels_other_queued_candidates(client, app):
+    b = new_book(client)
+    gens = candidates(client, b["id"], seed=1, count=4).json()
+    run_jobs(client, app, 1)
+    r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gens[0]["id"]})
+    assert r.status_code == 200
+    statuses = [client.get(f"/api/generations/{g['id']}").json()["status"] for g in gens]
+    assert statuses == ["succeeded", "cancelled", "cancelled", "cancelled"]
+    assert not client.portal.call(app.state.worker.run_once)
+    with app.state.sessions() as s:
+        assert s.get(Generation, gens[1]["id"]).finished_at is not None

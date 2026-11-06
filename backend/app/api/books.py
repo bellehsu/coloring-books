@@ -136,17 +136,44 @@ def set_character(
         raise HTTPException(409, "這張候選圖尚未成功生成")
     if gen.discarded:
         raise HTTPException(409, "這張候選圖已被捨棄")
+    # 同一條 UPDATE 再確認候選圖仍可用，避免與捨棄競爭而指向已捨棄的 generation
+    still_valid = (
+        select(Generation.id)
+        .where(
+            col(Generation.id) == gen.id,
+            col(Generation.book_id) == book_id,
+            col(Generation.kind) == GenKind.CHARACTER,
+            col(Generation.status) == GenStatus.SUCCEEDED,
+            col(Generation.discarded).is_(False),
+        )
+        .exists()
+    )
     res = session.exec(
         update(Book)
-        .where(col(Book.id) == book_id, col(Book.character_generation_id).is_(None))
+        .where(
+            col(Book.id) == book_id,
+            col(Book.character_generation_id).is_(None),
+            still_valid,
+        )
         .values(
             character_generation_id=gen.id,
             character_description=gen.user_text,
             updated_at=utcnow(),
         )
     )
-    session.commit()
     if res.rowcount == 0:
-        raise HTTPException(409, "這本繪本的角色已經設定")
+        session.rollback()
+        raise HTTPException(409, "這本繪本的角色已經設定，或這張候選圖已不可用")
+    # 角色已定案：同本書其餘排隊中的角色候選不再需要，同一交易取消（執行中的不動）
+    session.exec(
+        update(Generation)
+        .where(
+            col(Generation.book_id) == book_id,
+            col(Generation.kind) == GenKind.CHARACTER,
+            col(Generation.status) == GenStatus.QUEUED,
+        )
+        .values(status=GenStatus.CANCELLED, finished_at=utcnow())
+    )
+    session.commit()
     session.refresh(book)
     return BookOut.from_book(book)
