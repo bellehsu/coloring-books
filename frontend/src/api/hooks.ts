@@ -26,7 +26,7 @@ export const qk = {
 };
 
 export interface GenFilter {
-  kind?: "character" | "page";
+  kind?: "character" | "page" | "background" | "pose" | "composite";
   pageId?: number;
   includeDiscarded?: boolean;
 }
@@ -294,5 +294,56 @@ export function useUnpass(bookId: number) {
   return useMutation({
     mutationFn: (pageId: number) => api.post<Page>(`/pages/${pageId}/unpass`),
     onSuccess: (_d, pageId) => invalidatePage(qc, bookId, pageId),
+  });
+}
+
+/** 背景：新增一張（排隊）→ generations, queue */
+export function useGenerateBackground(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId }: { pageId: number }) => api.post<Generation>(`/pages/${pageId}/backgrounds`),
+    onSuccess: () => invalidateJobs(qc, bookId),
+  });
+}
+
+/** 角色動作：新增一張（排隊，自動去背）→ generations, queue */
+export function useGeneratePose(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId, action }: { pageId: number; action: string }) =>
+      api.post<Generation>(`/pages/${pageId}/poses`, { action }),
+    onSuccess: () => invalidateJobs(qc, bookId),
+  });
+}
+
+/** 選背景：若目前選定圖是合成圖，後端會清空選圖並退回草稿 → 同 invalidatePage */
+export function useSelectBackground(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId, generationId }: { pageId: number; generationId: number }) =>
+      api.post<Page>(`/pages/${pageId}/background`, { generation_id: generationId }),
+    onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
+  });
+}
+
+/** 選角色動作：同 useSelectBackground */
+export function useSelectPose(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId, generationId }: { pageId: number; generationId: number }) =>
+      api.post<Page>(`/pages/${pageId}/pose`, { generation_id: generationId }),
+    onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
+  });
+}
+
+/**
+ * 確認合成（無 body；後端用已存的背景／動作／位置）→ pages, qa, edits, book, books, exportSummary。
+ * 呼叫前要先 placementSaver.whenIdle(pageId)。合成圖只能經由這裡產生或選回，不要對 composite 呼叫 /select。
+ */
+export function useCompose(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId }: { pageId: number }) => api.post<Page>(`/pages/${pageId}/compose`),
+    onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
   });
 }

@@ -2,14 +2,16 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { Page } from "@/api/client";
 import { qk } from "@/api/hooks";
 import { allEditsQueues } from "./editsQueue";
+import { placementSaverFor } from "./placementSaver";
 import { sketchSaverFor } from "./sketchSaver";
 
 /**
- * 跨元件的「還沒存到伺服器」狀態：草圖存檔（送出中、失敗、畫布 debounce 中）與修線佇列（送出中、失敗）。
+ * 跨元件的「還沒存到伺服器」狀態：草圖存檔（送出中、失敗、畫布 debounce 中）、位置存檔與修線佇列（送出中、失敗）。
  * 都存在模組層級（每個 QueryClient 一份），元件卸載後仍然有效。
  */
 export function hasPendingWrites(qc: QueryClient): boolean {
   if (sketchSaverFor(qc).hasPending()) return true;
+  if (placementSaverFor(qc).hasPending()) return true;
   return allEditsQueues(qc).some((e) => e.busy() || e.failed);
 }
 
