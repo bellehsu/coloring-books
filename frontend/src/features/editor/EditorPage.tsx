@@ -142,6 +142,8 @@ export function EditorPage({ bookId }: { bookId: number }) {
   }, [qc, pagesQ.data]);
 
   const [zoom, setZoom] = useState(1);
+  /** 選圖前正在等修線寫入（候選圖暫時不能點）。 */
+  const [flushingSelect, setFlushingSelect] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -217,12 +219,22 @@ export function EditorPage({ bookId }: { bookId: number }) {
       .catch((e: unknown) => toast.show(errMsg(e, "無法產生候選圖"), "error"));
 
   const pickGen = async (g: Generation) => {
-    if (!current) return;
+    // 等修線寫入期間再點（連點）一律忽略，避免送出兩次 select
+    if (!current || flushingSelect || select.isPending) return;
     const pageId = current.id;
     // 先讓舊選圖的修線寫完：選圖後才到的 PUT 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」
     const sel = current.selected_generation_id;
     const pendingEdits = sel != null ? peekEditsQueue(qc, pageId, sel) : undefined;
-    if (pendingEdits) await pendingEdits.flush().catch(() => {}); // 失敗已提示過
+    if (pendingEdits?.busy()) {
+      setFlushingSelect(true);
+      try {
+        await pendingEdits.flush();
+      } catch {
+        /* 失敗已提示過 */
+      } finally {
+        setFlushingSelect(false);
+      }
+    }
     select.mutate(
       { pageId, generationId: g.id },
       { onError: (e) => toast.show(errMsg(e, "無法選擇這張圖"), "error") },
@@ -371,7 +383,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
             onSelect={(g) => void pickGen(g)}
             onToggleDiscard={toggleDiscard}
             onCancel={cancelGen}
-            selecting={select.isPending}
+            selecting={select.isPending || flushingSelect}
           />
         )}
       </section>

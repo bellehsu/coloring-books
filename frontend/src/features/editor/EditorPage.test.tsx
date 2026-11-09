@@ -640,4 +640,60 @@ describe("EditorPage", () => {
     expect(pageButton(3)).toHaveAttribute("aria-current", "true");
     expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=3", { scroll: false });
   });
+
+  // ---------- fix round 2 ----------
+
+  it("修線中自動補線：edits 背景重抓（pending）時畫布不卸載，完成後顯示「已補 N 條」", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    setup();
+    expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "0");
+    let release!: () => void;
+    gate["GET /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    await userEvent.click(screen.getByRole("button", { name: "自動補線" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/lineart/autofix")).toHaveLength(1));
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits").length).toBeGreaterThan(1));
+    expect(screen.getByTestId("linefix")).toBeInTheDocument();
+    expect(screen.queryByText("載入修線圖層中…")).not.toBeInTheDocument();
+    await act(async () => release());
+    expect(await screen.findByText("已補 1 條")).toBeInTheDocument();
+    expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1");
+  });
+
+  it("修線中改線寬：edits 背景重抓（pending）時畫布不卸載", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    setup();
+    const canvas = await screen.findByTestId("linefix");
+    await userEvent.click(within(canvas).getByRole("button", { name: "stub-draw" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    gate["GET /api/pages/1/lineart/edits"] = new Promise<void>(() => {});
+    const slider = screen.getByLabelText(/線寬/);
+    fireEvent.change(slider, { target: { value: "14" } });
+    fireEvent.keyUp(slider, { key: "ArrowRight" });
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits").length).toBeGreaterThan(1));
+    expect(screen.getByTestId("linefix")).toBe(canvas);
+    expect(canvas).toHaveAttribute("data-strokes", "1");
+    expect(screen.queryByText("載入修線圖層中…")).not.toBeInTheDocument();
+  });
+
+  it("選圖前等修線寫入時連點兩次只送一次 select", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5), mkGen(6)];
+    let release!: () => void;
+    gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    const pick = screen.getByRole("button", { name: "選 seed 106 為本頁圖片" });
+    await userEvent.click(pick);
+    await userEvent.click(pick);
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(1));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(1);
+  });
 });

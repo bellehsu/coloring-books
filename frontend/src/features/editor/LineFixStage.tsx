@@ -36,11 +36,16 @@ export function LineFixStage(props: LineFixStageProps) {
   const edits = useEdits(pageId);
   const entry = editsQueueFor(qc, bookId, pageId, genId);
 
+  const key = `${pageId}-${genId}`;
   const local = entry.shouldSeedFromLocal() ? entry.latest : null;
-  // 重抓中的快取可能是舊的（例如畫布不在時 QA 面板自動補線）：等重抓完成才用伺服器的資料 seed
+  // 第一次 seed 時，重抓中的快取可能是舊的（例如畫布不在時 QA 面板自動補線），要等重抓完成。
+  // 一旦這個（頁, 選圖）的編輯器掛上，就不再因背景重抓（自動補線、改線寬）卸載它。
   const server =
     !edits.isFetching && edits.data && edits.data.generation_id === genId ? (edits.data.strokes as Stroke[]) : null;
-  const seed = local ?? server;
+  const [seeded, setSeeded] = useState<{ key: string; strokes: Stroke[] } | null>(null);
+  const fresh = local ?? server;
+  if (seeded?.key !== key && fresh) setSeeded({ key, strokes: fresh });
+  const seed = seeded?.key === key ? seeded.strokes : fresh;
 
   if (!seed) {
     return edits.isError ? (
@@ -53,7 +58,7 @@ export function LineFixStage(props: LineFixStageProps) {
       </p>
     );
   }
-  return <LineFixEditor key={`${pageId}-${genId}`} {...props} entry={entry} initial={seed} />;
+  return <LineFixEditor key={key} {...props} entry={entry} initial={seed} />;
 }
 
 function LineFixEditor({
