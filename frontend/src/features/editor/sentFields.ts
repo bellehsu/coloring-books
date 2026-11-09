@@ -13,7 +13,7 @@ export interface PageSent {
  * 每頁最後送出的場景描述／構圖強度與它的請求，存在模組層級（每個 QueryClient 一份），比元件活得久：
  * 離開欄位（PATCH 送出中）→ 換頁或換模式 → pages 重抓前回來，欄位要顯示剛送出的值而不是舊的
  * page.scene_prompt（否則再編輯會把新值蓋回舊值）；產生前也要等前一次掛載送出的請求。
- * GeneratePanel 是這兩個欄位唯一的寫入者，所以送出成功的值一直是最新的；送出失敗就清掉（回到伺服器的值，且可重送）。
+ * 背景面板（BackgroundPanel，Task 9；先前是 GeneratePanel）是這兩個欄位唯一的寫入者，所以送出成功的值一直是最新的；送出失敗就清掉（回到伺服器的值，且可重送）。
  */
 const sentRegistry = new WeakMap<QueryClient, Map<number, PageSent>>();
 

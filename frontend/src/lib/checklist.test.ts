@@ -11,6 +11,9 @@ const page = (o: Partial<Page> = {}): Page =>
     controlnet_strength: 0.4,
     sketch_url: null,
     selected_generation_id: null,
+    background_generation_id: null,
+    pose_generation_id: null,
+    placement: null,
     status: "draft",
     line_detail: "standard",
     line_width_px: 11,
@@ -43,37 +46,83 @@ const qa = (o: Partial<QA> = {}): QA =>
 const byKey = (items: CheckItem[]) => Object.fromEntries(items.map((i) => [i.key, i]));
 
 describe("checklist", () => {
-  it("一律 5 項、順序固定", () => {
+  it("一律 6 項、順序固定", () => {
     const items = checklist(page(), undefined);
-    expect(items.map((i) => i.key)).toEqual(["sketch", "selected", "closed", "character", "passed"]);
-    expect(items.map((i) => i.label)).toEqual(["構圖草圖", "選定圖片", "線條封閉", "角色外型", "通過 QA"]);
+    expect(items.map((i) => i.key)).toEqual(["background", "pose", "composite", "closed", "character", "passed"]);
+    expect(items.map((i) => i.label)).toEqual(["背景", "角色動作", "合成", "線條封閉", "角色外型", "通過 QA"]);
   });
 
-  it("全新頁：沒草圖是 skip（灰色、非錯誤），其餘待辦", () => {
+  it("全新頁：全部待辦", () => {
     const c = byKey(checklist(page(), undefined));
-    expect(c.sketch).toMatchObject({ state: "skip", note: "未畫（不使用構圖）" });
-    expect(c.selected).toMatchObject({ state: "todo", note: "還沒選圖" });
+    expect(c.background).toMatchObject({ state: "todo", note: "還沒選背景" });
+    expect(c.pose).toMatchObject({ state: "todo", note: "還沒選角色動作" });
+    expect(c.composite).toMatchObject({ state: "todo", note: "" });
     expect(c.closed.state).toBe("todo");
     expect(c.character.state).toBe("todo");
     expect(c.passed).toMatchObject({ state: "todo", note: "" });
   });
 
-  it("有草圖 → done「已畫」", () => {
-    expect(byKey(checklist(page({ sketch_url: "/s.png?v=1" }), undefined)).sketch).toMatchObject({
+  it("選了背景與角色動作 → done", () => {
+    const c = byKey(checklist(page({ background_generation_id: 3, pose_generation_id: 4 }), undefined));
+    expect(c.background).toMatchObject({ state: "done", note: "已選" });
+    expect(c.pose).toMatchObject({ state: "done", note: "已選" });
+  });
+
+  it("只有背景：合成仍是 todo、沒有提示", () => {
+    const c = byKey(checklist(page({ background_generation_id: 3 }), undefined));
+    expect(c.pose.state).toBe("todo");
+    expect(c.composite).toMatchObject({ state: "todo", note: "" });
+  });
+
+  it("有背景＋動作但未合成 → todo「請確認合成」", () => {
+    const c = byKey(checklist(page({ background_generation_id: 3, pose_generation_id: 4 }), undefined));
+    expect(c.composite).toMatchObject({ state: "todo", note: "請確認合成" });
+    expect(c.closed).toMatchObject({ state: "todo", note: "" });
+  });
+
+  it("選定圖是 composite → 合成 done「已合成」", () => {
+    const c = byKey(
+      checklist(page({ background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 7 }), qa(), {
+        selectedKind: "composite",
+      }),
+    );
+    expect(c.composite).toMatchObject({ state: "done", note: "已合成" });
+  });
+
+  it("舊流程頁面（選定圖是 page）→ 合成 done「舊流程圖片」；背景／角色動作仍待辦；線稿與 QA 照常", () => {
+    const c = byKey(
+      checklist(page({ selected_generation_id: 7, status: "passed", character_check: "consistent" }), qa({ status: "passed", character_check: "consistent" }), {
+        selectedKind: "page",
+      }),
+    );
+    expect(c.background.state).toBe("todo");
+    expect(c.pose.state).toBe("todo");
+    expect(c.composite).toMatchObject({ state: "done", note: "舊流程圖片" });
+    expect(c.closed).toMatchObject({ state: "done", note: "0 個缺口" });
+    expect(c.character.state).toBe("done");
+    expect(c.passed.state).toBe("done");
+  });
+
+  it("舊流程頁面選了新背景＋動作（還沒確認新合成）：舊圖仍選定 → 合成 done「舊流程圖片」", () => {
+    const c = byKey(
+      checklist(page({ background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 7 }), qa(), {
+        selectedKind: "page",
+      }),
+    );
+    expect(c.composite).toMatchObject({ state: "done", note: "舊流程圖片" });
+  });
+
+  it("已選圖但種類未知（generations 載入中）→ 合成 done、沒有註記", () => {
+    expect(byKey(checklist(page({ selected_generation_id: 7 }), undefined)).composite).toMatchObject({
       state: "done",
-      note: "已畫",
+      note: "",
     });
   });
 
-  it("已選圖：顯示 seed；QA 載入中 → 線條封閉為 todo「檢查中…」", () => {
-    const c = byKey(checklist(page({ selected_generation_id: 7 }), undefined, { seed: 101 }));
-    expect(c.selected).toMatchObject({ state: "done", note: "seed 101" });
+  it("已選圖、QA 載入中 → 線條封閉為 todo「檢查中…」", () => {
+    const c = byKey(checklist(page({ selected_generation_id: 7 }), undefined, { selectedKind: "composite" }));
     expect(c.closed).toMatchObject({ state: "todo", note: "檢查中…" });
     expect(c.character).toMatchObject({ state: "todo", note: "待確認" });
-  });
-
-  it("已選圖但不知 seed → note「已選」", () => {
-    expect(byKey(checklist(page({ selected_generation_id: 7 }), qa())).selected.note).toBe("已選");
   });
 
   it("有缺口 → warn「N 個缺口」；沒缺口 → done", () => {
@@ -123,9 +172,15 @@ describe("checklist", () => {
 
   it("全部完成的頁", () => {
     const items = checklist(
-      page({ sketch_url: "/s.png", selected_generation_id: 7, status: "passed", character_check: "consistent" }),
+      page({
+        background_generation_id: 3,
+        pose_generation_id: 4,
+        selected_generation_id: 7,
+        status: "passed",
+        character_check: "consistent",
+      }),
       qa({ status: "passed", character_check: "consistent" }),
-      { seed: 5 },
+      { selectedKind: "composite" },
     );
     expect(items.every((i) => i.state === "done")).toBe(true);
   });

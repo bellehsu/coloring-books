@@ -34,7 +34,10 @@ export interface GeneratePanelProps {
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-/** 構圖模式的生成設定：場景描述（離開欄位時存）、構圖強度（放開時存）、產生 4 張候選。 */
+/**
+ * Phase 4 構圖模式的生成設定：場景描述（離開欄位時存）、構圖強度（放開時存）、產生 4 張候選。
+ * 合成流程（Task 8）起不再掛在介面上；留給 Task 9 的 BackgroundPanel 參考／沿用（存檔與 flush 順序）。
+ */
 export function GeneratePanel({
   page,
   hasCharacter,

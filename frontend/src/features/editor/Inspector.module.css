@@ -1,4 +1,4 @@
-/* 右欄：本頁進度＋模式面板（GeneratePanel／LinePanel）。 */
+/* 右欄：本頁進度＋模式面板（BackgroundPanel／PosePanel／ComposePanel／LinePanel／QAPanel）。 */
 .insp {
   grid-area: insp;
   background: var(--surface);
