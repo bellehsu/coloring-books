@@ -44,6 +44,12 @@ PYTHON="${PYTHON:-python}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
+# 允許區網其他電腦用本機的主機名稱／IP 開開發伺服器（Next 預設會擋 /_next/* 與 HMR WebSocket）。
+# 自動加入：主機名稱、完整網域名稱、區網 IPv4；dev.env 的 DEV_ALLOWED_ORIGINS 會再附加上去。
+auto_origins="$(hostname 2>/dev/null || true),$(hostname -f 2>/dev/null || true),$(hostname -I 2>/dev/null | tr ' ' ',' || true)"
+DEV_ALLOWED_ORIGINS="$(tr 'A-Z' 'a-z' <<<"$auto_origins,${DEV_ALLOWED_ORIGINS:-}" | tr -s ',' | sed 's/^,//; s/,$//')"
+export DEV_ALLOWED_ORIGINS
+
 die() { echo "錯誤：$*" >&2; exit 1; }
 
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -88,6 +94,7 @@ if (( DRY_RUN )); then
   (( RUN_COMFY )) && echo "  comfy     $COMFY_START_CMD"
   (( RUN_BACKEND )) && echo "  backend   127.0.0.1:$BACKEND_PORT（ComfyUI：$COMFY_URL）"
   (( RUN_FRONTEND )) && echo "  frontend  localhost:$FRONTEND_PORT → 後端 127.0.0.1:$BACKEND_PORT"
+  (( RUN_FRONTEND )) && echo "  允許的開發來源：$DEV_ALLOWED_ORIGINS"
   exit 0
 fi
 
@@ -122,7 +129,7 @@ fi
 
 echo "已啟動（Ctrl+C 全部關閉）："
 (( RUN_BACKEND )) && echo "  後端    http://127.0.0.1:$BACKEND_PORT/api/system/preflight"
-(( RUN_FRONTEND )) && echo "  前端    http://localhost:$FRONTEND_PORT"
+(( RUN_FRONTEND )) && echo "  前端    http://localhost:$FRONTEND_PORT（區網：http://$(hostname | tr 'A-Z' 'a-z'):$FRONTEND_PORT）"
 echo "  ComfyUI $COMFY_URL$( (( RUN_COMFY )) && echo '（由本腳本啟動）' || true)"
 comfy_up "$COMFY_URL" || (( RUN_COMFY )) || echo "  注意：$COMFY_URL 目前連不上 ComfyUI，生成會排隊等待；可加 --comfy 一起啟動。"
 
