@@ -120,6 +120,7 @@ class GenerationOut(BaseModel):
     height: int
     image_url: str | None
     mask_url: str | None  # pose：去背遮罩
+    cutout_url: str | None  # pose：裁好的去背 RGBA 圖
     error: str | None
     elapsed_s: float | None
     queue_position: int | None
@@ -148,6 +149,7 @@ class GenerationOut(BaseModel):
             height=gen.height,
             image_url=f"/api/generations/{gen.id}/image" if gen.image_path else None,
             mask_url=f"/api/generations/{gen.id}/mask" if gen.mask_path else None,
+            cutout_url=f"/api/generations/{gen.id}/cutout" if gen.mask_path else None,
             error=gen.error,
             elapsed_s=gen.elapsed_s,
             queue_position=queue_position,

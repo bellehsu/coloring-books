@@ -73,6 +73,25 @@ def _flatten(img: Image.Image, color: tuple[int, int, int]) -> Image.Image:
     return img.convert("RGB")
 
 
+def mask_bbox(mask: Image.Image) -> tuple[int, int, int, int] | None:
+    """遮罩 > 128 的外接框；全空時 None。"""
+    return mask.convert("L").point(lambda v: 255 if v > 128 else 0).getbbox()
+
+
+def cutout(pose: Image.Image, mask: Image.Image) -> Image.Image:
+    """角色圖裁到遮罩外接框的 RGBA，alpha＝遮罩。尺寸不同或遮罩全空時丟 ValueError。"""
+    rgb = pose.convert("RGB")
+    m = mask.convert("L")
+    if m.size != rgb.size:
+        raise ValueError("遮罩與角色圖尺寸不同")
+    bbox = mask_bbox(m)
+    if bbox is None:
+        raise ValueError("遮罩是空的")
+    out = rgb.crop(bbox).convert("RGBA")
+    out.putalpha(m.crop(bbox))
+    return out
+
+
 def compose(
     background: Image.Image, pose: Image.Image, mask: Image.Image, placement: Placement
 ) -> Image.Image:
@@ -86,7 +105,7 @@ def compose(
     m = mask.convert("L")
     if m.size != pose_rgb.size:
         raise ValueError("遮罩與角色圖尺寸不同")
-    bbox = m.point(lambda v: 255 if v > 128 else 0).getbbox()
+    bbox = mask_bbox(m)
     if bbox is None:
         raise ValueError("遮罩是空的")
     pose_rgb = pose_rgb.crop(bbox)

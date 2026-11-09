@@ -181,6 +181,52 @@ def test_mask_endpoint_404s(client, app):
     assert client.get(f"/api/generations/{pose}/mask").status_code == 404
 
 
+def test_cutout_alpha_and_size(client, app):
+    b, p, bg, pose = compose_ready(client, app)
+    g = client.get(f"/api/generations/{pose}").json()
+    assert g["cutout_url"] == f"/api/generations/{pose}/cutout"
+    assert client.get(f"/api/generations/{bg}").json()["cutout_url"] is None
+    row = gen_row(app, pose)
+    w, h = 40, 60
+    mask = Image.new("L", (w, h), 0)
+    mask.paste(255, (10, 20, 30, 50))
+    buf = io.BytesIO()
+    mask.save(buf, format="PNG")
+    app.state.storage.write(row.mask_path, buf.getvalue())
+    pbuf = io.BytesIO()
+    Image.new("RGB", (w, h), (200, 10, 10)).save(pbuf, format="PNG")
+    app.state.storage.write(row.image_path, pbuf.getvalue())
+    r = client.get(g["cutout_url"])
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    im = Image.open(io.BytesIO(r.content))
+    assert im.mode == "RGBA" and im.size == (20, 30)
+    assert im.getpixel((10, 15))[3] == 255
+    # 外接框內但遮罩為 0 的位置會是透明
+    mask2 = Image.new("L", (w, h), 0)
+    mask2.paste(255, (10, 20, 30, 25))
+    mask2.paste(255, (10, 45, 30, 50))
+    buf = io.BytesIO()
+    mask2.save(buf, format="PNG")
+    app.state.storage.write(row.mask_path, buf.getvalue())
+    im = Image.open(io.BytesIO(client.get(g["cutout_url"]).content))
+    assert im.size == (20, 30)
+    assert im.getpixel((5, 12))[3] == 0 and im.getpixel((5, 2))[3] == 255
+
+
+def test_cutout_404_and_409(client, app):
+    b, p, bg, pose = compose_ready(client, app)
+    assert client.get(f"/api/generations/{bg}/cutout").status_code == 404
+    assert client.get("/api/generations/999/cutout").status_code == 404
+    row = gen_row(app, pose)
+    mask_bytes = app.state.storage.abs(row.mask_path).read_bytes()
+    app.state.storage.delete(row.mask_path)
+    r = client.get(f"/api/generations/{pose}/cutout")
+    assert r.status_code == 409 and r.json()["detail"] == "圖片檔案遺失，請重新產生"
+    app.state.storage.write(row.mask_path, mask_bytes)
+    app.state.storage.delete(row.image_path)
+    assert client.get(f"/api/generations/{pose}/cutout").status_code == 409
+
+
 def test_pick_validation(client, app):
     b, p, bg, pose = compose_ready(client, app)
     pid = p["id"]
