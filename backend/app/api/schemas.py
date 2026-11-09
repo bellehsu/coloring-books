@@ -43,6 +43,13 @@ class LayoutOut(BaseModel):
     ratio_group: str
 
 
+class BookStats(BaseModel):
+    pages: int = 0
+    passed: int = 0
+    needs_fix: int = 0  # 已選圖且目前 QA 有錯誤的頁數
+    no_selection: int = 0
+
+
 class BookOut(BaseModel):
     id: int
     title: str
@@ -51,11 +58,15 @@ class BookOut(BaseModel):
     character_description: str | None
     character_generation_id: int | None
     layout: LayoutOut
+    stats: BookStats
+    cover_url: str | None  # position 最小且有選圖的頁的 lineart_url
     created_at: datetime
     updated_at: datetime
 
     @classmethod
-    def from_book(cls, book: Book) -> "BookOut":
+    def from_book(
+        cls, book: Book, stats: BookStats | None = None, cover_url: str | None = None
+    ) -> "BookOut":
         lay = compute_layout(book.paper_size, book.print_mode)
         return cls(
             id=book.id,
@@ -76,6 +87,8 @@ class BookOut(BaseModel):
                 safe_box_px=lay.safe_box_px,
                 ratio_group=lay.ratio_group,
             ),
+            stats=stats or BookStats(),
+            cover_url=cover_url,
             created_at=book.created_at,
             updated_at=book.updated_at,
         )
@@ -289,6 +302,7 @@ class QAOut(BaseModel):
     gaps: list[tuple[float, float]]  # 相對座標 (x/w, y/h)
     gap_count: int
     dangling_count: int
+    near_miss_count: int
     metrics: dict[str, Any]
     character_check: CharacterCheck | None
     qa_note: str
@@ -304,6 +318,7 @@ class QAOut(BaseModel):
             gaps=list(qa.gaps),
             gap_count=qa.gap_count,
             dangling_count=qa.dangling_count,
+            near_miss_count=qa.near_miss_count,
             metrics=qa.metrics,
             character_check=page.character_check,
             qa_note=page.qa_note,

@@ -1,11 +1,13 @@
 """頁面、草圖、頁面候選與選定端點。"""
 
+import logging
 import random
+import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import case, literal, null
-from sqlmodel import Session, col, func, select, update
+from sqlmodel import Session, col, delete, func, select, update
 
 from app.api.books import MAX_SEED, _book_or_404
 from app.api.deps import get_session, get_storage, get_worker
@@ -25,6 +27,7 @@ from app.services.prompts import PAGE_NEGATIVE, page_prompt
 from app.services.worker import GenerationWorker, encode_request
 from app.storage import ImageRejected, Storage, normalize_png
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["pages"])
 
 MAX_SKETCH_BYTES = 10_000_000
@@ -185,6 +188,57 @@ def delete_sketch(
     if old:
         storage.delete(old)
     return page_out(session, page)
+
+
+@router.delete("/pages/{page_id}", status_code=204)
+def delete_page(
+    page_id: int,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+) -> None:
+    page = _page_or_404(session, page_id)
+    book_id = page.book_id
+    # 先取消排隊中的（條件式 UPDATE 取得寫入鎖，worker 之後無法再認領），再檢查有沒有執行中的
+    session.exec(
+        update(Generation)
+        .where(col(Generation.page_id) == page_id, col(Generation.status) == GenStatus.QUEUED)
+        .values(status=GenStatus.CANCELLED, error="頁面已刪除", finished_at=utcnow())
+    )
+    running = session.exec(
+        select(
+            select(Generation.id)
+            .where(col(Generation.page_id) == page_id, col(Generation.status) == GenStatus.RUNNING)
+            .exists()
+        )
+    ).one()
+    if running:
+        session.rollback()
+        raise HTTPException(409, "這一頁還有圖片正在生成，請稍後再刪")
+    gens = session.exec(select(Generation).where(col(Generation.page_id) == page_id)).all()
+    gen_ids = [g.id for g in gens]
+    image_paths = [g.image_path for g in gens if g.image_path]
+    session.exec(delete(LineartEdit).where(col(LineartEdit.page_id) == page_id))
+    session.exec(delete(Generation).where(col(Generation.page_id) == page_id))
+    session.exec(delete(Page).where(col(Page.id) == page_id))
+    rest = session.exec(
+        select(Page).where(col(Page.book_id) == book_id).order_by(col(Page.position), col(Page.id))
+    ).all()
+    for i, p in enumerate(rest):
+        if p.position != i:
+            p.position = i
+            session.add(p)
+    session.commit()
+    # 檔案在交易提交後才刪（盡力而為）
+    try:
+        for rel in image_paths:
+            storage.delete(rel)
+        shutil.rmtree(storage.abs(f"books/{book_id}/pages/{page_id}"), ignore_errors=True)
+        previews = storage.abs("cache/previews")
+        for gid in gen_ids:
+            for f in previews.glob(f"{gid}_*.png"):
+                f.unlink(missing_ok=True)
+    except OSError:
+        log.warning("刪除頁面 %s 的檔案時發生錯誤", page_id, exc_info=True)
 
 
 @router.get("/pages/{page_id}/sketch")

@@ -263,3 +263,62 @@ def test_page_candidates_fail_when_sketch_file_missing(client, app):
     with app.state.sessions() as s:
         assert s.exec(select(Generation).where(Generation.kind == GenKind.PAGE)).all() == []
     assert sketch_files(app) == []
+
+
+def test_delete_page_cascades_and_reorders(client, app):
+    from app.models import LineartEdit
+    from tests.test_api_lineart import color_png
+
+    app.state.engine.image = color_png()
+    b, _ = book_with_character(client, app)
+    pages = [new_page(client, b["id"]) for _ in range(3)]
+    mid = pages[1]
+    done = client.post(f"/api/pages/{mid['id']}/candidates", json={"count": 1}).json()
+    run_jobs(client, app, 1)
+    queued = client.post(f"/api/pages/{mid['id']}/candidates", json={"count": 2}).json()
+    assert client.post(f"/api/pages/{mid['id']}/select", json={"generation_id": done[0]["id"]}).status_code == 200
+    assert client.get(f"/api/pages/{mid['id']}/lineart").status_code == 200  # 產生線稿檔
+    assert upload(client, mid["id"], color_png(), "s.png").status_code == 200
+    storage = app.state.storage
+    img = storage.abs(f"books/{b['id']}/generations/{done[0]['id']}.png")
+    pdir = storage.abs(f"books/{b['id']}/pages/{mid['id']}")
+    assert img.is_file() and pdir.is_dir()
+
+    assert client.delete(f"/api/pages/{mid['id']}").status_code == 204
+    assert client.delete(f"/api/pages/{mid['id']}").status_code == 404
+    got = client.get(f"/api/books/{b['id']}/pages").json()
+    assert [p["id"] for p in got] == [pages[0]["id"], pages[2]["id"]]
+    assert [p["position"] for p in got] == [0, 1]
+    assert not img.exists() and not pdir.exists()
+    with app.state.sessions() as s:
+        assert s.exec(select(Generation).where(Generation.page_id == mid["id"])).all() == []
+        assert s.exec(select(LineartEdit).where(LineartEdit.page_id == mid["id"])).all() == []
+        # 被取消而非執行：已不存在，worker 也沒東西可跑
+        assert all(s.get(Generation, g["id"]) is None for g in queued)
+    assert client.portal.call(app.state.worker.run_once) is False
+
+
+def test_delete_page_cancels_queued_generations(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    q = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 2}).json()
+    assert client.delete(f"/api/pages/{p['id']}").status_code == 204
+    assert client.portal.call(app.state.worker.run_once) is False
+    assert q
+
+
+def test_delete_page_with_running_generation_409(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    gens = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 2}).json()
+    with app.state.sessions() as s:
+        g = s.get(Generation, gens[0]["id"])
+        g.status = GenStatus.RUNNING
+        s.add(g)
+        s.commit()
+    r = client.delete(f"/api/pages/{p['id']}")
+    assert r.status_code == 409
+    assert r.json()["detail"] == "這一頁還有圖片正在生成，請稍後再刪"
+    with app.state.sessions() as s:  # 整個交易回復：頁面與排隊中的都還在
+        assert s.get(Page, p["id"]) is not None
+        assert s.get(Generation, gens[1]["id"]).status == GenStatus.QUEUED

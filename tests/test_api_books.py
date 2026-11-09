@@ -278,3 +278,33 @@ def test_change_size_same_group_only(client):
     assert client.patch(url, json={}).status_code == 200
     assert client.patch(url, json={"paper_size": "A0"}).status_code == 422
     assert client.patch(url, json={"title": "  "}).status_code == 422
+
+
+def test_book_stats_and_cover(client, app):
+    from tests.test_api_lineart import make_passed, selected_page, set_page
+    from tests.test_api_pages import new_page
+
+    b = new_book(client)
+    assert b["stats"] == {"pages": 0, "passed": 0, "needs_fix": 0, "no_selection": 0}
+    assert b["cover_url"] is None
+
+    b, p1, _ = selected_page(client, app, gap=0)
+    p0 = new_page(client, b["id"])  # 新頁、沒選圖
+    p2 = new_page(client, b["id"])
+    # p1 通過；p2 選圖但 QA 有缺口（直接寫入 qa_json）
+    make_passed(app, p1["id"])
+    got = client.get(f"/api/books/{b['id']}").json()
+    assert got["stats"] == {"pages": 3, "passed": 1, "needs_fix": 0, "no_selection": 2}
+    # 封面＝position 最小且有選圖的頁；網址與 PageOut.lineart_url 一致
+    assert got["cover_url"] == p1["lineart_url"]
+    assert got["cover_url"].startswith(f"/api/pages/{p1['id']}/lineart?v=")
+
+    import json as _json
+
+    set_page(app, p1["id"], qa_json=_json.dumps({"errors": ["gaps"]}))
+    got = client.get(f"/api/books/{b['id']}").json()
+    assert got["stats"]["needs_fix"] == 1
+    listed = {x["id"]: x for x in client.get("/api/books").json()}
+    assert listed[b["id"]]["stats"] == got["stats"]
+    assert listed[b["id"]]["cover_url"] == got["cover_url"]
+    assert p0["position"] == 1 and p2["position"] == 2

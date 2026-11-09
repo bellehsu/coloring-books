@@ -1,5 +1,6 @@
 """繪本與角色端點。"""
 
+import json
 import logging
 import random
 
@@ -10,12 +11,13 @@ from app.api.deps import get_session, get_worker
 from app.api.schemas import (
     BookCreate,
     BookOut,
+    BookStats,
     BookUpdate,
     CharacterCandidatesCreate,
     CharacterSelect,
     GenerationOut,
 )
-from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
+from app.models import Book, Generation, GenKind, GenStatus, Page, PageStatus, utcnow
 from app.services.layout import PaperSize, ratio_group
 from app.services.page_lineart import ensure_page_lineart
 from app.services.prompts import CHARACTER_NEGATIVE, character_prompt
@@ -35,23 +37,64 @@ def _book_or_404(session: Session, book_id: int) -> Book:
     return book
 
 
+def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
+    """附上統計與封面；所有繪本的頁面一次查完，封面頁再交給 page_outs 算 lineart_url。"""
+    from app.api.pages import page_outs  # 避免與 pages.py 循環匯入
+
+    ids = [b.id for b in books]
+    by_book: dict[int, list[Page]] = {i: [] for i in ids}
+    if ids:
+        for p in session.exec(
+            select(Page).where(col(Page.book_id).in_(ids)).order_by(col(Page.position))
+        ).all():
+            by_book[p.book_id].append(p)
+    covers = {}
+    for bid, pages in by_book.items():
+        sel = [p for p in pages if p.selected_generation_id is not None]
+        if sel:
+            covers[bid] = sel[0]  # 已依 position 排序
+    cover_urls = {
+        p.book_id: o.lineart_url for p, o in zip(covers.values(), page_outs(session, list(covers.values())))
+    }
+    out = []
+    for b in books:
+        pages = by_book[b.id]
+        stats = BookStats(
+            pages=len(pages),
+            passed=sum(p.status == PageStatus.PASSED for p in pages),
+            needs_fix=sum(
+                p.selected_generation_id is not None
+                and bool(p.qa_json)
+                and bool(json.loads(p.qa_json).get("errors"))
+                for p in pages
+            ),
+            no_selection=sum(p.selected_generation_id is None for p in pages),
+        )
+        out.append(BookOut.from_book(b, stats, cover_urls.get(b.id)))
+    return out
+
+
+def book_out(session: Session, book: Book) -> BookOut:
+    return book_outs(session, [book])[0]
+
+
 @router.post("", status_code=201, response_model=BookOut)
 def create_book(body: BookCreate, session: Session = Depends(get_session)) -> BookOut:
     book = Book(title=body.title, paper_size=body.paper_size, print_mode=body.print_mode)
     session.add(book)
     session.commit()
-    return BookOut.from_book(book)
+    return book_out(session, book)
 
 
 @router.get("", response_model=list[BookOut])
 def list_books(session: Session = Depends(get_session)) -> list[BookOut]:
     books = session.exec(select(Book).order_by(col(Book.id).desc())).all()
-    return [BookOut.from_book(b) for b in books]
+    return book_outs(session, list(books))
 
 
 @router.get("/{book_id}", response_model=BookOut)
 def get_book(book_id: int, session: Session = Depends(get_session)) -> BookOut:
-    return BookOut.from_book(_book_or_404(session, book_id))
+    return book_out(session, _book_or_404(session, book_id))
 
 
 def _recompute_book_lineart(sessions, storage, book_id: int) -> None:
@@ -103,7 +146,7 @@ def update_book(
         background.add_task(
             _recompute_book_lineart, request.app.state.sessions, request.app.state.storage, book_id
         )
-    return BookOut.from_book(book)
+    return book_out(session, book)
 
 
 @router.post("/{book_id}/character/candidates", status_code=202, response_model=list[GenerationOut])
@@ -222,4 +265,4 @@ def set_character(
     )
     session.commit()
     session.refresh(book)
-    return BookOut.from_book(book)
+    return book_out(session, book)

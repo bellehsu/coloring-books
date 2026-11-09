@@ -530,3 +530,10 @@ def test_change_size_recomputes_and_demotes(client, app, monkeypatch):
     w, h = im.size
     assert im.getpixel((w // 2, round(0.05 * (h - 1)))) == 0
     assert im.getpixel((w // 2, round(0.12 * (h - 1)))) == 255
+
+
+def test_qa_out_has_near_miss_count(client, app):
+    _, page, _ = selected_page(client, app)
+    r = client.get(f"/api/pages/{page['id']}/qa")
+    assert r.status_code == 200
+    assert isinstance(r.json()["near_miss_count"], int)

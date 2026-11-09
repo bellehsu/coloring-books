@@ -127,3 +127,16 @@ def test_comfy_url_from_settings(settings_file, monkeypatch):
     assert check_env.comfy_url_from_settings(settings_file) == "http://comfy.test:8188"
     monkeypatch.setenv("APP_COMFY__URL", "http://env:1")
     assert check_env.comfy_url_from_settings(settings_file) == "http://env:1"
+
+
+def test_export_openapi_writes_paths(tmp_path, settings_file, monkeypatch):
+    import json
+
+    monkeypatch.setenv("APP_SETTINGS_FILE", str(settings_file))
+    mod = _load("export_openapi")
+    out = tmp_path / "deep" / "dir" / "openapi.json"
+    monkeypatch.setattr(sys, "argv", ["export_openapi.py", str(out)])
+    assert mod.main() == 0
+    spec = json.loads(out.read_text(encoding="utf-8"))
+    assert "/api/pages/{page_id}/lineart/edits" in spec["paths"]
+    assert "delete" in spec["paths"]["/api/pages/{page_id}"]
