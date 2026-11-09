@@ -75,6 +75,9 @@ class Book(SQLModel, table=True):
 
 
 class Page(SQLModel, table=True):
+    # 刪除頁面會連同生成紀錄硬刪除；AUTOINCREMENT 保證 id 永不沿用，前端以 id 為 key 的狀態才不會串到新頁面
+    __table_args__ = {"sqlite_autoincrement": True}
+
     id: int | None = Field(default=None, primary_key=True)
     book_id: int = Field(foreign_key="book.id", index=True)
     position: int
@@ -97,6 +100,8 @@ class Page(SQLModel, table=True):
 
 
 class Generation(SQLModel, table=True):
+    __table_args__ = {"sqlite_autoincrement": True}  # 同 Page：id 永不沿用
+
     id: int | None = Field(default=None, primary_key=True)
     book_id: int = Field(foreign_key="book.id", index=True)
     page_id: int | None = Field(default=None, foreign_key="page.id", index=True)

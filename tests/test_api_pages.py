@@ -322,3 +322,18 @@ def test_delete_page_with_running_generation_409(client, app):
     with app.state.sessions() as s:  # 整個交易回復：頁面與排隊中的都還在
         assert s.get(Page, p["id"]) is not None
         assert s.get(Generation, gens[1]["id"]).status == GenStatus.QUEUED
+
+
+def test_deleted_page_and_generation_ids_are_never_reused(client, app):
+    """刪掉 id 最大的頁面後再新增，新頁面（與其生成紀錄）不可沿用舊 id，前端以 id 為 key 的狀態才不會串頁。"""
+    b, _ = book_with_character(client, app)
+    a = new_page(client, b["id"])
+    victim = new_page(client, b["id"])
+    old_gens = client.post(f"/api/pages/{victim['id']}/candidates", json={"count": 2}).json()
+    assert client.delete(f"/api/pages/{victim['id']}").status_code == 204
+    c = new_page(client, b["id"])
+    assert c["id"] != victim["id"]
+    assert c["id"] > victim["id"] > a["id"]
+    new_gens = client.post(f"/api/pages/{c['id']}/candidates", json={"count": 2}).json()
+    assert not {g["id"] for g in new_gens} & {g["id"] for g in old_gens}
+    assert min(g["id"] for g in new_gens) > max(g["id"] for g in old_gens)
