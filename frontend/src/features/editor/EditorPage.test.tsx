@@ -224,6 +224,7 @@ const mkGen = (id: number, o: O = {}): O => ({
   height: 1216,
   image_url: `/img/${id}.png`,
   mask_url: null,
+  cutout_url: null,
   error: null,
   elapsed_s: 3,
   queue_position: null,
@@ -706,10 +707,10 @@ describe("EditorPage", () => {
     expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "false");
   });
 
-  it("合成模式：角色動作沒有遮罩 → 舞台拿不到去背圖（由舞台說明要重新產生）", async () => {
+  it("合成模式：角色動作沒有遮罩（後端 cutout_url 為 null）→ 舞台拿不到去背圖（由舞台說明要重新產生）", async () => {
     search = "page=1&mode=compose";
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: null, cutout_url: "/c" })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: null, cutout_url: null })];
     setup();
     const stage = await screen.findByTestId("compose-stage");
     expect(stage).toHaveAttribute("data-cutout", "");

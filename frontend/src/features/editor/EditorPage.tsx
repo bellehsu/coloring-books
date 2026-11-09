@@ -60,9 +60,6 @@ import {
 import { ZoomControls } from "./LineFixCanvas";
 import styles from "./EditorPage.module.css";
 
-/** GenerationOut.cutout_url（Task 10 新增：依遮罩外框裁好的 RGBA 去背圖）；型別重新產生前先在這裡補上。 */
-type WithCutout = Generation & { cutout_url?: string | null };
-
 const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
 
 interface Nav {
@@ -403,12 +400,12 @@ export function EditorPage({ bookId }: { bookId: number }) {
   } else if (mode === "pose") {
     stage = <PoseStage pose={poseGen} />;
   } else if (mode === "compose") {
-    // 分頁啟用時兩個 id 都有；圖片缺漏（沒有圖、沒有遮罩）由 ComposeStage 說明要重新產生
+    // 分頁啟用時兩個 id 都有；圖片缺漏（沒有圖、沒有遮罩 → 沒有 cutout_url）由 ComposeStage 說明要重新產生
     stage =
       backgroundGen && poseGen ? (
         <ComposeStage
           backgroundUrl={backgroundGen.image_url}
-          cutoutUrl={poseGen.mask_url ? ((poseGen as WithCutout).cutout_url ?? null) : null}
+          cutoutUrl={poseGen.cutout_url}
           placement={placement}
           onChange={(p) => savePlacement(current.id, p)}
           disabled={confirming}
