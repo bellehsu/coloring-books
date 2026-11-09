@@ -1,0 +1,231 @@
+.compare {
+  width: 100%;
+  max-width: 900px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 16px;
+}
+.fig {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.frame {
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 8px;
+  text-align: center;
+}
+.cap {
+  font-size: 13px;
+  color: var(--muted-2);
+}
+
+/* panel */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.sec {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.secTight {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.h2 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 500;
+}
+.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+}
+.status[data-tone="ok"] {
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+}
+.status[data-tone="err"] {
+  background: #fde8e6;
+  color: var(--danger);
+}
+.statusList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ink);
+}
+.warnList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--warn-ink);
+}
+.fixBtn {
+  width: 100%;
+}
+.body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.radios {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.radio {
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.radio[data-on="true"][data-kind="ok"] {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  font-weight: 700;
+}
+.radio[data-on="true"][data-kind="bad"] {
+  border-color: var(--danger);
+  background: #fde8e6;
+  color: var(--danger);
+  font-weight: 700;
+}
+.radio:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.input {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font: inherit;
+  color: var(--ink);
+}
+.textarea {
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font: inherit;
+  color: var(--ink);
+  resize: vertical;
+  min-height: 88px;
+}
+.counter {
+  align-self: flex-end;
+  font-size: 12px;
+  color: var(--muted);
+}
+.passBtn {
+  min-height: 50px;
+  border: 0;
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--on-accent);
+  background: var(--ok);
+}
+.passBtn[data-passed="true"] {
+  background: #14532d;
+}
+.passBtn:disabled {
+  background: var(--line);
+  color: var(--muted);
+  cursor: default;
+}
+.hint {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+.link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.errBox {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: #fde8e6;
+  color: var(--danger);
+  font-size: 13px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
