@@ -702,6 +702,8 @@ export interface components {
             discarded: boolean;
             /** Prompt */
             prompt: string;
+            /** User Text */
+            user_text: string;
             /** Seed */
             seed: number;
             /** Width */

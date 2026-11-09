@@ -23,15 +23,6 @@ import styles from "./CharacterStudio.module.css";
 const MAX_DESC = 800;
 const ArrowRight = Icons["arrow-right"];
 
-/** 後端 GenerationOut 沒有 user_text，從組好的提示詞還原使用者描述（見 backend prompts.character_prompt）。 */
-function descriptionOf(g: Generation | undefined): string {
-  if (!g) return "";
-  const ut = (g as { user_text?: unknown }).user_text;
-  if (typeof ut === "string") return ut;
-  const m = g.prompt.match(/^single full body front view of ([\s\S]*?), standing, children's picture book/);
-  return m ? m[1] : "";
-}
-
 const errMsg = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
 export function CharacterStudio({ bookId }: { bookId: number }) {
@@ -62,7 +53,7 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
   const pickedGen = list.find((g) => g.id === picked && usable(g));
   const selected = locked ? lockedGen : (pickedGen ?? sorted.slice().reverse().find(usable));
 
-  const description = typed ?? descriptionOf(sorted.find((g) => g.status !== "cancelled"));
+  const description = typed ?? (sorted.find((g) => g.status !== "cancelled")?.user_text ?? "");
   const trimmed = description.trim();
   const valid = trimmed.length >= 1 && trimmed.length <= MAX_DESC;
 

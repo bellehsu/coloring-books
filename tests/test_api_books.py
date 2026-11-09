@@ -103,6 +103,7 @@ def test_candidates_validate_prompt_length(client, app):
     r = client.post(f"/api/books/{b['id']}/character/candidates", json={"description": "熊" * 800})
     assert r.status_code == 202
     assert len(r.json()[0]["prompt"]) < 2000
+    assert r.json()[0]["user_text"] == "熊" * 800
     for bad in ({"count": 0}, {"count": 9}):
         assert candidates(client, b["id"], **bad).status_code == 422
 

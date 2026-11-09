@@ -2228,6 +2228,10 @@
             "type": "string",
             "title": "Prompt"
           },
+          "user_text": {
+            "type": "string",
+            "title": "User Text"
+          },
           "seed": {
             "type": "integer",
             "title": "Seed"
@@ -2320,6 +2324,7 @@
           "status",
           "discarded",
           "prompt",
+          "user_text",
           "seed",
           "width",
           "height",

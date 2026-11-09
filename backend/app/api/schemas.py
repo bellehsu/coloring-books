@@ -112,6 +112,7 @@ class GenerationOut(BaseModel):
     status: GenStatus
     discarded: bool
     prompt: str
+    user_text: str  # 使用者輸入的原文（角色描述或場景描述）
     seed: int
     width: int
     height: int
@@ -138,6 +139,7 @@ class GenerationOut(BaseModel):
             status=gen.status,
             discarded=gen.discarded,
             prompt=gen.prompt,
+            user_text=gen.user_text,
             seed=gen.seed,
             width=gen.width,
             height=gen.height,
