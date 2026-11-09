@@ -80,3 +80,60 @@ def test_placement_dict_and_key():
     assert p.key() == (0.1235, 0.5, 0.6, True)
     assert Placement.from_dict(p.to_dict()) == p
     assert DEFAULT_PLACEMENT == Placement(0.5, 0.66, 0.6, False)
+
+
+@pytest.mark.parametrize(
+    "d",
+    [
+        {"cx": None, "cy": 0.5, "height": 0.5},
+        {"cx": float("nan"), "cy": 0.5, "height": 0.5},
+        {"cx": 0.5, "cy": float("inf"), "height": 0.5},
+        {"cx": True, "cy": 0.5, "height": 0.5},
+        {"cx": "0.5", "cy": 0.5, "height": 0.5},
+        {"cx": 0.5, "cy": 0.5},
+        {"cx": 0.5, "cy": 0.5, "height": 0.5, "flip": "false"},
+        {"cx": 0.5, "cy": 0.5, "height": 0.5, "flip": 1},
+        {"cx": 0.5, "cy": 0.5, "height": 0.05},
+        {"cx": 1.2, "cy": 0.5, "height": 0.5},
+        None,
+    ],
+)
+def test_from_dict_rejects_bad_input(d):
+    with pytest.raises(ValueError):
+        Placement.from_dict(d)
+
+
+def test_from_dict_flip_optional_and_ints_ok():
+    p = Placement.from_dict({"cx": 1, "cy": 0, "height": 1})
+    assert p == Placement(1.0, 0.0, 1.0, False)
+
+
+def test_mask_size_mismatch_raises():
+    pose, _ = _pose()
+    with pytest.raises(ValueError, match="遮罩與角色圖尺寸不同"):
+        compose(_bg(), pose, Image.new("L", (50, 50), 255), DEFAULT_PLACEMENT)
+
+
+def test_rgba_background_flattens_onto_white():
+    pose, mask = _pose()
+    bg = Image.new("RGBA", (200, 300), (0, 0, 0, 0))
+    out = compose(bg, pose, mask, Placement(0.5, 0.5, 0.6, False))
+    assert out.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_pose_alpha_ignored_only_mask_used():
+    pose, mask = _pose()
+    rgba = pose.convert("RGBA")
+    rgba.putalpha(Image.new("L", pose.size, 0))
+    a = compose(_bg(), pose, mask, Placement(0.5, 0.5, 0.6, False))
+    b = compose(_bg(), rgba, mask, Placement(0.5, 0.5, 0.6, False))
+    assert a.getpixel((90, 150)) == b.getpixel((90, 150)) == FG
+
+
+@pytest.mark.parametrize("w", [200, 201])
+def test_left_edge_column(w):
+    pose, mask = _pose()  # 角色 40x60，縮放後 height=150 => 寬 100
+    out = compose(_bg(w, 300), pose, mask, Placement(0.5, 0.5, 0.5, False))
+    cols = [x for x in range(w) if out.getpixel((x, 150)) == FG]
+    expected = round(0.5 * w - 100 / 2)
+    assert abs(min(cols) - expected) <= 2

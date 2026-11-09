@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 
 # 合成演算法改變時 +1
@@ -23,12 +23,27 @@ class Placement:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Placement":
-        return cls(
-            cx=float(d["cx"]),
-            cy=float(d["cy"]),
-            height=float(d["height"]),
-            flip=bool(d.get("flip", False)),
-        )
+        """cx、cy、height 必填（int 或 float，不接受 bool、字串、NaN／inf）；
+        flip 選填，缺少時為 False，有的話必須是真正的 bool。最後會呼叫 validate()。
+        任何不合法的輸入都丟 ValueError（中文訊息）。"""
+        if not isinstance(d, dict):
+            raise ValueError("位置必須是物件")
+        vals: dict[str, float] = {}
+        for k in ("cx", "cy", "height"):
+            if k not in d:
+                raise ValueError(f"缺少欄位 {k}")
+            v = d[k]
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError(f"{k} 必須是數字")
+            if not math.isfinite(v):
+                raise ValueError(f"{k} 必須是有限的數字")
+            vals[k] = float(v)
+        flip = d.get("flip", False)
+        if not isinstance(flip, bool):
+            raise ValueError("flip 必須是 true 或 false")
+        p = cls(cx=vals["cx"], cy=vals["cy"], height=vals["height"], flip=flip)
+        p.validate()
+        return p
 
     def to_dict(self) -> dict[str, Any]:
         return {"cx": self.cx, "cy": self.cy, "height": self.height, "flip": self.flip}
@@ -49,14 +64,29 @@ class Placement:
 DEFAULT_PLACEMENT = Placement(0.5, 0.66, 0.6, False)
 
 
+def _flatten(img: Image.Image, color: tuple[int, int, int]) -> Image.Image:
+    """有透明度的圖先鋪在指定底色上再轉 RGB（避免透明處變黑）。"""
+    if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        base = Image.new("RGBA", rgba.size, color + (255,))
+        return Image.alpha_composite(base, rgba).convert("RGB")
+    return img.convert("RGB")
+
+
 def compose(
     background: Image.Image, pose: Image.Image, mask: Image.Image, placement: Placement
 ) -> Image.Image:
-    """回傳與背景同尺寸的 RGB 合成圖。超出背景的部分會被裁掉。"""
-    bg = background.convert("RGB")
-    pose_rgb = pose.convert("RGB")
+    """回傳與背景同尺寸的 RGB 合成圖。超出背景的部分會被裁掉。
+
+    只使用 mask 決定角色輪廓；pose 本身的 alpha 會被忽略（直接丟掉 alpha 通道）。
+    RGBA 背景會先壓平鋪在白底上。mask 與 pose 尺寸必須相同。
+    """
+    bg = _flatten(background, (255, 255, 255))
+    pose_rgb = pose.convert("RGB")  # 直接丟掉 alpha，只留 RGB
     m = mask.convert("L")
-    bbox = Image.fromarray((np.array(m) > 128).astype(np.uint8) * 255).getbbox()
+    if m.size != pose_rgb.size:
+        raise ValueError("遮罩與角色圖尺寸不同")
+    bbox = m.point(lambda v: 255 if v > 128 else 0).getbbox()
     if bbox is None:
         raise ValueError("遮罩是空的")
     pose_rgb = pose_rgb.crop(bbox)
@@ -65,7 +95,7 @@ def compose(
     target_h = max(1, round(placement.height * bg.height))
     target_w = max(1, round(pose_rgb.width * target_h / pose_rgb.height))
     pose_rgb = pose_rgb.resize((target_w, target_h), Image.LANCZOS)
-    m = m.resize((target_w, target_h), Image.LANCZOS)
+    m = m.resize((target_w, target_h), Image.BILINEAR)
     if placement.flip:
         pose_rgb = ImageOps.mirror(pose_rgb)
         m = ImageOps.mirror(m)
