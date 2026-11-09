@@ -477,3 +477,17 @@ def test_dev_sh_rejects_comfy_port_mismatch(tmp_path):
                         "APP_COMFY__URL": f"http://127.0.0.1:{port}",
                         "COMFY_START_CMD": "comfy launch -- --listen 127.0.0.1 --port 1"})
     assert r.returncode == 1 and "請讓兩者一致" in r.stderr
+
+
+def test_dev_sh_allows_loopback_ip_origin(tmp_path):
+    # 用 http://127.0.0.1:3000 開頁面時，Next dev 會擋 /_next/*，頁面不會 hydrate；dev.sh 要自動允許
+    import shutil
+
+    npm = shutil.which("npm")
+    if npm is None or not (REPO / "frontend" / "node_modules").is_dir():
+        pytest.skip("需要 npm 與 frontend/node_modules")
+    r = _dev("--frontend-only", "--dry-run", tmp_path=tmp_path,
+             env_extra={"PATH": f"{Path(npm).parent}:/usr/bin:/bin", "FRONTEND_PORT": str(_free_port())})
+    assert r.returncode == 0, r.stderr
+    line = next(l for l in r.stdout.splitlines() if "允許的開發來源" in l)
+    assert "127.0.0.1" in line.split("：", 1)[1].split(",")
