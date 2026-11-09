@@ -42,10 +42,18 @@ export function LineFixStage(props: LineFixStageProps) {
   // 一旦這個（頁, 選圖）的編輯器掛上，就不再因背景重抓（自動補線、改線寬）卸載它。
   const server =
     !edits.isFetching && edits.data && edits.data.generation_id === genId ? (edits.data.strokes as Stroke[]) : null;
+  // 只存「目前這個 key」的 seed：key 一變（換頁或換選圖）就換掉或清掉，回來時重新走第一次 seed 的規則，
+  // 不會拿到離開前的舊 seed（期間畫的筆畫會不見，下一筆還會把它們蓋掉）。
+  // （render 中依條件 setState 是 React 允許的「依 props 調整 state」寫法；ref 在 render 中讀寫會被 lint 擋。）
   const [seeded, setSeeded] = useState<{ key: string; strokes: Stroke[] } | null>(null);
   const fresh = local ?? server;
-  if (seeded?.key !== key && fresh) setSeeded({ key, strokes: fresh });
-  const seed = seeded?.key === key ? seeded.strokes : fresh;
+  if (seeded?.key !== key) {
+    if (fresh) setSeeded({ key, strokes: fresh });
+    else if (seeded) setSeeded(null);
+  }
+  const stored = seeded?.key === key ? seeded.strokes : null;
+  // 佇列裡的最新筆畫（還在送或送失敗）永遠優先於存下的 seed
+  const seed = local ?? stored ?? server;
 
   if (!seed) {
     return edits.isError ? (

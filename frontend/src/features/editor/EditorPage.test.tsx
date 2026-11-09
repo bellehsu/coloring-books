@@ -696,4 +696,28 @@ describe("EditorPage", () => {
     await act(async () => {});
     expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(1);
   });
+
+  // ---------- fix round 3 ----------
+
+  it("A 畫線 → 切到 B（B 的 edits 載入中）→ 回到 A：A 顯示畫過的筆畫，不用舊的第一次 seed", async () => {
+    // 先開 B：B 的 QA 有快取，之後切回 B 時 LineFixStage 不會因 QA 載入而卸載（同一個實例換 key）
+    search = "page=2&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    pages[1] = mkPage(2, { selected_generation_id: 7 });
+    gens = [mkGen(5), mkGen(7, { page_id: 2 })];
+    setup();
+    await screen.findByTestId("linefix");
+    await userEvent.click(pageButton(1));
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    const a = await screen.findByTestId("linefix");
+    expect(a).toHaveAttribute("data-strokes", "0");
+    await userEvent.click(within(a).getByRole("button", { name: "stub-draw" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-gaps", "2")); // 寫入完成
+    gate["GET /api/pages/2/lineart/edits"] = new Promise<void>(() => {});
+    await userEvent.click(pageButton(2));
+    expect(await screen.findByText("載入修線圖層中…")).toBeInTheDocument();
+    await userEvent.click(pageButton(1));
+    await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1"));
+  });
 });
