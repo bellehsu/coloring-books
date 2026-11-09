@@ -15,10 +15,12 @@
   --ok: #1e7a46;
   --ok-soft: #e3f2e8;
   --ok-ink: #1e6b3f;
+  --ok-strong: #14532d;
   --warn: #a34f06;
   --warn-soft: #fdecdc;
   --warn-ink: #8a3f05;
   --danger: #b42318;
+  --danger-soft: #fde8e6;
   --gap: #d92d20;
   --trim: #5b6ee8;
   --safe: #2e9a5c;
@@ -33,6 +35,8 @@
   --shadow-drawer: -8px 0 32px rgba(28, 27, 25, 0.18);
   --shadow-toast: 0 4px 16px rgba(28, 27, 25, 0.16);
   --shadow-tab: 0 1px 2px rgba(28, 27, 25, 0.12);
+  --shadow-card: 0 1px 2px rgba(28, 27, 25, 0.08);
+  --shadow-card-raised: 0 8px 24px rgba(28, 27, 25, 0.12);
   --shadow-float: 0 1px 2px rgba(28, 27, 25, 0.08), 0 4px 16px rgba(28, 27, 25, 0.08);
   --shadow-paper: 0 1px 2px rgba(28, 27, 25, 0.08), 0 10px 30px rgba(28, 27, 25, 0.1);
   --hint-bg: rgba(255, 255, 255, 0.9);

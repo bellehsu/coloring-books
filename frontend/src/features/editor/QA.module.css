@@ -72,7 +72,7 @@
   color: var(--ok-ink);
 }
 .status[data-tone="err"] {
-  background: #fde8e6;
+  background: var(--danger-soft);
   color: var(--danger);
 }
 .statusList {
@@ -124,7 +124,7 @@
 }
 .radio[data-on="true"][data-kind="bad"] {
   border-color: var(--danger);
-  background: #fde8e6;
+  background: var(--danger-soft);
   color: var(--danger);
   font-weight: 700;
 }
@@ -172,7 +172,7 @@
   background: var(--ok);
 }
 .passBtn[data-passed="true"] {
-  background: #14532d;
+  background: var(--ok-strong);
 }
 .passBtn:disabled {
   background: var(--line);
@@ -202,7 +202,7 @@
   margin: 0;
   padding: 10px 12px;
   border-radius: var(--radius-md);
-  background: #fde8e6;
+  background: var(--danger-soft);
   color: var(--danger);
   font-size: 13px;
   list-style: none;

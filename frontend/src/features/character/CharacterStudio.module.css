@@ -10,11 +10,11 @@
 .stage { flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 14px; background-color: var(--stage); background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px); background-size: 18px 18px; }
 .stageHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 14px; }
 .status { font-size: 13px; color: var(--muted-2); }
-.history { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.7); color: var(--muted-2); font: inherit; font-size: 13px; cursor: pointer; }
+.history { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--hint-bg); color: var(--muted-2); font: inherit; font-size: 13px; cursor: pointer; }
 .history[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr)); gap: 16px; }
-.card { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: var(--radius-xl); background: var(--surface); box-shadow: 0 1px 2px rgba(28, 27, 25, 0.08); }
-.card[data-on="true"] { box-shadow: 0 0 0 3px var(--accent), 0 8px 24px rgba(28, 27, 25, 0.12); }
+.card { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow-card); }
+.card[data-on="true"] { box-shadow: 0 0 0 3px var(--accent), var(--shadow-card-raised); }
 .card[data-off="true"] { opacity: 0.35; }
 .pick { position: relative; display: block; padding: 0; border: 0; background: none; cursor: pointer; border-radius: var(--radius-sm); }
 .thumb { aspect-ratio: 832 / 1216; border-radius: var(--radius-sm); background: var(--surface); display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); }
@@ -35,7 +35,7 @@
 .h2 { margin: 0; font-size: 16px; }
 .seed { font-size: 13px; color: var(--muted); }
 .previewStage { border-radius: var(--radius-lg); padding: 18px; display: grid; place-items: center; background-color: var(--stage); background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px); background-size: 18px 18px; }
-.paper { width: min(100%, 240px); aspect-ratio: 832 / 1216; background: var(--surface); box-shadow: 0 1px 2px rgba(28, 27, 25, 0.08), 0 10px 30px rgba(28, 27, 25, 0.12); display: grid; place-items: center; }
+.paper { width: min(100%, 240px); aspect-ratio: 832 / 1216; background: var(--surface); box-shadow: var(--shadow-paper); display: grid; place-items: center; }
 .checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
 .checks li { display: flex; gap: 10px; }
 .tick { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: var(--ok-soft); color: var(--ok); display: grid; place-items: center; }
