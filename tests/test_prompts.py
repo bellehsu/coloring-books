@@ -27,9 +27,11 @@ def test_background_prompt_has_scene_and_no_people():
     from app.services.prompts import BACKGROUND_NEGATIVE, background_prompt
 
     p = background_prompt("a park")
-    assert "a park" in p and "no people" in p
-    assert "a few large objects" in p
-    assert "people" in BACKGROUND_NEGATIVE
+    assert p.startswith("a park, ") and "no people" in p
+    assert "(a few large simple objects:1.3)" in p
+    assert "people" in BACKGROUND_NEGATIVE and "cluttered" in BACKGROUND_NEGATIVE
+    # 場景描述空白時不能以逗號開頭
+    assert not background_prompt("   ").startswith(",")
 
 
 def test_pose_prompt_has_character_and_action_but_no_scene():
