@@ -18,6 +18,7 @@ import {
   type SketchGuides,
   type Tool,
 } from "@/lib/raster";
+import type { SketchCanvasHandle } from "./sketchSaver";
 import styles from "./SketchCanvas.module.css";
 
 export { guidesFromLayout, type SketchGuides } from "@/lib/raster";
@@ -41,6 +42,11 @@ export interface SketchCanvasProps {
   onSave: (blob: Blob | null) => void;
   /** 呼叫端 POST /books/{id}/reference-sketch，回傳擷取好的白底黑線 PNG。 */
   onUploadReference: (file: File) => Promise<Blob>;
+  /**
+   * 掛載時呼叫一次，交出 handle（flush：有未存變更就立即同步 onSave；dirty：有未存變更），
+   * 回傳的函式在卸載時呼叫（取消登記）。產生候選、匯出前用它跳過 1 秒 debounce。
+   */
+  register?: (handle: SketchCanvasHandle) => () => void;
 }
 
 type Ctx = RasterCtx & Pick<CanvasRenderingContext2D, "getImageData" | "putImageData" | "drawImage">;
@@ -91,7 +97,15 @@ function pngBlobSync(canvas: HTMLCanvasElement): Blob {
   return new Blob([bytes], { type: "image/png" });
 }
 
-export function SketchCanvas({ width, height, guides, initialUrl, onSave, onUploadReference }: SketchCanvasProps) {
+export function SketchCanvas({
+  width,
+  height,
+  guides,
+  initialUrl,
+  onSave,
+  onUploadReference,
+  register,
+}: SketchCanvasProps) {
   const toast = useToast();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -103,6 +117,9 @@ export function SketchCanvas({ width, height, guides, initialUrl, onSave, onUplo
   const mountedRef = useRef(false);
   const dirtyRef = useRef(false);
   const saveSeqRef = useRef(0);
+  /** canvas.toBlob 送出、結果還沒交給 onSave（這段期間畫布內容也還沒存）。 */
+  const encodingRef = useRef(false);
+  const registerRef = useRef(register);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** saveNow 與 scheduleSave 互相呼叫（toBlob 失敗重試），用 ref 打斷循環依賴。 */
   const scheduleRef = useRef<(canvas: HTMLCanvasElement, isRetry?: boolean) => void>(() => {});
@@ -132,6 +149,8 @@ export function SketchCanvas({ width, height, guides, initialUrl, onSave, onUplo
     if (!ctx) return;
     dirtyRef.current = false;
     const seq = ++saveSeqRef.current;
+    // 較新的存檔取代編碼中的 toBlob（它的結果會被丟掉）
+    encodingRef.current = false;
     if (isBlank(readAll(canvas, ctx))) {
       onSaveRef.current(null);
       return;
@@ -140,8 +159,10 @@ export function SketchCanvas({ width, height, guides, initialUrl, onSave, onUplo
       onSaveRef.current(pngBlobSync(canvas));
       return;
     }
+    encodingRef.current = true;
     canvas.toBlob((blob) => {
       if (seq !== saveSeqRef.current) return;
+      encodingRef.current = false;
       if (blob) {
         onSaveRef.current(blob);
         return;
@@ -217,13 +238,24 @@ export function SketchCanvas({ width, height, guides, initialUrl, onSave, onUplo
 
   // 卸載 flush：還有未存的變更（debounce 還沒到）就同步呼叫 onSave，離開頁面不會掉最後一筆。
   // canvas 在 effect 掛載時先取出：卸載清理時 ref 可能已被 React 清成 null，但 DOM 節點仍可讀取。
+  // 同時把 flush handle 交給呼叫端（產生候選、匯出前立即存檔；離開頁面前檢查未存變更）。
   useEffect(() => {
     const canvas = canvasRef.current;
     mountedRef.current = true;
+    const unregister = registerRef.current?.({
+      flush() {
+        if (!canvas) return;
+        // 編碼中的 toBlob 還沒交出結果：改成同步存一次（toBlob 的結果因流水號過期會被丟掉）
+        if (encodingRef.current) dirtyRef.current = true;
+        saveNow(canvas, true);
+      },
+      dirty: () => dirtyRef.current || encodingRef.current,
+    });
     return () => {
       mountedRef.current = false;
       if (canvas) saveNow(canvas, true);
       else if (timerRef.current) clearTimeout(timerRef.current);
+      unregister?.();
     };
   }, [saveNow]);
 

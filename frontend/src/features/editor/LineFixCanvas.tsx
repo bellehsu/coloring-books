@@ -55,6 +55,8 @@ export interface LineFixCanvasProps {
   toolbarExtra?: ReactNode;
   /** 寫入佇列忙碌中：狀態列顯示「更新中…」（紅圈可能還是舊的）。 */
   pending?: boolean;
+  /** 取代狀態列（缺口數／更新中）的內容，以 role="alert" 顯示：例如「修線尚未儲存」＋重試。 */
+  statusOverride?: ReactNode;
 }
 
 /** 疊層 canvas 最長邊（內容 2551×3579 時約 1460×2048，記憶體約 12 MB）。 */
@@ -130,6 +132,7 @@ export function LineFixCanvas({
   onZoomChange,
   toolbarExtra,
   pending = false,
+  statusOverride,
 }: LineFixCanvasProps) {
   const toast = useToast();
   const [w, h] = contentPx;
@@ -453,9 +456,15 @@ export function LineFixCanvas({
         </div>
       </div>
 
-      <p role="status" className={`${styles.status} ${statusTone}`}>
-        {statusText}
-      </p>
+      {statusOverride ? (
+        <div role="alert" className={`${styles.status} ${styles.statusGap}`}>
+          {statusOverride}
+        </div>
+      ) : (
+        <p role="status" className={`${styles.status} ${statusTone}`}>
+          {statusText}
+        </p>
+      )}
     </div>
   );
 }

@@ -92,6 +92,11 @@ function LineFixEditor({
   const [fixBusy, setFixBusy] = useState(false);
   const [fixMsg, setFixMsg] = useState<string | null>(null);
   const busy = useSyncExternalStore(entry.subscribe, entry.busy, entry.busy);
+  const failed = useSyncExternalStore(
+    entry.subscribe,
+    () => entry.failed,
+    () => entry.failed,
+  );
 
   useEffect(() => {
     entry.setErrorHandler((e) => toast.show(`${errMsg(e, "儲存失敗")}，修線尚未儲存`, "error"));
@@ -104,6 +109,12 @@ function LineFixEditor({
     // 自動補線進行中先不寫入（伺服器正在改同一個圖層），結束後合併再送。
     if (fixing.current) changedWhileFixing.current = true;
     else entry.push(next);
+  }
+
+  /** 重送畫面上的完整筆畫（＝佇列最新的筆畫，再加上自動補線併入的）。補線中就等補線結束再一起送。 */
+  function retrySave() {
+    if (fixing.current) changedWhileFixing.current = true;
+    else entry.push(latest.current);
   }
 
   async function runAutofix() {
@@ -159,6 +170,16 @@ function LineFixEditor({
         zoom={zoom}
         onZoomChange={onZoomChange}
         pending={busy || fixBusy}
+        statusOverride={
+          failed ? (
+            <span data-testid="edits-save-failed" className={styles.saveFailed}>
+              修線尚未儲存
+              <button type="button" className={styles.retry} onClick={retrySave}>
+                重試
+              </button>
+            </span>
+          ) : undefined
+        }
         toolbarExtra={
           <>
             <button

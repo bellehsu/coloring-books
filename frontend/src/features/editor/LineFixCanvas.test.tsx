@@ -284,6 +284,23 @@ describe("LineFixCanvas", () => {
     expect(screen.getByRole("status")).toHaveTextContent("更新中");
   });
 
+  it("statusOverride（例如寫入失敗＋重試）取代缺口狀態列，優先於 pending", () => {
+    setup({
+      gaps: [[0.5, 0.5]],
+      pending: true,
+      statusOverride: (
+        <span>
+          修線尚未儲存 <button type="button">重試</button>
+        </span>
+      ),
+    });
+    expect(screen.queryByText(/個缺口/)).not.toBeInTheDocument();
+    expect(screen.queryByText("更新中…")).not.toBeInTheDocument();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("修線尚未儲存");
+    expect(within(alert).getByRole("button", { name: "重試" })).toBeInTheDocument();
+  });
+
   it("中鍵拖曳＝平移，不產生筆畫", () => {
     const { surface, onChange } = setup();
     drag(surface, [10, 10], [50, 50], { button: 1 });

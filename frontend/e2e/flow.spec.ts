@@ -29,22 +29,27 @@ test("完整流程：建書 → 角色 → 頁面 → 修線 → QA 通過 → �
   await page.getByRole("button", { name: "新增頁面" }).click();
   const canvas = page.getByRole("img", { name: /構圖畫板/ });
   await expect(canvas).toBeVisible();
+  await page.getByLabel("場景描述").fill("in a sunny park");
   await page.getByRole("button", { name: "方框" }).click();
   const box = (await canvas.boundingBox())!;
-  const sketchSaved = page.waitForResponse(
-    (r) => /\/api\/pages\/\d+\/sketch$/.test(r.url()) && r.request().method() === "PUT" && r.ok(),
-  );
+  // 記錄順序：草圖 PUT 完成、候選 POST 送出。畫完立刻按產生（不等 1 秒 debounce），
+  // 產生必須先把草圖存好，後端在 POST 當下讀 sketch_path。
+  const order: string[] = [];
+  page.on("requestfinished", (r) => {
+    if (/\/api\/pages\/\d+\/sketch$/.test(r.url()) && r.method() === "PUT") order.push("sketch saved");
+  });
+  page.on("request", (r) => {
+    if (/\/api\/pages\/\d+\/candidates$/.test(r.url()) && r.method() === "POST") order.push("candidates sent");
+  });
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.6);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.75, { steps: 5 });
   await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.9, { steps: 5 });
   await page.mouse.up();
-  await sketchSaved; // 落筆後 1 秒存檔
-
-  await page.getByLabel("場景描述").fill("in a sunny park");
   await page.getByRole("button", { name: "產生 4 張候選" }).click();
   const pageCards = page.getByRole("button", { name: /^選 seed \d+ 為本頁圖片$/ });
   await expect(pageCards).toHaveCount(4);
+  expect(order).toEqual(["sketch saved", "candidates sent"]);
   await pageCards.first().click();
   await expect(page.getByText("使用中")).toBeVisible();
 

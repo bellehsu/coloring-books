@@ -13,6 +13,8 @@ import {
   computeLayout,
   formatCm,
 } from "@/lib/layout";
+import { errMsg } from "./errMsg";
+import { whenBookWritesIdle } from "./pendingWrites";
 import styles from "./ExportDrawer.module.css";
 
 const Download = Icons.download;
@@ -66,6 +68,17 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
     if (busy || count === 0) return;
     setBusy(true);
     setMsg(null);
+    // 先讓伺服器等於畫面：草圖（含 debounce 中的）與修線都寫完；有失敗就不匯出舊內容
+    try {
+      await whenBookWritesIdle(qc, book.id);
+    } catch (e) {
+      setMsg({
+        tone: "error",
+        text: `有修改尚未儲存（${errMsg(e, "儲存失敗")}），請先按「重試」存好再匯出`,
+      });
+      setBusy(false);
+      return;
+    }
     try {
       const { blob, filename } = await api.download(
         `/books/${book.id}/export.pdf?include=${include}`,

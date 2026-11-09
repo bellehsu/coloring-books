@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
 import { MAX_UNDO } from "@/lib/raster";
 import { SketchCanvas, type SketchCanvasProps } from "./SketchCanvas";
+import type { SketchCanvasHandle } from "./sketchSaver";
 
 /**
  * jsdom 沒有 canvas：用一個「像素模型」的假 2D context。
@@ -387,5 +388,60 @@ describe("SketchCanvas", () => {
     fireEvent.click(screen.getByRole("button", { name: "復原" }));
     expect(screen.getByRole("button", { name: "復原" })).toBeDisabled();
     expect(pixels[0]).toBe(255);
+  });
+
+  // ---------- final review：產生／匯出前 flush、離開前知道有未存變更 ----------
+
+  it("register：handle.flush 立即同步存檔（不等 1 秒），之後 debounce 不再重複存；卸載時取消登記", async () => {
+    vi.useFakeTimers();
+    const off = vi.fn();
+    let handle: SketchCanvasHandle | null = null;
+    const register = vi.fn((h: SketchCanvasHandle) => {
+      handle = h;
+      return off;
+    });
+    const { canvas, onSave, unmount } = setup({ register });
+    await ready();
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(handle!.dirty()).toBe(false);
+    stroke(canvas);
+    expect(handle!.dirty()).toBe(true);
+    act(() => handle!.flush());
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).toBeInstanceOf(Blob);
+    expect(handle!.dirty()).toBe(false);
+    tick(2000);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    act(() => handle!.flush()); // 沒有新變更：不動作
+    expect(onSave).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(off).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("PNG 編碼中（toBlob 還沒回來）也算未存；flush 同步存一次，晚到的 toBlob 結果丟掉", async () => {
+    vi.useFakeTimers();
+    let pending: (() => void) | null = null;
+    HTMLCanvasElement.prototype.toBlob = function (cb: BlobCallback) {
+      pending = () => cb(new Blob(["late"], { type: "image/png" }));
+    };
+    let handle: SketchCanvasHandle | null = null;
+    const { canvas, onSave } = setup({
+      register: (h) => {
+        handle = h;
+        return () => {};
+      },
+    });
+    await ready();
+    stroke(canvas);
+    tick(1100);
+    expect(pending).not.toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(handle!.dirty()).toBe(true);
+    act(() => handle!.flush());
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(handle!.dirty()).toBe(false);
+    act(() => pending!());
+    expect(onSave).toHaveBeenCalledTimes(1);
   });
 });

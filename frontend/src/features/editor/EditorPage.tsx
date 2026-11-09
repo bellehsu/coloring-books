@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -37,10 +37,11 @@ import { Inspector } from "./Inspector";
 import { LineFixStage } from "./LineFixStage";
 import { LinePanel } from "./LinePanel";
 import { QACompare } from "./QACompare";
+import { onBeforeUnload } from "./pendingWrites";
 import { QAPanel } from "./QAPanel";
 import { uploadReference } from "./referenceSketch";
 import { SketchCanvas } from "./SketchCanvas";
-import { sketchSaverFor } from "./sketchSaver";
+import { sketchSaverFor, type SketchSaver } from "./sketchSaver";
 import { StageHeader, tabIdOf, type EditorMode } from "./StageHeader";
 import { ZoomControls } from "./LineFixCanvas";
 import styles from "./EditorPage.module.css";
@@ -137,6 +138,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
     sketchSaver.setErrorHandler((e) => toast.show(errMsg(e, "草圖儲存失敗"), "error"));
   }, [sketchSaver, toast]);
 
+  // 關分頁／重新整理：草圖或修線還沒存好（送出中、失敗、畫布 debounce 中）就請瀏覽器確認
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => onBeforeUnload(qc, e);
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [qc]);
+
   // 換選圖後，舊選圖閒置的修線佇列就不需要了
   useEffect(() => {
     for (const p of pagesQ.data ?? []) pruneEditsQueues(qc, p.id, p.selected_generation_id);
@@ -197,14 +205,19 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const removePage = (id: number) => {
     const i = pages.findIndex((p) => p.id === id);
     const neighbor = pages[i + 1] ?? pages[i - 1];
+    // 切頁前先標記刪除中：畫布卸載時 flush 的草圖先停著，不和 DELETE 賽跑、不跳出誤導的「草圖儲存失敗」
+    sketchSaver.beginDelete(id);
     // 先切到相鄰頁（樂觀），避免刪除完成前後閃到別頁；失敗就留在相鄰頁並提示
     if (id === current?.id && neighbor) selectPage(neighbor.id);
     deletePage.mutate(id, {
       onSuccess: () => {
-        sketchSaver.forget(id);
+        sketchSaver.endDelete(id, true);
         forgetEditsQueues(qc, id);
       },
-      onError: (e) => toast.show(errMsg(e, "無法刪除頁面"), "error"),
+      onError: (e) => {
+        sketchSaver.endDelete(id, false); // 停著的草圖照常送出
+        toast.show(errMsg(e, "無法刪除頁面"), "error");
+      },
     });
   };
 
@@ -213,6 +226,18 @@ export function EditorPage({ bookId }: { bookId: number }) {
       toast.show(errMsg(e, "無法儲存"), "error");
       throw e;
     });
+
+  /** 產生前：草圖立即存檔（不等 1 秒 debounce）並等它完成；失敗就不產生（後端在 POST 時讀 sketch_path）。 */
+  const flushSketch = async (pageId: number) => {
+    sketchSaver.flush(pageId);
+    try {
+      await sketchSaver.whenIdle(pageId);
+    } catch (e) {
+      // 寫入失敗的原因已由 saver 的錯誤 toast 顯示；這裡說明「沒有產生」，畫布下方有重試
+      toast.show("草圖尚未儲存，沒有產生候選圖；請按畫板下方的「重試」", "error");
+      throw e;
+    }
+  };
 
   const generate = (pageId: number) =>
     candidates
@@ -293,15 +318,19 @@ export function EditorPage({ bookId }: { bookId: number }) {
     const pending = sketchSaver.latestUrl(pageId);
     const sketchSeed = pending !== undefined ? pending : current.sketch_url;
     stage = (
-      <SketchCanvas
-        key={pageId}
-        width={gw}
-        height={gh}
-        guides={guidesFromLayout(b.layout)}
-        initialUrl={sketchSeed}
-        onSave={(blob) => sketchSaver.save(bookId, pageId, blob)}
-        onUploadReference={(file) => uploadReference(bookId, file)}
-      />
+      <>
+        <SketchCanvas
+          key={pageId}
+          width={gw}
+          height={gh}
+          guides={guidesFromLayout(b.layout)}
+          initialUrl={sketchSeed}
+          onSave={(blob) => sketchSaver.save(bookId, pageId, blob)}
+          onUploadReference={(file) => uploadReference(bookId, file)}
+          register={(h) => sketchSaver.register(bookId, pageId, h)}
+        />
+        <SketchSaveStatus saver={sketchSaver} pageId={pageId} />
+      </>
     );
   } else if (mode === "line") {
     stage = qa ? (
@@ -337,6 +366,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
         hasCharacter={hasCharacter}
         characterHref={characterHref}
         onPatch={(body) => patchPage(current.id, body)}
+        beforeGenerate={() => flushSketch(current.id)}
         onGenerate={() => generate(current.id)}
         generating={candidates.isPending}
         activeCount={activeCount}
@@ -392,5 +422,23 @@ export function EditorPage({ bookId }: { bookId: number }) {
         {panel}
       </Inspector>
     </div>,
+  );
+}
+
+/** 草圖最後一次寫入失敗時，畫布下方持續顯示（toast 會消失）＋重試。 */
+function SketchSaveStatus({ saver, pageId }: { saver: SketchSaver; pageId: number }) {
+  const failed = useSyncExternalStore(
+    saver.subscribe,
+    () => saver.failed(pageId),
+    () => false,
+  );
+  if (!failed) return null;
+  return (
+    <p role="alert" data-testid="sketch-save-failed" className={`${styles.saveFailed} ${styles.sketchSaveFailed}`}>
+      草圖尚未儲存
+      <button type="button" className={styles.retry} onClick={() => saver.retry(pageId)}>
+        重試
+      </button>
+    </p>
   );
 }

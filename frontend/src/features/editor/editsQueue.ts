@@ -10,12 +10,13 @@ import { createWriteQueue, type WriteQueue } from "@/lib/writeQueue";
  * 「同一頁的修改圖層依序寫入」在重新掛載後仍成立。
  */
 export interface EditsEntry {
+  readonly bookId: number;
   readonly pageId: number;
   readonly genId: number;
   push(strokes: Stroke[]): void;
   flush(): Promise<QA | undefined>;
   busy(): boolean;
-  /** 訂閱忙碌狀態變化（useSyncExternalStore 用）。 */
+  /** 訂閱忙碌／失敗狀態變化（useSyncExternalStore 用）。 */
   subscribe(fn: () => void): () => void;
   /** 最後 push 的完整筆畫（尚未確認也算）；這個 session 沒 push 過為 null。 */
   readonly latest: Stroke[] | null;
@@ -32,6 +33,11 @@ export interface EditsEntry {
 
 const registry = new WeakMap<QueryClient, Map<string, EditsEntry>>();
 const keyOf = (pageId: number, genId: number) => `${pageId}:${genId}`;
+
+/** 這個 QueryClient 目前所有的修線佇列（離開頁面前檢查、匯出前等待用）。 */
+export function allEditsQueues(qc: QueryClient): EditsEntry[] {
+  return [...(registry.get(qc)?.values() ?? [])];
+}
 
 /** 只查詢、不建立。 */
 export function peekEditsQueue(qc: QueryClient, pageId: number, genId: number): EditsEntry | undefined {
@@ -77,6 +83,7 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
   };
 
   const listeners = new Set<() => void>();
+  const notify = () => listeners.forEach((fn) => fn());
   let latest: Stroke[] | null = null;
   let failed = false;
   let reportError: (error: unknown) => void = () => {};
@@ -96,21 +103,25 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
       },
       onError: (err) => {
         failed = true;
+        notify();
         reportError(err);
       },
-      onBusyChange: () => listeners.forEach((fn) => fn()),
+      onBusyChange: notify,
     },
   );
 
   const entry: EditsEntry = {
+    bookId,
     pageId,
     genId,
     push(strokes) {
       latest = strokes.slice();
+      const wasFailed = failed;
       failed = false;
       // 樂觀更新：重新掛載或其他讀者看到的是畫面上的筆畫
       setEdits(latest);
       queue.push(latest);
+      if (wasFailed) notify();
     },
     flush: () => queue.flush(),
     busy: () => queue.busy(),

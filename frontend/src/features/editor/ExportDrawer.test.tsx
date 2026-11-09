@@ -4,7 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
 import type { Book } from "@/api/client";
+import { editsQueueFor } from "./editsQueue";
 import { ExportDrawer } from "./ExportDrawer";
+import { sketchSaverFor } from "./sketchSaver";
 
 const book = {
   id: 1,
@@ -17,6 +19,9 @@ let summary: unknown;
 let pages: unknown[];
 let calls: string[];
 let pdfRes: () => Response;
+/** 修線／草圖寫入：等 writeGate 放行，回 writeStatus。 */
+let writeGate: Promise<void> | null;
+let writeStatus: number;
 
 function json(b: unknown) {
   return new Response(JSON.stringify(b), {
@@ -28,6 +33,8 @@ function json(b: unknown) {
 beforeEach(() => {
   calls = [];
   pages = [];
+  writeGate = null;
+  writeStatus = 200;
   pdfRes = () =>
     new Response(new Blob(["pdf"]), {
       status: 200,
@@ -39,6 +46,13 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (url: string) => {
       calls.push(url);
+      if (url.includes("/lineart/edits") || url.endsWith("/sketch")) {
+        if (writeGate) await writeGate;
+        return new Response(JSON.stringify(writeStatus === 200 ? {} : { detail: "儲存失敗了" }), {
+          status: writeStatus,
+          headers: { "content-type": "application/json" },
+        });
+      }
       if (url.includes("export/summary")) return json(summary);
       if (url.includes("export.pdf")) return pdfRes();
       if (url.endsWith("/pages")) return json(pages);
@@ -60,7 +74,7 @@ function setup() {
       </ToastProvider>
     </QueryClientProvider>,
   );
-  return { spy };
+  return { spy, qc };
 }
 
 describe("ExportDrawer", () => {
@@ -194,5 +208,44 @@ describe("ExportDrawer", () => {
       expect(keys).toContain('["pages",1]');
       expect(keys).toContain('["book",1]');
     });
+  });
+
+  // ---------- final review：匯出前等寫入 ----------
+
+  it("下載前先等這本書的修線與草圖寫完，再要 PDF", async () => {
+    summary = { total: 1, passed: 1, exportable_ids: [1], skipped: [] };
+    const clicked: string[] = [];
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      clicked.push(this.download);
+    };
+    try {
+      let release!: () => void;
+      writeGate = new Promise<void>((r) => (release = r));
+      const { qc } = setup();
+      editsQueueFor(qc, 1, 10, 7).push([{ op: "draw", width_px: 11, points: [[0.1, 0.1]] }]);
+      sketchSaverFor(qc).save(1, 11, new Blob(["x"]));
+      await userEvent.click(await screen.findByRole("button", { name: /下載 PDF（1 頁）/ }));
+      await act(async () => {});
+      expect(calls.some((u) => u.includes("export.pdf"))).toBe(false);
+      await act(async () => release());
+      await waitFor(() => expect(clicked).toHaveLength(1));
+      const order = calls.filter((u) => /edits|sketch|export\.pdf/.test(u));
+      expect(order[order.length - 1]).toContain("export.pdf");
+    } finally {
+      HTMLAnchorElement.prototype.click = orig;
+    }
+  });
+
+  it("有寫入失敗 → 顯示錯誤、不下載", async () => {
+    summary = { total: 1, passed: 1, exportable_ids: [1], skipped: [] };
+    writeStatus = 500;
+    const { qc } = setup();
+    const entry = editsQueueFor(qc, 1, 10, 7);
+    entry.push([{ op: "draw", width_px: 11, points: [[0.1, 0.1]] }]);
+    await waitFor(() => expect(entry.failed).toBe(true));
+    await userEvent.click(await screen.findByRole("button", { name: /下載 PDF（1 頁）/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/尚未儲存/);
+    expect(calls.some((u) => u.includes("export.pdf"))).toBe(false);
   });
 });

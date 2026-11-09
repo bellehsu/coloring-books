@@ -133,3 +133,33 @@
       "insp";
   }
 }
+
+/* 寫入失敗的持續狀態（修線狀態列、草圖畫布下方）＋重試 */
+.saveFailed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--danger);
+  font-size: 14px;
+}
+.sketchSaveFailed {
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--danger-soft);
+}
+.retry {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--danger);
+  font-size: 13px;
+  cursor: pointer;
+}
+.retry:hover {
+  background: var(--danger-soft);
+}

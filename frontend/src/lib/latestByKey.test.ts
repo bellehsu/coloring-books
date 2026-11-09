@@ -109,4 +109,101 @@ describe("createLatestByKey", () => {
     await tick();
     expect(bad.busy(1)).toBe(false);
   });
+
+  // ---------- whenIdle／failed／clearError／subscribe ----------
+
+  it("whenIdle：閒置立即 resolve；忙碌時等到最後一筆完成才 resolve", async () => {
+    const ds: ReturnType<typeof deferred<string>>[] = [];
+    const q = createLatestByKey(() => {
+      const d = deferred<string>();
+      ds.push(d);
+      return d.promise;
+    });
+    await expect(q.whenIdle(1)).resolves.toBeUndefined();
+    q.push(1, "a");
+    q.push(1, "b");
+    let done = false;
+    const w = q.whenIdle(1).then(() => (done = true));
+    ds[0].resolve("ok");
+    await tick();
+    expect(done).toBe(false); // b 還在路上
+    ds[1].resolve("ok");
+    await w;
+    expect(done).toBe(true);
+  });
+
+  it("whenIdle：最後一筆失敗 → reject 該錯誤；failed 保持到下一次 push", async () => {
+    const ds: ReturnType<typeof deferred<string>>[] = [];
+    const q = createLatestByKey(() => {
+      const d = deferred<string>();
+      ds.push(d);
+      return d.promise;
+    });
+    q.push(1, "a");
+    const w = q.whenIdle(1);
+    ds[0].reject(new Error("壞了"));
+    await expect(w).rejects.toThrow("壞了");
+    expect(q.failed(1)).toBe(true);
+    expect(q.busy(1)).toBe(false);
+    await expect(q.whenIdle(1)).rejects.toThrow("壞了"); // 失敗是持續的狀態
+    expect(q.failed(2)).toBe(false);
+    q.push(1, "b");
+    expect(q.failed(1)).toBe(false);
+    ds[1].resolve("ok");
+    await expect(q.whenIdle(1)).resolves.toBeUndefined();
+  });
+
+  it("whenIdle：被取代的失敗不算", async () => {
+    const ds: ReturnType<typeof deferred<string>>[] = [];
+    const q = createLatestByKey(() => {
+      const d = deferred<string>();
+      ds.push(d);
+      return d.promise;
+    });
+    q.push(1, "a");
+    q.push(1, "b");
+    const w = q.whenIdle(1);
+    ds[0].reject(new Error("舊的"));
+    await tick();
+    ds[1].resolve("ok");
+    await expect(w).resolves.toBeUndefined();
+    expect(q.failed(1)).toBe(false);
+  });
+
+  it("clearError：忘掉失敗（例如頁面已刪除）", async () => {
+    const q = createLatestByKey(async () => {
+      throw new Error("x");
+    });
+    q.push(1, "a");
+    await expect(q.whenIdle(1)).rejects.toThrow("x");
+    q.clearError(1);
+    expect(q.failed(1)).toBe(false);
+    await expect(q.whenIdle(1)).resolves.toBeUndefined();
+  });
+
+  it("subscribe：開始送、完成、失敗都通知；anyBusy／anyFailed 看所有 key", async () => {
+    const ds: ReturnType<typeof deferred<string>>[] = [];
+    const q = createLatestByKey(() => {
+      const d = deferred<string>();
+      ds.push(d);
+      return d.promise;
+    });
+    const fn = vi.fn();
+    const off = q.subscribe(fn);
+    expect(q.anyBusy()).toBe(false);
+    q.push(1, "a");
+    expect(fn).toHaveBeenCalled();
+    expect(q.anyBusy()).toBe(true);
+    fn.mockClear();
+    ds[0].reject(new Error("x"));
+    await tick();
+    expect(fn).toHaveBeenCalled();
+    expect(q.anyBusy()).toBe(false);
+    expect(q.anyFailed()).toBe(true);
+    off();
+    fn.mockClear();
+    q.push(1, "b");
+    expect(fn).not.toHaveBeenCalled();
+    expect(q.anyFailed()).toBe(false);
+  });
 });

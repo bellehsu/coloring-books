@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -22,10 +23,44 @@ vi.mock("./SketchCanvas", async (orig) => {
   const real = await orig<typeof import("./SketchCanvas")>();
   return {
     ...real,
-    SketchCanvas: (p: { initialUrl: string | null; onSave: (b: Blob | null) => void; width: number }) => {
+    SketchCanvas: function StubSketch(p: {
+      initialUrl: string | null;
+      onSave: (b: Blob | null) => void;
+      width: number;
+      register?: (h: { flush(): void; dirty(): boolean }) => () => void;
+    }) {
       sketchSaves.push(p.onSave);
+      // 跟真的畫布一樣：落筆後 1 秒才存檔；register 的 flush 立即存、卸載時有未存變更也存
+      const dirty = useRef(false);
+      const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+      const saveRef = useRef(p.onSave);
+      const registerRef = useRef(p.register);
+      useEffect(() => {
+        const flush = () => {
+          clearTimeout(timer.current);
+          if (!dirty.current) return;
+          dirty.current = false;
+          saveRef.current(new Blob(["drawn"], { type: "image/png" }));
+        };
+        const off = registerRef.current?.({ flush, dirty: () => dirty.current });
+        return () => {
+          flush();
+          off?.();
+        };
+      }, []);
+      const draw = () => {
+        dirty.current = true;
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => {
+          dirty.current = false;
+          saveRef.current(new Blob(["drawn"], { type: "image/png" }));
+        }, 1000);
+      };
       return (
         <div data-testid="sketch" data-initial={p.initialUrl ?? ""} data-width={p.width}>
+          <button type="button" onClick={draw}>
+            stub-draw-sketch
+          </button>
           <button type="button" onClick={() => p.onSave(new Blob(["x"], { type: "image/png" }))}>
             stub-save
           </button>
@@ -45,6 +80,7 @@ type LineProps = {
   zoom?: number;
   pending?: boolean;
   gaps: unknown[];
+  statusOverride?: React.ReactNode;
 };
 vi.mock("./LineFixCanvas", async (orig) => {
   const real = await orig<typeof import("./LineFixCanvas")>();
@@ -59,6 +95,7 @@ vi.mock("./LineFixCanvas", async (orig) => {
           stub-draw
         </button>
         {p.toolbarExtra}
+        {p.statusOverride ?? <p role="status">{p.gaps.length} 個缺口</p>}
       </div>
     ),
   };
@@ -158,6 +195,8 @@ let edits: O[];
 let calls: { method: string; url: string; body?: unknown }[];
 let gate: Record<string, Promise<void> | undefined>;
 let candidatesStatus: number;
+/** `${method} ${url}` → 回傳這個錯誤狀態碼（測寫入失敗）。 */
+let failWith: Record<string, number>;
 
 const j = (data: unknown, status = 200) =>
   new Response(data === undefined ? null : JSON.stringify(data), {
@@ -174,6 +213,7 @@ beforeEach(() => {
   calls = [];
   gate = {};
   candidatesStatus = 202;
+  failWith = {};
   sketchSaves.length = 0;
   let blobN = 0;
   URL.createObjectURL = vi.fn(() => `blob:${++blobN}`);
@@ -187,6 +227,8 @@ beforeEach(() => {
       calls.push({ method, url, body });
       const g = gate[`${method} ${url}`];
       if (g) await g;
+      const fail = failWith[`${method} ${url}`];
+      if (fail) return j({ detail: "伺服器壞了" }, fail);
       if (url === "/api/books/1" && method === "GET") return book ? j(book) : j({ detail: "找不到這本繪本" }, 404);
       if (url === "/api/books/1/pages" && method === "GET") return j(pages);
       if (url === "/api/books/1/pages" && method === "POST") {
@@ -217,6 +259,7 @@ beforeEach(() => {
         return j(undefined, 204);
       }
       m = url.match(/^\/api\/pages\/(\d+)\/sketch$/);
+      if (m && !pages.some((p) => p.id === Number(m![1]))) return j({ detail: "找不到頁面" }, 404);
       if (m) {
         pages = pages.map((p) =>
           p.id === Number(m![1]) ? { ...p, sketch_url: method === "PUT" ? `/api/pages/${m![1]}/sketch?v=2` : null } : p,
@@ -719,5 +762,160 @@ describe("EditorPage", () => {
     expect(await screen.findByText("載入修線圖層中…")).toBeInTheDocument();
     await userEvent.click(pageButton(1));
     await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1"));
+  });
+
+  // ---------- final review fixes ----------
+
+  it("畫完 1 秒內就按產生：先把草圖存完（PUT 完成）才 POST candidates", async () => {
+    let release!: () => void;
+    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-draw-sketch" }));
+    await userEvent.click(screen.getByRole("button", { name: "產生 4 張候選" }));
+    // 沒等 debounce：按下產生就立即送出草圖
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/sketch")).toHaveLength(1));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(0);
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(1));
+    const order = calls.map((c) => `${c.method} ${c.url}`);
+    expect(order.indexOf("PUT /api/pages/1/sketch")).toBeLessThan(order.indexOf("POST /api/pages/1/candidates"));
+    expect(calledWith("PUT", "/api/pages/1/sketch")).toHaveLength(1); // debounce 不再重送
+  });
+
+  it("草圖存檔失敗：不產生、提示；畫布下方持續顯示「草圖尚未儲存」，按重試再送一次", async () => {
+    failWith["PUT /api/pages/1/sketch"] = 500;
+    setup();
+    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-draw-sketch" }));
+    await userEvent.click(screen.getByRole("button", { name: "產生 4 張候選" }));
+    expect(await screen.findByText(/草圖尚未儲存，沒有產生候選圖/)).toBeInTheDocument();
+    expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(0);
+    const line = screen.getByTestId("sketch-save-failed");
+    expect(line).toHaveTextContent("草圖尚未儲存");
+    delete failWith["PUT /api/pages/1/sketch"];
+    await userEvent.click(within(line).getByRole("button", { name: "重試" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/sketch")).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByTestId("sketch-save-failed")).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "產生 4 張候選" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(1));
+  });
+
+  it("beforeunload：草圖還在送或畫布有未存變更時攔下離開；都存好就不攔", async () => {
+    let release!: () => void;
+    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
+    setup();
+    const unload = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    const sk = await screen.findByTestId("sketch");
+    expect(unload()).toBe(false);
+    await userEvent.click(within(sk).getByRole("button", { name: "stub-draw-sketch" }));
+    expect(unload()).toBe(true); // debounce 中
+    await userEvent.click(within(sk).getByRole("button", { name: "stub-save" }));
+    expect(unload()).toBe(true); // PUT 送出中
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/sketch").length).toBeGreaterThan(0));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1100)); // 讓 debounce 的存檔也送完
+    });
+    await waitFor(() => expect(unload()).toBe(false));
+  });
+
+  it("修線寫入失敗：缺口文字換成「修線尚未儲存」＋重試，重試送出最新筆畫；離開頁面會被攔", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    failWith["PUT /api/pages/1/lineart/edits"] = 500;
+    setup();
+    const canvas = await screen.findByTestId("linefix");
+    await userEvent.click(within(canvas).getByRole("button", { name: "stub-draw" }));
+    const failed = await screen.findByTestId("edits-save-failed");
+    expect(failed).toHaveTextContent("修線尚未儲存");
+    expect(within(screen.getByTestId("linefix")).queryByText(/個缺口/)).not.toBeInTheDocument();
+    const e = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    delete failWith["PUT /api/pages/1/lineart/edits"];
+    await userEvent.click(within(failed).getByRole("button", { name: "重試" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(2));
+    expect((calledWith("PUT", "/api/pages/1/lineart/edits")[1].body as { strokes: unknown[] }).strokes).toHaveLength(1);
+    await waitFor(() => expect(screen.queryByTestId("edits-save-failed")).not.toBeInTheDocument());
+    expect(within(screen.getByTestId("linefix")).getByText("2 個缺口")).toBeInTheDocument();
+  });
+
+  it("刪除目前頁：未存的草圖不在卸載時送出，也不出現「草圖儲存失敗」", async () => {
+    search = "page=2";
+    let releaseDelete!: () => void;
+    gate["DELETE /api/pages/2"] = new Promise<void>((r) => (releaseDelete = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-draw-sketch" }));
+    await userEvent.click(screen.getByRole("button", { name: "第 2 頁的更多動作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
+    expect(pageButton(3)).toHaveAttribute("aria-current", "true");
+    await act(async () => releaseDelete());
+    await waitFor(() => expect(calledWith("DELETE", "/api/pages/2")).toHaveLength(1));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1100));
+    });
+    expect(calledWith("PUT", "/api/pages/2/sketch")).toHaveLength(0);
+    expect(screen.queryByText(/草圖儲存失敗/)).not.toBeInTheDocument();
+  });
+
+  it("刪除目前頁：刪除前就在路上的草圖 PUT 回 404 → 不提示錯誤", async () => {
+    search = "page=2";
+    let releasePut!: () => void;
+    gate["PUT /api/pages/2/sketch"] = new Promise<void>((r) => (releasePut = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-save" }));
+    await userEvent.click(screen.getByRole("button", { name: "第 2 頁的更多動作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
+    await waitFor(() => expect(calledWith("DELETE", "/api/pages/2")).toHaveLength(1));
+    await act(async () => releasePut()); // 頁面已刪：404
+    await act(async () => {});
+    expect(screen.queryByText(/找不到頁面|草圖儲存失敗/)).not.toBeInTheDocument();
+    const e = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("場景描述離開欄位（PATCH 送出中）→ 換頁再回來（pages 還沒重抓）：顯示剛送出的文字", async () => {
+    let release!: () => void;
+    gate["PATCH /api/pages/1"] = new Promise<void>((r) => (release = r));
+    setup();
+    const ta = await screen.findByLabelText("場景描述");
+    await userEvent.clear(ta);
+    await userEvent.type(ta, "new text");
+    fireEvent.blur(ta);
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+    await userEvent.click(pageButton(2));
+    expect(screen.getByLabelText("場景描述")).toHaveValue("scene 2");
+    await userEvent.click(pageButton(1));
+    expect(screen.getByLabelText("場景描述")).toHaveValue("new text");
+    // 產生前仍等那個 PATCH，不重送
+    await userEvent.click(screen.getByRole("button", { name: "產生 4 張候選" }));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(0);
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(1));
+    expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1);
+  });
+
+  it("場景描述 PATCH 失敗後再按產生：重送 PATCH", async () => {
+    failWith["PATCH /api/pages/1"] = 500;
+    setup();
+    const ta = await screen.findByLabelText("場景描述");
+    await userEvent.type(ta, "!");
+    fireEvent.blur(ta);
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+    expect(await screen.findByText(/伺服器壞了/)).toBeInTheDocument();
+    delete failWith["PATCH /api/pages/1"];
+    await userEvent.click(screen.getByRole("button", { name: "產生 4 張候選" }));
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(2));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(1));
+    expect(screen.getByLabelText("場景描述")).toHaveValue("scene 1!");
   });
 });
