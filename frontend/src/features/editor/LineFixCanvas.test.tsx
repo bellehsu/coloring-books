@@ -215,6 +215,24 @@ describe("LineFixCanvas", () => {
     expect((onChange.mock.calls[1][0] as Stroke[]).length).toBe(2);
   });
 
+  it("失去指標捕捉（lostpointercapture）→ 結束這一筆，之後的 pointerdown 仍能畫", () => {
+    const { surface, onChange } = setup();
+    fireEvent.pointerDown(surface, { pointerId: 1, button: 0, ...at(10, 10) });
+    fireEvent.pointerMove(surface, { pointerId: 1, ...at(40, 10) });
+    fireEvent.lostPointerCapture(surface, { pointerId: 1 });
+    expect(onChange).toHaveBeenCalledTimes(1); // 跟 pointercancel 一樣提交
+    drag(surface, [10, 50], [40, 50], { pointerId: 2 });
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect((onChange.mock.calls[1][0] as Stroke[]).length).toBe(2);
+  });
+
+  it("正常放開後的 lostpointercapture 不會重複提交", () => {
+    const { surface, onChange } = setup();
+    drag(surface, [10, 10], [40, 10]);
+    fireEvent.lostPointerCapture(surface, { pointerId: 1 });
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
   it("復原＝移除最後一筆", () => {
     const strokes: Stroke[] = [
       { op: "draw", width_px: 11, points: [[0.1, 0.1]] },

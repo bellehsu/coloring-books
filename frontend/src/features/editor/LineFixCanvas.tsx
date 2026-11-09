@@ -332,6 +332,11 @@ export function LineFixCanvas({
     if (ctx) drawStrokes(ctx, [{ op: d.op, width_px: d.width, points: [last, p] }], w, h);
   };
 
+  /**
+   * pointerup／pointercancel／lostpointercapture 都走這裡：結束拖曳（筆畫照常提交）。
+   * 捕捉被瀏覽器收走（例如切換視窗）時若不清 dragRef，之後的 pointerdown 都會被忽略。
+   * 正常放開時 releasePointerCapture 也會觸發 lostpointercapture，那時 dragRef 已清空，不會重複提交。
+   */
   const onPointerUp = (e: PointerEvent<HTMLDivElement>) => {
     const d = dragRef.current;
     if (!d || e.pointerId !== d.pointerId) return;
@@ -417,6 +422,7 @@ export function LineFixCanvas({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onLostPointerCapture={onPointerUp}
         onPointerEnter={() => (hoverRef.current = true)}
         onPointerLeave={() => (hoverRef.current = false)}
       >

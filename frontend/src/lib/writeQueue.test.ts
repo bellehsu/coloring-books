@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Stroke } from "./strokes";
-import { createWriteQueue } from "./writeQueue";
+import { createWriteQueue, type WriteQueue } from "./writeQueue";
 
 /** 可手動決定何時完成的假請求。 */
 function deferred<T>() {
@@ -188,6 +188,54 @@ describe("createWriteQueue", () => {
     await settle();
     expect(onBusyChange.mock.calls).toEqual([[true], [false]]);
     expect(q.busy()).toBe(false);
+  });
+
+  it("onSuccess 裡同步 push：新請求在路上時不回報閒置、flush 等新請求結束", async () => {
+    const s = fakeServer();
+    const onBusyChange = vi.fn();
+    let again = true;
+    const q: WriteQueue<FakeQA> = createWriteQueue(s.send, {
+      onBusyChange,
+      onSuccess: () => {
+        if (again) {
+          again = false;
+          q.push(st(2));
+        }
+      },
+    });
+    q.push(st(1));
+    const done = vi.fn();
+    void q.flush().then(done);
+    s.calls[0].d.resolve({ n: 1 });
+    await settle();
+    expect(s.send).toHaveBeenCalledTimes(2);
+    expect(onBusyChange.mock.calls).toEqual([[true]]); // 沒有 false，也沒有重複 true
+    expect(q.busy()).toBe(true);
+    expect(done).not.toHaveBeenCalled();
+
+    s.calls[1].d.resolve({ n: 2 });
+    await settle();
+    expect(onBusyChange.mock.calls).toEqual([[true], [false]]);
+    expect(done).toHaveBeenCalledWith({ n: 2 });
+    expect(s.server()).toEqual(st(2));
+  });
+
+  it("onError 裡同步 push（重試）：同樣不提早回報閒置；重試成功後 flush 成功", async () => {
+    const s = fakeServer();
+    const onBusyChange = vi.fn();
+    const q: WriteQueue<FakeQA> = createWriteQueue(s.send, {
+      onBusyChange,
+      onError: (_e, strokes) => q.push(strokes),
+    });
+    q.push(st(1));
+    const done = q.flush();
+    s.calls[0].d.reject(new Error("暫時失敗"));
+    await settle();
+    expect(s.send).toHaveBeenCalledTimes(2);
+    expect(onBusyChange.mock.calls).toEqual([[true]]);
+    s.calls[1].d.resolve({ n: 1 });
+    await expect(done).resolves.toEqual({ n: 1 });
+    expect(onBusyChange.mock.calls).toEqual([[true], [false]]);
   });
 
   it("push 會複製陣列：之後呼叫端改動原陣列不影響已排隊的內容", async () => {

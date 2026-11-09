@@ -43,6 +43,14 @@ export function createWriteQueue<Q>(
   /** 最後一次（未被取代的）寫入失敗；之後任何 push 會清掉。 */
   let lastError: { error: unknown } | null = null;
   let waiters: { resolve: (q: Q | undefined) => void; reject: (e: unknown) => void }[] = [];
+  /** 已通知給 onBusyChange 的狀態：只在真的轉換時通知（接續請求、回呼裡再 push 都不會閃爍或重複）。 */
+  let busyNotified = false;
+
+  const setBusy = (b: boolean) => {
+    if (b === busyNotified) return;
+    busyNotified = b;
+    opts.onBusyChange?.(b);
+  };
 
   const settleWaiters = () => {
     const ws = waiters;
@@ -53,13 +61,13 @@ export function createWriteQueue<Q>(
     }
   };
 
-  /** 送出 pending。fromIdle：從閒置開始（要通知 busy=true）；接續上一個請求時不通知，避免閃爍。 */
-  const pump = (fromIdle: boolean) => {
+  /** 送出 pending（已有請求在路上則等它結束）。 */
+  const pump = () => {
     if (inflight || pending === null) return;
     const strokes = pending;
     pending = null;
     inflight = true;
-    if (fromIdle) opts.onBusyChange?.(true);
+    setBusy(true);
     let p: Promise<Q>;
     try {
       p = Promise.resolve(send(strokes));
@@ -83,15 +91,18 @@ export function createWriteQueue<Q>(
   const finish = (report: () => void) => {
     inflight = false;
     if (pending !== null) {
-      pump(false);
+      pump();
       return;
     }
     try {
       report();
     } finally {
-      // 回呼丟錯也不能讓佇列卡在忙碌、flush 永遠不結束
-      opts.onBusyChange?.(false);
-      settleWaiters();
+      // 回呼可能同步 push（已經有新請求在路上）：那就還不是閒置，等新請求結束再通知與結算 flush。
+      // 回呼丟錯也會走到這裡，佇列不會卡在忙碌、flush 不會永遠不結束。
+      if (!inflight && pending === null) {
+        setBusy(false);
+        settleWaiters();
+      }
     }
   };
 
@@ -99,7 +110,7 @@ export function createWriteQueue<Q>(
     push(strokes) {
       pending = strokes.slice();
       lastError = null;
-      pump(true);
+      pump();
     },
     flush() {
       if (!inflight && pending === null) {

@@ -38,7 +38,7 @@ export interface PlaceInput {
 
 /**
  * 算紙張左上角在視窗中的位置。某一軸紙比視窗小 → 該軸置中；比視窗大 → 依 center 放置並夾住，
- * 不露出紙外的舞台。回傳夾過的 center（存回 state，平移不會累積超出範圍）。
+ * 不露出紙外的舞台。也回傳夾過後實際的 center（元件目前不存回 state；平移與滾輪都從夾過的 x/y 反推 center，不會累積超出範圍）。
  */
 export function placePaper({ vpW, vpH, dispW, dispH, cx, cy }: PlaceInput) {
   const axis = (vp: number, disp: number, c: number) => {
