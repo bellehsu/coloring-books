@@ -103,9 +103,11 @@ npm run build && npm test && npm run lint
 
 ### 假生成後端（不需要 GPU）
 
-`scripts/dev_fake_backend.py` 是真正的 FastAPI 後端，但生成引擎換成 `DemoEngine`：每張圖延遲 0.3 秒、回報 3 次進度，
-用 Pillow 畫一張彩色圖（白底、黑色粗外框的角色與幾個背景方塊）。下方不填色的大框上緣刻意留了約 7 px 的缺口
-（A4 300 DPI 線稿上約 20 px），所以 QA 一定會報「線條有缺口」，按「自動補線」後缺口歸零。
+`scripts/dev_fake_backend.py` 是真正的 FastAPI 後端，但生成引擎換成 `DemoEngine`：每張圖延遲 0.3 秒、回報 3 次進度，用 Pillow 畫彩色圖：
+- 背景：太陽、雲、樹、草叢幾個大物件，上方一個不填色的大框，上緣刻意留了約 7 px 的缺口（A4 300 DPI 線稿上約 20 px）。
+  物件都避開角色的預設位置，合成後 QA 一定會報 1 個「線條有缺口」，按「自動補線」後缺口歸零。
+- 角色動作：白底上的角色（832×1216）＋同尺寸遮罩（角色處白、其他黑），可以去背、合成。
+- 角色候選（與舊流程的頁面圖）：白底、黑色粗外框的角色與幾個背景方塊（同樣留一個缺口）。
 
 ```bash
 $VENV_ROOT/coloring-books/bin/python scripts/dev_fake_backend.py --port 8000 [--storage /tmp/fake-books]
@@ -126,9 +128,13 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `playwright.config.ts` 會自動啟動兩個服務：假後端（`127.0.0.1:8010`，每次執行用新的暫存 storage）與 `next dev -p 3010`（`BACKEND_URL=http://127.0.0.1:8010`）。
   非 CI 時若這兩個埠已有服務就直接重用（資料會累積；測試不依賴既有資料）。
 - 只用 chromium，並以 `--disable-gpu --disable-software-rasterizer` 啟動：WSL2 上 headless chromium 的 GPU 行程常卡住，`requestAnimationFrame` 不觸發、點擊一直等不到。
-- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 產生並設定角色 → 新增頁、在畫板畫方框 → 產生候選並選圖 → 線稿看到紅圈 → 自動補線後缺口 0 → QA 一致 → 標為通過 → 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）；
-  以及沒設角色時按鈕停用、後端 409「請先設定角色」原樣顯示。
-- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器，整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
+- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 產生並設定角色 → 新增頁、在畫板畫方框 → 產生背景並選用 → 點「揮手」產生角色動作並選用 →
+  合成：拖曳＋方向鍵移動角色後立刻「確認合成」（位置 PUT 故意變慢，檢查合成在最後一次位置寫完後才送出）→ 自動切到線稿、看到紅圈 →
+  自動補線後缺口 0 → QA 一致 → 標為通過 → 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）；
+  以及沒設角色時角色分頁停用、後端 409「請先設定角色」原樣顯示。
+- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器（背景、畫構圖、角色、線稿模式）與合成分頁（角色移到邊緣外也一樣），
+  整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
+- `next dev` 同一個 `frontend/` 只能跑一份：`scripts/dev.sh`（或其他 `next dev`）還開著時 e2e 會出現「Another next dev server is already running」，先關掉它再跑。
 - 全部約 20 秒（第一次 `next dev` 編譯會再久一點）。
 
 ## 內網部署
