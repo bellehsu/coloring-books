@@ -1,11 +1,24 @@
 "use client";
 
-import { useEffect, useId, useRef, type ReactNode, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { Icons } from "./Icons";
 import styles from "./Modal.module.css";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+const modalStack: object[] = [];
+let lockCount = 0;
+let prevOverflow = "";
+function lockScroll() {
+  if (lockCount++ === 0) {
+    prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+}
+function unlockScroll() {
+  if (--lockCount === 0) document.body.style.overflow = prevOverflow;
+}
 
 export interface ModalProps {
   open: boolean;
@@ -25,47 +38,64 @@ export function Modal({ open, onClose, title, children, variant }: ModalProps & 
     onCloseRef.current = onClose;
   });
   const titleId = useId();
+  const downOnBackdrop = useRef(false);
 
   useEffect(() => {
     if (!open) return;
+    const token = {};
+    modalStack.push(token);
+    lockScroll();
     const opener = document.activeElement as HTMLElement | null;
     panel.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+
+    // 只有最上層的 modal 回應；焦點落在 body 時仍有效。
+    const onDocKey = (e: globalThis.KeyboardEvent) => {
+      if (modalStack[modalStack.length - 1] !== token) return;
+      const el = panel.current;
+      if (!el) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      const inside = el.contains(active);
+      if (e.shiftKey && (active === first || !inside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !inside)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onDocKey);
     return () => {
+      document.removeEventListener("keydown", onDocKey);
+      modalStack.splice(modalStack.indexOf(token), 1);
+      unlockScroll();
       if (opener && opener.isConnected) opener.focus();
     };
   }, [open]);
 
   if (!open) return null;
 
-  function onKeyDown(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      e.stopPropagation();
-      onCloseRef.current();
-      return;
-    }
-    if (e.key !== "Tab" || !panel.current) return;
-    const items = Array.from(panel.current.querySelectorAll<HTMLElement>(FOCUSABLE));
-    if (items.length === 0) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    const active = document.activeElement;
-    if (e.shiftKey && (active === first || !panel.current.contains(active))) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && (active === last || !panel.current.contains(active))) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-
   return (
     <div
       data-testid="overlay"
       className={`${styles.overlay} ${styles[variant]}`}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      onMouseDown={(e) => {
+        downOnBackdrop.current = e.target === e.currentTarget;
       }}
-      onKeyDown={onKeyDown}
+      onClick={(e) => {
+        const ok = downOnBackdrop.current && e.target === e.currentTarget;
+        downOnBackdrop.current = false;
+        if (ok) onClose();
+      }}
     >
       <section
         ref={panel}

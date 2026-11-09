@@ -10,6 +10,9 @@ export function QueuePill() {
   if (data?.state === "engine_unavailable") {
     tone = "warn";
     text = "生成引擎無法連線";
+  } else if (data?.state === "stopped") {
+    tone = "warn";
+    text = "生成服務已停止";
   } else if (data) {
     const n = data.queued + (data.running_id != null ? 1 : 0);
     if (n > 0) {
@@ -21,6 +24,7 @@ export function QueuePill() {
     <span role="status" className={styles.pill} title={data?.last_error ?? undefined}>
       <span className={`${styles.dot} ${styles[tone]}`} aria-hidden="true" />
       {text}
+      {data?.last_error && <span className={styles.srOnly}>{`（${data.last_error}）`}</span>}
     </span>
   );
 }

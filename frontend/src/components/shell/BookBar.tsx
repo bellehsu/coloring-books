@@ -91,9 +91,9 @@ export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
             type="button"
             onClick={onExport}
             aria-current={current === "export" ? "step" : undefined}
-            className={`${styles.pill} ${styles.todo}`}
+            className={`${styles.pill} ${current === "export" ? styles.now : styles.todo}`}
           >
-            <span className={`${styles.badge} ${styles.badgeTodo}`}>3</span>
+            <span className={`${styles.badge} ${current === "export" ? styles.badgeNow : styles.badgeTodo}`}>3</span>
             匯出
           </button>
         </li>

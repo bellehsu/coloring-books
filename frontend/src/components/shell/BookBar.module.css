@@ -84,9 +84,6 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
-.num {
-  display: contents;
-}
 .actions {
   margin-left: auto;
   display: flex;

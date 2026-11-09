@@ -24,6 +24,12 @@ describe("QueuePill", () => {
     render(<QueuePill />);
     expect(screen.getByText("生成佇列 1 張")).toBeInTheDocument();
   });
+  it("服務已停止與 last_error", () => {
+    useQueue.mockReturnValue(q({ state: "stopped", last_error: "boom" }));
+    render(<QueuePill />);
+    expect(screen.getByText("生成服務已停止")).toBeInTheDocument();
+    expect(screen.getByText("（boom）")).toBeInTheDocument();
+  });
   it("空閒", () => {
     useQueue.mockReturnValue(q({}));
     render(<QueuePill />);

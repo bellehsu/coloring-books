@@ -11,7 +11,7 @@ export interface Crumb {
 export function AppBar({ crumbs = [] }: { crumbs?: Crumb[] }) {
   return (
     <header className={styles.bar}>
-      <Link href="/" className={styles.logo}>
+      <Link href="/" className={styles.logo} aria-label="繪本工作室">
         <span className={styles.mark}>
           <Icons.pen size={18} />
         </span>

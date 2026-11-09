@@ -3,8 +3,8 @@ import styles from "./IconButton.module.css";
 
 export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "aria-label"> {
   label: string;
-  /** 40 為工具列例外，預設 44（可點擊目標）。 */
-  size?: 36 | 40 | 44;
+  /** 40 僅限工具列，其餘一律 44（可點擊目標）。 */
+  size?: 40 | 44;
   active?: boolean;
   children: ReactNode;
 }
