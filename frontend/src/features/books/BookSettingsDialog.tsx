@@ -75,7 +75,10 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
           type="text"
           className={styles.input}
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            update.reset();
+            setTitle(e.target.value);
+          }}
           maxLength={100}
           autoComplete="off"
         />
@@ -98,7 +101,10 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
                 disabled={locked}
                 title={locked ? SAME_RATIO : undefined}
                 className={`${styles.card} ${styles.sizeCard} ${on ? styles.on : ""} ${locked ? extra.locked : ""}`}
-                onClick={() => setSize(s)}
+                onClick={() => {
+                  update.reset();
+                  setSize(s);
+                }}
               >
                 <span className={styles.shapeBox}>
                   <span
@@ -130,7 +136,10 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
                 role="radio"
                 aria-checked={on}
                 className={`${styles.card} ${styles.modeCard} ${on ? styles.on : ""}`}
-                onClick={() => setMode(m)}
+                onClick={() => {
+                  update.reset();
+                  setMode(m);
+                }}
               >
                 {m === "home" ? (
                   <span className={styles.homeIcon} aria-hidden="true">

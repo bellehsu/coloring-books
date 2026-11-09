@@ -77,7 +77,8 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      // 立刻 revoke 會讓 Safari／Firefox 取消下載
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
       setMsg({ tone: "ok", text: `已產生「${a.download}」` });
       // 匯出時後端可能重算並退回草稿
       void qc.invalidateQueries({ queryKey: qk.pages(book.id) });
@@ -101,7 +102,7 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
 
   let hint: string;
   if (summary.isLoading) hint = "讀取中…";
-  else if (summary.isError) hint = "讀不到匯出資訊";
+  else if (summary.isError) hint = "";
   else if (count === 0)
     hint =
       include === "passed"
@@ -206,7 +207,7 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
             {msg.text}
           </span>
         ) : (
-          <span className={styles.msg}>{hint}</span>
+          hint && <span className={styles.msg}>{hint}</span>
         )}
       </div>
     </Drawer>
