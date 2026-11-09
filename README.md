@@ -115,6 +115,10 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器，整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
 - 全部約 20 秒（第一次 `next dev` 編譯會再久一點）。
 
+## 內網部署
+
+正式建置、systemd 常駐與 Windows 埠轉發見 [docs/deploy-intranet.md](docs/deploy-intranet.md)（範本在 `deploy/`）。
+
 ## API 一覽
 
 所有路徑以 `/api` 為前綴。
