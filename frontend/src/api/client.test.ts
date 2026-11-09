@@ -79,3 +79,34 @@ describe("api", () => {
     expect(b).toBeInstanceOf(Blob);
   });
 });
+
+describe("api.download", () => {
+  function pdfRes(disposition?: string) {
+    return new Response(new Blob(["%PDF"]), {
+      status: 200,
+      headers: disposition ? { "content-disposition": disposition } : {},
+    });
+  }
+
+  it("filename* 解碼 UTF-8", async () => {
+    const d = `attachment; filename="book-1.pdf"; filename*=UTF-8''${encodeURIComponent("小兔子的一天")}.pdf`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(pdfRes(d)));
+    const r = await api.download("/books/1/export.pdf");
+    expect(r.filename).toBe("小兔子的一天.pdf");
+    expect(r.blob.size).toBeGreaterThan(0);
+  });
+
+  it("沒有 filename* 時用 filename，都沒有時為 null", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(pdfRes('attachment; filename="book-1.pdf"')));
+    expect((await api.download("/x")).filename).toBe("book-1.pdf");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(pdfRes()));
+    expect((await api.download("/x")).filename).toBeNull();
+  });
+
+  it("409 丟出帶後端訊息的 ApiError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(409, { detail: "沒有可匯出的頁面" })));
+    const err = (await api.download("/x").catch((e) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.message).toBe("沒有可匯出的頁面");
+  });
+});

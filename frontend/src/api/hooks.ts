@@ -125,6 +125,9 @@ export function useUpdateBook(bookId: number) {
         qc.invalidateQueries({ queryKey: qk.book(bookId) }),
         qc.invalidateQueries({ queryKey: qk.books() }),
         qc.invalidateQueries({ queryKey: qk.pages(bookId) }),
+        // 版面改變後後端會重算線稿與 QA；QA 結果以 ["qa"] 前綴一併重抓
+        qc.invalidateQueries({ queryKey: ["qa"] }),
+        qc.invalidateQueries({ queryKey: qk.exportSummary(bookId) }),
       ]),
   });
 }

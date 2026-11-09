@@ -4,7 +4,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Book, Generation, Page } from "@/api/client";
+import type { Generation, Page } from "@/api/client";
 import {
   useBook,
   useCancelGeneration,
@@ -29,6 +29,7 @@ import { guidesFromLayout } from "@/lib/raster";
 import { CandidateTray } from "./CandidateTray";
 import { forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 import { errMsg } from "./errMsg";
+import { BookSettingsDialog } from "@/features/books/BookSettingsDialog";
 import { ExportDrawer } from "./ExportDrawer";
 import { Filmstrip } from "./Filmstrip";
 import { GeneratePanel } from "./GeneratePanel";
@@ -261,7 +262,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
       )}
       {body}
       <ExportDrawer open={exportOpen} onClose={() => setExportOpen(false)} book={b} />
-      <SettingsSlot open={settingsOpen} onClose={() => setSettingsOpen(false)} book={b} />
+      <BookSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} book={b} />
     </>
   );
 
@@ -392,13 +393,4 @@ export function EditorPage({ bookId }: { bookId: number }) {
       </Inspector>
     </div>,
   );
-}
-
-/**
- * 繪本設定對話框的插槽：Task 11 換成 features/books/BookSettingsDialog
- * （<BookSettingsDialog open={open} onClose={onClose} book={book} />）。目前不顯示任何東西。
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function SettingsSlot(_props: { open: boolean; onClose: () => void; book: Book }) {
-  return null;
 }

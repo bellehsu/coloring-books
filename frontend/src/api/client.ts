@@ -76,6 +76,20 @@ async function json<T>(method: string, path: string, body?: unknown): Promise<T>
   return (await res.json()) as T;
 }
 
+function filenameFrom(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim());
+    } catch {
+      /* 落到 filename= */
+    }
+  }
+  const plain = /filename\s*=\s*"([^"]*)"/i.exec(disposition) ?? /filename\s*=\s*([^;]+)/i.exec(disposition);
+  return plain ? plain[1].trim() : null;
+}
+
 export const api = {
   get: <T>(path: string) => json<T>("GET", path),
   post: <T>(path: string, body?: unknown) => json<T>("POST", path, body),
@@ -97,5 +111,10 @@ export const api = {
       init.body = JSON.stringify(body);
     }
     return (await request(path, init)).blob();
+  },
+  /** 下載檔案：回 Blob 與 Content-Disposition 的檔名（沒有則 null）。非 2xx 丟 ApiError。 */
+  async download(path: string): Promise<{ blob: Blob; filename: string | null }> {
+    const res = await request(path, { method: "GET" });
+    return { blob: await res.blob(), filename: filenameFrom(res.headers.get("content-disposition")) };
   },
 };
