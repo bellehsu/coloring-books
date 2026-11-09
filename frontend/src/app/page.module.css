@@ -1,0 +1,84 @@
+.main {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: clamp(20px, 4vw, 40px) clamp(16px, 3vw, 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+}
+.titles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.h1 {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 30px);
+  line-height: 1.2;
+}
+.sub {
+  font-size: 14px;
+  color: var(--muted);
+}
+.create {
+  margin-left: auto;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
+  gap: 20px;
+}
+.skeleton {
+  min-height: 300px;
+  border-radius: var(--radius-xl);
+  background: var(--chip-bg);
+}
+.newCard {
+  min-height: 240px;
+  border: 2px dashed var(--step-line);
+  border-radius: var(--radius-xl);
+  background: transparent;
+  color: var(--muted-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.newCard:hover {
+  background: var(--surface);
+}
+.plus {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.error {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--danger);
+}
+.empty {
+  padding: 48px 16px;
+  text-align: center;
+  border: 2px dashed var(--step-line);
+  border-radius: var(--radius-xl);
+}
+.emptyText {
+  margin: 0;
+  color: var(--muted-2);
+}
