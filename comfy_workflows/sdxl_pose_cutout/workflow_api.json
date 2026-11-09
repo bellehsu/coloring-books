@@ -11,7 +11,7 @@
   "2": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "a cute character, black and white coloring book page, clean bold outlines",
+      "text": "a character, full body, standing, plain white background",
       "clip": [
         "1",
         1
@@ -24,7 +24,7 @@
   "3": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "color, colored, shading, gray, gradient, shadow, hatching, texture, photo, realistic, text, watermark, signature, blurry",
+      "text": "text, watermark, signature, blurry",
       "clip": [
         "1",
         1
@@ -106,7 +106,7 @@
     "class_type": "KSampler",
     "inputs": {
       "model": [
-        "1",
+        "7",
         0
       ],
       "positive": [

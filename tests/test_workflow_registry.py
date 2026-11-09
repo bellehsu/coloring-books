@@ -169,3 +169,34 @@ def test_repo_compose_workflows_load():
         f"{m['folder']}/{m['filename']}" for m in pose.models}
     with pytest.raises(ParameterError):
         pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png", "ipadapter_weight": 5.0})
+
+
+def _src(prompt, title, inp):
+    by_title = {n["_meta"]["title"]: nid for nid, n in prompt.items()}
+    return prompt[by_title[title]]["inputs"][inp][0], by_title
+
+
+def _assert_no_orphans(prompt):
+    refs = {v[0] for n in prompt.values() for v in n["inputs"].values()
+            if isinstance(v, list) and len(v) == 2}
+    orphans = [nid for nid, n in prompt.items()
+               if nid not in refs and n["class_type"] != "SaveImage"]
+    assert not orphans, orphans
+
+
+def test_repo_compose_workflows_wiring():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    bg = reg.get("sdxl_background").build_prompt(
+        {"prompt": "x", "seed": 1, "structure_image": "s.png"}).prompt
+    src, t = _src(bg, "SAMPLER", "model")
+    assert src == t["CKPT"]
+    assert _src(bg, "SAMPLER", "positive")[0] == t["APPLY_CONTROLNET"]
+    assert _src(bg, "SAMPLER", "negative")[0] == t["APPLY_CONTROLNET"]
+    _assert_no_orphans(bg)
+
+    pose = reg.get("sdxl_pose_cutout").build_prompt(
+        {"prompt": "x", "seed": 1, "character_image": "c.png"}).prompt
+    src, t = _src(pose, "SAMPLER", "model")
+    assert src == t["IPADAPTER"]
+    assert _src(pose, "IPADAPTER", "image")[0] == t["CHARACTER_REF"]
+    _assert_no_orphans(pose)
