@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useId, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import type { Placement } from "@/api/client";
 import { cornerResize, movePlacement, placementBox, resizePlacement } from "@/lib/placement";
 import styles from "./ComposeStage.module.css";
@@ -113,6 +113,8 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (disabled || !ready || drag) return;
+    // Ctrl／⌘＋−／＝ 是瀏覽器縮放，不要吃掉
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     const step = e.shiftKey ? KEY_STEP_BIG : KEY_STEP;
     let next: Placement | null = null;
     switch (e.key) {
@@ -159,7 +161,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
       <div
         className={styles.frame}
         data-ready={ready}
-        style={bgSize ? { aspectRatio: `${bgSize.w} / ${bgSize.h}` } : undefined}
+        style={bgSize ? ({ aspectRatio: `${bgSize.w} / ${bgSize.h}`, "--bg-aspect": bgSize.w / bgSize.h } as CSSProperties) : undefined}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -186,6 +188,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
             onPointerMove={move}
             onPointerUp={end}
             onPointerCancel={cancel}
+            onLostPointerCapture={cancel}
             onKeyDown={onKeyDown}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -211,6 +214,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
               onPointerMove={move}
               onPointerUp={end}
               onPointerCancel={cancel}
+            onLostPointerCapture={cancel}
             />
           )}
         </div>

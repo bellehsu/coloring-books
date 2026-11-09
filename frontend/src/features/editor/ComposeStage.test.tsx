@@ -167,4 +167,33 @@ describe("ComposeStage", () => {
     rerender({ placement: { ...P, cx: 0.3 } });
     expect(box().style.left).toBe("20%");
   });
+
+  it("Ctrl／⌘／Alt＋按鍵（瀏覽器縮放等）不移動、不縮放角色", () => {
+    const { load, onChange } = view();
+    load();
+    fireEvent.keyDown(box(), { key: "-", ctrlKey: true });
+    fireEvent.keyDown(box(), { key: "=", metaKey: true });
+    fireEvent.keyDown(box(), { key: "ArrowLeft", altKey: true });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("失去 pointer capture（沒有 pointerup）→ 取消拖曳，之後還能再拖", () => {
+    const { load, onChange } = view();
+    load();
+    fireEvent.pointerDown(box(), { pointerId: 1, button: 0, clientX: 250, clientY: 200 });
+    fireEvent.pointerMove(box(), { pointerId: 1, clientX: 300, clientY: 200 });
+    fireEvent.lostPointerCapture(box(), { pointerId: 1 });
+    expect(box().style.left).toBe("40%"); // 回到已存的位置
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.pointerDown(box(), { pointerId: 3, button: 0, clientX: 250, clientY: 200 });
+    fireEvent.pointerUp(box(), { pointerId: 3, clientX: 300, clientY: 200 });
+    expect(onChange).toHaveBeenCalledWith({ ...P, cx: 0.6 });
+  });
+
+  it("舞台寬度帶背景寬高比（CSS 用來讓整張背景塞進可視高度）", () => {
+    const { load } = view();
+    load();
+    const frame = screen.getByTestId("compose-overlay").parentElement!;
+    expect(frame.style.getPropertyValue("--bg-aspect")).toBe("1.25");
+  });
 });

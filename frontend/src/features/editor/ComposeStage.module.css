@@ -9,7 +9,9 @@
 }
 .frame {
   position: relative;
-  width: min(100%, 640px);
+  /* 整張背景要在一個畫面內看得到：寬度也受可視高度限制（扣掉頂欄、分頁與說明約 300 px），最小 280 px */
+  --bg-aspect: 1; /* 背景寬／高；元件載入背景後以 inline style 覆寫 */
+  width: min(100%, 640px, max(280px, calc((100dvh - 300px) * var(--bg-aspect))));
   background: var(--surface);
   box-shadow: var(--shadow-paper);
   user-select: none;

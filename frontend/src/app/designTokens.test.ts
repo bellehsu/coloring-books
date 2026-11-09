@@ -26,13 +26,16 @@ describe("design tokens", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("元件用到的 var(--x) 都在 globals.css 定義", () => {
+  it("元件用到的 var(--x) 都在 globals.css（或同一個 CSS 檔的元件區域變數）定義", () => {
     const globals = readFileSync(path.join(SRC, "app", "globals.css"), "utf8");
-    const defined = new Set([...globals.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+    const definedIn = (css: string) => new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+    const defined = definedIn(globals);
     const missing = new Set<string>();
     for (const f of cssFiles(SRC)) {
-      for (const m of readFileSync(f, "utf8").matchAll(/var\((--[\w-]+)/g)) {
-        if (!defined.has(m[1]) && !m[1].startsWith("--font-")) missing.add(m[1]);
+      const css = readFileSync(f, "utf8");
+      const local = definedIn(css);
+      for (const m of css.matchAll(/var\((--[\w-]+)/g)) {
+        if (!defined.has(m[1]) && !local.has(m[1]) && !m[1].startsWith("--font-")) missing.add(m[1]);
       }
     }
     expect([...missing]).toEqual([]);
