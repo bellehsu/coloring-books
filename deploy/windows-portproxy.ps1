@@ -8,13 +8,15 @@ $RuleName = "Coloring Books Frontend $Port"
 # 優先取預設路由介面的 IP；失敗時退回 hostname -I 的第一個位址
 $wslIp = $null
 try {
-    $cmd = 'ip -4 route get 1.1.1.1 | sed -n "s/.* src \([0-9.]*\).*/\1/p"'
-    $wslIp = ((wsl -e sh -c $cmd) | Select-Object -First 1).Trim()
+    $out = (wsl -e ip -4 route get 1.1.1.1) -join ' '
+    if ($out -match 'src\s+(\d+\.\d+\.\d+\.\d+)') { $wslIp = $Matches[1] }
 } catch { }
-if ($wslIp -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+if (-not $wslIp) {
+    Write-Warning '無法由預設路由取得 WSL IP，改用 wsl hostname -I 的第一個位址（多網卡時可能不正確）。'
     $wslIp = ((wsl hostname -I) -split '\s+' | Where-Object { $_ })[0]
 }
 if (-not $wslIp) { throw '取不到 WSL IP；請確認 WSL 已啟動。' }
+Write-Host "WSL IP: $wslIp"
 
 # 先刪除舊規則（不存在時 netsh 會報錯，忽略即可）
 netsh interface portproxy delete v4tov4 listenport=$Port listenaddress=0.0.0.0 2>$null | Out-Null
