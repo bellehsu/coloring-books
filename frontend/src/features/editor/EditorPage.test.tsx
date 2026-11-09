@@ -175,6 +175,9 @@ beforeEach(() => {
   gate = {};
   candidatesStatus = 202;
   sketchSaves.length = 0;
+  let blobN = 0;
+  URL.createObjectURL = vi.fn(() => `blob:${++blobN}`);
+  URL.revokeObjectURL = vi.fn();
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -266,15 +269,19 @@ afterEach(() => {
   push.mockReset();
 });
 
+let rerenderEditor: () => void = () => {};
+
 function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const tree = () => (
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <EditorPage bookId={1} />
       </ToastProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const r = render(tree());
+  rerenderEditor = () => r.rerender(tree());
   return qc;
 }
 
@@ -546,5 +553,91 @@ describe("EditorPage", () => {
     expect(await screen.findByTestId("qa-compare")).toBeInTheDocument();
     expect(screen.getByTestId("qa-panel")).toBeInTheDocument();
     expect(screen.queryByText("候選圖")).not.toBeInTheDocument();
+  });
+
+  // ---------- fix round 1 ----------
+
+  it("草圖 PUT 還沒完成就換頁再回來：畫布用待送的 blob seed，不用舊的 sketch_url", async () => {
+    pages[0] = mkPage(1, { sketch_url: "/api/pages/1/sketch?v=1" });
+    let release!: () => void;
+    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
+    setup();
+    const sk = await screen.findByTestId("sketch");
+    expect(sk).toHaveAttribute("data-initial", "/api/pages/1/sketch?v=1");
+    await userEvent.click(within(sk).getByRole("button", { name: "stub-save" }));
+    await userEvent.click(pageButton(2));
+    await userEvent.click(pageButton(1));
+    expect(screen.getByTestId("sketch")).toHaveAttribute("data-initial", "blob:1");
+    await act(async () => release());
+  });
+
+  it("清空草圖（DELETE 待送）後重新掛載 → 空白畫布", async () => {
+    pages[0] = mkPage(1, { sketch_url: "/api/pages/1/sketch?v=1" });
+    gate["DELETE /api/pages/1/sketch"] = new Promise<void>(() => {});
+    setup();
+    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-clear" }));
+    await userEvent.click(pageButton(2));
+    await userEvent.click(pageButton(1));
+    expect(screen.getByTestId("sketch")).toHaveAttribute("data-initial", "");
+  });
+
+  it("修線重新掛載時 edits 正在重抓 → 等它完成，不用舊快取 seed", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    setup();
+    expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "0");
+    await userEvent.click(screen.getByRole("tab", { name: "構圖草圖" }));
+    // 畫布不在時伺服器的修改圖層變了（例如 QA 面板自動補線）
+    edits = [{ op: "draw", width_px: 11, points: [[0.1, 0.1], [0.2, 0.2]] }];
+    let release!: () => void;
+    gate["GET /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    await userEvent.click(screen.getByRole("tab", { name: /線稿與修線/ }));
+    expect(screen.queryByTestId("linefix")).not.toBeInTheDocument();
+    expect(screen.getByText("載入修線圖層中…")).toBeInTheDocument();
+    await act(async () => release());
+    expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "1");
+  });
+
+  it("修線模式換選圖前先等修線寫入完成", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5), mkGen(6)];
+    let release!: () => void;
+    gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await userEvent.click(screen.getByRole("button", { name: "選 seed 106 為本頁圖片" }));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(1));
+  });
+
+  it("網址晚到：忽略我們較早寫的網址；外部改變才跟著改", async () => {
+    setup();
+    await screen.findByText("第 1 頁進度");
+    await userEvent.click(pageButton(2));
+    await userEvent.click(pageButton(3));
+    search = "page=2"; // 第一次 replace 晚到
+    rerenderEditor();
+    expect(pageButton(3)).toHaveAttribute("aria-current", "true");
+    search = "page=3";
+    rerenderEditor();
+    expect(pageButton(3)).toHaveAttribute("aria-current", "true");
+    search = "page=1"; // 外部導覽
+    rerenderEditor();
+    expect(pageButton(1)).toHaveAttribute("aria-current", "true");
+  });
+
+  it("刪除目前頁：DELETE 完成前就選到相鄰頁", async () => {
+    search = "page=2";
+    gate["DELETE /api/pages/2"] = new Promise<void>(() => {});
+    setup();
+    await userEvent.click(await screen.findByRole("button", { name: "第 2 頁的更多動作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
+    expect(pageButton(3)).toHaveAttribute("aria-current", "true");
+    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=3", { scroll: false });
   });
 });

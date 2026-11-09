@@ -27,6 +27,7 @@ import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
 import { guidesFromLayout } from "@/lib/raster";
 import { CandidateTray } from "./CandidateTray";
+import { forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 import { errMsg } from "./errMsg";
 import { ExportDrawer } from "./ExportDrawer";
 import { Filmstrip } from "./Filmstrip";
@@ -78,12 +79,21 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const bookGens = useGenerations(bookId, { kind: "page" });
 
   // ---------- 目前頁與模式：本機狀態為準（立即反應），寫回網址；網址被外部改變時跟著改 ----------
+  // 我們寫過、網址還沒追上的 query string（依序）。router.replace 可能晚到：較早的那幾個到了要忽略，
+  // 否則連點 A、B 時晚到的 A 會把畫面切回 A。不在清單裡的變化才是外部導覽。
   const qs = sp.toString();
   const [nav, setNav] = useState<Nav>(() => parseNav(sp));
   const [seenQs, setSeenQs] = useState(qs);
+  const [writes, setWrites] = useState<string[]>([]);
   if (qs !== seenQs) {
     setSeenQs(qs);
-    setNav(parseNav(sp));
+    const i = writes.indexOf(qs);
+    if (i === -1) {
+      setWrites([]);
+      setNav(parseNav(sp));
+    } else {
+      setWrites(writes.slice(i + 1));
+    }
   }
 
   const pages = pagesQ.data ?? [];
@@ -96,7 +106,9 @@ export function EditorPage({ bookId }: { bookId: number }) {
     const q = new URLSearchParams();
     q.set("page", String(page));
     if (m !== "sketch") q.set("mode", m);
-    router.replace(`${pathname}?${q}`, { scroll: false });
+    const next = q.toString();
+    if (next !== qs) setWrites((w) => [...w, next]);
+    router.replace(`${pathname}?${next}`, { scroll: false });
   };
   /** 換頁：目標頁沒選圖就回到構圖模式（否則選圖後會突然跳到修線）。 */
   const selectPage = (id: number) => {
@@ -123,6 +135,11 @@ export function EditorPage({ bookId }: { bookId: number }) {
   useEffect(() => {
     sketchSaver.setErrorHandler((e) => toast.show(errMsg(e, "草圖儲存失敗"), "error"));
   }, [sketchSaver, toast]);
+
+  // 換選圖後，舊選圖閒置的修線佇列就不需要了
+  useEffect(() => {
+    for (const p of pagesQ.data ?? []) pruneEditsQueues(qc, p.id, p.selected_generation_id);
+  }, [qc, pagesQ.data]);
 
   const [zoom, setZoom] = useState(1);
   const [exportOpen, setExportOpen] = useState(false);
@@ -177,9 +194,12 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const removePage = (id: number) => {
     const i = pages.findIndex((p) => p.id === id);
     const neighbor = pages[i + 1] ?? pages[i - 1];
+    // 先切到相鄰頁（樂觀），避免刪除完成前後閃到別頁；失敗就留在相鄰頁並提示
+    if (id === current?.id && neighbor) selectPage(neighbor.id);
     deletePage.mutate(id, {
       onSuccess: () => {
-        if (id === current?.id && neighbor) selectPage(neighbor.id);
+        sketchSaver.forget(id);
+        forgetEditsQueues(qc, id);
       },
       onError: (e) => toast.show(errMsg(e, "無法刪除頁面"), "error"),
     });
@@ -196,12 +216,18 @@ export function EditorPage({ bookId }: { bookId: number }) {
       .mutateAsync({ pageId, count: 4 })
       .catch((e: unknown) => toast.show(errMsg(e, "無法產生候選圖"), "error"));
 
-  const pickGen = (g: Generation) =>
-    current &&
+  const pickGen = async (g: Generation) => {
+    if (!current) return;
+    const pageId = current.id;
+    // 先讓舊選圖的修線寫完：選圖後才到的 PUT 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」
+    const sel = current.selected_generation_id;
+    const pendingEdits = sel != null ? peekEditsQueue(qc, pageId, sel) : undefined;
+    if (pendingEdits) await pendingEdits.flush().catch(() => {}); // 失敗已提示過
     select.mutate(
-      { pageId: current.id, generationId: g.id },
+      { pageId, generationId: g.id },
       { onError: (e) => toast.show(errMsg(e, "無法選擇這張圖"), "error") },
     );
+  };
 
   const toggleDiscard = (g: Generation) =>
     updateGen.mutate(
@@ -250,13 +276,16 @@ export function EditorPage({ bookId }: { bookId: number }) {
   let stage: ReactNode;
   if (mode === "sketch") {
     const pageId = current.id;
+    // 這個 session 存過（可能還在送、或失敗）→ 用最後存的內容；null＝空白。沒存過才用伺服器的 sketch_url。
+    const pending = sketchSaver.latestUrl(pageId);
+    const sketchSeed = pending !== undefined ? pending : current.sketch_url;
     stage = (
       <SketchCanvas
         key={pageId}
         width={gw}
         height={gh}
         guides={guidesFromLayout(b.layout)}
-        initialUrl={current.sketch_url}
+        initialUrl={sketchSeed}
         onSave={(blob) => sketchSaver.save(bookId, pageId, blob)}
         onUploadReference={(file) => uploadReference(bookId, file)}
       />
@@ -339,7 +368,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           <CandidateTray
             generations={gens}
             selectedId={current.selected_generation_id}
-            onSelect={pickGen}
+            onSelect={(g) => void pickGen(g)}
             onToggleDiscard={toggleDiscard}
             onCancel={cancelGen}
             selecting={select.isPending}

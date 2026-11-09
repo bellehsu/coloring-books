@@ -10,6 +10,8 @@ import { createWriteQueue, type WriteQueue } from "@/lib/writeQueue";
  * 「同一頁的修改圖層依序寫入」在重新掛載後仍成立。
  */
 export interface EditsEntry {
+  readonly pageId: number;
+  readonly genId: number;
   push(strokes: Stroke[]): void;
   flush(): Promise<QA | undefined>;
   busy(): boolean;
@@ -29,6 +31,31 @@ export interface EditsEntry {
 }
 
 const registry = new WeakMap<QueryClient, Map<string, EditsEntry>>();
+const keyOf = (pageId: number, genId: number) => `${pageId}:${genId}`;
+
+/** 只查詢、不建立。 */
+export function peekEditsQueue(qc: QueryClient, pageId: number, genId: number): EditsEntry | undefined {
+  return registry.get(qc)?.get(keyOf(pageId, genId));
+}
+
+/**
+ * 移除這一頁「閒置、沒失敗、且不再是選定圖」的佇列（換選圖後不再需要）。
+ * 忙碌的留著把請求送完；失敗的留著，重新選回那張圖時還能拿回沒存成功的筆畫。
+ */
+export function pruneEditsQueues(qc: QueryClient, pageId: number, selectedGenId: number | null) {
+  const map = registry.get(qc);
+  if (!map) return;
+  for (const [k, e] of map) {
+    if (e.pageId === pageId && e.genId !== selectedGenId && !e.busy() && !e.failed) map.delete(k);
+  }
+}
+
+/** 頁面刪除後移除它所有的佇列（還在路上的請求照常結束）。 */
+export function forgetEditsQueues(qc: QueryClient, pageId: number) {
+  const map = registry.get(qc);
+  if (!map) return;
+  for (const [k, e] of map) if (e.pageId === pageId) map.delete(k);
+}
 
 export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, genId: number): EditsEntry {
   let map = registry.get(qc);
@@ -36,9 +63,18 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
     map = new Map();
     registry.set(qc, map);
   }
-  const key = `${pageId}:${genId}`;
+  const key = keyOf(pageId, genId);
   const found = map.get(key);
   if (found) return found;
+
+  /**
+   * 寫入 edits 快取前先取消進行中的 GET：它可能在寫入前發出、晚於寫入回來，帶著舊筆畫蓋掉快取。
+   * 取消會同步把快取還原成 GET 前的狀態，接著才寫入新資料，所以不會被蓋掉。
+   */
+  const setEdits = (strokes: Stroke[]) => {
+    void qc.cancelQueries({ queryKey: qk.edits(pageId) });
+    qc.setQueryData(qk.edits(pageId), { generation_id: genId, strokes });
+  };
 
   const listeners = new Set<() => void>();
   let latest: Stroke[] | null = null;
@@ -48,8 +84,9 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
   const queue: WriteQueue<QA> = createWriteQueue<QA>(
     (strokes) => api.put<QA>(`/pages/${pageId}/lineart/edits`, { generation_id: genId, strokes }),
     {
-      onSuccess: (qa) => {
+      onSuccess: (qa, strokes) => {
         failed = false;
+        setEdits(strokes);
         qc.setQueryData(qk.qa(pageId), qa);
         // lineart_url／needs_fix／status（修線會把通過退回草稿）與整本統計
         void qc.invalidateQueries({ queryKey: qk.pages(bookId) });
@@ -66,11 +103,13 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
   );
 
   const entry: EditsEntry = {
+    pageId,
+    genId,
     push(strokes) {
       latest = strokes.slice();
       failed = false;
       // 樂觀更新：重新掛載或其他讀者看到的是畫面上的筆畫
-      qc.setQueryData(qk.edits(pageId), { generation_id: genId, strokes: latest });
+      setEdits(latest);
       queue.push(latest);
     },
     flush: () => queue.flush(),

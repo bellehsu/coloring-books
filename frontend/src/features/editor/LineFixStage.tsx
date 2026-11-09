@@ -37,7 +37,9 @@ export function LineFixStage(props: LineFixStageProps) {
   const entry = editsQueueFor(qc, bookId, pageId, genId);
 
   const local = entry.shouldSeedFromLocal() ? entry.latest : null;
-  const server = edits.data && edits.data.generation_id === genId ? (edits.data.strokes as Stroke[]) : null;
+  // 重抓中的快取可能是舊的（例如畫布不在時 QA 面板自動補線）：等重抓完成才用伺服器的資料 seed
+  const server =
+    !edits.isFetching && edits.data && edits.data.generation_id === genId ? (edits.data.strokes as Stroke[]) : null;
   const seed = local ?? server;
 
   if (!seed) {

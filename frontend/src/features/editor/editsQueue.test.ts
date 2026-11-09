@@ -2,7 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/hooks";
 import type { Stroke } from "@/lib/strokes";
-import { editsQueueFor } from "./editsQueue";
+import { editsQueueFor, forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 
 const s = (x: number): Stroke => ({ op: "draw", width_px: 11, points: [[x, x]] });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -85,5 +85,57 @@ describe("editsQueueFor", () => {
   it("閒置且沒失敗 → 從伺服器 seed", () => {
     const e = editsQueueFor(new QueryClient(), 1, 12, 7);
     expect(e.shouldSeedFromLocal()).toBe(false);
+  });
+
+  it("push 時取消進行中的 edits GET：晚到的舊回應不會蓋掉樂觀資料；成功後寫入確認的筆畫", async () => {
+    let releaseGet!: () => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit = {}) => {
+        if (init.method === "PUT") {
+          bodies.push(JSON.parse(init.body as string));
+          const qa = await new Promise((r) => resolvers.push(r));
+          return new Response(JSON.stringify(qa), { status: 200 });
+        }
+        await new Promise<void>((r) => (releaseGet = r));
+        return new Response(JSON.stringify({ generation_id: 7, strokes: [] }), { status: 200 });
+      }),
+    );
+    const qc = new QueryClient();
+    const get = qc
+      .fetchQuery({
+        queryKey: qk.edits(20),
+        queryFn: async () => (await fetch("/api/pages/20/lineart/edits")).json(),
+      })
+      .catch(() => undefined);
+    await tick();
+    const e = editsQueueFor(qc, 1, 20, 7);
+    e.push([s(0.1)]);
+    releaseGet();
+    await get;
+    await tick();
+    expect(qc.getQueryData(qk.edits(20))).toEqual({ generation_id: 7, strokes: [s(0.1)] });
+    // 伺服器確認後（期間被其他東西改壞了快取）→ 寫回確認的筆畫
+    qc.setQueryData(qk.edits(20), { generation_id: 7, strokes: [] });
+    resolvers.shift()!({ gap_count: 0 });
+    await tick();
+    await tick();
+    expect(qc.getQueryData(qk.edits(20))).toEqual({ generation_id: 7, strokes: [s(0.1)] });
+  });
+
+  it("prune：閒置、沒失敗、不再是選定圖的 entry 被移除；忙碌或失敗的保留；forget 移除整頁", async () => {
+    const qc = new QueryClient();
+    const idleOld = editsQueueFor(qc, 1, 30, 1);
+    const busyOld = editsQueueFor(qc, 1, 30, 2);
+    const current = editsQueueFor(qc, 1, 30, 3);
+    busyOld.push([s(0.2)]);
+    pruneEditsQueues(qc, 30, 3);
+    expect(peekEditsQueue(qc, 30, 1)).toBeUndefined();
+    expect(peekEditsQueue(qc, 30, 2)).toBe(busyOld);
+    expect(peekEditsQueue(qc, 30, 3)).toBe(current);
+    expect(editsQueueFor(qc, 1, 30, 1)).not.toBe(idleOld);
+    forgetEditsQueues(qc, 30);
+    expect(peekEditsQueue(qc, 30, 2)).toBeUndefined();
+    expect(peekEditsQueue(qc, 30, 3)).toBeUndefined();
   });
 });
