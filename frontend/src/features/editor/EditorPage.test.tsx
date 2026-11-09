@@ -148,10 +148,9 @@ vi.mock("./ComposeStage", () => ({
   ComposeStage: (p: ComposeStageProps) => (
     <div
       data-testid="compose-stage"
-      data-bg={p.backgroundUrl}
-      data-pose={p.poseUrl}
-      data-mask={p.maskUrl}
-      data-aspect={p.poseAspect}
+      data-bg={p.backgroundUrl ?? ""}
+      data-cutout={p.cutoutUrl ?? ""}
+      data-disabled={String(!!p.disabled)}
       data-placement={JSON.stringify(p.placement)}
     >
       <button type="button" onClick={() => p.onChange({ ...p.placement, cx: 0.25 })}>
@@ -631,11 +630,17 @@ describe("EditorPage", () => {
     await waitFor(() => expect(screen.getByTestId("pose-panel")).toHaveAttribute("data-active", "1"));
   });
 
-  it("合成模式：舞台拿到背景、角色、遮罩與比例；移動 → PUT placement；確認合成 → 切到線稿與修線", async () => {
+  it("合成模式：舞台拿到背景與去背圖；移動 → PUT placement；確認合成（舞台停用）→ 切到線稿與修線", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
     gens = [
       mkGen(3, { kind: "background" }),
-      mkGen(4, { kind: "pose", width: 832, height: 1216, mask_url: "/api/generations/4/mask" }),
+      mkGen(4, {
+        kind: "pose",
+        width: 832,
+        height: 1216,
+        mask_url: "/api/generations/4/mask",
+        cutout_url: "/api/generations/4/cutout",
+      }),
     ];
     setup();
     await waitFor(() => expect(within(progressTitle()).getByText("請確認合成")).toBeInTheDocument());
@@ -645,9 +650,8 @@ describe("EditorPage", () => {
     expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=compose", { scroll: false });
     const stage = await screen.findByTestId("compose-stage");
     expect(stage).toHaveAttribute("data-bg", "/img/3.png");
-    expect(stage).toHaveAttribute("data-pose", "/img/4.png");
-    expect(stage).toHaveAttribute("data-mask", "/api/generations/4/mask");
-    expect(stage).toHaveAttribute("data-aspect", String(832 / 1216));
+    expect(stage).toHaveAttribute("data-cutout", "/api/generations/4/cutout");
+    expect(stage).toHaveAttribute("data-disabled", "false");
     expect(JSON.parse(stage.getAttribute("data-placement")!)).toEqual({ cx: 0.5, cy: 0.66, height: 0.6, flip: false });
     expect(screen.queryByRole("region", { name: /歷史/ })).not.toBeInTheDocument();
     let release!: () => void;
@@ -660,6 +664,8 @@ describe("EditorPage", () => {
     // 位置還在送 → 確認合成要等它
     await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
     expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "true");
+    // 確認期間舞台不能改位置（合成結果＝畫面）
+    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "true");
     await act(async () => {});
     expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
     await act(async () => release());
@@ -700,12 +706,32 @@ describe("EditorPage", () => {
     expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "false");
   });
 
-  it("合成模式：角色動作沒有遮罩 → 說明要重新產生，不畫舞台", async () => {
+  it("合成模式：角色動作沒有遮罩 → 舞台拿不到去背圖（由舞台說明要重新產生）", async () => {
     search = "page=1&mode=compose";
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: null })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: null, cutout_url: "/c" })];
     setup();
-    expect(await screen.findByText("這個角色動作沒有去背遮罩，請重新產生")).toBeInTheDocument();
+    const stage = await screen.findByTestId("compose-stage");
+    expect(stage).toHaveAttribute("data-cutout", "");
+    expect(stage).toHaveAttribute("data-bg", "/img/3.png");
+  });
+
+  it("合成模式：背景沒有圖 → 舞台拿到 null（說明而不是一直載入中）", async () => {
+    search = "page=1&mode=compose";
+    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
+    gens = [mkGen(3, { kind: "background", image_url: null }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    setup();
+    const stage = await screen.findByTestId("compose-stage");
+    expect(stage).toHaveAttribute("data-bg", "");
+    expect(stage).toHaveAttribute("data-cutout", "/c");
+  });
+
+  it("合成模式：選用的背景不在這頁的紀錄裡 → 說明，不是一直載入中", async () => {
+    search = "page=1&mode=compose";
+    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
+    gens = [mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    setup();
+    expect(await screen.findByText("找不到選用的背景或角色動作，請回到前面的步驟重新選擇")).toBeInTheDocument();
     expect(screen.queryByTestId("compose-stage")).not.toBeInTheDocument();
   });
 

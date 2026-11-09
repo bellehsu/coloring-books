@@ -1,0 +1,15 @@
+/* 合成面板：目前位置、翻轉／重設 */
+.readout {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.row > * {
+  flex: 1 1 auto;
+}

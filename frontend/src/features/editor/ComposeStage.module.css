@@ -1,0 +1,109 @@
+/* 合成舞台：背景圖＋可拖曳的去背角色。位置以百分比擺放，寬度跟著容器（手機寬無水平捲動）。 */
+.wrap {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.frame {
+  position: relative;
+  width: min(100%, 640px);
+  background: var(--surface);
+  box-shadow: var(--shadow-paper);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.frame[data-ready="false"] {
+  min-height: 240px;
+}
+.bg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+/* 超出背景的部分裁掉（與合成結果相同） */
+.overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.box {
+  position: absolute;
+  cursor: grab;
+  touch-action: none;
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -1px;
+}
+.box[data-ready="false"] {
+  visibility: hidden;
+}
+.box[data-dragging="true"] {
+  cursor: grabbing;
+}
+.box:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 0;
+}
+.box[aria-disabled="true"] {
+  cursor: default;
+  outline-color: var(--muted-3);
+}
+.cutout {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+.cutout[data-flip="true"] {
+  transform: scaleX(-1);
+}
+/* 右下角把手：看得到 24 px，可點範圍 44 px */
+.handle {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  transform: translate(-75%, -75%);
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  box-shadow: var(--shadow-tab);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.handle::before {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  border-radius: 50%;
+}
+.handle[data-disabled="true"] {
+  cursor: default;
+  border-color: var(--muted-3);
+}
+.loading {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: var(--muted-2);
+}
+.hint {
+  margin: 0;
+  max-width: 640px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted-2);
+  text-align: center;
+}
+.msg {
+  margin: 40px 0;
+  font-size: 14px;
+  color: var(--muted-2);
+}
