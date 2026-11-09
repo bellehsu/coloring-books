@@ -1,0 +1,8 @@
+[08:21:33] 角色：4 張候選＋設定 30.6 s
+[08:22:22] 第 1 頁完成 {"page":1,"scene":"in a sunny park with a big tree and a bench","action":"揮手","bg_s":"25.7","pose_s":"13.7","placement":"水平 50%・垂直 66%・高度 60%","compose_to_line_s":"1.6","line_status_before":"94 個缺口會讓塗色漏出去（紅圈）","gaps_before":94,"autofix_s":"3.4","line_status_after":"沒有缺口","gaps_after":0,"qa_text":"自動檢查 通過 線條都有封閉 太多過小的區域，小孩塗不進去 角色外型（人工確認） 臉、耳朵、衣服、顏色和參考圖一致嗎？有沒有多出來的角色？角色在綠色安全區內嗎？ 一致 不一致 註記（選填） 標為通過 可以通過了。 下載本頁 PNG","passed":true,"page_total_s":"48.7"}
+[08:22:52] 第 2 頁完成 {"page":2,"scene":"in a cozy kitchen with a table and a teapot","action":"拿著東西","bg_s":"8.4","pose_s":"12.4","placement":"水平 60%・垂直 66%・高度 65%","compose_to_line_s":"2.5","line_status_before":"74 個缺口會讓塗色漏出去（紅圈）","gaps_before":74,"autofix_s":"2.8","line_status_after":"沒有缺口","gaps_after":0,"qa_text":"自動檢查 通過 線條都有封閉 太多過小的區域，小孩塗不進去 角色外型（人工確認） 臉、耳朵、衣服、顏色和參考圖一致嗎？有沒有多出來的角色？角色在綠色安全區內嗎？ 一致 不一致 註記（選填） 標為通過 可以通過了。 下載本頁 PNG","passed":true,"page_total_s":"30.4"}
+[08:23:22] 第 3 頁完成 {"page":3,"scene":"at the beach with a sandcastle and the sea","action":"跳起來","bg_s":"8.4","pose_s":"12.4","placement":"水平 40%・垂直 66%・高度 60%","compose_to_line_s":"1.1","line_status_before":"34 個缺口會讓塗色漏出去（紅圈）","gaps_before":34,"autofix_s":"3.7","line_status_after":"沒有缺口","gaps_after":0,"qa_text":"自動檢查 通過 線條都有封閉 角色外型（人工確認） 臉、耳朵、衣服、顏色和參考圖一致嗎？有沒有多出來的角色？角色在綠色安全區內嗎？ 一致 不一致 註記（選填） 標為通過 可以通過了。 下載本頁 PNG","passed":true,"page_total_s":"29.8"}
+[08:23:25] 390 compose: 水平溢出 0px
+[08:23:27] 390 line: 水平溢出 0px
+[08:23:30] 390 qa: 水平溢出 0px
+[08:23:32] PDF：%PDF 172439 bytes
