@@ -1,0 +1,59 @@
+:root {
+  --bg: #f4f3ef;
+  --surface: #ffffff;
+  --stage: #e9e7e1;
+  --stage-dot: #d2cec5;
+  --ink: #1c1b19;
+  --muted: #5e5b55;
+  --muted-2: #4a4741;
+  --line: #e2dfd8;
+  --line-strong: #d9d5cc;
+  --accent: #3b4fd8;
+  --accent-hover: #2a3aa8;
+  --accent-soft: #e6e9fb;
+  --accent-softer: #f3f5fe;
+  --ok: #1e7a46;
+  --ok-soft: #e3f2e8;
+  --ok-ink: #1e6b3f;
+  --warn: #a34f06;
+  --warn-soft: #fdecdc;
+  --warn-ink: #8a3f05;
+  --danger: #b42318;
+  --gap: #d92d20;
+  --trim: #5b6ee8;
+  --safe: #2e9a5c;
+  --focus: #8ea0f5;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-noto-sans-tc), "Noto Sans TC", system-ui, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.stage {
+  background-color: var(--stage);
+  background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px);
+  background-size: 18px 18px;
+}

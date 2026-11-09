@@ -66,6 +66,26 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
 - ComfyUI 離線時任務保持 `queued`，不會失敗；`GET /api/system/queue` 的 `state` 會顯示 `engine_unavailable`，ComfyUI 恢復後自動續跑。
 - `config/settings.yaml` 預設 `comfy.url` 為 `http://127.0.0.1:8188`；以 `APP_COMFY__URL` 覆寫（8188 若已被其他服務佔用，可改用 8190 等埠）。
 
+## 前端
+
+Next.js（App Router、TypeScript）位於 `frontend/`，需要 Node 24。瀏覽器只呼叫同源 `/api/*`，由 Next rewrites 轉給後端。
+
+```bash
+cd frontend
+npm install
+BACKEND_URL=http://127.0.0.1:8000 npm run dev   # 前端 http://localhost:3000；後端需先在 8000 啟動
+npm run build && npm test && npm run lint
+```
+
+- `BACKEND_URL`：後端位址，預設 `http://127.0.0.1:8000`（`next.config.ts` 的 rewrites 與 build 時讀取）。
+- `npm run gen:api`：由後端 OpenAPI 重新產生 `src/api/openapi.json` 與 `src/api/schema.d.ts`。**後端 API 的路由或 schema 有變動時必須重跑並一起 commit。**
+  Python 以環境變數 `PYTHON` 指定（預設 `python`），指令內已含 `env -u PYTHONPATH`（ROS 的 PYTHONPATH 會破壞載入）：
+
+  ```bash
+  PYTHON=$VENV_ROOT/coloring-books/bin/python npm run gen:api
+  ```
+- `npm run e2e`：Playwright 端對端測試（Task 12 補上設定；瀏覽器需另行 `npx playwright install`）。
+
 ## API 一覽
 
 所有路徑以 `/api` 為前綴。
