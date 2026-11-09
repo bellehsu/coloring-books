@@ -1,6 +1,6 @@
 # systemd user service：後端（FastAPI，單一 process）
 # 安裝：mkdir -p ~/.config/systemd/user && cp deploy/*.service ~/.config/systemd/user/
-# 必改：下方 WorkingDirectory 與 ExecStart 的專案路徑、venv 路徑（%h 代表家目錄）。
+# 必改：下方 WorkingDirectory 與 ExecStart 的專案路徑、venv 路徑。
 [Unit]
 Description=Coloring Books backend (FastAPI)
 After=network.target

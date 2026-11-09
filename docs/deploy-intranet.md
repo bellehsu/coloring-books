@@ -32,7 +32,7 @@ PORT=3000 HOSTNAME=0.0.0.0 node .next/standalone/server.js
 
 - **`BACKEND_URL` 在 build 時讀取**（`next.config.ts` 的 rewrites），會被寫死在 standalone 產物裡；啟動時再設定無效。改後端位址要重新 build。
 - standalone 不含 `.next/static` 與 `public`，必須如上複製，否則 JS/CSS 會 404。每次重新 build 後都要再複製一次。
-- `server.js` 位於 `.next/standalone/server.js`（不在專案資料夾名稱的子層）；請在 `frontend/` 下執行，或把 `WorkingDirectory` 設為 `frontend/`。
+- 本專案的 `server.js` 就在 `.next/standalone/server.js`（沒有多一層專案資料夾）；請在 `frontend/` 下執行，或把 `WorkingDirectory` 設為 `frontend/`。若日後 build 輸出變成巢狀路徑，以 `find .next/standalone -name server.js -not -path '*/node_modules/*'` 確認。
 - build 會透過 `next/font` 下載 Google Fonts，建置的機器需要連網；執行時不需要。
 - `HOSTNAME=0.0.0.0` 是必要的，否則只聽本機。
 
@@ -77,7 +77,7 @@ powershell -ExecutionPolicy Bypass -File \\wsl$\Ubuntu-24.04\<專案根目錄>\d
 # 或把 deploy\windows-portproxy.ps1 複製到 Windows 資料夾後執行
 ```
 
-腳本會取得 WSL IP（`wsl hostname -I` 的第一個位址）、重設 3000 的 portproxy 規則，並新增只允許「私人」網路設定檔、TCP 3000 的防火牆規則。可重複執行。
+腳本會取得 WSL IP（優先取預設路由介面的位址，失敗才退回 `wsl hostname -I` 的第一個位址，並印出所選 IP）、重設 3000 的 portproxy 規則，並新增只允許「私人」網路設定檔、TCP 3000 的防火牆規則。可重複執行。
 
 - **WSL 重開機後 IP 會變，必須重新執行腳本。**
 - 只開 3000。不要轉發 8000 或 ComfyUI。
@@ -89,3 +89,9 @@ powershell -ExecutionPolicy Bypass -File \\wsl$\Ubuntu-24.04\<專案根目錄>\d
 2. Windows 本機：瀏覽器開 `http://localhost:3000`。
 3. 同網段另一台電腦開 `http://<Windows IP>:3000`（Windows IP 用 `ipconfig` 查），應看到「我的繪本」。
 4. 從另一台電腦確認 8000 連不上：`http://<Windows IP>:8000` 應逾時。
+
+## 7. 疑難排解
+
+- **Windows 本機能連、其他電腦連不上**：防火牆規則只開「私人」網路設定檔。若 Windows 把這個區網歸類為「公用」，規則不會生效。檢查：`Get-NetConnectionProfile`（看 `NetworkCategory`）。改成私人（系統管理員 PowerShell）：`Set-NetConnectionProfile -InterfaceAlias "<介面名稱>" -NetworkCategory Private`，或在「設定 > 網路和網際網路 > 內容」選「私人網路」。
+- **重開機後連不上**：WSL IP 變了，重新執行 `windows-portproxy.ps1`。
+- **前端回 502／API 失敗**：確認後端在 127.0.0.1:8000 運作，且 build 時的 `BACKEND_URL` 正確。
