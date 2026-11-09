@@ -282,3 +282,54 @@ def test_portproxy_script_validates_fallback_ipv4():
     assert "Test-IPv4" in fallback.split("\n", 3)[1] or "Test-IPv4" in fallback[:200]
     func = text[text.index("function Test-IPv4"):text.index("(wsl hostname -I)")]
     assert "InterNetwork" in func
+
+
+# ---- scripts/dev.sh（一起啟動前後端）----
+
+import socket
+import subprocess
+
+DEV_SH = REPO / "scripts" / "dev.sh"
+
+
+def _dev(*args, env_extra=None, tmp_path=None):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path or REPO),
+           "DEV_ENV_FILE": str((tmp_path or REPO) / "nonexistent.env"), **(env_extra or {})}
+    return subprocess.run(["bash", str(DEV_SH), *args], capture_output=True, text=True, env=env, timeout=30)
+
+
+def test_dev_sh_syntax_and_help(tmp_path):
+    assert subprocess.run(["bash", "-n", str(DEV_SH)]).returncode == 0
+    r = _dev("--help", tmp_path=tmp_path)
+    assert r.returncode == 0 and "--backend-only" in r.stdout
+
+
+def test_dev_sh_rejects_unknown_arg(tmp_path):
+    r = _dev("--nope", tmp_path=tmp_path)
+    assert r.returncode == 2 and "未知參數" in r.stderr
+
+
+def test_dev_sh_reports_missing_python(tmp_path):
+    r = _dev("--backend-only", env_extra={"PYTHON": str(tmp_path / "no-python")}, tmp_path=tmp_path)
+    assert r.returncode == 1 and "找不到 python" in r.stderr
+
+
+def test_dev_sh_reports_busy_backend_port(tmp_path):
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        r = _dev("--backend-only", env_extra={"PYTHON": sys.executable, "BACKEND_PORT": str(port)},
+                 tmp_path=tmp_path)
+    # sys.executable 可能沒有 uvicorn：兩種錯誤都代表沒有啟動任何服務
+    assert r.returncode == 1
+    assert ("已被占用" in r.stderr) or ("uvicorn" in r.stderr)
+
+
+def test_dev_sh_reads_env_file_without_overriding_env(tmp_path):
+    envf = tmp_path / "dev.env"
+    envf.write_text('PYTHON=/from/file/python\nBACKEND_PORT=1\n', encoding="utf-8")
+    r = _dev("--backend-only", env_extra={"DEV_ENV_FILE": str(envf), "PYTHON": str(tmp_path / "env-python")},
+             tmp_path=tmp_path)
+    # 環境變數的 PYTHON 優先於檔案
+    assert "env-python" in r.stderr and "/from/file/python" not in r.stderr
