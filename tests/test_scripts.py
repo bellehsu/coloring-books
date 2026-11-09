@@ -333,3 +333,58 @@ def test_dev_sh_reads_env_file_without_overriding_env(tmp_path):
              tmp_path=tmp_path)
     # 環境變數的 PYTHON 優先於檔案
     assert "env-python" in r.stderr and "/from/file/python" not in r.stderr
+
+
+def _free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_dev_sh_comfy_url_defaults_to_settings(tmp_path, settings_file):
+    r = _dev("--backend-only", "--dry-run", tmp_path=tmp_path,
+             env_extra={"PYTHON": sys.executable, "BACKEND_PORT": str(_free_port()),
+                        "APP_SETTINGS_FILE": str(settings_file)})
+    assert r.returncode == 0, r.stderr
+    assert "ComfyUI：http://comfy.test:8188" in r.stdout  # settings.yaml 的 comfy.url
+
+
+def test_dev_sh_comfy_url_env_override(tmp_path, settings_file):
+    r = _dev("--backend-only", "--dry-run", tmp_path=tmp_path,
+             env_extra={"PYTHON": sys.executable, "BACKEND_PORT": str(_free_port()),
+                        "APP_SETTINGS_FILE": str(settings_file), "APP_COMFY__URL": "http://127.0.0.1:8190/"})
+    assert r.returncode == 0, r.stderr
+    assert "ComfyUI：http://127.0.0.1:8190）" in r.stdout
+
+
+def test_dev_sh_skips_starting_comfy_when_already_running(tmp_path):
+    import http.server
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200 if self.path == "/system_stats" else 404)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{srv.server_address[1]}"
+        r = _dev("--comfy", "--backend-only", "--dry-run", tmp_path=tmp_path,
+                 env_extra={"PYTHON": sys.executable, "BACKEND_PORT": str(_free_port()), "APP_COMFY__URL": url})
+    finally:
+        srv.shutdown()
+    assert r.returncode == 0, r.stderr
+    assert "略過啟動" in r.stdout and "  comfy " not in r.stdout
+
+
+def test_dev_sh_rejects_comfy_port_mismatch(tmp_path):
+    port = _free_port()  # 沒有服務在這個埠 → 需要啟動 ComfyUI
+    r = _dev("--comfy", "--backend-only", "--dry-run", tmp_path=tmp_path,
+             env_extra={"PYTHON": sys.executable, "BACKEND_PORT": str(_free_port()),
+                        "APP_COMFY__URL": f"http://127.0.0.1:{port}",
+                        "COMFY_START_CMD": "comfy launch -- --listen 127.0.0.1 --port 1"})
+    assert r.returncode == 1 and "請讓兩者一致" in r.stderr

@@ -61,11 +61,12 @@ cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
 ```bash
 cp scripts/dev.env.example scripts/dev.env   # 第一次：填 PYTHON（專案 venv）、埠號、APP_COMFY__URL、COMFY_START_CMD
 scripts/dev.sh                 # 後端 :8000 + 前端 :3000 → 打開 http://localhost:3000
-scripts/dev.sh --comfy         # 連 ComfyUI 一起啟動（用 dev.env 的 COMFY_START_CMD；GPU 被其他工作占用時不要用）
+scripts/dev.sh --comfy         # ComfyUI 沒在跑時一起啟動（用 dev.env 的 COMFY_START_CMD；已在跑就略過；GPU 被其他工作占用時不要用）
 scripts/dev.sh --backend-only  # 只啟動後端；--frontend-only 只啟動前端
 ```
 
-- `scripts/dev.env` 不進版控；同名環境變數優先（例如 `BACKEND_PORT=8001 scripts/dev.sh`）。
+- ComfyUI 位址預設讀 `config/settings.yaml` 的 `comfy.url`（8188）；只有要連別的埠時才在 dev.env 設 `APP_COMFY__URL`。
+- `scripts/dev.env` 不進版控；同名環境變數優先（例如 `BACKEND_PORT=8001 scripts/dev.sh`）。`--dry-run` 只做檢查並列出會啟動什麼。
 - 啟動前會檢查：python 有沒有 uvicorn、前端是否已 `npm ci`、埠號是否被占用。
 - 正式（內網）部署請看 [docs/deploy-intranet.md](docs/deploy-intranet.md)，不要用這個腳本。
 

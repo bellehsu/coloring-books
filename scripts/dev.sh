@@ -6,19 +6,23 @@
 #   scripts/dev.sh --comfy         另外啟動 ComfyUI（需在 dev.env 設 COMFY_START_CMD）
 #   scripts/dev.sh --backend-only  只啟動後端
 #   scripts/dev.sh --frontend-only 只啟動前端（後端要已在 BACKEND_PORT 執行）
+#   scripts/dev.sh --dry-run       只做檢查並列出會啟動什麼，不真的啟動
 #
+# ComfyUI 位址預設讀 config/settings.yaml 的 comfy.url（8188），可用 APP_COMFY__URL 覆寫；
+# --comfy 時若該位址已有 ComfyUI 在執行，就略過啟動。
 # 設定：scripts/dev.env（從 dev.env.example 複製）。環境變數優先於 dev.env。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${DEV_ENV_FILE:-$ROOT/scripts/dev.env}"
 
-usage() { sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
-RUN_BACKEND=1 RUN_FRONTEND=1 RUN_COMFY=0
+RUN_BACKEND=1 RUN_FRONTEND=1 RUN_COMFY=0 DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
     --comfy) RUN_COMFY=1 ;;
+    --dry-run) DRY_RUN=1 ;;
     --backend-only) RUN_FRONTEND=0 ;;
     --frontend-only) RUN_BACKEND=0 ;;
     -h|--help) usage; exit 0 ;;
@@ -54,8 +58,37 @@ if (( RUN_FRONTEND )); then
   [[ -d "$ROOT/frontend/node_modules" ]] || die "前端還沒安裝依賴：cd frontend && npm ci"
   port_busy "$FRONTEND_PORT" && die "埠 $FRONTEND_PORT 已被占用（前端）；改 FRONTEND_PORT 或先關掉占用的程式"
 fi
+# 後端實際會用的 ComfyUI 位址：APP_COMFY__URL，否則 settings.yaml 的 comfy.url
+comfy_url() {
+  if [[ -n "${APP_COMFY__URL:-}" ]]; then echo "${APP_COMFY__URL%/}"; return; fi
+  env -u PYTHONPATH "$PYTHON" -c 'import sys; sys.path.insert(0, "backend")
+from app.config import load_settings; print(load_settings().comfy.url)' 2>/dev/null \
+    || echo "（讀不到 config/settings.yaml 的 comfy.url）"
+}
+comfy_up() { curl -s -m 3 -o /dev/null -w '%{http_code}' "$1/system_stats" 2>/dev/null | grep -q '^200$'; }
+
+cd "$ROOT"
+COMFY_URL="$(comfy_url)"
 if (( RUN_COMFY )); then
-  [[ -n "${COMFY_START_CMD:-}" ]] || die "--comfy 需要在 scripts/dev.env 設定 COMFY_START_CMD"
+  if comfy_up "$COMFY_URL"; then
+    echo "ComfyUI 已在 $COMFY_URL 執行，略過啟動。"
+    RUN_COMFY=0
+  else
+    [[ -n "${COMFY_START_CMD:-}" ]] || die "--comfy 需要在 scripts/dev.env 設定 COMFY_START_CMD"
+    cmd_port="$(grep -oE -- '--port[ =]+[0-9]+' <<<"$COMFY_START_CMD" | grep -oE '[0-9]+$' || true)"
+    url_port="$(grep -oE ':[0-9]+$' <<<"$COMFY_URL" | tr -d : || true)"
+    if [[ -n "$cmd_port" && -n "$url_port" && "$cmd_port" != "$url_port" ]]; then
+      die "COMFY_START_CMD 用埠 $cmd_port，但後端會連 $COMFY_URL；請讓兩者一致（改 COMFY_START_CMD 或設 APP_COMFY__URL）"
+    fi
+  fi
+fi
+
+if (( DRY_RUN )); then
+  echo "dry-run：檢查通過，將啟動："
+  (( RUN_COMFY )) && echo "  comfy     $COMFY_START_CMD"
+  (( RUN_BACKEND )) && echo "  backend   127.0.0.1:$BACKEND_PORT（ComfyUI：$COMFY_URL）"
+  (( RUN_FRONTEND )) && echo "  frontend  localhost:$FRONTEND_PORT → 後端 127.0.0.1:$BACKEND_PORT"
+  exit 0
 fi
 
 PIDS=()
@@ -77,7 +110,6 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-cd "$ROOT"
 if (( RUN_COMFY )); then
   start comfy "$COMFY_START_CMD"
 fi
@@ -89,9 +121,10 @@ if (( RUN_FRONTEND )); then
 fi
 
 echo "已啟動（Ctrl+C 全部關閉）："
-(( RUN_BACKEND )) && echo "  後端  http://127.0.0.1:$BACKEND_PORT/api/system/preflight"
-(( RUN_FRONTEND )) && echo "  前端  http://localhost:$FRONTEND_PORT"
-(( RUN_COMFY )) && echo "  ComfyUI ${APP_COMFY__URL:-（settings.yaml 的 comfy.url）}"
+(( RUN_BACKEND )) && echo "  後端    http://127.0.0.1:$BACKEND_PORT/api/system/preflight"
+(( RUN_FRONTEND )) && echo "  前端    http://localhost:$FRONTEND_PORT"
+echo "  ComfyUI $COMFY_URL$( (( RUN_COMFY )) && echo '（由本腳本啟動）' || true)"
+comfy_up "$COMFY_URL" || (( RUN_COMFY )) || echo "  注意：$COMFY_URL 目前連不上 ComfyUI，生成會排隊等待；可加 --comfy 一起啟動。"
 
 # 任何一個服務結束就全部關閉
 wait -n "${PIDS[@]}" || true
