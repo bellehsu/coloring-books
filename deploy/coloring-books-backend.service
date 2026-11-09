@@ -1,0 +1,21 @@
+# systemd user service：後端（FastAPI，單一 process）
+# 安裝：mkdir -p ~/.config/systemd/user && cp deploy/*.service ~/.config/systemd/user/
+# 必改：下方 WorkingDirectory 與 ExecStart 的專案路徑、venv 路徑。
+[Unit]
+Description=Coloring Books backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+# 改成專案根目錄
+WorkingDirectory=/ai-data/repos/coloring-books
+# 清掉 ROS 的 PYTHONPATH（會破壞載入）
+Environment=PYTHONPATH=
+# 需要覆寫設定時加：Environment=APP_COMFY__URL=http://127.0.0.1:8188
+# 改成你的 venv 路徑。不可加 --workers（生成 worker 在 process 內）。
+ExecStart=/ai-data/venvs/ubuntu24.04/coloring-books/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

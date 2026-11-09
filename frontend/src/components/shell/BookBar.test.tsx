@@ -1,0 +1,64 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import type { Book } from "@/api/client";
+import { AppBar } from "./AppBar";
+import { BookBar } from "./BookBar";
+
+vi.mock("@/api/hooks", () => ({
+  useQueue: () => ({ data: { state: "idle", last_error: null, queued: 0, running_id: null } }),
+}));
+
+const book = (o: Partial<Book> = {}) =>
+  ({
+    id: 7,
+    title: "小兔子的一天",
+    paper_size: "a4",
+    print_mode: "print_shop",
+    character_generation_id: 3,
+    stats: { pages: 20, passed: 14, needs_fix: 4, no_selection: 2 },
+    ...o,
+  }) as Book;
+
+describe("BookBar", () => {
+  it("書名、版面說明、頁面 passed / pages、角色打勾連到角色工作室", () => {
+    render(<BookBar book={book()} current="pages" />);
+    expect(screen.getByRole("heading", { name: "小兔子的一天" })).toBeInTheDocument();
+    expect(screen.getByText(/A4・印刷廠/)).toBeInTheDocument();
+    expect(screen.getByText("頁面 14 / 20")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /角色/ })).toHaveAttribute("href", "/books/7/character");
+    expect(screen.getByText("頁面 14 / 20").closest("[aria-current]")).toHaveAttribute("aria-current", "step");
+  });
+
+  it("角色未設定：頁面步驟不可點且有說明", () => {
+    render(<BookBar book={book({ character_generation_id: null })} current="character" />);
+    const pages = screen.getByRole("button", { name: /頁面/ });
+    expect(pages).toHaveAttribute("aria-disabled", "true");
+    expect(pages).toHaveAccessibleDescription("請先設定角色");
+    expect(screen.getByText("請先設定角色")).toBeInTheDocument();
+  });
+
+  it("角色已設定時頁面連到編輯器；匯出呼叫 onExport / onSettings", async () => {
+    const user = userEvent.setup();
+    const onExport = vi.fn();
+    const onSettings = vi.fn();
+    render(<BookBar book={book()} current="character" onExport={onExport} onSettings={onSettings} />);
+    expect(screen.getByRole("link", { name: /頁面/ })).toHaveAttribute("href", "/books/7/editor");
+    await user.click(screen.getByRole("button", { name: /匯出$/ }));
+    await user.click(screen.getByRole("button", { name: "匯出 PDF" }));
+    expect(onExport).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole("button", { name: "繪本設定" }));
+    expect(onSettings).toHaveBeenCalled();
+  });
+});
+
+describe("AppBar", () => {
+  it("logo、麵包屑連結與目前位置", () => {
+    render(<AppBar crumbs={[{ label: "我的繪本", href: "/" }, { label: "小兔子的一天" }]} />);
+    expect(screen.getByRole("link", { name: /繪本工作室/ })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "我的繪本" })).toHaveAttribute("href", "/");
+    expect(screen.getByText("小兔子的一天")).toHaveAttribute("aria-current", "page");
+    expect(screen.getByText("佇列空閒")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "繪本工作室" })).toBeInTheDocument();
+  });
+});

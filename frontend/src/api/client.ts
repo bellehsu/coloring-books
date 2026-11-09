@@ -1,0 +1,120 @@
+import type { components } from "./schema";
+
+type S = components["schemas"];
+export type Book = S["BookOut"];
+export type Page = S["PageOut"];
+export type Generation = S["GenerationOut"];
+export type QA = S["QAOut"];
+export type Edits = S["EditsOut"];
+export type QueueStatus = S["QueueStatus"];
+/** 後端 export/summary 沒有 response model，型別在此手寫（見 backend/app/api/export.py）。 */
+export interface ExportSummary {
+  total: number;
+  passed: number;
+  exportable_ids: number[];
+  skipped: { page_id: number; position: number; reason: "no_selection" | "not_passed" }[];
+}
+
+const BASE = "/api";
+
+function messageFrom(status: number, detail: unknown): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    const parts = detail
+      .map((d) => {
+        if (!d || typeof d !== "object") return null;
+        const { loc, msg } = d as { loc?: unknown; msg?: unknown };
+        if (typeof msg !== "string") return null;
+        const field = Array.isArray(loc) ? String(loc[loc.length - 1] ?? "") : "";
+        return field ? `${field}：${msg}` : msg;
+      })
+      .filter((p): p is string => p !== null);
+    if (parts.length > 0) return parts.join("；");
+  }
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const m = (detail as { message?: unknown }).message;
+    if (typeof m === "string" && m) return m;
+  }
+  return `伺服器錯誤（${status}）`;
+}
+
+export class ApiError extends Error {
+  status: number;
+  detail: unknown;
+  constructor(status: number, detail: unknown) {
+    super(messageFrom(status, detail));
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+async function failure(res: Response): Promise<ApiError> {
+  let detail: unknown;
+  try {
+    detail = ((await res.json()) as { detail?: unknown })?.detail;
+  } catch {
+    detail = undefined;
+  }
+  return new ApiError(res.status, detail);
+}
+
+async function request(path: string, init: RequestInit): Promise<Response> {
+  const res = await fetch(`${BASE}${path}`, init);
+  if (!res.ok) throw await failure(res);
+  return res;
+}
+
+async function json<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const init: RequestInit & { headers: Record<string, string> } = { method, headers: {} };
+  if (body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  const res = await request(path, init);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+function filenameFrom(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim());
+    } catch {
+      /* 落到 filename= */
+    }
+  }
+  const plain = /filename\s*=\s*"([^"]*)"/i.exec(disposition) ?? /filename\s*=\s*([^;]+)/i.exec(disposition);
+  return plain ? plain[1].trim() : null;
+}
+
+export const api = {
+  get: <T>(path: string) => json<T>("GET", path),
+  post: <T>(path: string, body?: unknown) => json<T>("POST", path, body),
+  patch: <T>(path: string, body?: unknown) => json<T>("PATCH", path, body),
+  put: <T>(path: string, body?: unknown) => json<T>("PUT", path, body),
+  /** 204 回 undefined；有 JSON body（例如刪除草圖回 Page）則回傳之。 */
+  del: <T = void>(path: string) => json<T>("DELETE", path),
+  /** multipart 上傳，欄位名 `file`。 */
+  async upload<T>(path: string, file: Blob, method: "PUT" | "POST" = "PUT"): Promise<T> {
+    const form = new FormData();
+    form.append("file", file, "file.png");
+    const res = await request(path, { method, body: form });
+    return (await res.json()) as T;
+  },
+  async blob(path: string, method = "GET", body?: unknown): Promise<Blob> {
+    const init: RequestInit & { headers: Record<string, string> } = { method, headers: {} };
+    if (body !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    return (await request(path, init)).blob();
+  },
+  /** 下載檔案：回 Blob 與 Content-Disposition 的檔名（沒有則 null）。非 2xx 丟 ApiError。 */
+  async download(path: string): Promise<{ blob: Blob; filename: string | null }> {
+    const res = await request(path, { method: "GET" });
+    return { blob: await res.blob(), filename: filenameFrom(res.headers.get("content-disposition")) };
+  },
+};

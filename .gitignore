@@ -11,3 +11,9 @@ experiments/samples/character_ref.*
 
 # brainstorming 視覺草稿
 .superpowers/
+
+# frontend
+frontend/node_modules/
+frontend/.next/
+frontend/test-results/
+frontend/playwright-report/

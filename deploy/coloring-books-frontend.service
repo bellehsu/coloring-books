@@ -1,0 +1,20 @@
+# systemd user service：前端（Next.js standalone）
+# 必改：WorkingDirectory 的專案路徑；ExecStart 的 node 絕對路徑（用 `which node` 查，此處為 nvm 路徑）。
+# 前提：已在 frontend/ 以 BACKEND_URL 執行 npm run build，並複製 .next/static（見 docs/deploy-intranet.md）。
+[Unit]
+Description=Coloring Books frontend (Next.js standalone)
+After=network.target coloring-books-backend.service
+Wants=coloring-books-backend.service
+
+[Service]
+Type=simple
+WorkingDirectory=/ai-data/repos/coloring-books/frontend
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+ExecStart=/home/belle/.nvm/versions/node/v24.21.0/bin/node .next/standalone/server.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

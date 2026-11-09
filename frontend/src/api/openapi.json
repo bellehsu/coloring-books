@@ -1,0 +1,3133 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Coloring Books",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/books": {
+      "get": {
+        "tags": [
+          "books"
+        ],
+        "summary": "List Books",
+        "operationId": "list_books_api_books_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BookOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Books Api Books Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Create Book",
+        "operationId": "create_book_api_books_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}": {
+      "get": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Get Book",
+        "operationId": "get_book_api_books__book_id__get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Update Book",
+        "operationId": "update_book_api_books__book_id__patch",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/character/candidates": {
+      "post": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Create Character Candidates",
+        "operationId": "create_character_candidates_api_books__book_id__character_candidates_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterCandidatesCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GenerationOut"
+                  },
+                  "title": "Response Create Character Candidates Api Books  Book Id  Character Candidates Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/character": {
+      "post": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Set Character",
+        "operationId": "set_character_api_books__book_id__character_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterSelect"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/pages": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Create Page",
+        "operationId": "create_page_api_books__book_id__pages_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "List Pages",
+        "operationId": "list_pages_api_books__book_id__pages_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PageOut"
+                  },
+                  "title": "Response List Pages Api Books  Book Id  Pages Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/pages/order": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Reorder Pages",
+        "operationId": "reorder_pages_api_books__book_id__pages_order_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageOrder"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PageOut"
+                  },
+                  "title": "Response Reorder Pages Api Books  Book Id  Pages Order Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}": {
+      "patch": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Update Page",
+        "operationId": "update_page_api_pages__page_id__patch",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Delete Page",
+        "operationId": "delete_page_api_pages__page_id__delete",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/sketch": {
+      "put": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Upload Sketch",
+        "operationId": "upload_sketch_api_pages__page_id__sketch_put",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_sketch_api_pages__page_id__sketch_put"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Delete Sketch",
+        "operationId": "delete_sketch_api_pages__page_id__sketch_delete",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Get Sketch",
+        "operationId": "get_sketch_api_pages__page_id__sketch_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/candidates": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Create Page Candidates",
+        "operationId": "create_page_candidates_api_pages__page_id__candidates_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageCandidatesCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GenerationOut"
+                  },
+                  "title": "Response Create Page Candidates Api Pages  Page Id  Candidates Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/select": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Select Generation",
+        "operationId": "select_generation_api_pages__page_id__select_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectGeneration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generations/{gen_id}": {
+      "get": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Get Generation",
+        "operationId": "get_generation_api_generations__gen_id__get",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Update Generation",
+        "operationId": "update_generation_api_generations__gen_id__patch",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerationUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generations/{gen_id}/image": {
+      "get": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Get Generation Image",
+        "operationId": "get_generation_image_api_generations__gen_id__image_get",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/generations": {
+      "get": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "List Generations",
+        "operationId": "list_generations_api_books__book_id__generations_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/GenKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "page_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page Id"
+            }
+          },
+          {
+            "name": "include_discarded",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Discarded"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GenerationOut"
+                  },
+                  "title": "Response List Generations Api Books  Book Id  Generations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generations/{gen_id}/cancel": {
+      "post": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Cancel Generation",
+        "operationId": "cancel_generation_api_generations__gen_id__cancel_post",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/queue": {
+      "get": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Queue Status",
+        "operationId": "queue_status_api_system_queue_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/lineart": {
+      "get": {
+        "tags": [
+          "lineart"
+        ],
+        "summary": "Get Lineart",
+        "operationId": "get_lineart_api_pages__page_id__lineart_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/qa": {
+      "get": {
+        "tags": [
+          "lineart"
+        ],
+        "summary": "Get Qa",
+        "operationId": "get_qa_api_pages__page_id__qa_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QAOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/qa/overlay.png": {
+      "get": {
+        "tags": [
+          "lineart"
+        ],
+        "summary": "Get Qa Overlay",
+        "operationId": "get_qa_overlay_api_pages__page_id__qa_overlay_png_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/lineart/edits": {
+      "get": {
+        "tags": [
+          "lineart"
+        ],
+        "summary": "Get Edits",
+        "operationId": "get_edits_api_pages__page_id__lineart_edits_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "lineart"
+        ],
+        "summary": "Put Edits",
+        "operationId": "put_edits_api_pages__page_id__lineart_edits_put",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QAOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/lineart/autofix": {
+      "post": {
+        "tags": [
+          "lineart"
+        ],
+        "summary": "Autofix",
+        "description": "對目前 QA 的每個缺口補一筆 draw（加在修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。",
+        "operationId": "autofix_api_pages__page_id__lineart_autofix_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutofixIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutofixOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generations/{gen_id}/lineart-preview": {
+      "get": {
+        "tags": [
+          "lineart"
+        ],
+        "summary": "Lineart Preview",
+        "description": "角色或頁面候選的線稿預覽（不含修改圖層），依所屬繪本目前的內容尺寸。",
+        "operationId": "lineart_preview_api_generations__gen_id__lineart_preview_get",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          },
+          {
+            "name": "detail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LineDetail",
+              "default": "standard"
+            }
+          },
+          {
+            "name": "line_width_px",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 16,
+              "minimum": 8,
+              "default": 11,
+              "title": "Line Width Px"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/reference-sketch": {
+      "post": {
+        "tags": [
+          "lineart"
+        ],
+        "summary": "Reference Sketch",
+        "description": "上傳參考圖 → xdog 擷取（sigma 1.2）→ 以 contain 放進繪本的 generation_size，白底黑線。不存檔。",
+        "operationId": "reference_sketch_api_books__book_id__reference_sketch_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_reference_sketch_api_books__book_id__reference_sketch_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/character-check": {
+      "post": {
+        "tags": [
+          "review"
+        ],
+        "summary": "Character Check",
+        "operationId": "character_check_api_pages__page_id__character_check_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterCheckIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/pass": {
+      "post": {
+        "tags": [
+          "review"
+        ],
+        "summary": "Pass Page",
+        "operationId": "pass_page_api_pages__page_id__pass_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PassIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/unpass": {
+      "post": {
+        "tags": [
+          "review"
+        ],
+        "summary": "Unpass Page",
+        "operationId": "unpass_page_api_pages__page_id__unpass_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/export/summary": {
+      "get": {
+        "tags": [
+          "export"
+        ],
+        "summary": "Export Summary",
+        "operationId": "export_summary_api_books__book_id__export_summary_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Export Summary Api Books  Book Id  Export Summary Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/export.pdf": {
+      "get": {
+        "tags": [
+          "export"
+        ],
+        "summary": "Export Pdf",
+        "operationId": "export_pdf_api_books__book_id__export_pdf_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "passed",
+                "all"
+              ],
+              "type": "string",
+              "default": "passed",
+              "title": "Include"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/print.png": {
+      "get": {
+        "tags": [
+          "export"
+        ],
+        "summary": "Print Png",
+        "operationId": "print_png_api_pages__page_id__print_png_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/preflight": {
+      "get": {
+        "summary": "Preflight",
+        "operationId": "preflight_api_system_preflight_get",
+        "parameters": [
+          {
+            "name": "reload",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Reload"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Preflight Api System Preflight Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AutofixIn": {
+        "properties": {
+          "generation_id": {
+            "type": "integer",
+            "title": "Generation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generation_id"
+        ],
+        "title": "AutofixIn"
+      },
+      "AutofixOut": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/PageStatus"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/QAMessage"
+            },
+            "type": "array",
+            "title": "Errors"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/QAMessage"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "gaps": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Gaps"
+          },
+          "gap_count": {
+            "type": "integer",
+            "title": "Gap Count"
+          },
+          "dangling_count": {
+            "type": "integer",
+            "title": "Dangling Count"
+          },
+          "near_miss_count": {
+            "type": "integer",
+            "title": "Near Miss Count"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metrics"
+          },
+          "character_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qa_note": {
+            "type": "string",
+            "title": "Qa Note"
+          },
+          "forced_pass_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forced Pass Reason"
+          },
+          "lineart_url": {
+            "type": "string",
+            "title": "Lineart Url"
+          },
+          "autofix_added": {
+            "type": "integer",
+            "title": "Autofix Added"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "errors",
+          "warnings",
+          "gaps",
+          "gap_count",
+          "dangling_count",
+          "near_miss_count",
+          "metrics",
+          "character_check",
+          "qa_note",
+          "forced_pass_reason",
+          "lineart_url",
+          "autofix_added"
+        ],
+        "title": "AutofixOut"
+      },
+      "Body_reference_sketch_api_books__book_id__reference_sketch_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_reference_sketch_api_books__book_id__reference_sketch_post"
+      },
+      "Body_upload_sketch_api_pages__page_id__sketch_put": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_sketch_api_pages__page_id__sketch_put"
+      },
+      "BookCreate": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "paper_size": {
+            "$ref": "#/components/schemas/PaperSize"
+          },
+          "print_mode": {
+            "$ref": "#/components/schemas/PrintMode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "paper_size",
+          "print_mode"
+        ],
+        "title": "BookCreate"
+      },
+      "BookOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "paper_size": {
+            "$ref": "#/components/schemas/PaperSize"
+          },
+          "print_mode": {
+            "$ref": "#/components/schemas/PrintMode"
+          },
+          "character_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Character Description"
+          },
+          "character_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Character Generation Id"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/LayoutOut"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/BookStats"
+          },
+          "cover_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "paper_size",
+          "print_mode",
+          "character_description",
+          "character_generation_id",
+          "layout",
+          "stats",
+          "cover_url",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "BookOut"
+      },
+      "BookStats": {
+        "properties": {
+          "pages": {
+            "type": "integer",
+            "title": "Pages",
+            "default": 0
+          },
+          "passed": {
+            "type": "integer",
+            "title": "Passed",
+            "default": 0
+          },
+          "needs_fix": {
+            "type": "integer",
+            "title": "Needs Fix",
+            "default": 0
+          },
+          "no_selection": {
+            "type": "integer",
+            "title": "No Selection",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "BookStats"
+      },
+      "BookUpdate": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "paper_size": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaperSize"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "print_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrintMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "BookUpdate"
+      },
+      "CharacterCandidatesCreate": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 800,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 4
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4294967295.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "description"
+        ],
+        "title": "CharacterCandidatesCreate"
+      },
+      "CharacterCheck": {
+        "type": "string",
+        "enum": [
+          "consistent",
+          "inconsistent"
+        ],
+        "title": "CharacterCheck"
+      },
+      "CharacterCheckIn": {
+        "properties": {
+          "generation_id": {
+            "type": "integer",
+            "title": "Generation Id"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CharacterCheck"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "generation_id",
+          "result"
+        ],
+        "title": "CharacterCheckIn"
+      },
+      "CharacterSelect": {
+        "properties": {
+          "generation_id": {
+            "type": "integer",
+            "title": "Generation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generation_id"
+        ],
+        "title": "CharacterSelect"
+      },
+      "EditsIn": {
+        "properties": {
+          "generation_id": {
+            "type": "integer",
+            "title": "Generation Id"
+          },
+          "strokes": {
+            "items": {
+              "$ref": "#/components/schemas/StrokeIn"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Strokes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generation_id",
+          "strokes"
+        ],
+        "title": "EditsIn"
+      },
+      "EditsOut": {
+        "properties": {
+          "generation_id": {
+            "type": "integer",
+            "title": "Generation Id"
+          },
+          "strokes": {
+            "items": {
+              "$ref": "#/components/schemas/StrokeOut"
+            },
+            "type": "array",
+            "title": "Strokes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generation_id",
+          "strokes"
+        ],
+        "title": "EditsOut"
+      },
+      "GenKind": {
+        "type": "string",
+        "enum": [
+          "character",
+          "page"
+        ],
+        "title": "GenKind"
+      },
+      "GenStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "title": "GenStatus"
+      },
+      "GenerationOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "book_id": {
+            "type": "integer",
+            "title": "Book Id"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/GenKind"
+          },
+          "status": {
+            "$ref": "#/components/schemas/GenStatus"
+          },
+          "discarded": {
+            "type": "boolean",
+            "title": "Discarded"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "user_text": {
+            "type": "string",
+            "title": "User Text"
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "elapsed_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed S"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Position"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "book_id",
+          "page_id",
+          "kind",
+          "status",
+          "discarded",
+          "prompt",
+          "user_text",
+          "seed",
+          "width",
+          "height",
+          "image_url",
+          "error",
+          "elapsed_s",
+          "queue_position",
+          "progress",
+          "created_at"
+        ],
+        "title": "GenerationOut"
+      },
+      "GenerationUpdate": {
+        "properties": {
+          "discarded": {
+            "type": "boolean",
+            "title": "Discarded"
+          }
+        },
+        "type": "object",
+        "required": [
+          "discarded"
+        ],
+        "title": "GenerationUpdate"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LayoutOut": {
+        "properties": {
+          "paper_mm": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Paper Mm"
+          },
+          "content_mm": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Content Mm"
+          },
+          "content_px": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Content Px"
+          },
+          "generation_size": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Generation Size"
+          },
+          "safe_inset_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Safe Inset Mm"
+          },
+          "page_px": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Page Px"
+          },
+          "content_offset_px": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Content Offset Px"
+          },
+          "trim_box_px": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 4,
+                "minItems": 4
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trim Box Px"
+          },
+          "safe_box_px": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 4,
+                "minItems": 4
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Safe Box Px"
+          },
+          "ratio_group": {
+            "type": "string",
+            "title": "Ratio Group"
+          }
+        },
+        "type": "object",
+        "required": [
+          "paper_mm",
+          "content_mm",
+          "content_px",
+          "generation_size",
+          "safe_inset_mm",
+          "page_px",
+          "content_offset_px",
+          "trim_box_px",
+          "safe_box_px",
+          "ratio_group"
+        ],
+        "title": "LayoutOut"
+      },
+      "LineDetail": {
+        "type": "string",
+        "enum": [
+          "simple",
+          "standard",
+          "detailed"
+        ],
+        "title": "LineDetail"
+      },
+      "PageCandidatesCreate": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 4
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4294967295.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          }
+        },
+        "type": "object",
+        "title": "PageCandidatesCreate"
+      },
+      "PageCreate": {
+        "properties": {
+          "scene_prompt": {
+            "type": "string",
+            "maxLength": 800,
+            "title": "Scene Prompt",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "PageCreate"
+      },
+      "PageOrder": {
+        "properties": {
+          "page_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Page Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_ids"
+        ],
+        "title": "PageOrder"
+      },
+      "PageOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "book_id": {
+            "type": "integer",
+            "title": "Book Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "scene_prompt": {
+            "type": "string",
+            "title": "Scene Prompt"
+          },
+          "controlnet_strength": {
+            "type": "number",
+            "title": "Controlnet Strength"
+          },
+          "sketch_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sketch Url"
+          },
+          "selected_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Generation Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PageStatus"
+          },
+          "line_detail": {
+            "$ref": "#/components/schemas/LineDetail"
+          },
+          "line_width_px": {
+            "type": "integer",
+            "title": "Line Width Px"
+          },
+          "character_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lineart_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineart Url"
+          },
+          "needs_fix": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Fix"
+          },
+          "aspect_mismatch": {
+            "type": "boolean",
+            "title": "Aspect Mismatch"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "book_id",
+          "position",
+          "scene_prompt",
+          "controlnet_strength",
+          "sketch_url",
+          "selected_generation_id",
+          "status",
+          "line_detail",
+          "line_width_px",
+          "character_check",
+          "lineart_url",
+          "needs_fix",
+          "aspect_mismatch",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PageOut"
+      },
+      "PageStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "passed"
+        ],
+        "title": "PageStatus"
+      },
+      "PageUpdate": {
+        "properties": {
+          "scene_prompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 800
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Prompt"
+          },
+          "controlnet_strength": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 0.6,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Controlnet Strength"
+          },
+          "line_detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LineDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "line_width_px": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 16.0,
+                "minimum": 8.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Width Px"
+          }
+        },
+        "type": "object",
+        "title": "PageUpdate"
+      },
+      "PaperSize": {
+        "type": "string",
+        "enum": [
+          "a4",
+          "a5",
+          "b5",
+          "letter",
+          "square_21"
+        ],
+        "title": "PaperSize"
+      },
+      "PassIn": {
+        "properties": {
+          "force_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Force Reason"
+          }
+        },
+        "type": "object",
+        "title": "PassIn"
+      },
+      "PrintMode": {
+        "type": "string",
+        "enum": [
+          "home",
+          "print_shop"
+        ],
+        "title": "PrintMode"
+      },
+      "QAMessage": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "QAMessage"
+      },
+      "QAOut": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/PageStatus"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/QAMessage"
+            },
+            "type": "array",
+            "title": "Errors"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/QAMessage"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "gaps": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Gaps"
+          },
+          "gap_count": {
+            "type": "integer",
+            "title": "Gap Count"
+          },
+          "dangling_count": {
+            "type": "integer",
+            "title": "Dangling Count"
+          },
+          "near_miss_count": {
+            "type": "integer",
+            "title": "Near Miss Count"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metrics"
+          },
+          "character_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qa_note": {
+            "type": "string",
+            "title": "Qa Note"
+          },
+          "forced_pass_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forced Pass Reason"
+          },
+          "lineart_url": {
+            "type": "string",
+            "title": "Lineart Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "errors",
+          "warnings",
+          "gaps",
+          "gap_count",
+          "dangling_count",
+          "near_miss_count",
+          "metrics",
+          "character_check",
+          "qa_note",
+          "forced_pass_reason",
+          "lineart_url"
+        ],
+        "title": "QAOut"
+      },
+      "QueueStatus": {
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/WorkerState"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "running_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "last_error",
+          "queued",
+          "running_id"
+        ],
+        "title": "QueueStatus"
+      },
+      "SelectGeneration": {
+        "properties": {
+          "generation_id": {
+            "type": "integer",
+            "title": "Generation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generation_id"
+        ],
+        "title": "SelectGeneration"
+      },
+      "StrokeIn": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "draw",
+              "erase"
+            ],
+            "title": "Op"
+          },
+          "width_px": {
+            "type": "number",
+            "maximum": 64.0,
+            "minimum": 2.0,
+            "title": "Width Px"
+          },
+          "points": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Points"
+          }
+        },
+        "type": "object",
+        "required": [
+          "op",
+          "width_px",
+          "points"
+        ],
+        "title": "StrokeIn"
+      },
+      "StrokeOut": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "draw",
+              "erase"
+            ],
+            "title": "Op"
+          },
+          "width_px": {
+            "type": "number",
+            "title": "Width Px"
+          },
+          "points": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Points"
+          }
+        },
+        "type": "object",
+        "required": [
+          "op",
+          "width_px",
+          "points"
+        ],
+        "title": "StrokeOut"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WorkerState": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "running",
+          "engine_unavailable",
+          "stopped"
+        ],
+        "title": "WorkerState"
+      }
+    }
+  }
+}

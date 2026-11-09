@@ -1,0 +1,165 @@
+/* 頁面編輯器：三區 grid。> 1180 px 三欄（236／彈性／332）；761–1180 兩欄、檢查面板在下；≤ 760 單欄。 */
+.ws {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr) 332px;
+  grid-template-areas: "pages stage insp";
+  min-height: calc(100vh - 129px);
+}
+.work {
+  grid-area: stage;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 點陣底來自 globals.css 的 .stage */
+.stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 16px 24px;
+}
+.banner {
+  margin: 0;
+  align-self: stretch;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font-size: 14px;
+  text-align: center;
+}
+.stageMsg {
+  margin: 40px 0;
+  font-size: 14px;
+  color: var(--muted-2);
+}
+.lineStage {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+.autofix {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--warn);
+  color: var(--on-accent);
+  font-size: 14px;
+  cursor: pointer;
+}
+.autofix:hover {
+  background: var(--warn-ink);
+}
+.autofix:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.fixMsg {
+  font-size: 13px;
+  color: var(--ok-ink);
+  padding: 0 4px;
+}
+.fixMsg:empty {
+  display: none;
+}
+.notice {
+  margin: 0;
+  padding: 10px 16px;
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.notice a {
+  margin-left: 8px;
+  color: var(--accent-ink);
+}
+.empty {
+  max-width: 480px;
+  margin: 64px auto;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.emptyTitle {
+  margin: 0;
+  font-size: 20px;
+}
+.emptyText {
+  margin: 0 0 8px;
+  color: var(--muted-2);
+  line-height: 1.6;
+}
+.loadError {
+  padding: 24px 16px;
+  color: var(--muted-2);
+}
+.loadError p {
+  margin: 0 0 8px;
+}
+.placeholder {
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--muted-2);
+  font-size: 14px;
+}
+
+@media (max-width: 1180px) {
+  .ws {
+    grid-template-columns: 212px minmax(0, 1fr);
+    grid-template-areas:
+      "pages stage"
+      "insp insp";
+  }
+}
+@media (max-width: 760px) {
+  .ws {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "pages"
+      "stage"
+      "insp";
+  }
+}
+
+/* 寫入失敗的持續狀態（修線狀態列、草圖畫布下方）＋重試 */
+.saveFailed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--danger);
+  font-size: 14px;
+}
+.sketchSaveFailed {
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--danger-soft);
+}
+.retry {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--danger);
+  font-size: 13px;
+  cursor: pointer;
+}
+.retry:hover {
+  background: var(--danger-soft);
+}
