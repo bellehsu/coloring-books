@@ -1,0 +1,32 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ok {
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+}
+.warn {
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+.draft {
+  background: var(--chip-bg);
+  color: var(--muted-2);
+}
+.busy {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}

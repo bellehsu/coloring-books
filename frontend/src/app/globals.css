@@ -23,6 +23,15 @@
   --trim: #5b6ee8;
   --safe: #2e9a5c;
   --focus: #8ea0f5;
+  --accent-ink: #2f3fb8;
+  --chip-bg: #efede8;
+  --muted-3: #8c8880;
+  --step-line: #cfcbc2;
+  --on-accent: #ffffff;
+  --overlay: rgba(28, 27, 25, 0.36);
+  --shadow-pop: 0 20px 60px rgba(28, 27, 25, 0.24);
+  --shadow-drawer: -8px 0 32px rgba(28, 27, 25, 0.18);
+  --shadow-toast: 0 4px 16px rgba(28, 27, 25, 0.16);
   --radius-sm: 8px;
   --radius-md: 10px;
   --radius-lg: 12px;
@@ -31,6 +40,13 @@
 
 * {
   box-sizing: border-box;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
 
 html,
