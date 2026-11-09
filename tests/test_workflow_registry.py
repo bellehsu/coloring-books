@@ -146,3 +146,26 @@ def test_repo_registry_has_no_retired_routes():
     assert "route_b_qwen_edit_2511_gguf" not in reg.entries
     assert "sdxl_text2img" in reg.entries
     assert "route_a_sdxl_ipadapter_cn" in reg.entries
+
+
+def test_repo_compose_workflows_load():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    bg = reg.get("sdxl_background")
+    assert bg.ok, bg.errors
+    built = bg.build_prompt({"prompt": "x", "seed": 1, "structure_image": "s.png"})
+    assert built.params["controlnet_strength"] == 0.0
+    assert built.params["controlnet_type"] == "hed/pidi/scribble/ted"
+    assert built.params["controlnet_end_percent"] == 0.5
+    assert len(built.output_node_ids) == 1
+    assert not any(n["class_type"].startswith("IPAdapter") for n in built.prompt.values())
+
+    pose = reg.get("sdxl_pose_cutout")
+    assert pose.ok, pose.errors
+    built = pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png"})
+    assert built.params["ipadapter_weight"] == 0.55
+    assert built.params["ipadapter_end_at"] == 0.6
+    assert len(built.output_node_ids) == 2
+    assert "background_removal/birefnet.safetensors" in {
+        f"{m['folder']}/{m['filename']}" for m in pose.models}
+    with pytest.raises(ParameterError):
+        pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png", "ipadapter_weight": 5.0})
