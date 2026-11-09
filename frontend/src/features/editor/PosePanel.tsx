@@ -1,7 +1,13 @@
 "use client";
 
+import { useId, useRef, useState } from "react";
+import Link from "next/link";
 import type { Page } from "@/api/client";
+import { Button } from "@/components/ui/Button";
+import { ACTIONS, hasPhrase, togglePhrase } from "@/lib/actions";
 import styles from "./Inspector.module.css";
+
+export const MAX_ACTION = 300;
 
 export interface PosePanelProps {
   /** 呼叫端用 key={page.id}。 */
@@ -17,14 +23,76 @@ export interface PosePanelProps {
   activeCount: number;
 }
 
-/**
- * 角色模式的面板。
- * Task 8 佔位。Task 10 換成完整版：動作描述（1–300 字）、十個常用動作按鈕、「產生角色動作」（整段停用防連點）。
- */
-export function PosePanel(props: PosePanelProps) {
+/** 角色模式的面板：動作描述（1–300 字）、十個常用動作、產生角色動作（一次一張，整段停用防連點）。 */
+export function PosePanel({ page, hasCharacter, characterHref, onGenerate, generating, activeCount }: PosePanelProps) {
+  const id = useId();
+  const [action, setAction] = useState("");
+  const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
+  const trimmed = action.trim();
+
+  async function generate() {
+    if (startingRef.current || !trimmed) return;
+    startingRef.current = true;
+    setStarting(true);
+    try {
+      await onGenerate(trimmed);
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
+    }
+  }
+
   return (
-    <section aria-label="角色動作設定" className={styles.panel} data-page={props.page.id}>
-      <h2 className={styles.h2}>角色動作</h2>
+    <section aria-labelledby={`${id}-h`} className={styles.panel} data-page={page.id}>
+      <h2 id={`${id}-h`} className={styles.h2}>
+        角色動作
+      </h2>
+      <div className={styles.field}>
+        <label htmlFor={id}>動作描述</label>
+        <textarea
+          id={id}
+          rows={3}
+          maxLength={MAX_ACTION}
+          className={styles.textarea}
+          value={action}
+          placeholder="例如：waving one hand"
+          aria-describedby={`${id}-count`}
+          onChange={(e) => setAction(e.target.value)}
+        />
+        <span id={`${id}-count`} className={styles.counter}>
+          {action.length} / {MAX_ACTION}
+        </span>
+      </div>
+      <div className={styles.presets} role="group" aria-label="常用動作">
+        {ACTIONS.map((a) => {
+          const on = hasPhrase(action, a.phrase);
+          return (
+            <button
+              key={a.phrase}
+              type="button"
+              className={styles.preset}
+              data-on={on}
+              aria-pressed={on}
+              onClick={() => setAction((cur) => togglePhrase(cur, a.phrase).slice(0, MAX_ACTION))}
+            >
+              {a.label}
+            </button>
+          );
+        })}
+      </div>
+      <Button variant="primary" size="lg" disabled={!hasCharacter || !trimmed || generating || starting} onClick={() => void generate()}>
+        產生角色動作
+      </Button>
+      {hasCharacter ? (
+        <span className={styles.hintCenter} role="status">
+          {activeCount > 0 ? `本頁 ${activeCount} 張排隊或生成中` : "約 10 秒"}
+        </span>
+      ) : (
+        <span className={styles.hintCenter}>
+          <Link href={characterHref}>先設定角色</Link>
+        </span>
+      )}
     </section>
   );
 }
