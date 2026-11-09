@@ -6,7 +6,7 @@ import { SketchCanvas, type SketchCanvasProps } from "./SketchCanvas";
 
 /**
  * jsdom 沒有 canvas：用一個「像素模型」的假 2D context。
- * - fillRect(白) → 全部像素白；stroke/fill/strokeRect → 用目前顏色塗第 0 個像素
+ * - fillRect(白) → 全部像素白；stroke/fill/strokeRect → 用目前顏色塗滿所有像素
  * - getImageData 回傳複本並帶流水號，putImageData 還原
  * 足以驗證：空白判斷、復原快照、存檔回呼收到 null 或 PNG。
  */
@@ -17,9 +17,10 @@ let snapSeq: number;
 let puts: number[];
 let toBlobCalls: number;
 
+/** 每次塗色都塗滿全部 16 個像素（≥ MAX_INK_PIXELS，黑色才會被判定為「有墨水」）。 */
 const paintPixel0 = (color: unknown) => {
   const v = color === "#ffffff" ? 255 : 0;
-  pixels[0] = pixels[1] = pixels[2] = v;
+  for (let i = 0; i < pixels.length; i += 4) pixels[i] = pixels[i + 1] = pixels[i + 2] = v;
 };
 
 function makeCtx() {
@@ -214,6 +215,43 @@ describe("SketchCanvas", () => {
     act(() => pending!());
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenLastCalledWith(null);
+  });
+
+  it("toBlob 回傳 null → 經同一個 debounce 重試一次", async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    HTMLCanvasElement.prototype.toBlob = function (cb: BlobCallback) {
+      n++;
+      cb(n === 1 ? null : new Blob(["png"], { type: "image/png" }));
+    };
+    const { canvas, onSave } = setup();
+    await ready();
+    stroke(canvas);
+    tick(1100);
+    expect(n).toBe(1);
+    expect(onSave).not.toHaveBeenCalled();
+    tick(1100);
+    expect(n).toBe(2);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenLastCalledWith(expect.any(Blob));
+  });
+
+  it("toBlob 連續回傳 null → 只重試一次，之後留給卸載 flush", async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    HTMLCanvasElement.prototype.toBlob = function (cb: BlobCallback) {
+      n++;
+      cb(null);
+    };
+    const { canvas, onSave, unmount } = setup();
+    await ready();
+    stroke(canvas);
+    tick(5000);
+    expect(n).toBe(2);
+    expect(onSave).not.toHaveBeenCalled();
+    unmount();
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).toBeInstanceOf(Blob);
   });
 
   it("用橡皮擦擦到全白，也存 null", async () => {

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   BRUSH_WIDTH,
   INK,
+  INK_THRESHOLD,
+  MAX_INK_PIXELS,
   MAX_UNDO,
   PAPER,
   drawShape,
@@ -50,15 +52,33 @@ function pixels(values: number[][]): ImageData {
 }
 
 describe("isBlank", () => {
-  it("全部像素都 ≥ 門檻才算空白", () => {
-    expect(isBlank(pixels([[255, 255, 255, 255], [250, 251, 252, 255]]))).toBe(true);
-    expect(isBlank(pixels([[255, 255, 255, 255], [249, 255, 255, 255]]))).toBe(false);
-    expect(isBlank(pixels([[0, 0, 0, 255]]))).toBe(false);
+  const W = [255, 255, 255, 255];
+  const K = [0, 0, 0, 255];
+  const rep = (px: number[], n: number) => Array.from({ length: n }, () => px);
+
+  it("全白是空白", () => {
+    expect(isBlank(pixels(rep(W, 100)))).toBe(true);
   });
 
-  it("門檻可調；alpha 不參與判斷", () => {
-    expect(isBlank(pixels([[200, 200, 200, 255]]), 200)).toBe(true);
-    expect(isBlank(pixels([[255, 255, 255, 0]]))).toBe(true);
+  it("橡皮擦留下的淺灰毛邊（例如 200）不算墨水 → 空白", () => {
+    expect(isBlank(pixels([...rep(W, 50), ...rep([200, 200, 200, 255], 30)]))).toBe(true);
+  });
+
+  it(`少於 ${MAX_INK_PIXELS} 個深色像素仍是空白；20 個就不是`, () => {
+    expect(MAX_INK_PIXELS).toBe(8);
+    expect(isBlank(pixels([...rep(W, 50), ...rep(K, 7)]))).toBe(true);
+    expect(isBlank(pixels([...rep(W, 50), ...rep(K, MAX_INK_PIXELS)]))).toBe(false);
+    expect(isBlank(pixels([...rep(W, 50), ...rep(K, 20)]))).toBe(false);
+  });
+
+  it(`任一通道 < ${INK_THRESHOLD} 就算深色（彩色墨水也算）`, () => {
+    expect(INK_THRESHOLD).toBe(128);
+    expect(isBlank(pixels(rep([255, 255, INK_THRESHOLD - 1, 255], 20)))).toBe(false);
+    expect(isBlank(pixels(rep([INK_THRESHOLD, INK_THRESHOLD, INK_THRESHOLD, 255], 20)))).toBe(true);
+  });
+
+  it("alpha 不參與判斷", () => {
+    expect(isBlank(pixels(rep([255, 255, 255, 0], 20)))).toBe(true);
   });
 });
 

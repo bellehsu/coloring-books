@@ -98,11 +98,29 @@ export function drawShape(ctx: RasterCtx, kind: ShapeKind, a: Pt, b: Pt, width: 
   ctx.restore();
 }
 
-/** 所有像素的 R、G、B 都 ≥ threshold 才算空白（alpha 不看：畫布一律先塗白）。 */
-export function isBlank(img: Pick<ImageData, "data">, threshold = 250): boolean {
+/**
+ * 「墨水」像素：luma 或最小通道 < INK_THRESHOLD。luma 是 R、G、B 的加權平均，一定 ≥ 最小通道，
+ * 所以只看最小通道就同時涵蓋兩個條件。
+ * 門檻取中間灰 128：橡皮擦（白色圓頭）擦過黑線後，反鋸齒會留下一圈淺灰毛邊（約 150–250），
+ * 那不是使用者畫的東西，不能讓畫板被當成「有內容」而上傳一張幾乎全白的 PNG。
+ */
+export const INK_THRESHOLD = 128;
+/**
+ * 少於這麼多個墨水像素仍算空白：零星幾個殘點（擦不乾淨的角落、單一深色反鋸齒點）不構成構圖。
+ * 一筆 6 px 寬的筆刷至少有幾十個深色像素，不會被誤判成空白。
+ */
+export const MAX_INK_PIXELS = 8;
+
+/** 空白＝墨水像素少於 maxInk 個（alpha 不看：畫布一律先塗白）。 */
+export function isBlank(
+  img: Pick<ImageData, "data">,
+  inkThreshold = INK_THRESHOLD,
+  maxInk = MAX_INK_PIXELS,
+): boolean {
   const d = img.data;
+  let ink = 0;
   for (let i = 0; i < d.length; i += 4) {
-    if (d[i] < threshold || d[i + 1] < threshold || d[i + 2] < threshold) return false;
+    if (Math.min(d[i], d[i + 1], d[i + 2]) < inkThreshold && ++ink >= maxInk) return false;
   }
   return true;
 }

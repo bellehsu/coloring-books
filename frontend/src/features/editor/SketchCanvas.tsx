@@ -104,6 +104,8 @@ export function SketchCanvas({ width, height, guides, initialUrl, onSave, onUplo
   const dirtyRef = useRef(false);
   const saveSeqRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** saveNow 與 scheduleSave 互相呼叫（toBlob 失敗重試），用 ref 打斷循環依賴。 */
+  const scheduleRef = useRef<(canvas: HTMLCanvasElement, isRetry?: boolean) => void>(() => {});
 
   const [tool, setTool] = useState<Tool>("brush");
   const [undoCount, setUndoCount] = useState(0);
@@ -118,8 +120,9 @@ export function SketchCanvas({ width, height, guides, initialUrl, onSave, onUplo
    * 立即存檔。sync=false：canvas.toBlob（非同步）；sync=true：toDataURL 轉 Blob（同步，卸載時用）。
    * 空白一律給 null，不產生 PNG。每次存檔都帶流水號；較舊的 toBlob 若晚於較新的存檔才完成，直接丟掉，
    * 確保 onSave 的最後一次呼叫永遠對應畫布最新狀態。
+   * toBlob 回傳 null（編碼失敗）時，經同一個 debounce 重試一次；再失敗就保持 dirty，等下一次變更或卸載 flush。
    */
-  const saveNow = useCallback((canvas: HTMLCanvasElement, sync: boolean) => {
+  const saveNow = useCallback((canvas: HTMLCanvasElement, sync: boolean, isRetry = false) => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -139,23 +142,38 @@ export function SketchCanvas({ width, height, guides, initialUrl, onSave, onUplo
     }
     canvas.toBlob((blob) => {
       if (seq !== saveSeqRef.current) return;
-      if (blob) onSaveRef.current(blob);
-      else dirtyRef.current = true;
+      if (blob) {
+        onSaveRef.current(blob);
+        return;
+      }
+      dirtyRef.current = true;
+      if (!isRetry && mountedRef.current) scheduleRef.current(canvas, true);
     }, "image/png");
   }, []);
+
+  /** 1 秒後存檔（重設計時器）。 */
+  const scheduleSave = useCallback(
+    (canvas: HTMLCanvasElement, isRetry = false) => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        if (mountedRef.current) saveNow(canvas, false, isRetry);
+      }, SAVE_DEBOUNCE_MS);
+    },
+    [saveNow],
+  );
+  useEffect(() => {
+    scheduleRef.current = scheduleSave;
+  }, [scheduleSave]);
 
   /** 每次變更結束：更新空白狀態（控制留白提示），1 秒後存檔。 */
   const afterChange = useCallback(
     (canvas: HTMLCanvasElement, ctx: Ctx) => {
       setBlank(isBlank(readAll(canvas, ctx)));
       dirtyRef.current = true;
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null;
-        if (mountedRef.current) saveNow(canvas, false);
-      }, SAVE_DEBOUNCE_MS);
+      scheduleSave(canvas);
     },
-    [saveNow],
+    [scheduleSave],
   );
 
   const pushUndo = (snapshot: ImageData) => {
