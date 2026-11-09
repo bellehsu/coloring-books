@@ -247,3 +247,38 @@ def test_fake_backend_cli_runs_uvicorn_on_port(settings_file, tmp_path, monkeypa
     (app, kw), = calls
     assert kw["port"] == 8123 and kw["host"] == "127.0.0.1"
     assert storage.is_dir() and app.title == "Coloring Books"
+
+
+# ---------- deploy/windows-portproxy.ps1（Windows PowerShell 5.1） ----------
+
+PORTPROXY = REPO / "deploy" / "windows-portproxy.ps1"
+
+
+def test_portproxy_script_has_utf8_bom():
+    """PS 5.1 讀沒有 BOM 的檔案時用 ANSI 字碼頁，中文會變亂碼（還會吃掉變數名稱的邊界）。"""
+    assert PORTPROXY.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_portproxy_script_variables_delimited_before_non_ascii():
+    """$var 後面緊接非 ASCII 字元時一律寫成 ${var}，避免被當成變數名稱的一部分。"""
+    import re
+
+    text = PORTPROXY.read_text(encoding="utf-8-sig")
+    assert not re.search(r"\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]", text)
+
+
+def test_portproxy_script_prints_ip_once_and_guards_netsh_delete():
+    text = PORTPROXY.read_text(encoding="utf-8-sig")
+    assert text.count("WSL IP:") == 1
+    delete_line = next(i for i, l in enumerate(text.splitlines()) if "portproxy delete" in l)
+    before = "\n".join(text.splitlines()[max(0, delete_line - 3):delete_line])
+    assert "try" in before  # 第一次執行沒有舊規則：netsh 報錯在 Stop 模式下不能中止腳本
+
+
+def test_portproxy_script_validates_fallback_ipv4():
+    text = PORTPROXY.read_text(encoding="utf-8-sig")
+    # hostname -I 也會列出 IPv6：退回值要經過 IPv4 檢查（AddressFamily InterNetwork）
+    fallback = text[text.index("(wsl hostname -I)"):]
+    assert "Test-IPv4" in fallback.split("\n", 3)[1] or "Test-IPv4" in fallback[:200]
+    func = text[text.index("function Test-IPv4"):text.index("(wsl hostname -I)")]
+    assert "InterNetwork" in func
