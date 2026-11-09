@@ -326,3 +326,21 @@ async def test_start_requeues_interrupted_and_stop_is_idempotent(env):
     finally:
         await worker.stop()
         await worker.stop()
+
+
+async def test_pose_mask_saved_and_path_set(env):
+    worker, engine, sessions, storage = env
+    rj = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="n", seed=7, width=64, height=64)
+    gid = add_gen(sessions, request_json=rj)
+    await worker.run_once()
+    g = get(sessions, gid)
+    assert g.status == GenStatus.SUCCEEDED
+    assert g.mask_path == storage.generation_mask(1, gid)
+    assert storage.abs(g.mask_path).read_bytes().startswith(b"\x89PNG")
+
+
+async def test_non_pose_has_no_mask_path(env):
+    worker, engine, sessions, storage = env
+    gid = add_gen(sessions)
+    await worker.run_once()
+    assert get(sessions, gid).mask_path is None

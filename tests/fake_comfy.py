@@ -64,6 +64,8 @@ class FakeComfy:
         self.history: dict[str, Any] = {}
         self.interrupted = False
         self.freed = 0
+        self.skip_output_titles: set[str] = set()  # 這些標題的 SaveImage 不產生輸出
+        self.mask_image: bytes = png_bytes(np.zeros((64, 48), np.uint8))
         self.dead = False  # True：模擬 ComfyUI 程序已停止，所有連線失敗
 
     # ---- WebSocket ----
@@ -78,10 +80,17 @@ class FakeComfy:
                 s.queue.put_nowait(msg if isinstance(msg, (bytes, Exception)) else json.dumps(msg))
 
     def _complete(self, pid: str, prompt: dict) -> None:
-        out_node = next((nid for nid, n in prompt.items() if n["class_type"] == "SaveImage"), "9")
+        saves = {nid: n for nid, n in prompt.items() if n["class_type"] == "SaveImage"} or {"9": {}}
+        outputs = {}
+        for nid, n in saves.items():
+            title = n.get("_meta", {}).get("title", "")
+            if title in self.skip_output_titles:
+                continue
+            fname = f"{pid}_mask.png" if title == "MASK" else f"{pid}.png"
+            outputs[nid] = {"images": [{"filename": fname, "subfolder": "", "type": "output"}]}
         self.history[pid] = {
             "status": {"status_str": "success", "completed": True, "messages": []},
-            "outputs": {out_node: {"images": [{"filename": f"{pid}.png", "subfolder": "", "type": "output"}]}},
+            "outputs": outputs,
         }
 
     def _run(self, pid: str, prompt: dict) -> None:
@@ -147,7 +156,8 @@ class FakeComfy:
             pid = path.rsplit("/", 1)[1]
             return httpx.Response(200, json={pid: self.history[pid]} if pid in self.history else {})
         if path == "/view":
-            return httpx.Response(200, content=self.image)
+            fname = request.url.params.get("filename", "")
+            return httpx.Response(200, content=self.mask_image if fname.endswith("_mask.png") else self.image)
         if path == "/interrupt":
             self.interrupted = True
             return httpx.Response(200)
