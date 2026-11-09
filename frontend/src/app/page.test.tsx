@@ -46,7 +46,7 @@ describe("我的繪本", () => {
     expect(await screen.findByRole("link", { name: /書1/ })).toHaveAttribute("href", "/books/1/character");
     expect(screen.getByRole("link", { name: /書2/ })).toHaveAttribute("href", "/books/2/editor");
     expect(screen.getByText("2 本")).toBeInTheDocument();
-    expect(screen.getAllByText("1 / 4 頁通過")).toBeInTheDocument();
+    expect(screen.getAllByText("1 / 4 頁通過")).toHaveLength(2);
   });
   it("空狀態只有一個建立入口", async () => {
     mockBooks([]);
