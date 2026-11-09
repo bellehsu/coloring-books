@@ -105,4 +105,20 @@ describe("placementSaverFor", () => {
     s.savePlacement(1, at(0.4));
     expect(gates).toHaveLength(2);
   });
+
+  it("retry 重送最後的位置；沒存過不動作", async () => {
+    const s = placementSaverFor(new QueryClient());
+    s.retry(9);
+    expect(gates).toHaveLength(0);
+    s.savePlacement(1, at(0.2));
+    gates[0].release(500);
+    await tick();
+    expect(s.failed(1)).toBe(true);
+    s.retry(1);
+    expect(gates).toHaveLength(2);
+    expect(gates[1].body).toEqual(at(0.2));
+    gates[1].release();
+    await tick();
+    expect(s.failed(1)).toBe(false);
+  });
 });

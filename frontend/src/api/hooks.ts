@@ -5,6 +5,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { api } from "./client";
+import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
 import type { Book, Edits, ExportSummary, Generation, Page, QA, QueueStatus } from "./client";
 
@@ -322,7 +323,11 @@ export function useSelectBackground(bookId: number) {
   return useMutation({
     mutationFn: ({ pageId, generationId }: { pageId: number; generationId: number }) =>
       api.post<Page>(`/pages/${pageId}/background`, { generation_id: generationId }),
-    onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
+    onSuccess: (_d, v) =>
+      Promise.all([
+        invalidatePage(qc, bookId, v.pageId),
+        qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
+      ]),
   });
 }
 
@@ -332,18 +337,34 @@ export function useSelectPose(bookId: number) {
   return useMutation({
     mutationFn: ({ pageId, generationId }: { pageId: number; generationId: number }) =>
       api.post<Page>(`/pages/${pageId}/pose`, { generation_id: generationId }),
-    onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
+    onSuccess: (_d, v) =>
+      Promise.all([
+        invalidatePage(qc, bookId, v.pageId),
+        qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
+      ]),
   });
 }
 
 /**
- * 確認合成（無 body；後端用已存的背景／動作／位置）→ pages, qa, edits, book, books, exportSummary。
- * 呼叫前要先 placementSaver.whenIdle(pageId)。合成圖只能經由這裡產生或選回，不要對 composite 呼叫 /select。
+ * 確認合成（無 body；後端用已存的背景／動作／位置）→ pages, qa, edits, book, books, exportSummary, generations。
+ * mutationFn 內會先等 placementSaver.whenIdle(pageId)，位置寫入失敗則拒絕（「位置尚未儲存，請重試」）且不送出合成。合成圖只能經由這裡產生或選回，不要對 composite 呼叫 /select。
  */
 export function useCompose(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pageId }: { pageId: number }) => api.post<Page>(`/pages/${pageId}/compose`),
-    onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
+    mutationFn: async ({ pageId }: { pageId: number }) => {
+      // 先等位置寫完；最後一次寫入失敗就不合成（否則合成結果不等於畫面上的位置）
+      try {
+        await placementSaverFor(qc).whenIdle(pageId);
+      } catch {
+        throw new Error("位置尚未儲存，請重試");
+      }
+      return api.post<Page>(`/pages/${pageId}/compose`);
+    },
+    onSuccess: (_d, v) =>
+      Promise.all([
+        invalidatePage(qc, bookId, v.pageId),
+        qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
+      ]),
   });
 }

@@ -16,6 +16,8 @@ export interface PlacementSaver {
   busy(): boolean;
   busyPage(pageId: number): boolean;
   failed(pageId: number): boolean;
+  /** 重送最後 save 的位置（失敗後的「重試」）；沒存過則不動作。 */
+  retry(pageId: number): void;
   /** 任何一頁送出中或失敗（算進 hasPendingWrites）。 */
   hasPending(): boolean;
   /** 這個 session 最後 save 的位置（含失敗的）；沒存過 undefined。 */
@@ -62,6 +64,10 @@ export function placementSaverFor(qc: QueryClient): PlacementSaver {
     busyPage: (pageId) => q.busy(pageId),
     failed: (pageId) => q.failed(pageId),
     hasPending: () => q.anyBusy() || q.anyFailed(),
+    retry(pageId) {
+      const p = last.get(pageId);
+      if (p && !gone.has(pageId)) q.push(pageId, p);
+    },
     latest: (pageId) => last.get(pageId),
     subscribe: (fn) => q.subscribe(fn),
     markGone(pageId) {
