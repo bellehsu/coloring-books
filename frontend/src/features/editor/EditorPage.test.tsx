@@ -206,6 +206,7 @@ const mkPage = (id: number, o: O = {}): O => ({
   lineart_url: null,
   needs_fix: null,
   aspect_mismatch: false,
+  compose_pending: false,
   created_at: "",
   updated_at: "",
   ...o,
@@ -675,6 +676,42 @@ describe("EditorPage", () => {
     expect(await screen.findByTestId("linefix")).toBeInTheDocument();
     await waitFor(() => expect(within(progressTitle()).getByText("已合成")).toBeInTheDocument());
     expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
+  });
+
+  it("確認合成中換到另一頁：只有正在合成的那頁停用，另一頁的舞台與確認按鈕照常可用", async () => {
+    search = "page=1&mode=compose";
+    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
+    pages[1] = mkPage(2, { background_generation_id: 5, pose_generation_id: 6 });
+    const cut = (id: number, page_id: number) =>
+      mkGen(id, { kind: "pose", page_id, mask_url: `/api/generations/${id}/mask`, cutout_url: `/api/generations/${id}/cutout` });
+    gens = [mkGen(3, { kind: "background" }), cut(4, 1), mkGen(5, { kind: "background", page_id: 2 }), cut(6, 2)];
+    let release!: () => void;
+    gate["POST /api/pages/1/compose"] = new Promise<void>((r) => (release = r));
+    setup();
+    await screen.findByTestId("compose-stage");
+    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
+    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "true");
+    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "true");
+    await userEvent.click(pageButton(2));
+    await waitFor(() => expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-bg", "/img/5.png"));
+    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "false");
+    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "false");
+    // 第 2 頁照常可以確認合成
+    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(1));
+    await waitFor(() => expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2&mode=line", { scroll: false }));
+    // 第 1 頁的合成較晚結束：不會把畫面切回第 1 頁
+    await act(async () => release());
+    await act(async () => {});
+    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2&mode=line", { scroll: false });
+  });
+
+  it("compose_pending：進度清單的合成顯示「待重新合成」", async () => {
+    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 50, compose_pending: true });
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose" }), mkGen(50, { kind: "composite" })];
+    setup();
+    await waitFor(() => expect(within(progressTitle()).getByText("待重新合成")).toBeInTheDocument());
   });
 
   it("合成模式：位置從伺服器的草稿開始", async () => {

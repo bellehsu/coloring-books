@@ -3123,6 +3123,10 @@
             "type": "boolean",
             "title": "Aspect Mismatch"
           },
+          "compose_pending": {
+            "type": "boolean",
+            "title": "Compose Pending"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -3153,6 +3157,7 @@
           "lineart_url",
           "needs_fix",
           "aspect_mismatch",
+          "compose_pending",
           "created_at",
           "updated_at"
         ],

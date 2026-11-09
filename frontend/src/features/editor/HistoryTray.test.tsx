@@ -171,12 +171,25 @@ describe("HistoryTray", () => {
     );
   });
 
-  it("捨棄被後端拒絕（使用中）→ toast 顯示原因", async () => {
+  it("捨棄被後端拒絕 → toast 顯示原因", async () => {
     gens = [gen(2)];
     failWith["PATCH /api/generations/2"] = 409;
-    setup({ selectedId: 2 });
+    setup();
     await userEvent.click(await screen.findByRole("button", { name: "捨棄 seed 102" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("正被頁面使用或作為角色");
+  });
+
+  it("使用中的那張：捨棄按鈕停用並說明「使用中的不能捨棄」，不送 PATCH", async () => {
+    gens = [gen(1), gen(2)];
+    setup({ selectedId: 2 });
+    const inUse = await screen.findByRole("button", { name: "捨棄 seed 102" });
+    expect(inUse).toBeDisabled();
+    expect(inUse).toHaveAttribute("title", "使用中的不能捨棄");
+    await userEvent.click(inUse);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+    const other = screen.getByRole("button", { name: "捨棄 seed 101" });
+    expect(other).not.toBeDisabled();
+    expect(other).toHaveAttribute("title", "捨棄這張");
   });
 
   it("選用進行中：其他張停用", async () => {

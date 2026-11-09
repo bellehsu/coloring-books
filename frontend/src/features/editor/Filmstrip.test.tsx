@@ -20,6 +20,7 @@ const page = (id: number, o: Partial<Page> = {}): Page =>
     lineart_url: null,
     needs_fix: null,
     aspect_mismatch: false,
+    compose_pending: false,
     created_at: "",
     updated_at: "",
     ...o,

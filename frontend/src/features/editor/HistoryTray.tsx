@@ -180,7 +180,9 @@ function Card({
             type="button"
             className={styles.iconBtn}
             aria-label={g.discarded ? `還原 seed ${g.seed}` : `捨棄 seed ${g.seed}`}
-            title={g.discarded ? "還原這張" : "捨棄這張"}
+            title={g.discarded ? "還原這張" : on ? "使用中的不能捨棄" : "捨棄這張"}
+            // 後端不讓捨棄頁面正在用的背景／角色動作（409）；先換一張再捨棄
+            disabled={on && !g.discarded}
             onClick={onToggle}
           >
             {g.discarded ? <Icons.undo size={16} /> : <Icons.trash size={16} />}

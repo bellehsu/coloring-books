@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 from PIL import Image
 
-from app.services.compose import DEFAULT_PLACEMENT, Placement, compose
+from app.models import Generation, GenKind
+from app.services.compose import (
+    COMPOSE_VERSION,
+    DEFAULT_PLACEMENT,
+    Placement,
+    compose,
+    composite_matches,
+    page_placement,
+)
 
 BG = (200, 220, 255)
 FG = (255, 0, 0)
@@ -137,3 +147,30 @@ def test_left_edge_column(w):
     cols = [x for x in range(w) if out.getpixel((x, 150)) == FG]
     expected = round(0.5 * w - 100 / 2)
     assert abs(min(cols) - expected) <= 2
+
+
+def _composite(params: str, kind=GenKind.COMPOSITE, version=COMPOSE_VERSION) -> Generation:
+    return Generation(book_id=1, page_id=1, kind=kind, user_text="", prompt="", negative_prompt="",
+                      seed=0, width=8, height=8, request_json="", params_json=params,
+                      workflow_version=version)
+
+
+def test_page_placement_defaults_and_parses():
+    assert page_placement(None) == DEFAULT_PLACEMENT
+    assert page_placement("") == DEFAULT_PLACEMENT
+    assert page_placement('{"cx": 0.3, "cy": 0.4, "height": 0.5, "flip": true}') == Placement(0.3, 0.4, 0.5, True)
+
+
+def test_composite_matches():
+    params = json.dumps({"background_generation_id": 1, "pose_generation_id": 2,
+                         "placement": DEFAULT_PLACEMENT.to_dict()})
+    near = Placement(DEFAULT_PLACEMENT.cx + 0.00001, DEFAULT_PLACEMENT.cy, DEFAULT_PLACEMENT.height, False)
+    assert composite_matches(_composite(params), 1, 2, DEFAULT_PLACEMENT)
+    assert composite_matches(_composite(params), 1, 2, near)  # 小數第 5 位視為相同
+    assert not composite_matches(_composite(params), 3, 2, DEFAULT_PLACEMENT)
+    assert not composite_matches(_composite(params), 1, 3, DEFAULT_PLACEMENT)
+    assert not composite_matches(_composite(params), 1, 2, Placement(0.5, 0.66, 0.6, True))
+    assert not composite_matches(_composite(params, version="0"), 1, 2, DEFAULT_PLACEMENT)
+    assert not composite_matches(_composite(params, kind=GenKind.PAGE), 1, 2, DEFAULT_PLACEMENT)
+    for bad in ("", "not json", "{}", '{"background_generation_id": 1}'):
+        assert not composite_matches(_composite(bad), 1, 2, DEFAULT_PLACEMENT)

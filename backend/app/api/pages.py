@@ -21,6 +21,7 @@ from app.api.schemas import (
     SelectGeneration,
 )
 from app.models import Book, Generation, GenKind, GenStatus, LineartEdit, Page, PageStatus, utcnow
+from app.services.compose import composite_matches, page_placement
 from app.services.layout import compute_layout
 from app.services.page_lineart import lineart_key
 from app.services.prompts import PAGE_NEGATIVE, page_prompt
@@ -56,6 +57,19 @@ def reset_review_when(cond) -> dict:
     }
 
 
+def compose_pending(page: Page, selected: Generation | None) -> bool:
+    """選好了背景與角色動作，但選定圖不是用目前背景＋角色動作＋位置（與合成版本）合成的那張。
+    缺背景或角色動作（例如舊流程頁面）時為 False。比對規則與確認合成時沿用既有合成圖相同。"""
+    bg_id, pose_id = page.background_generation_id, page.pose_generation_id
+    if bg_id is None or pose_id is None:
+        return False
+    try:
+        placement = page_placement(page.placement_json)
+    except (ValueError, TypeError):
+        return True
+    return selected is None or not composite_matches(selected, bg_id, pose_id, placement)
+
+
 def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
     """PageOut 需要繪本版面、選定圖與它的修改圖層；一次查完（頁數不多）。"""
     if not pages:
@@ -83,14 +97,16 @@ def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
     for page in pages:
         gen = gens.get(page.selected_generation_id)
         lay = layouts[page.book_id]
+        pending = compose_pending(page, gen)
         if gen is None:
-            out.append(PageOut.from_page(page))
+            out.append(PageOut.from_page(page, compose_pending=pending))
             continue
         key = lineart_key(gen, page, lay.content_px, edits.get(gen.id, "[]"))
         out.append(PageOut.from_page(
             page,
             current_lineart_key=key,
             aspect_mismatch=(gen.width, gen.height) != tuple(lay.generation_size),
+            compose_pending=pending,
         ))
     return out
 

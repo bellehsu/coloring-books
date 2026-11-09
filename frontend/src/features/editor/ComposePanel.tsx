@@ -30,6 +30,7 @@ const pct = (v: number) => `${Math.round(v * 100)}%`;
 /**
  * 合成模式的面板：目前位置、水平翻轉、重設位置（保留翻轉）、「確認合成」。
  * 位置寫入失敗時持續顯示「位置尚未儲存」＋重試（toast 會消失）。
+ * page.compose_pending（目前選定圖不是這組背景＋角色動作＋位置的合成圖）時持續提示要確認合成。
  */
 export function ComposePanel({ page, placement, onPlacementChange, onConfirm, confirming }: ComposePanelProps) {
   const saver = placementSaverFor(useQueryClient());
@@ -68,6 +69,11 @@ export function ComposePanel({ page, placement, onPlacementChange, onConfirm, co
           重設位置
         </Button>
       </div>
+      {page.compose_pending && (
+        <p role="status" data-testid="compose-pending" className={own.pending}>
+          位置或素材已變更，按「確認合成」更新本頁圖片
+        </p>
+      )}
       <PlacementSaveStatus saver={saver} pageId={page.id} />
       <Button variant="primary" size="lg" disabled={confirming} onClick={() => void confirm()}>
         {confirming ? "合成中…" : "確認合成"}

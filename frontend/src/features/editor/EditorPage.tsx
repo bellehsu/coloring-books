@@ -191,9 +191,12 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const [zoom, setZoom] = useState(1);
   /** 改選背景／角色動作或合成前，正在等舊選圖的修線寫入（歷史托盤暫時不能點）。 */
   const [flushingSelect, setFlushingSelect] = useState(false);
-  /** 確認合成整段流程（等修線 → 等位置 → POST compose）。ref 擋住同一輪 render 前的第二次點擊。 */
-  const [confirming, setConfirming] = useState(false);
-  const confirmingRef = useRef(false);
+  /**
+   * 正在確認合成（等修線 → 等位置 → POST compose）的頁面 id。以頁為單位：合成中換頁，另一頁照常可用。
+   * ref 擋住同一輪 render 前的第二次點擊。
+   */
+  const [confirmingIds, setConfirmingIds] = useState<ReadonlySet<number>>(() => new Set());
+  const confirmingRef = useRef(new Set<number>());
   /** 非同步流程結束時用來判斷使用者是否已換頁。 */
   const currentIdRef = useRef<number | null>(null);
   useEffect(() => {
@@ -329,10 +332,10 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   /** 確認合成：等舊選圖的修線 → useCompose（內含等位置寫完）→ 成功後切到線稿與修線（還在這頁時）。 */
   const confirmCompose = async () => {
-    if (!current || confirmingRef.current) return;
+    if (!current || confirmingRef.current.has(current.id)) return;
     const pageId = current.id;
-    confirmingRef.current = true;
-    setConfirming(true);
+    confirmingRef.current.add(pageId);
+    setConfirmingIds(new Set(confirmingRef.current));
     try {
       await flushSelectedEdits(current);
       await compose.mutateAsync({ pageId });
@@ -342,8 +345,8 @@ export function EditorPage({ bookId }: { bookId: number }) {
       const msg = placementSaver.failed(pageId) ? "位置尚未儲存，沒有合成；請重試" : errMsg(e, "無法合成");
       toast.show(msg, "error");
     } finally {
-      confirmingRef.current = false;
-      setConfirming(false);
+      confirmingRef.current.delete(pageId);
+      setConfirmingIds(new Set(confirmingRef.current));
     }
   };
 
@@ -382,6 +385,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const poseGen = byId(current.pose_generation_id);
   const activeOf = (kind: Generation["kind"]) => gens.filter((g) => g.kind === kind && isActive(g)).length;
   const items = checklist(current, qa, { selectedKind: selectedGen?.kind });
+  const confirming = confirmingIds.has(current.id);
   const contentPx = b.layout.content_px;
   const placement: Placement = savedPlacement ?? current.placement ?? DEFAULT_PLACEMENT;
   const loadingMsg = pageGens.isError ? (

@@ -516,3 +516,126 @@ def test_delete_page_removes_composite_files_and_masks(client, app):
     assert all(f.is_file() for f in files)
     assert client.delete(f"/api/pages/{p['id']}").status_code == 204
     assert not any(f.exists() for f in files)
+
+
+# ---- 待合成（compose_pending） --------------------------------------------------------
+
+
+def page_json(client, book_id, page_id):
+    return next(x for x in client.get(f"/api/books/{book_id}/pages").json() if x["id"] == page_id)
+
+
+def test_compose_pending_tracks_selected_composite(client, app):
+    app.state.engine.image = color_png()
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    pid = p["id"]
+    assert p["compose_pending"] is False
+    bg = gen_background(client, app, pid)
+    assert picked(client, pid, "background", bg)["compose_pending"] is False  # 還沒選角色動作
+    pose = gen_pose(client, app, pid)
+    assert picked(client, pid, "pose", pose)["compose_pending"] is True  # 還沒合成
+    page = confirm(client, pid)
+    assert page["compose_pending"] is False
+    make_passed(app, pid)
+    # 拖拉／翻轉後（位置草稿）→ 待重新合成，但不改通過狀態
+    moved = {"cx": 0.3, "cy": 0.6, "height": 0.5, "flip": True}
+    r = client.put(f"/api/pages/{pid}/placement", json=moved)
+    assert r.status_code == 200 and r.json()["compose_pending"] is True
+    assert r.json()["status"] == "passed"
+    assert page_json(client, b["id"], pid)["compose_pending"] is True
+    # 放回原位（小數第 5 位的差異視為相同）→ 不再待合成
+    d = DEFAULT_PLACEMENT.to_dict()
+    r = client.put(f"/api/pages/{pid}/placement", json={**d, "cx": d["cx"] + 0.00001})
+    assert r.json()["compose_pending"] is False
+    # 用 /select 選回某張合成圖，位置不同 → 待合成
+    client.put(f"/api/pages/{pid}/placement", json=moved)
+    gid2 = confirm(client, pid)["selected_generation_id"]
+    assert gid2 != page["selected_generation_id"]
+    r = client.post(f"/api/pages/{pid}/select", json={"generation_id": page["selected_generation_id"]})
+    assert r.status_code == 200 and r.json()["compose_pending"] is True
+
+
+def test_compose_pending_on_legacy_page(client, app):
+    b, p, ids = selected_page(client, app)
+    pid = p["id"]
+    assert p["compose_pending"] is False
+    bg = gen_background(client, app, pid)
+    assert picked(client, pid, "background", bg)["compose_pending"] is False  # 只有背景：仍是舊流程
+    pose = gen_pose(client, app, pid)
+    page = picked(client, pid, "pose", pose)
+    assert page["selected_generation_id"] == ids[0] and page["compose_pending"] is True
+    assert confirm(client, pid)["compose_pending"] is False
+
+
+def test_compose_pending_when_composite_version_is_old(client, app):
+    b, p, bg, pose = compose_ready(client, app)
+    gid = confirm(client, p["id"])["selected_generation_id"]
+    with app.state.sessions() as s:
+        g = s.get(Generation, gid)
+        g.workflow_version = "0"
+        s.add(g)
+        s.commit()
+    assert page_json(client, b["id"], p["id"])["compose_pending"] is True
+
+
+def test_compose_does_not_reuse_old_version_composite(client, app):
+    b, p, bg, pose = compose_ready(client, app)
+    pid = p["id"]
+    gid = confirm(client, pid)["selected_generation_id"]
+    with app.state.sessions() as s:
+        g = s.get(Generation, gid)
+        g.workflow_version = "0"
+        s.add(g)
+        s.commit()
+    gid2 = confirm(client, pid)["selected_generation_id"]
+    assert gid2 != gid
+    assert gen_row(app, gid2).workflow_version == COMPOSE_VERSION
+    assert len(composites(app, pid)) == 2
+
+
+# ---- 確認合成時輸入被改（INPUTS_CHANGED） -------------------------------------------
+
+
+def _files(root):
+    return {f for f in root.rglob("*.png") if f.is_file()}
+
+
+def test_compose_race_inputs_changed(client, app, monkeypatch):
+    import app.api.compose as compose_api
+
+    b, p, bg, pose = compose_ready(client, app)
+    pid = p["id"]
+    gid = confirm(client, pid)["selected_generation_id"]
+    client.put(f"/api/pages/{pid}/placement", json={"cx": 0.3, "cy": 0.6, "height": 0.5, "flip": True})
+    real = compose_api.compose
+    raced = {"cx": 0.7, "cy": 0.5, "height": 0.4, "flip": False}
+
+    def racing_compose(*args, **kwargs):
+        # 合成進行中，另一個連線（例如另一個分頁）改了位置
+        with app.state.sessions() as s:
+            pg = s.get(compose_api.Page, pid)
+            pg.placement_json = json.dumps(raced)
+            s.add(pg)
+            s.commit()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(compose_api, "compose", racing_compose)
+    root = app.state.storage.abs(".")
+    before_files = _files(root)
+    before_rows = {g.id for g in composites(app, pid)}
+    r = client.post(f"/api/pages/{pid}/compose")
+    assert r.status_code == 409
+    assert r.json()["detail"] == "背景、角色動作或位置剛被更改，請重新確認合成"
+    assert {g.id for g in composites(app, pid)} == before_rows  # 沒有留下新的合成圖
+    assert _files(root) == before_files  # 寫出的合成圖檔已刪除
+    pg = get_page(app, pid)
+    assert pg.selected_generation_id == gid
+    assert json.loads(pg.placement_json) == raced
+
+
+def test_cutout_is_cacheable(client, app):
+    b, p, bg, pose = compose_ready(client, app)
+    r = client.get(f"/api/generations/{pose}/cutout")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "private, max-age=86400"

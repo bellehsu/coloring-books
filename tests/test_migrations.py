@@ -159,3 +159,8 @@ def test_upgrade_to_head_keeps_generation_and_accepts_new_kinds(tmp_path):
                 f"'QUEUED', 0, 'u', 'p', 'n', 1, 8, 8, '{{}}', {ts})"
             )
         assert c.exec_driver_sql("SELECT count(*) FROM generation WHERE kind IN ('BACKGROUND','POSE','COMPOSITE')").scalar() == 3
+    # 0004 重建資料表後仍保留 AUTOINCREMENT（刪掉的 id 不可沿用）
+    with eng.connect() as c:
+        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0004"
+        for t in AUTOINCREMENT_TABLES:
+            assert "AUTOINCREMENT" in table_sql(c, t), t

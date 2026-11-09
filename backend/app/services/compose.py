@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from typing import Any
 
 from PIL import Image, ImageFilter, ImageOps
+
+from app.models import Generation, GenKind
 
 # 合成演算法改變時 +1
 COMPOSE_VERSION = "1"
@@ -62,6 +65,24 @@ class Placement:
 
 
 DEFAULT_PLACEMENT = Placement(0.5, 0.66, 0.6, False)
+
+
+def page_placement(placement_json: str | None) -> Placement:
+    """頁面的位置草稿；還沒存過時用預設位置（與確認合成時相同）。"""
+    return Placement.from_dict(json.loads(placement_json)) if placement_json else DEFAULT_PLACEMENT
+
+
+def composite_matches(gen: Generation, bg_id: int, pose_id: int, placement: Placement) -> bool:
+    """gen（合成圖 generation）是否正是以這組背景＋角色動作＋位置（Placement.key()）
+    用目前版本（COMPOSE_VERSION）的演算法合成的。只看紀錄，不檢查檔案或狀態。"""
+    if gen.kind != GenKind.COMPOSITE or gen.workflow_version != COMPOSE_VERSION:
+        return False
+    try:
+        p = json.loads(gen.params_json or "")
+        return (p["background_generation_id"] == bg_id and p["pose_generation_id"] == pose_id
+                and Placement.from_dict(p["placement"]).key() == placement.key())
+    except (ValueError, KeyError, TypeError):
+        return False
 
 
 def _flatten(img: Image.Image, color: tuple[int, int, int]) -> Image.Image:

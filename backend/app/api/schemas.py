@@ -229,6 +229,8 @@ class PageOut(BaseModel):
     lineart_url: str | None  # 有選圖才有；?v= 為目前輸入對應的線稿 key
     needs_fix: bool | None  # 目前線稿的 QA 有錯誤；還沒算過（或參數已改、尚未重算）為 None
     aspect_mismatch: bool  # 選定圖的寬高 ≠ 繪本目前的 generation_size
+    # 已選背景與角色動作，但選定圖不是用目前背景＋角色動作＋位置合成的（需要按「確認合成」）
+    compose_pending: bool
     created_at: datetime
     updated_at: datetime
 
@@ -239,6 +241,7 @@ class PageOut(BaseModel):
         *,
         current_lineart_key: str | None = None,
         aspect_mismatch: bool = False,
+        compose_pending: bool = False,
     ) -> "PageOut":
         """current_lineart_key：依目前選圖／參數／修改圖層算出的 key（pages.page_outs 會給）。
         沒給時退回頁面上快取的 key，needs_fix 直接看 qa_json。"""
@@ -271,6 +274,7 @@ class PageOut(BaseModel):
             lineart_url=lineart_url(page.id, key) if selected else None,
             needs_fix=needs_fix,
             aspect_mismatch=aspect_mismatch if selected else False,
+            compose_pending=compose_pending,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )

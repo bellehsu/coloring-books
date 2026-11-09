@@ -18,6 +18,7 @@ export interface CheckItem {
  * 頁面進度清單（純函式，6 項）。qa 未載入時給 undefined。
  * opts.selectedKind：選定圖的 generation kind（composite＝新流程合成圖；page＝舊流程圖片）；不知道時省略。
  * 沒選圖時 QA 一律忽略（可能是舊圖的快取）。QA 的 status／character_check 比頁面列表新，優先採用。
+ * page.compose_pending（後端算）：選定圖不是目前背景＋角色動作＋位置的合成圖 → 合成 warn「待重新合成」。
  */
 export function checklist(
   page: Page,
@@ -38,7 +39,10 @@ export function checklist(
     : { key: "pose", label: "角色動作", state: "todo", note: "還沒選角色動作" };
 
   let composite: CheckItem = { key: "composite", label: "合成", state: "todo", note: "" };
-  if (selected) {
+  if (selected && page.compose_pending) {
+    // 選定圖不是用目前背景＋角色動作＋位置合成的（改了位置，或舊流程頁面選了新素材）；不影響通過狀態
+    composite = { ...composite, state: "warn", note: "待重新合成" };
+  } else if (selected) {
     const note = opts.selectedKind === "composite" ? "已合成" : opts.selectedKind === "page" ? "舊流程圖片" : "";
     composite = { ...composite, state: "done", note };
   } else if (hasBg && hasPose) {

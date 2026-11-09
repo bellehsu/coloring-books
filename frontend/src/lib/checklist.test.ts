@@ -21,6 +21,7 @@ const page = (o: Partial<Page> = {}): Page =>
     lineart_url: null,
     needs_fix: null,
     aspect_mismatch: false,
+    compose_pending: false,
     created_at: "",
     updated_at: "",
     ...o,
@@ -103,13 +104,48 @@ describe("checklist", () => {
     expect(c.passed.state).toBe("done");
   });
 
-  it("舊流程頁面選了新背景＋動作（還沒確認新合成）：舊圖仍選定 → 合成 done「舊流程圖片」", () => {
+  it("舊流程頁面選了新背景＋動作（還沒確認新合成）：舊圖仍選定 → 合成 warn「待重新合成」", () => {
     const c = byKey(
-      checklist(page({ background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 7 }), qa(), {
-        selectedKind: "page",
-      }),
+      checklist(
+        page({ background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 7, compose_pending: true }),
+        qa(),
+        { selectedKind: "page" },
+      ),
+    );
+    expect(c.composite).toMatchObject({ state: "warn", note: "待重新合成" });
+  });
+
+  it("舊流程頁面只選了新背景（沒有角色動作）→ 仍是 done「舊流程圖片」", () => {
+    const c = byKey(
+      checklist(page({ background_generation_id: 3, selected_generation_id: 7 }), qa(), { selectedKind: "page" }),
     );
     expect(c.composite).toMatchObject({ state: "done", note: "舊流程圖片" });
+  });
+
+  it("已合成後改了位置（compose_pending）→ 合成 warn「待重新合成」；通過狀態不受影響", () => {
+    const c = byKey(
+      checklist(
+        page({
+          background_generation_id: 3,
+          pose_generation_id: 4,
+          selected_generation_id: 7,
+          compose_pending: true,
+          status: "passed",
+          character_check: "consistent",
+        }),
+        qa({ status: "passed", character_check: "consistent" }),
+        { selectedKind: "composite" },
+      ),
+    );
+    expect(c.composite).toMatchObject({ state: "warn", note: "待重新合成" });
+    expect(c.passed.state).toBe("done");
+  });
+
+  it("還沒選圖時 compose_pending → 照舊 todo「請確認合成」", () => {
+    const c = byKey(
+      checklist(page({ background_generation_id: 3, pose_generation_id: 4, compose_pending: true }), undefined),
+    );
+    expect(c.composite).toMatchObject({ state: "todo", note: "請確認合成" });
   });
 
   it("已選圖但種類未知（generations 載入中）→ 合成 done、沒有註記", () => {

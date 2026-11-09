@@ -78,6 +78,15 @@ describe("ComposePanel", () => {
     expect(screen.getByText("水平 42%・垂直 70%・高度 35%")).toBeInTheDocument();
   });
 
+  it("compose_pending：持續提示要按確認合成更新本頁圖片；沒有時不顯示", () => {
+    const msg = "位置或素材已變更，按「確認合成」更新本頁圖片";
+    const { r } = panel({ page: { ...page, compose_pending: true } as Page });
+    expect(screen.getByTestId("compose-pending")).toHaveTextContent(msg);
+    r.unmount();
+    panel({ page: { ...page, compose_pending: false } as Page });
+    expect(screen.queryByTestId("compose-pending")).toBeNull();
+  });
+
   it("確認合成中：按鈕全部停用，顯示合成中", () => {
     panel({ confirming: true });
     expect(screen.getByRole("button", { name: "合成中…" })).toBeDisabled();

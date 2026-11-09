@@ -1006,6 +1006,8 @@ export interface components {
             needs_fix: boolean | null;
             /** Aspect Mismatch */
             aspect_mismatch: boolean;
+            /** Compose Pending */
+            compose_pending: boolean;
             /**
              * Created At
              * Format: date-time

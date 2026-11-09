@@ -163,6 +163,10 @@
   place-items: center;
   cursor: pointer;
 }
-.iconBtn:hover {
+.iconBtn:hover:not(:disabled) {
   background: var(--chip-bg);
+}
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

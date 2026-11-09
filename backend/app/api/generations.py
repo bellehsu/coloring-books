@@ -100,7 +100,9 @@ def get_generation_cutout(
         raise HTTPException(409, "圖片檔案遺失，請重新產生") from None
     buf = io.BytesIO()
     out.save(buf, format="PNG")
-    return Response(content=buf.getvalue(), media_type="image/png")
+    # 同一個 generation id 的去背圖不會變（圖與遮罩都不再改寫）
+    return Response(content=buf.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.get("/books/{book_id}/generations", response_model=list[GenerationOut])

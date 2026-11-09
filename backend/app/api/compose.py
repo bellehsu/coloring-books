@@ -19,7 +19,13 @@ from app.api.deps import get_session, get_storage, get_worker
 from app.api.pages import _page_or_404, page_out, reset_review_when
 from app.api.schemas import GenerationOut, PageOut, PagePlacement, PoseCreate, SelectGeneration
 from app.models import Generation, GenKind, GenStatus, Page, utcnow
-from app.services.compose import COMPOSE_VERSION, DEFAULT_PLACEMENT, Placement, compose
+from app.services.compose import (
+    COMPOSE_VERSION,
+    Placement,
+    compose,
+    composite_matches,
+    page_placement,
+)
 from app.services.layout import compute_layout
 from app.services.prompts import (
     BACKGROUND_NEGATIVE,
@@ -272,23 +278,20 @@ def _composite_params(bg_id: int, pose_id: int, placement: Placement) -> dict:
 def _find_composite(
     session: Session, storage: Storage, page_id: int, bg_id: int, pose_id: int, placement: Placement
 ) -> Generation | None:
-    """同背景＋角色動作＋位置（Placement.key()）且檔案還在的既有合成圖。"""
+    """同背景＋角色動作＋位置（Placement.key()）、同合成版本且檔案還在的既有合成圖。"""
     rows = session.exec(
         select(Generation)
         .where(col(Generation.page_id) == page_id, col(Generation.kind) == GenKind.COMPOSITE,
                col(Generation.status) == GenStatus.SUCCEEDED, col(Generation.discarded).is_(False))
         .order_by(col(Generation.id).desc())
     ).all()
-    want = placement.key()
     for g in rows:
-        try:
-            p = json.loads(g.params_json or "")
-            if (p["background_generation_id"] == bg_id and p["pose_generation_id"] == pose_id
-                    and Placement.from_dict(p["placement"]).key() == want
-                    and g.image_path and storage.abs(g.image_path).is_file()):
-                return g
-        except (ValueError, KeyError, TypeError):
-            continue
+        if composite_matches(g, bg_id, pose_id, placement) and g.image_path:
+            try:
+                if storage.abs(g.image_path).is_file():
+                    return g
+            except ValueError:
+                continue
     return None
 
 
@@ -309,8 +312,7 @@ def confirm_compose(
             if page.pose_generation_id is not None else None)
     if not _is_usable(pose, GenKind.POSE, page_id):
         raise HTTPException(409, NEED_POSE)
-    placement = (Placement.from_dict(json.loads(page.placement_json))
-                 if page.placement_json else DEFAULT_PLACEMENT)
+    placement = page_placement(page.placement_json)
     placement_json = page.placement_json
 
     written: str | None = None
