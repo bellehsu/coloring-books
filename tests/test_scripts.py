@@ -140,3 +140,110 @@ def test_export_openapi_writes_paths(tmp_path, settings_file, monkeypatch):
     spec = json.loads(out.read_text(encoding="utf-8"))
     assert "/api/pages/{page_id}/lineart/edits" in spec["paths"]
     assert "delete" in spec["paths"]["/api/pages/{page_id}"]
+
+
+# ---- dev_fake_backend --------------------------------------------------------
+
+fake_backend = _load("dev_fake_backend")
+
+
+def _wait_succeeded(client, book_id: int, kind: str, n: int, timeout_s: float = 10.0) -> list[dict]:
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        gens = client.get(f"/api/books/{book_id}/generations", params={"kind": kind}).json()
+        if len(gens) >= n and all(g["status"] == "succeeded" for g in gens):
+            return gens
+        assert time.monotonic() < deadline, [g["status"] for g in gens]
+        time.sleep(0.05)
+
+
+@pytest.mark.parametrize(("paper", "mode"), [("a4", "print_shop"), ("a4", "home"), ("a5", "home"),
+                                             ("letter", "print_shop"), ("square_21", "home")])
+def test_demo_image_has_one_leak_that_autofix_closes(paper, mode):
+    """DemoEngine 的圖經真正的線稿流程（render_base → evaluate）要有會漏色的缺口，補上 bridges 後歸零。"""
+    from app.services.layout import PaperSize, PrintMode, compute_layout
+    from app.services.lineart_render import LINE_WIDTH_DEFAULT, Stroke, apply_strokes, render_base
+    from app.services.qa import evaluate
+
+    import numpy as np
+
+    lay = compute_layout(PaperSize(paper), PrintMode(mode))
+    img = np.asarray(fake_backend.draw_demo(*lay.generation_size, seed=3))
+    ink, _ = render_base(img, lay.content_px, "standard", LINE_WIDTH_DEFAULT)
+    report = evaluate(ink, LINE_WIDTH_DEFAULT)
+    assert report.gap_count >= 1 and "gaps" in report.errors
+    # 缺口就在大框上緣中央
+    fx0, fy0, fx1, _ = fake_backend.GAP_FRAME
+    assert any(abs(x - (fx0 + fx1) / 2) < 0.05 and abs(y - fy0) < 0.05 for x, y in report.gaps)
+    fixed = apply_strokes(ink, [Stroke("draw", LINE_WIDTH_DEFAULT, b) for b in report.bridges])
+    assert evaluate(fixed, LINE_WIDTH_DEFAULT).gap_count == 0
+
+
+def test_demo_engine_reports_progress_and_size():
+    import asyncio
+    import io
+
+    from PIL import Image
+
+    from app.models import GenKind
+    from app.services.engine import GenerationRequest
+
+    steps: list[tuple[int, int]] = []
+    req = GenerationRequest(kind=GenKind.PAGE, prompt="p", negative_prompt="", seed=5, width=864, height=1216)
+    res = asyncio.run(fake_backend.DemoEngine(delay_s=0.03).generate(req, lambda v, m: steps.append((v, m))))
+    assert steps == [(1, 3), (2, 3), (3, 3)]
+    assert Image.open(io.BytesIO(res.image)).size == (864, 1216)
+    assert res.engine == "demo" and res.params["seed"] == 5
+
+
+def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
+    """假後端可啟動：角色 → 頁面候選 → 選圖 → QA 有缺口 → 自動補線後 0；資料寫在 --storage，不碰設定的 storage。"""
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from app import main as app_main
+    from app.config import load_settings
+    from app.services.comfy_client import ComfyClient
+
+    def refused(request):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(app_main, "ComfyClient",
+                        lambda url, **kw: ComfyClient(url, transport=httpx.MockTransport(refused), **kw))
+    storage = tmp_path / "fake-storage"
+    app = fake_backend.create_demo_app(storage, load_settings(settings_file),
+                                       engine=fake_backend.DemoEngine(delay_s=0.02))
+    with TestClient(app) as c:
+        book = c.post("/api/books", json={"title": "示範", "paper_size": "a4", "print_mode": "print_shop"}).json()
+        assert c.post(f"/api/books/{book['id']}/character/candidates",
+                      json={"description": "a cat", "count": 4}).status_code == 202
+        chars = _wait_succeeded(c, book["id"], "character", 4)
+        assert c.post(f"/api/books/{book['id']}/character", json={"generation_id": chars[0]["id"]}).status_code == 200
+
+        page = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "park"}).json()
+        assert c.post(f"/api/pages/{page['id']}/candidates", json={"count": 1}).status_code == 202
+        gen = _wait_succeeded(c, book["id"], "page", 1)[0]
+        assert (gen["width"], gen["height"]) == (864, 1216)
+        assert c.post(f"/api/pages/{page['id']}/select", json={"generation_id": gen["id"]}).status_code == 200
+
+        qa = c.get(f"/api/pages/{page['id']}/qa").json()
+        assert qa["gap_count"] >= 1
+        fixed = c.post(f"/api/pages/{page['id']}/lineart/autofix", json={"generation_id": gen["id"]}).json()
+        assert fixed["autofix_added"] >= 1 and fixed["gap_count"] == 0
+    assert (storage / "app.db").is_file()
+    assert not (tmp_path / "storage" / "app.db").exists()
+
+
+def test_fake_backend_cli_runs_uvicorn_on_port(settings_file, tmp_path, monkeypatch):
+    import uvicorn
+
+    monkeypatch.setenv("APP_SETTINGS_FILE", str(settings_file))
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: calls.append((app, kw)))
+    storage = tmp_path / "s"
+    assert fake_backend.main(["--port", "8123", "--storage", str(storage)]) == 0
+    (app, kw), = calls
+    assert kw["port"] == 8123 and kw["host"] == "127.0.0.1"
+    assert storage.is_dir() and app.title == "Coloring Books"

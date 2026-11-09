@@ -84,7 +84,36 @@ npm run build && npm test && npm run lint
   ```bash
   PYTHON=$VENV_ROOT/coloring-books/bin/python npm run gen:api
   ```
-- `npm run e2e`：Playwright 端對端測試（Task 12 補上設定；瀏覽器需另行 `npx playwright install`）。
+
+### 假生成後端（不需要 GPU）
+
+`scripts/dev_fake_backend.py` 是真正的 FastAPI 後端，但生成引擎換成 `DemoEngine`：每張圖延遲 0.3 秒、回報 3 次進度，
+用 Pillow 畫一張彩色圖（白底、黑色粗外框的角色與幾個背景方塊）。下方不填色的大框上緣刻意留了約 7 px 的缺口
+（A4 300 DPI 線稿上約 20 px），所以 QA 一定會報「線條有缺口」，按「自動補線」後缺口歸零。
+
+```bash
+$VENV_ROOT/coloring-books/bin/python scripts/dev_fake_backend.py --port 8000 [--storage /tmp/fake-books]
+BACKEND_URL=http://127.0.0.1:8000 npm run dev   # 另一個終端機，在 frontend/
+```
+
+設定沿用 `config/settings.yaml`（或 `APP_SETTINGS_FILE`），但資料庫與檔案一律放在 `--storage`（預設：新的暫存資料夾），不會碰到正式資料。
+
+### 端對端測試（Playwright）
+
+```bash
+cd frontend
+npx playwright install chromium        # 第一次（或升級 @playwright/test 後）
+PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
+```
+
+- 這台機器的 venv 是 `/ai-data/venvs/ubuntu24.04/coloring-books`（`VENV_ROOT=/ai-data/venvs/ubuntu24.04`）。`PYTHON` 預設 `python`；指令內已含 `env -u PYTHONPATH`。
+- `playwright.config.ts` 會自動啟動兩個服務：假後端（`127.0.0.1:8010`，每次執行用新的暫存 storage）與 `next dev -p 3010`（`BACKEND_URL=http://127.0.0.1:8010`）。
+  非 CI 時若這兩個埠已有服務就直接重用（資料會累積；測試不依賴既有資料）。
+- 只用 chromium，並以 `--disable-gpu --disable-software-rasterizer` 啟動：WSL2 上 headless chromium 的 GPU 行程常卡住，`requestAnimationFrame` 不觸發、點擊一直等不到。
+- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 產生並設定角色 → 新增頁、在畫板畫方框 → 產生候選並選圖 → 線稿看到紅圈 → 自動補線後缺口 0 → QA 一致 → 標為通過 → 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）；
+  以及沒設角色時按鈕停用、後端 409「請先設定角色」原樣顯示。
+- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器，整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
+- 全部約 20 秒（第一次 `next dev` 編譯會再久一點）。
 
 ## API 一覽
 
