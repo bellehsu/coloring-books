@@ -55,7 +55,8 @@ class FakeEngine:
             raise self.error
         extra = {}
         if req.kind == GenKind.POSE and self.pose_mask:
-            extra["mask"] = make_mask_png()
+            with Image.open(io.BytesIO(self.image)) as im:  # 遮罩與角色圖同尺寸（合成時會檢查）
+                extra["mask"] = make_mask_png(im.size)
         return GenerationResult(
             image=self.image,
             extra_images=extra,

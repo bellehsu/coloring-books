@@ -64,6 +64,21 @@ def get_generation_image(
     return FileResponse(path, media_type="image/png")
 
 
+@router.get("/generations/{gen_id}/mask")
+def get_generation_mask(
+    gen_id: int,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+) -> FileResponse:
+    gen = _gen_or_404(session, gen_id)
+    if not gen.mask_path:
+        raise HTTPException(404, "這筆生成紀錄沒有遮罩")
+    path = storage.abs(gen.mask_path)
+    if not path.is_file():
+        raise HTTPException(404, "遮罩檔案遺失")
+    return FileResponse(path, media_type="image/png")
+
+
 @router.get("/books/{book_id}/generations", response_model=list[GenerationOut])
 def list_generations(
     book_id: int,
@@ -96,7 +111,11 @@ def update_generation(
     guard = col(Generation.id) == gen_id
     if body.discarded:
         in_use = (
-            select(Page.id).where(col(Page.selected_generation_id) == gen_id).exists()
+            select(Page.id).where(
+                (col(Page.selected_generation_id) == gen_id)
+                | (col(Page.background_generation_id) == gen_id)
+                | (col(Page.pose_generation_id) == gen_id)
+            ).exists()
             | select(Book.id).where(col(Book.character_generation_id) == gen_id).exists()
         )
         guard = guard & ~in_use
@@ -117,7 +136,7 @@ def update_generation(
     res = session.exec(update(Generation).where(guard).values(**values))
     session.commit()
     if res.rowcount == 0:
-        raise HTTPException(409, "這筆生成紀錄正被頁面選定或作為角色，無法捨棄")
+        raise HTTPException(409, "這筆生成紀錄正被頁面使用或作為角色，無法捨棄")
     session.refresh(gen)
     return _out(gen, worker)
 

@@ -31,6 +31,8 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["pages"])
 
 MAX_SKETCH_BYTES = 10_000_000
+# 頁面選定圖可以是舊流程的頁面候選圖，或合成流程的合成圖
+SELECTABLE_KINDS = (GenKind.PAGE, GenKind.COMPOSITE)
 
 
 def _page_or_404(session: Session, page_id: int) -> Page:
@@ -38,6 +40,20 @@ def _page_or_404(session: Session, page_id: int) -> Page:
     if page is None:
         raise HTTPException(404, "找不到這一頁")
     return page
+
+
+def reset_review_when(cond) -> dict:
+    """條件式 UPDATE 用的 SET 片段：cond 成立（以寫入當下的舊值判斷）時退回草稿，
+    角色檢查、通過時間與強制通過原因作廢；不成立時保持原值。"""
+    return {
+        "status": case(
+            (cond, literal(PageStatus.DRAFT, Page.__table__.c.status.type)),
+            else_=col(Page.status),
+        ),
+        "passed_at": case((cond, null()), else_=col(Page.passed_at)),
+        "character_check": case((cond, null()), else_=col(Page.character_check)),
+        "forced_pass_reason": case((cond, null()), else_=col(Page.forced_pass_reason)),
+    }
 
 
 def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
@@ -216,7 +232,7 @@ def delete_page(
         raise HTTPException(409, "這一頁還有圖片正在生成，請稍後再刪")
     gens = session.exec(select(Generation).where(col(Generation.page_id) == page_id)).all()
     gen_ids = [g.id for g in gens]
-    image_paths = [g.image_path for g in gens if g.image_path]
+    image_paths = [p for g in gens for p in (g.image_path, g.mask_path) if p]
     session.exec(delete(LineartEdit).where(col(LineartEdit.page_id) == page_id))
     session.exec(delete(Generation).where(col(Generation.page_id) == page_id))
     session.exec(delete(Page).where(col(Page.id) == page_id))
@@ -344,8 +360,8 @@ def select_generation(
         raise HTTPException(404, "找不到這筆生成紀錄")
     if gen.page_id != page_id:
         raise HTTPException(409, "這筆生成紀錄不屬於這一頁")
-    if gen.kind != GenKind.PAGE:
-        raise HTTPException(409, "只能選擇頁面候選圖")
+    if gen.kind not in SELECTABLE_KINDS:
+        raise HTTPException(409, "只能選擇頁面候選圖或合成圖")
     if gen.status != GenStatus.SUCCEEDED:
         raise HTTPException(409, "這張候選圖尚未成功生成")
     if gen.discarded:
@@ -355,7 +371,7 @@ def select_generation(
         .where(
             col(Generation.id) == gen.id,
             col(Generation.page_id) == page_id,
-            col(Generation.kind) == GenKind.PAGE,
+            col(Generation.kind).in_(SELECTABLE_KINDS),
             col(Generation.status) == GenStatus.SUCCEEDED,
             col(Generation.discarded).is_(False),
         )
@@ -366,17 +382,7 @@ def select_generation(
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, still_valid)
-        .values(
-            selected_generation_id=gen.id,
-            updated_at=utcnow(),
-            status=case(
-                (changed, literal(PageStatus.DRAFT, Page.__table__.c.status.type)),
-                else_=col(Page.status),
-            ),
-            passed_at=case((changed, null()), else_=col(Page.passed_at)),
-            character_check=case((changed, null()), else_=col(Page.character_check)),
-            forced_pass_reason=case((changed, null()), else_=col(Page.forced_pass_reason)),
-        )
+        .values(selected_generation_id=gen.id, updated_at=utcnow(), **reset_review_when(changed))
     )
     session.commit()
     if res.rowcount == 0:
