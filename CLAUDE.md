@@ -26,6 +26,10 @@
 - Route C：SDXL Base 1.0 + IP-Adapter（ComfyUI_IPAdapter_plus，目前為僅維護狀態）+ ControlNet Union SDXL（xinsir，scribble 模式）
   先生成**彩色**圖，再以 xdog 擷取線稿（`app.services.lineart_extract`）。沿用 `route_a_sdxl_ipadapter_cn` workflow。
   預設參數與網站設計見 `docs/superpowers/specs/2026-11-06-coloring-book-web-design.md`（§10）；實驗紀錄見 `experiments/results/phase1_route_c*`。
+- 頁面合成流程（Phase 5，2026-11-09）：Route C 的頁面改為「背景（`sdxl_background`，無 IP-Adapter，選用 ControlNet scribble）
+  ＋角色動作（`sdxl_pose_cutout`，IP-Adapter＋ComfyUI 內建去背）→ 後端 Pillow 合成（`composite` generation）→ xdog 擷取」。
+  背景與角色動作每次各生成一張。設計見 `docs/superpowers/specs/2026-11-09-page-compose-flow-design.md`；
+  實驗紀錄見 `experiments/results/phase5_*`。`route_a_sdxl_ipadapter_cn` 保留給舊流程的整頁候選。
 - 已淘汰：Route A（直接生成黑白線稿）、Route B（Qwen-Image-Edit-2511 GGUF）。`route_b_qwen_edit_2511_gguf` 已移到 `archive/comfy_workflows/`（preflight 不掃描）。
 - 生成層要可替換：網頁與 API 只使用邏輯參數；日後雲端 GPU 版本可能改用 diffusers 直接跑模型（目前範圍外，不實作）。
 

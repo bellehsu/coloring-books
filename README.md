@@ -9,7 +9,8 @@ backend/app/
   config.py                    設定載入（config/settings.yaml + APP_ 環境變數）
   main.py                      FastAPI 進入點、lifespan（DB、worker、啟動 preflight）
   api/books.py                 書籍與角色 endpoints
-  api/pages.py                 頁面、構圖草圖、頁面候選 endpoints
+  api/pages.py                 頁面、構圖草圖、頁面候選（舊流程）endpoints
+  api/compose.py               頁面合成流程：背景、角色動作、位置、確認合成 endpoints
   api/generations.py           生成紀錄、取消、佇列狀態 endpoints
   api/schemas.py               API 請求／回應 Pydantic 模型
   api/deps.py                  FastAPI 依賴（session、worker）
@@ -22,12 +23,13 @@ backend/app/
   services/engine.py           生成引擎介面
   services/worker.py           單一背景 worker，依序執行佇列任務
   services/layout.py           版面尺寸計算（五種紙張、兩種列印模式）
-  services/prompts.py          提示詞組裝
+  services/prompts.py          提示詞組裝（角色、背景、角色動作）
+  services/compose.py          背景＋去背角色合成（Placement、cutout）
   services/lineart_extract.py  生成圖轉線稿（呼叫 lineart_post）
   services/workflow_registry.py workflow 登錄、白名單參數、hash
   services/preflight.py        節點／模型／輸入欄位檢查
   services/lineart_post.py     線稿後處理與指標
-comfy_workflows/<name>/        workflow_api.json + manifest.yaml（例：sdxl_text2img/）
+comfy_workflows/<name>/        workflow_api.json + manifest.yaml（sdxl_text2img、route_a_sdxl_ipadapter_cn、sdxl_background、sdxl_pose_cutout）
 docs/superpowers/
   specs/                       設計規格
   plans/                       實作計畫（各 Phase）
@@ -141,6 +143,21 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 
 正式建置、systemd 常駐與 Windows 埠轉發見 [docs/deploy-intranet.md](docs/deploy-intranet.md)（範本在 `deploy/`）。
 
+## 頁面流程（Phase 5：背景＋角色動作＋合成）
+
+設定好角色之後，每一頁依序做：
+
+1. **背景**：輸入場景描述，按「產生背景」，每次一張（`sdxl_background`，不用 IP-Adapter，提示詞要求無人物、少量大物件）。
+   畫構圖（ControlNet scribble）為選用；不畫就不使用 ControlNet。
+2. **角色動作**：輸入動作文字或點常用動作按鈕（揮手、跑步…），按「產生角色動作」，每次一張
+   （`sdxl_pose_cutout`：角色參考圖 IP-Adapter 0.55、832×1216 白底，ComfyUI 內建 `RemoveBackground` 產生遮罩）。
+3. **合成**：拖曳、拉角落、方向鍵調整角色位置與大小，可水平翻轉；位置自動儲存。按「確認合成」後，後端用 Pillow
+   把去背角色貼到背景上，存成一筆 `composite` 生成紀錄並設為本頁 `selected_generation_id`。
+4. **線稿、QA、匯出**：與之前相同（xdog 擷取 → 後處理 → 補線 → 角色一致確認 → 通過 → PDF）。
+
+背景與角色動作的歷史紀錄每頁各自保存。改選另一張背景或角色動作時，若本頁目前用的是合成圖，會清除選定並退回草稿；
+同一組背景、角色、位置再按確認會重用原本的合成圖。舊流程的整頁候選（`/pages/{id}/candidates`）仍保留，已選的舊頁面不受影響。
+
 ## API 一覽
 
 所有路徑以 `/api` 為前綴。
@@ -164,6 +181,14 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | DELETE | `/pages/{page_id}/sketch` | 移除頁面構圖草圖 |
 | GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
 | POST | `/pages/{page_id}/candidates` | 產生頁面候選（非同步，202） |
+| POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202；可用構圖草圖） |
+| POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩（非同步，202；未設角色 409） |
+| POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
+| POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |
+| PUT | `/pages/{page_id}/placement` | 儲存角色位置 `{cx, cy, height, flip}`（中心點與高度為背景的比例） |
+| POST | `/pages/{page_id}/compose` | 確認合成：產生／重用 `composite` 生成紀錄並設為選定 |
+| GET | `/generations/{gen_id}/mask` | 下載角色動作的去背遮罩 |
+| GET | `/generations/{gen_id}/cutout` | 依遮罩去背並裁切的 RGBA PNG（合成預覽用） |
 | POST | `/pages/{page_id}/select` | 選定頁面採用的生成結果 |
 | GET | `/generations/{gen_id}` | 取得生成紀錄（參數、seed、提示詞、耗時、錯誤） |
 | GET | `/generations/{gen_id}/image` | 下載生成圖 |
