@@ -11,19 +11,15 @@ export const ACTIONS: { label: string; phrase: string }[] = [
   { label: "開心笑", phrase: "smiling happily" },
 ];
 
-const parts = (text: string) =>
-  text
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** 描述裡已有這個片語（以逗號分隔的完整項目）。 */
+/** 描述裡已有這個片語：整詞、不分大小寫，出現在句子任何位置都算。 */
 export function hasPhrase(text: string, phrase: string): boolean {
-  return parts(text).includes(phrase);
+  return new RegExp(`(?<![\\w])${escape(phrase)}(?![\\w])`, "i").test(text);
 }
 
-/** 把片語加到描述末尾（以「, 」分隔）；已存在就原樣回傳。 */
-export function togglePhrase(text: string, phrase: string): string {
+/** 把片語加到描述末尾後的結果（以「, 」分隔）；已存在就原樣回傳。 */
+export function appendPhrase(text: string, phrase: string): string {
   if (hasPhrase(text, phrase)) return text;
   const base = text.trim().replace(/,\s*$/, "");
   return base ? `${base}, ${phrase}` : phrase;

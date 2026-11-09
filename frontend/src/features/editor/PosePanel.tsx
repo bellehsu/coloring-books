@@ -4,7 +4,7 @@ import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import type { Page } from "@/api/client";
 import { Button } from "@/components/ui/Button";
-import { ACTIONS, hasPhrase, togglePhrase } from "@/lib/actions";
+import { ACTIONS, hasPhrase, appendPhrase } from "@/lib/actions";
 import styles from "./Inspector.module.css";
 
 export const MAX_ACTION = 300;
@@ -66,16 +66,20 @@ export function PosePanel({ page, hasCharacter, characterHref, onGenerate, gener
       </div>
       <div className={styles.presets} role="group" aria-label="常用動作">
         {ACTIONS.map((a) => {
-          const on = hasPhrase(action, a.phrase);
+          const added = hasPhrase(action, a.phrase);
+          const tooLong = !added && appendPhrase(action, a.phrase).length > MAX_ACTION;
           return (
             <button
               key={a.phrase}
               type="button"
               className={styles.preset}
-              data-on={on}
-              aria-pressed={on}
-              onClick={() => setAction((cur) => togglePhrase(cur, a.phrase).slice(0, MAX_ACTION))}
+              data-added={added}
+              disabled={added || tooLong}
+              aria-label={added ? `${a.label}（已加入）` : undefined}
+              title={tooLong ? `再加入會超過 ${MAX_ACTION} 字` : undefined}
+              onClick={() => setAction((cur) => appendPhrase(cur, a.phrase))}
             >
+              {added ? <span aria-hidden="true">✓ </span> : null}
               {a.label}
             </button>
           );

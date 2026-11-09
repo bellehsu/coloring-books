@@ -1212,6 +1212,47 @@
         }
       }
     },
+    "/api/generations/{gen_id}/cutout": {
+      "get": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Get Generation Cutout",
+        "description": "角色動作的去背圖：裁到遮罩外接框的 RGBA PNG（alpha＝遮罩）。",
+        "operationId": "get_generation_cutout_api_generations__gen_id__cutout_get",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/books/{book_id}/generations": {
       "get": {
         "tags": [
@@ -2605,6 +2646,17 @@
             ],
             "title": "Mask Url"
           },
+          "cutout_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cutout Url"
+          },
           "error": {
             "anyOf": [
               {
@@ -2680,6 +2732,7 @@
           "height",
           "image_url",
           "mask_url",
+          "cutout_url",
           "error",
           "elapsed_s",
           "queue_position",

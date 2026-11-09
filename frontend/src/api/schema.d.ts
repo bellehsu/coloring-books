@@ -347,6 +347,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/generations/{gen_id}/cutout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Generation Cutout
+         * @description 角色動作的去背圖：裁到遮罩外接框的 RGBA PNG（alpha＝遮罩）。
+         */
+        get: operations["get_generation_cutout_api_generations__gen_id__cutout_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/books/{book_id}/generations": {
         parameters: {
             query?: never;
@@ -846,6 +866,8 @@ export interface components {
             image_url: string | null;
             /** Mask Url */
             mask_url: string | null;
+            /** Cutout Url */
+            cutout_url: string | null;
             /** Error */
             error: string | null;
             /** Elapsed S */
@@ -1977,6 +1999,37 @@ export interface operations {
         };
     };
     get_generation_mask_api_generations__gen_id__mask_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gen_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_generation_cutout_api_generations__gen_id__cutout_get: {
         parameters: {
             query?: never;
             header?: never;

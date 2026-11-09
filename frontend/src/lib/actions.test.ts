@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTIONS, hasPhrase, togglePhrase } from "./actions";
+import { ACTIONS, hasPhrase, appendPhrase } from "./actions";
 
 describe("actions", () => {
   it("has the ten presets", () => {
@@ -8,12 +8,15 @@ describe("actions", () => {
     expect(ACTIONS[6].phrase).toBe("holding something with both hands");
   });
   it("appends with a comma and does not duplicate", () => {
-    expect(togglePhrase("", "standing")).toBe("standing");
-    expect(togglePhrase("waving one hand", "reading a book")).toBe("waving one hand, reading a book");
-    expect(togglePhrase("waving one hand, reading a book", "waving one hand")).toBe("waving one hand, reading a book");
+    expect(appendPhrase("", "standing")).toBe("standing");
+    expect(appendPhrase("waving one hand", "reading a book")).toBe("waving one hand, reading a book");
+    expect(appendPhrase("waving one hand, reading a book", "waving one hand")).toBe("waving one hand, reading a book");
   });
-  it("detects phrases as whole comma-separated items", () => {
+  it("detects phrases as whole words, case-insensitively, anywhere in the text", () => {
     expect(hasPhrase("sitting, waving one hand", "waving one hand")).toBe(true);
-    expect(hasPhrase("a standing man", "standing")).toBe(false);
+    expect(hasPhrase("Waving one hand", "waving one hand")).toBe(true);
+    expect(hasPhrase("waving one hand and smiling", "waving one hand")).toBe(true);
+    expect(hasPhrase("outstanding", "standing")).toBe(false);
+    expect(appendPhrase("Waving one hand", "waving one hand")).toBe("Waving one hand");
   });
 });

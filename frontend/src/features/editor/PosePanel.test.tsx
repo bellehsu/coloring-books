@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Page } from "@/api/client";
@@ -34,15 +34,33 @@ describe("PosePanel", () => {
     expect(gen()).toBeDisabled();
   });
 
-  it("presets append, do not duplicate, and reflect aria-pressed", async () => {
+  it("presets append, then show an added, disabled state", async () => {
     setup();
     await userEvent.click(screen.getByRole("button", { name: "揮手" }));
     await userEvent.click(screen.getByRole("button", { name: "看書" }));
     expect(box().value).toBe("waving one hand, reading a book");
-    await userEvent.click(screen.getByRole("button", { name: "揮手" }));
-    expect(box().value).toBe("waving one hand, reading a book");
-    expect(screen.getByRole("button", { name: "揮手" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "站著" })).toHaveAttribute("aria-pressed", "false");
+    const added = screen.getByRole("button", { name: "揮手（已加入）" });
+    expect(added).toBeDisabled();
+    expect(added).not.toHaveAttribute("aria-pressed");
+    expect(screen.getByRole("button", { name: "站著" })).toBeEnabled();
+  });
+
+  it("treats existing text case-insensitively and inside sentences as added", async () => {
+    setup();
+    await userEvent.type(box(), "Waving one hand and smiling");
+    expect(screen.getByRole("button", { name: "揮手（已加入）" })).toBeDisabled();
+    expect(box().value).toBe("Waving one hand and smiling");
+  });
+
+  it("disables presets that would exceed 300 characters, with a reason", async () => {
+    setup();
+    fireEvent.change(box(), { target: { value: "x".repeat(290) } });
+    const b = screen.getByRole("button", { name: "站著" });
+    expect(b).toBeEnabled();
+    const long = screen.getByRole("button", { name: "拿著東西" });
+    expect(long).toBeDisabled();
+    expect(long).toHaveAttribute("title", expect.stringContaining("300"));
+    expect(box().value).toHaveLength(290);
   });
 
   it("submits the trimmed action", async () => {
