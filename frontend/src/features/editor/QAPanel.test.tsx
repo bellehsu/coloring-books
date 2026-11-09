@@ -164,6 +164,60 @@ describe("QAPanel", () => {
     expect(posts("/api/pages/7/lineart/autofix")[0].body).toEqual({ generation_id: 5 });
   });
 
+  it("先打註記再選結果：選之前顯示提示，選了才送出註記", async () => {
+    setup(mkPage(), mkQA());
+    expect(screen.queryByText("選擇一致或不一致後才會儲存註記")).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/註記/), "顏色偏淡");
+    expect(screen.getByText("選擇一致或不一致後才會儲存註記")).toBeInTheDocument();
+    expect(posts("/api/pages/7/character-check")).toHaveLength(0);
+    await userEvent.click(screen.getByRole("radio", { name: "不一致" }));
+    await waitFor(() => expect(posts("/api/pages/7/character-check")).toHaveLength(1));
+    expect(posts("/api/pages/7/character-check")[0].body).toMatchObject({ result: "inconsistent", note: "顏色偏淡" });
+  });
+
+  it("連點「標為通過」只送一次 POST（flush 等待期間也擋）", async () => {
+    const qc = setup(mkPage({ character_check: "consistent" }), mkQA());
+    const e = editsQueueFor(qc, 1, 7, 5);
+    let release!: () => void;
+    vi.spyOn(e, "flush").mockReturnValue(new Promise<undefined>((r) => (release = () => r(undefined))));
+    await userEvent.dblClick(passBtn());
+    release();
+    await waitFor(() => expect(posts("/api/pages/7/pass")).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posts("/api/pages/7/pass")).toHaveLength(1);
+  });
+
+  it("連點「自動補線」只送一次 POST", async () => {
+    const qc = setup(mkPage({ character_check: "consistent" }), mkQA({ errors: [msg("gap", "x")], gap_count: 1 }));
+    const e = editsQueueFor(qc, 1, 7, 5);
+    let release!: () => void;
+    vi.spyOn(e, "flush").mockReturnValue(new Promise<undefined>((r) => (release = () => r(undefined))));
+    await userEvent.dblClick(screen.getByRole("button", { name: "自動補線" }));
+    release();
+    await waitFor(() => expect(posts("/api/pages/7/lineart/autofix")).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posts("/api/pages/7/lineart/autofix")).toHaveLength(1);
+  });
+
+  it("失焦存註記進行中，通過按鈕與單選仍可點", async () => {
+    let release!: () => void;
+    responses["POST /api/pages/7/character-check"] = () => j({});
+    const gate = new Promise<void>((r) => (release = r));
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, init: RequestInit = {}) => {
+      const method = init.method ?? "GET";
+      calls.push({ method, url, body: typeof init.body === "string" ? JSON.parse(init.body) : undefined });
+      if (url === "/api/pages/7/character-check") await gate;
+      return j({});
+    });
+    setup(mkPage({ character_check: "consistent" }), mkQA({ qa_note: "舊" }));
+    await userEvent.type(screen.getByLabelText(/註記/), "新");
+    await userEvent.tab();
+    await waitFor(() => expect(posts("/api/pages/7/character-check")).toHaveLength(1));
+    expect(passBtn()).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "不一致" })).toBeEnabled();
+    release();
+  });
+
   it("下載本頁 PNG 連結", () => {
     setup(mkPage(), mkQA());
     const a = screen.getByRole("link", { name: /下載本頁 PNG/ });

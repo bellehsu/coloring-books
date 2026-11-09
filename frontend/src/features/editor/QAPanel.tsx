@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, type Book, type Generation, type Page, type QA } from "@/api/client";
 import { qk, useAutofix, useCharacterCheck, usePass, useUnpass } from "@/api/hooks";
@@ -43,6 +43,7 @@ function passFailure(e: unknown): PassFailure {
 
 /** QA 模式的檢查面板：自動檢查、角色外型確認、通過／退回、下載本頁 PNG。 */
 export function QAPanel(props: QAPanelProps) {
+  // key：角色檢查是「每張圖」的；換頁或換選圖時，尚未儲存的註記草稿與強制通過原因直接捨棄。
   return <QAPanelInner key={`${props.page.id}:${props.page.selected_generation_id}`} {...props} />;
 }
 
@@ -70,7 +71,22 @@ function QAPanelInner({ book, page, qa }: QAPanelProps) {
   const errors = qa?.errors ?? [];
   const warnings = qa?.warnings ?? [];
   const hasErrors = errors.length > 0;
-  const busy = autofix.isPending || check.isPending || pass.isPending || unpass.isPending;
+  // 從點擊到 mutation 結束都算送出中（flush 等待期間 isPending 還是 false）；ref 擋同一個事件循環內的連點。
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  function begin(): boolean {
+    if (submittingRef.current) return false;
+    submittingRef.current = true;
+    setSubmitting(true);
+    return true;
+  }
+  function end() {
+    submittingRef.current = false;
+    setSubmitting(false);
+  }
+  // 只有「換結果」的儲存會擋住通過；失焦時只存註記（結果不變）不能吃掉下一次點擊。
+  const savingResult = check.isPending && check.variables.result !== saved;
+  const busy = submitting || savingResult || autofix.isPending || pass.isPending || unpass.isPending;
 
   /** 先讓修線寫完；寫入失敗（已有 toast）就停止。 */
   async function flushEdits(): Promise<boolean> {
@@ -99,10 +115,12 @@ function QAPanelInner({ book, page, qa }: QAPanelProps) {
   }
 
   async function doAutofix() {
-    if (genId == null || !(await flushEdits())) return;
+    if (genId == null || !begin()) return;
+    if (!(await flushEdits())) return end();
     autofix.mutate(
       { pageId: page.id, generationId: genId },
       {
+        onSettled: end,
         onSuccess: (d) => toast.show(d.autofix_added > 0 ? `已補 ${d.autofix_added} 條線` : "沒有可補的線", "success"),
         onError: (e) => toast.show(errMsg(e, "自動補線失敗"), "error"),
       },
@@ -110,11 +128,13 @@ function QAPanelInner({ book, page, qa }: QAPanelProps) {
   }
 
   async function doPass(forceReason?: string) {
-    if (!(await flushEdits())) return;
+    if (!begin()) return;
+    if (!(await flushEdits())) return end();
     setFailure(null);
     pass.mutate(
       { pageId: page.id, forceReason },
       {
+        onSettled: end,
         onSuccess: () => setForceOpen(false),
         onError: (e) => {
           setForceOpen(false);
@@ -203,7 +223,7 @@ function QAPanelInner({ book, page, qa }: QAPanelProps) {
             data-on={result === "consistent"}
             data-kind="ok"
             className={styles.radio}
-            disabled={genId == null}
+            disabled={genId == null || submitting}
             onClick={() => submitCheck("consistent")}
           >
             一致
@@ -215,7 +235,7 @@ function QAPanelInner({ book, page, qa }: QAPanelProps) {
             data-on={result === "inconsistent"}
             data-kind="bad"
             className={styles.radio}
-            disabled={genId == null}
+            disabled={genId == null || submitting}
             onClick={() => submitCheck("inconsistent")}
           >
             不一致
@@ -234,6 +254,7 @@ function QAPanelInner({ book, page, qa }: QAPanelProps) {
             }}
           />
         </label>
+        {!result && note !== "" && <span className={styles.hint}>選擇一致或不一致後才會儲存註記</span>}
       </section>
 
       <section className={styles.secTight}>
@@ -295,7 +316,7 @@ function QAPanelInner({ book, page, qa }: QAPanelProps) {
             <Button variant="ghost" onClick={() => setForceOpen(false)}>
               取消
             </Button>
-            <Button variant="primary" disabled={pass.isPending} onClick={submitForce}>
+            <Button variant="primary" disabled={busy} onClick={submitForce}>
               強制通過
             </Button>
           </div>
