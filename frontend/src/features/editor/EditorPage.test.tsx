@@ -918,4 +918,22 @@ describe("EditorPage", () => {
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(1));
     expect(screen.getByLabelText("場景描述")).toHaveValue("scene 1!");
   });
+
+  it("產生 4 張候選：等存檔期間連點兩次只送一次 POST", async () => {
+    let release!: () => void;
+    gate["PATCH /api/pages/1"] = new Promise<void>((r) => (release = r));
+    setup();
+    const ta = await screen.findByLabelText("場景描述");
+    await userEvent.type(ta, "!");
+    const btn = screen.getByRole("button", { name: "產生 4 張候選" });
+    await userEvent.click(btn);
+    expect(btn).toBeDisabled();
+    await userEvent.dblClick(btn);
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(1));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(1);
+    expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1);
+    await waitFor(() => expect(btn).not.toBeDisabled());
+  });
 });
