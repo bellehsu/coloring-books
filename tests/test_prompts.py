@@ -21,3 +21,23 @@ def test_character_negative_suppresses_backgrounds_and_sheets():
 
     for term in ("colored background", "scenery", "character sheet", "upper body"):
         assert term in CHARACTER_NEGATIVE
+
+
+def test_background_prompt_has_scene_and_no_people():
+    from app.services.prompts import BACKGROUND_NEGATIVE, background_prompt
+
+    p = background_prompt("a park")
+    assert "a park" in p and "no people" in p
+    assert "a few large objects" in p
+    assert "people" in BACKGROUND_NEGATIVE
+
+
+def test_pose_prompt_has_character_and_action_but_no_scene():
+    from app.services.prompts import POSE_NEGATIVE, POSE_SIZE, pose_prompt
+
+    p = pose_prompt("  a blue bunny ", " sitting on a swing ")
+    assert "a blue bunny" in p and "sitting on a swing" in p
+    assert "white background" in p and "full body" in p
+    assert "park" not in p and "scene" not in p
+    assert "scenery" in POSE_NEGATIVE
+    assert POSE_SIZE == (832, 1216)

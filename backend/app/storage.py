@@ -20,6 +20,9 @@ class Storage:
     def generation_image(self, book_id: int, gen_id: int) -> str:
         return f"books/{book_id}/generations/{gen_id}.png"
 
+    def generation_mask(self, book_id: int, gen_id: int) -> str:
+        return f"books/{book_id}/generations/{gen_id}_mask.png"
+
     def sketch(self, book_id: int, page_id: int) -> str:
         return f"books/{book_id}/pages/{page_id}/sketch.png"
 

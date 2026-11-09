@@ -18,3 +18,25 @@ def character_prompt(description: str) -> str:
         "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, "
         "(isolated on pure white background:1.3), centered, whole body visible from head to feet"
     )
+
+
+# --- 頁面合成流程（背景＋角色動作）；初始文字取自 phase5_compose_spike_20261109，Task 6 校正後可改 ---
+BACKGROUND_STYLE = "children's picture book illustration, flat colors, thick clean black outlines, simple shapes"
+BACKGROUND_NEGATIVE = "people, person, character, girl, boy, child, animal, rabbit, photo, realistic, 3d render, gradient, soft shading, texture, noise, blurry, text, watermark"
+POSE_NEGATIVE = "colored background, scenery, landscape, ground, multiple views, character sheet, cropped, photo, realistic, 3d render, gradient, soft shading, texture, noise, blurry, text, watermark, multiple characters"
+POSE_SIZE = (832, 1216)
+
+
+def background_prompt(scene: str) -> str:
+    return (
+        f"{scene.strip()}, {BACKGROUND_STYLE}, full detailed background scene, "
+        "simple uncluttered composition with a few large objects, empty scene with no people"
+    )
+
+
+def pose_prompt(character_description: str, action: str) -> str:
+    # 不帶場景描述：背景另外生成，這裡只要白底角色
+    return (
+        f"{character_description.strip()}, {action.strip()}, full body, {BACKGROUND_STYLE}, "
+        "(isolated on pure white background:1.3), centered"
+    )

@@ -43,6 +43,9 @@ def _utc_col() -> Column:
 class GenKind(str, Enum):
     CHARACTER = "character"
     PAGE = "page"
+    BACKGROUND = "background"
+    POSE = "pose"
+    COMPOSITE = "composite"
 
 
 class GenStatus(str, Enum):
@@ -85,6 +88,9 @@ class Page(SQLModel, table=True):
     controlnet_strength: float = 0.4
     sketch_path: str | None = None
     selected_generation_id: int | None = None
+    background_generation_id: int | None = None
+    pose_generation_id: int | None = None
+    placement_json: str | None = None  # 角色在背景上的位置（JSON：cx, cy, height, flip）
     status: PageStatus = PageStatus.DRAFT
     line_detail: LineDetail = LineDetail.STANDARD
     line_width_px: int = 11
@@ -122,6 +128,7 @@ class Generation(SQLModel, table=True):
     models_json: str | None = None
     params_json: str | None = None  # 實際送出的全部 manifest 參數
     image_path: str | None = None
+    mask_path: str | None = None  # pose：去背遮罩
     elapsed_s: float | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
