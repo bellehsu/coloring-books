@@ -8,7 +8,8 @@ $RuleName = "Coloring Books Frontend $Port"
 # 優先取預設路由介面的 IP；失敗時退回 hostname -I 的第一個位址
 $wslIp = $null
 try {
-    $wslIp = ((wsl -e sh -c "ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if(\$i==\"src\") {print \$(i+1); exit}}'") | Select-Object -First 1).Trim()
+    $cmd = 'ip -4 route get 1.1.1.1 | sed -n "s/.* src \([0-9.]*\).*/\1/p"'
+    $wslIp = ((wsl -e sh -c $cmd) | Select-Object -First 1).Trim()
 } catch { }
 if ($wslIp -notmatch '^\d+\.\d+\.\d+\.\d+$') {
     $wslIp = ((wsl hostname -I) -split '\s+' | Where-Object { $_ })[0]
