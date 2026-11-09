@@ -27,7 +27,8 @@ import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
 import { guidesFromLayout } from "@/lib/raster";
 import { CandidateTray } from "./CandidateTray";
-import { forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
+import { peekEditsQueue, pruneEditsQueues } from "./editsQueue";
+import { forgetDeletedPage, forgetPageId } from "./forgetPage";
 import { errMsg } from "./errMsg";
 import { BookSettingsDialog } from "@/features/books/BookSettingsDialog";
 import { ExportDrawer } from "./ExportDrawer";
@@ -145,10 +146,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
     return () => window.removeEventListener("beforeunload", handler);
   }, [qc]);
 
-  // 換選圖後，舊選圖閒置的修線佇列就不需要了
+  // 換選圖後，舊選圖閒置的修線佇列就不需要了；已刪除的 id 又出現在清單（被新頁沿用）→ 當成全新的頁
   useEffect(() => {
-    for (const p of pagesQ.data ?? []) pruneEditsQueues(qc, p.id, p.selected_generation_id);
-  }, [qc, pagesQ.data]);
+    for (const p of pagesQ.data ?? []) {
+      if (sketchSaver.isGone(p.id)) forgetPageId(qc, p.id);
+      pruneEditsQueues(qc, p.id, p.selected_generation_id);
+    }
+  }, [qc, sketchSaver, pagesQ.data]);
 
   const [zoom, setZoom] = useState(1);
   /** 選圖前正在等修線寫入（候選圖暫時不能點）。 */
@@ -188,7 +192,10 @@ export function EditorPage({ bookId }: { bookId: number }) {
     createPage.mutate(
       { scene_prompt: "" },
       {
-        onSuccess: (p) => go(p.id, "sketch"),
+        onSuccess: (p) => {
+          forgetPageId(qc, p.id); // 後端若沿用了已刪除頁的 id，不要讓舊頁的狀態串過來
+          go(p.id, "sketch");
+        },
         onError: (e) => toast.show(errMsg(e, "無法新增頁面"), "error"),
       },
     );
@@ -210,10 +217,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     // 先切到相鄰頁（樂觀），避免刪除完成前後閃到別頁；失敗就留在相鄰頁並提示
     if (id === current?.id && neighbor) selectPage(neighbor.id);
     deletePage.mutate(id, {
-      onSuccess: () => {
-        sketchSaver.endDelete(id, true);
-        forgetEditsQueues(qc, id);
-      },
+      onSuccess: () => forgetDeletedPage(qc, id),
       onError: (e) => {
         sketchSaver.endDelete(id, false); // 停著的草圖照常送出
         toast.show(errMsg(e, "無法刪除頁面"), "error");

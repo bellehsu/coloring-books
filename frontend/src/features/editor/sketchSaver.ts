@@ -55,6 +55,13 @@ export interface SketchSaver {
   beginDelete(pageId: number): void;
   /** 刪除結束：成功 → forget，飛行中寫入回來的 404 不回報；失敗 → 停著的存檔照常送出。 */
   endDelete(pageId: number, deleted: boolean): void;
+  /** 這頁已刪除（endDelete 成功），之後的 save 會被丟掉。 */
+  isGone(pageId: number): boolean;
+  /**
+   * 這個 id 現在是新頁（後端沿用了已刪除頁的 id）：清掉已刪除標記、刪除中停著的存檔與記憶，
+   * 之後的 save 照常送出。
+   */
+  reset(pageId: number): void;
   setErrorHandler(fn: (error: unknown) => void): void;
 }
 
@@ -183,6 +190,12 @@ export function sketchSaverFor(qc: QueryClient): SketchSaver {
       } else if (parked) {
         saver.save(parked.bookId, pageId, parked.blob);
       }
+    },
+    isGone: (pageId) => gone.has(pageId),
+    reset(pageId) {
+      gone.delete(pageId);
+      deleting.delete(pageId);
+      saver.forget(pageId);
     },
     setErrorHandler(fn) {
       reportError = fn;

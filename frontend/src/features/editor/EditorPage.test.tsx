@@ -197,6 +197,8 @@ let gate: Record<string, Promise<void> | undefined>;
 let candidatesStatus: number;
 /** `${method} ${url}` → 回傳這個錯誤狀態碼（測寫入失敗）。 */
 let failWith: Record<string, number>;
+/** POST /books/1/pages 回傳的新頁 id（測 id 被沿用）。 */
+let nextPageId: number;
 
 const j = (data: unknown, status = 200) =>
   new Response(data === undefined ? null : JSON.stringify(data), {
@@ -214,6 +216,7 @@ beforeEach(() => {
   gate = {};
   candidatesStatus = 202;
   failWith = {};
+  nextPageId = 10;
   sketchSaves.length = 0;
   let blobN = 0;
   URL.createObjectURL = vi.fn(() => `blob:${++blobN}`);
@@ -232,7 +235,7 @@ beforeEach(() => {
       if (url === "/api/books/1" && method === "GET") return book ? j(book) : j({ detail: "找不到這本繪本" }, 404);
       if (url === "/api/books/1/pages" && method === "GET") return j(pages);
       if (url === "/api/books/1/pages" && method === "POST") {
-        const p = mkPage(10, { position: pages.length, scene_prompt: "" });
+        const p = mkPage(nextPageId, { position: pages.length, scene_prompt: "" });
         pages = [...pages, p];
         return j(p, 201);
       }
@@ -313,6 +316,7 @@ afterEach(() => {
 });
 
 let rerenderEditor: () => void = () => {};
+let lastQc: QueryClient;
 
 function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -325,6 +329,7 @@ function setup() {
   );
   const r = render(tree());
   rerenderEditor = () => r.rerender(tree());
+  lastQc = qc;
   return qc;
 }
 
@@ -917,6 +922,56 @@ describe("EditorPage", () => {
     await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(2));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/candidates")).toHaveLength(1));
     expect(screen.getByLabelText("場景描述")).toHaveValue("scene 1!");
+  });
+
+  // ---------- 刪除後 id 被沿用（後端舊庫沒有 AUTOINCREMENT 時）：舊頁的前端狀態不可串到新頁 ----------
+
+  /** 第 3 頁：改場景描述（PATCH）、存草圖（PUT），再刪除它。 */
+  async function editThenDeletePage3() {
+    search = "page=3";
+    setup();
+    const ta = await screen.findByLabelText("場景描述");
+    await userEvent.clear(ta);
+    await userEvent.type(ta, "old scene");
+    fireEvent.blur(ta);
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/3")).toHaveLength(1));
+    await userEvent.click(within(screen.getByTestId("sketch")).getByRole("button", { name: "stub-save" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/3/sketch")).toHaveLength(1));
+    await userEvent.click(screen.getByRole("button", { name: "第 3 頁的更多動作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
+    await waitFor(() => expect(calledWith("DELETE", "/api/pages/3")).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "第 3 頁的更多動作" })).not.toBeInTheDocument());
+  }
+
+  /** 新頁（沿用 id 3）：場景描述是空的、草圖照常送出、產生時帶著草圖。 */
+  async function expectFreshPage3() {
+    await waitFor(() => expect(pageButton(3)).toHaveAttribute("aria-current", "true"));
+    expect(screen.getByLabelText("場景描述")).toHaveValue("");
+    await userEvent.click(within(screen.getByTestId("sketch")).getByRole("button", { name: "stub-save" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/3/sketch")).toHaveLength(2));
+    await userEvent.click(screen.getByRole("button", { name: "產生 4 張候選" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/3/candidates")).toHaveLength(1));
+    expect(calledWith("PATCH", "/api/pages/3")).toHaveLength(1); // 空白＝伺服器的值，不重送
+    expect(screen.queryByText(/草圖儲存失敗|找不到頁面/)).not.toBeInTheDocument();
+  }
+
+  it("刪除最後一頁後新增，後端沿用同一個 id：草圖照常存、場景描述從空白開始", async () => {
+    nextPageId = 3;
+    await editThenDeletePage3();
+    await userEvent.click(screen.getByRole("button", { name: "新增頁面" }));
+    await waitFor(() => expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=3", { scroll: false }));
+    await expectFreshPage3();
+  });
+
+  it("已刪除的 id 又出現在頁面清單（例如別的分頁新增）：清掉舊狀態", async () => {
+    await editThenDeletePage3();
+    pages = [...pages, mkPage(3, { position: pages.length, scene_prompt: "" })];
+    await act(async () => {
+      await lastQc.invalidateQueries({ queryKey: qk.pages(1) });
+    });
+    await userEvent.click(await screen.findByRole("button", { name: /^第 3 頁(?!的更多動作)/ }));
+    await expectFreshPage3();
   });
 
   it("產生 4 張候選：等存檔期間連點兩次只送一次 POST", async () => {
