@@ -258,25 +258,6 @@ export function useCancelGeneration(bookId: number) {
   });
 }
 
-/** upload → pages（含 sketch_url；草圖只影響之後的生成） */
-export function useUploadSketch(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ pageId, file }: { pageId: number; file: Blob }) =>
-      api.upload<Page>(`/pages/${pageId}/sketch`, file, "PUT"),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.pages(bookId) }),
-  });
-}
-
-/** invalidate: pages */
-export function useDeleteSketch(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (pageId: number) => api.del<Page>(`/pages/${pageId}/sketch`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.pages(bookId) }),
-  });
-}
-
 /** autofix → qa, edits, pages, book, exportSummary */
 export function useAutofix(bookId: number) {
   const qc = useQueryClient();
