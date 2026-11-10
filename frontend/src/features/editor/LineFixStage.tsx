@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, type Edits, type QA } from "@/api/client";
 import { qk, useAutofix, useEdits } from "@/api/hooks";
-import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import type { Stroke } from "@/lib/strokes";
 import { editsQueueFor, type EditsEntry } from "./editsQueue";
@@ -26,7 +25,8 @@ export interface LineFixStageProps {
 }
 
 /**
- * 修線舞台：載入修改圖層後掛上 LineFixCanvas。
+ * 修線舞台：載入修改圖層後掛上 LineFixCanvas（QA 找到的缺口畫成橘色圈，位置用 qa.gaps）。
+ * 自動補線的按鈕在右欄（FinishPanel），經 entry.autofix 呼叫這裡的補線，補上的線併進畫面上的筆畫。
  * 寫入走 editsQueueFor（每頁＋選圖一個、跨重新掛載共用）；佇列忙碌或上次寫入失敗時用本機最新筆畫，
  * 不從伺服器（可能還沒追上的）edits 重設。
  */
@@ -90,7 +90,6 @@ function LineFixEditor({
   /** 自動補線期間有修改（延後到結束才送出）。 */
   const changedWhileFixing = useRef(false);
   const [fixBusy, setFixBusy] = useState(false);
-  const [fixMsg, setFixMsg] = useState<string | null>(null);
   const busy = useSyncExternalStore(entry.subscribe, entry.busy, entry.busy);
   const failed = useSyncExternalStore(
     entry.subscribe,
@@ -105,7 +104,6 @@ function LineFixEditor({
   function onChange(next: Stroke[]) {
     latest.current = next;
     setStrokes(next);
-    setFixMsg(null);
     // 自動補線進行中先不寫入（伺服器正在改同一個圖層），結束後合併再送。
     if (fixing.current) changedWhileFixing.current = true;
     else entry.push(next);
@@ -117,18 +115,18 @@ function LineFixEditor({
     else entry.push(latest.current);
   }
 
-  async function runAutofix() {
-    if (fixing.current) return;
+  /** 自動補線（由右欄的「自動補線」經 entry.autofix 呼叫）：補上的線併進畫面，回傳補了幾條；失敗提示後回傳 null。 */
+  async function runAutofix(): Promise<number | null> {
+    if (fixing.current) return null;
     fixing.current = true;
     setFixBusy(true);
-    setFixMsg(null);
     changedWhileFixing.current = false;
     try {
       try {
         await entry.flush(); // 先讓伺服器等於畫面，補線才會接在正確的圖層後面
       } catch (e) {
         toast.show(`${errMsg(e, "修線尚未儲存")}，請再畫一筆後再試`, "error");
-        return;
+        return null;
       }
       const res = await autofix.mutateAsync({ pageId, generationId: genId });
       const { autofix_added: added, ...rest } = res;
@@ -146,9 +144,10 @@ function LineFixEditor({
           setStrokes(latest.current);
         }
       }
-      setFixMsg(added > 0 ? `已補 ${added} 條` : "沒有可自動補的缺口");
+      return added;
     } catch (e) {
       toast.show(errMsg(e, "自動補線失敗"), "error");
+      return null;
     } finally {
       fixing.current = false;
       setFixBusy(false);
@@ -157,6 +156,19 @@ function LineFixEditor({
       changedWhileFixing.current = false;
     }
   }
+
+  // 登記給右欄的「自動補線」：畫布掛著時一定要經過這裡，補上的線才會併進畫面上的筆畫
+  const runRef = useRef(runAutofix);
+  useEffect(() => {
+    runRef.current = runAutofix;
+  });
+  useEffect(() => {
+    const run = () => runRef.current();
+    entry.setAutofix(run);
+    return () => {
+      if (entry.autofix === run) entry.setAutofix(null);
+    };
+  }, [entry]);
 
   return (
     <div className={styles.lineStage}>
@@ -179,23 +191,6 @@ function LineFixEditor({
               </button>
             </span>
           ) : undefined
-        }
-        toolbarExtra={
-          <>
-            <button
-              type="button"
-              className={styles.autofix}
-              disabled={fixBusy}
-              aria-busy={fixBusy}
-              onClick={() => void runAutofix()}
-            >
-              <Icons.wand size={18} />
-              自動補線
-            </button>
-            <span role="status" className={styles.fixMsg}>
-              {fixMsg}
-            </span>
-          </>
         }
       />
     </div>

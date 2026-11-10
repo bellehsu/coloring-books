@@ -299,6 +299,17 @@ beforeEach(() => {
         edits = (body as { strokes: O[] }).strokes;
         return j(mkQA({ gap_count: 2, gaps: [[0.1, 0.1], [0.2, 0.2]], lineart_url: "/api/pages/1/lineart?v=b" }));
       }
+      m = url.match(/^\/api\/pages\/(\d+)\/character-check$/);
+      if (m) {
+        const result = (body as { result: string }).result;
+        pages = pages.map((p) => (p.id === Number(m![1]) ? { ...p, character_check: result } : p));
+        return j(pages.find((p) => p.id === Number(m![1])));
+      }
+      m = url.match(/^\/api\/pages\/(\d+)\/pass$/);
+      if (m) {
+        pages = pages.map((p) => (p.id === Number(m![1]) ? { ...p, status: "passed" } : p));
+        return j(pages.find((p) => p.id === Number(m![1])));
+      }
       m = url.match(/^\/api\/pages\/(\d+)\/lineart\/autofix$/);
       if (m) {
         edits = [...edits, { op: "draw", width_px: 11, points: [[0.1, 0.1], [0.2, 0.2]] }];
@@ -443,7 +454,7 @@ describe("EditorPage", () => {
     setup();
     expect(await screen.findByTestId("linefix")).toBeInTheDocument();
     expect(lineTab()).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("qa-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("finish-panel")).toBeInTheDocument();
   });
 
   it("legacy page keeps line tab：舊流程頁（選定圖是 page）可以補線；改選背景不清掉舊圖", async () => {
@@ -465,7 +476,7 @@ describe("EditorPage", () => {
     expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
   });
 
-  it("有選圖：② 補線分頁顯示缺口數；切到補線顯示畫布、縮放、自動補線、線條設定與 QA 面板，網址帶 mode=line", async () => {
+  it("有選圖：② 補線分頁顯示缺口數；切到補線顯示畫布、縮放與完成面板（只有一個自動補線，在面板），網址帶 mode=line", async () => {
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5)];
     setup();
@@ -480,8 +491,11 @@ describe("EditorPage", () => {
     expect(screen.getByRole("group", { name: "縮放" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "放大" }));
     expect(canvas).toHaveAttribute("data-zoom", "1.5");
-    expect(screen.getByRole("radiogroup", { name: "細緻度" })).toBeInTheDocument();
-    expect(screen.getByTestId("qa-panel")).toBeInTheDocument();
+    const panel = await screen.findByTestId("finish-panel");
+    expect(within(panel).getByRole("radiogroup", { name: "線條多寡" })).toBeInTheDocument();
+    expect(within(panel).getByText("還有 3 個缺口")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "自動補線" })).toHaveLength(1);
+    expect(within(panel).getByRole("button", { name: "自動補線" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "背景" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /歷史/ })).not.toBeInTheDocument();
   });
@@ -504,7 +518,7 @@ describe("EditorPage", () => {
     expect(bgCard()).toBeInTheDocument();
   });
 
-  it("修線：每筆依序 PUT（帶 generation_id），回應更新 QA；自動補線顯示「已補 N 條」並併入筆畫", async () => {
+  it("修線：每筆依序 PUT（帶 generation_id），回應更新 QA；面板的自動補線顯示「已補 N 條線」並併入畫布筆畫", async () => {
     search = "page=1&mode=line";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5)];
@@ -514,11 +528,18 @@ describe("EditorPage", () => {
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(1));
     expect(calledWith("PUT", "/api/pages/1/lineart/edits")[0].body).toMatchObject({ generation_id: 5 });
     await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-gaps", "2"));
-    await userEvent.click(within(screen.getByTestId("linefix")).getByRole("button", { name: "自動補線" }));
-    expect(await screen.findByText("已補 1 條")).toBeInTheDocument();
+    expect(within(screen.getByTestId("finish-panel")).getByText("還有 2 個缺口")).toBeInTheDocument();
+    await userEvent.click(within(screen.getByTestId("finish-panel")).getByRole("button", { name: "自動補線" }));
+    expect(await screen.findByText("已補 1 條線")).toBeInTheDocument();
+    expect(calledWith("POST", "/api/pages/1/lineart/autofix")).toHaveLength(1);
     expect(calledWith("POST", "/api/pages/1/lineart/autofix")[0].body).toEqual({ generation_id: 5 });
     await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "2"));
     expect(screen.getByTestId("linefix")).toHaveAttribute("data-gaps", "0");
+    expect(within(screen.getByTestId("finish-panel")).getByText("✓ 線條都接好了")).toBeInTheDocument();
+    // 補上的線已在畫布上：下一筆送出的是 2＋1 筆，不會蓋掉補上的線
+    await userEvent.click(within(screen.getByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(2));
+    expect((calledWith("PUT", "/api/pages/1/lineart/edits")[1].body as { strokes: unknown[] }).strokes).toHaveLength(3);
   });
 
   it("修線寫入中切走再回來：沿用同一個佇列，不從伺服器舊資料重設筆畫", async () => {
@@ -926,6 +947,38 @@ describe("EditorPage", () => {
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
   });
 
+  it("補線面板「不太像，換一張」記錄 inconsistent 並切回 ① 構圖", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    setup();
+    const panel = await screen.findByTestId("finish-panel");
+    await userEvent.click(within(panel).getByRole("button", { name: "不太像，換一張" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/character-check")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/character-check")[0].body).toMatchObject({ generation_id: 5, result: "inconsistent" });
+    await waitFor(() => expect(composeTab()).toHaveAttribute("aria-selected", "true"));
+    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1", { scroll: false });
+  });
+
+  it("補線面板：角色對 → 完成這一頁（有缺口先問一次）→ POST /pass 空 body → 已完成", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    setup();
+    const panel = await screen.findByTestId("finish-panel");
+    await within(panel).findByText("還有 3 個缺口");
+    expect(within(panel).getByRole("button", { name: "完成這一頁 ✓" })).toBeDisabled();
+    await userEvent.click(within(panel).getByRole("button", { name: "對" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "完成這一頁 ✓" })).toBeEnabled());
+    await userEvent.click(within(panel).getByRole("button", { name: "完成這一頁 ✓" }));
+    const dlg = await screen.findByRole("dialog");
+    expect(dlg).toHaveTextContent("還有 3 個缺口，小朋友塗色時顏色可能漏出去。確定完成嗎？");
+    await userEvent.click(within(dlg).getByRole("button", { name: "完成" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/pass")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/pass")[0].body).toEqual({});
+    expect(await within(screen.getByTestId("finish-panel")).findByText("已完成")).toBeInTheDocument();
+  });
+
   it("線條設定：細緻度立即 PATCH；線寬顯示 mm、放開時 PATCH", async () => {
     search = "page=1&mode=line";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
@@ -1061,7 +1114,7 @@ describe("EditorPage", () => {
 
   // ---------- fix round 2 ----------
 
-  it("修線中自動補線：edits 背景重抓（pending）時畫布不卸載，完成後顯示「已補 N 條」", async () => {
+  it("修線中自動補線：edits 背景重抓（pending）時畫布不卸載，完成後顯示「已補 N 條線」", async () => {
     search = "page=1&mode=line";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5)];
@@ -1069,13 +1122,13 @@ describe("EditorPage", () => {
     expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "0");
     let release!: () => void;
     gate["GET /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
-    await userEvent.click(within(screen.getByTestId("linefix")).getByRole("button", { name: "自動補線" }));
+    await userEvent.click(within(await screen.findByTestId("finish-panel")).getByRole("button", { name: "自動補線" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/lineart/autofix")).toHaveLength(1));
     await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits").length).toBeGreaterThan(1));
     expect(screen.getByTestId("linefix")).toBeInTheDocument();
     expect(screen.queryByText("載入修線圖層中…")).not.toBeInTheDocument();
     await act(async () => release());
-    expect(await screen.findByText("已補 1 條")).toBeInTheDocument();
+    expect(await screen.findByText("已補 1 條線")).toBeInTheDocument();
     expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1");
   });
 

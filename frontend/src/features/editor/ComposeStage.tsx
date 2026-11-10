@@ -315,7 +315,7 @@ export function ComposeStatus({
   return (
     <>
       {placementFailed && (
-        <span role="alert" data-testid="placement-save-failed" className={`${editorStyles.saveFailed} ${editorStyles.sketchSaveFailed}`}>
+        <span role="alert" data-testid="placement-save-failed" className={`${editorStyles.saveFailed} ${editorStyles.placementSaveFailed}`}>
           位置尚未儲存
           <button type="button" className={editorStyles.retry} onClick={onRetryPlacement}>
             重試

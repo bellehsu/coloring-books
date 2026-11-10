@@ -1,4 +1,4 @@
-/* 右欄：本頁進度＋模式面板（構圖：ComposeWorkspace；舞台下方有翻轉／重設與自動合成狀態；補線：LinePanel＋QAPanel）。 */
+/* 右欄：本頁進度＋模式面板（構圖：ComposeWorkspace；舞台下方有翻轉／重設與自動合成狀態；補線：FinishPanel）。 */
 .insp {
   grid-area: insp;
   background: var(--surface);
@@ -76,18 +76,6 @@
   color: var(--warn-ink);
 }
 
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.h2 {
-  margin: 0;
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  font-weight: 500;
-}
 .field {
   display: flex;
   flex-direction: column;
@@ -107,38 +95,6 @@
   align-self: flex-end;
   font-size: 12px;
   color: var(--muted);
-}
-.rangeLabel {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-.value {
-  color: var(--muted);
-}
-.range {
-  width: 100%;
-  min-height: 44px;
-  accent-color: var(--accent);
-}
-.hint {
-  font-size: 12px;
-  color: var(--muted);
-}
-.warnHint {
-  font-size: 12px;
-  color: var(--warn-ink);
-}
-.hintCenter {
-  font-size: 13px;
-  color: var(--muted);
-  text-align: center;
-}
-.note2 {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.6;
 }
 .srOnly {
   position: absolute;

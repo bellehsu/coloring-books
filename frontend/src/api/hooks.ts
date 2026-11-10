@@ -271,12 +271,11 @@ export function useCharacterCheck(bookId: number) {
   });
 }
 
-/** pass → pages, qa, book, books, exportSummary */
+/** pass（不帶原因：有缺口時後端記下「使用者確認完成（N 個缺口）」）→ pages, qa, book, books, exportSummary */
 export function usePass(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pageId, forceReason }: { pageId: number; forceReason?: string | null }) =>
-      api.post<Page>(`/pages/${pageId}/pass`, { force_reason: forceReason ?? null }),
+    mutationFn: ({ pageId }: { pageId: number }) => api.post<Page>(`/pages/${pageId}/pass`, {} satisfies S["PassIn"]),
     onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
   });
 }

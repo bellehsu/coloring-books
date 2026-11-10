@@ -258,7 +258,7 @@ describe("LineFixCanvas", () => {
     expect(calls).toContainEqual(["stroke", "#ffffff", 24]);
   });
 
-  it("缺口紅圈：位置用相對座標（%），直徑 30 px 螢幕尺寸；狀態列顯示數量", () => {
+  it("缺口橘色圈：位置用相對座標（%），直徑 30 px 螢幕尺寸；狀態列顯示數量", () => {
     const { container } = setup({
       gaps: [
         [0.25, 0.5],

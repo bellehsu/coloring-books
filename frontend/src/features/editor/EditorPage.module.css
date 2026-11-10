@@ -42,34 +42,6 @@
   display: flex;
   justify-content: center;
 }
-.autofix {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--warn);
-  color: var(--on-accent);
-  font-size: 14px;
-  cursor: pointer;
-}
-.autofix:hover {
-  background: var(--warn-ink);
-}
-.autofix:disabled {
-  opacity: 0.6;
-  cursor: progress;
-}
-.fixMsg {
-  font-size: 13px;
-  color: var(--ok-ink);
-  padding: 0 4px;
-}
-.fixMsg:empty {
-  display: none;
-}
 .notice {
   margin: 0;
   padding: 10px 16px;
@@ -141,7 +113,7 @@
   }
 }
 
-/* 寫入失敗的持續狀態（修線狀態列、草圖畫布下方）＋重試 */
+/* 寫入失敗的持續狀態（修線狀態列、合成舞台下方的位置）＋重試 */
 .saveFailed {
   display: inline-flex;
   align-items: center;
@@ -151,7 +123,7 @@
   color: var(--danger);
   font-size: 14px;
 }
-.sketchSaveFailed {
+.placementSaveFailed {
   margin: 0;
   padding: 6px 14px;
   border-radius: 999px;
@@ -169,27 +141,6 @@
 }
 .retry:hover {
   background: var(--danger-soft);
-}
-
-.poseBoard {
-  position: relative;
-  width: min(100%, 420px);
-  max-height: 100%;
-  background-color: var(--check-a);
-  background-image:
-    linear-gradient(45deg, var(--check-b) 25%, transparent 25%, transparent 75%, var(--check-b) 75%),
-    linear-gradient(45deg, var(--check-b) 25%, transparent 25%, transparent 75%, var(--check-b) 75%);
-  background-size: 20px 20px;
-  background-position:
-    0 0,
-    10px 10px;
-  box-shadow: var(--shadow-paper);
-}
-.poseImg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 /* 「清掉補過的線？」確認框 */

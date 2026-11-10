@@ -36,12 +36,11 @@ import { errMsg } from "./errMsg";
 import { BookSettingsDialog } from "@/features/books/BookSettingsDialog";
 import { ExportDrawer } from "./ExportDrawer";
 import { Filmstrip } from "./Filmstrip";
+import { FinishPanel } from "./FinishPanel";
 import { Inspector } from "./Inspector";
 import { LineFixStage } from "./LineFixStage";
-import { LinePanel } from "./LinePanel";
 import { onBeforeUnload } from "./pendingWrites";
 import { placementSaverFor } from "./placementSaver";
-import { QAPanel } from "./QAPanel";
 import type { ThumbKind } from "./Thumbs";
 import {
   allowedMode,
@@ -95,7 +94,8 @@ function createEditorAutoCompose() {
 
 /**
  * 頁面編輯器（/books/{id}/editor?page=<id>&mode=<compose|line>；舊網址的 background／pose／qa 照常可開，見 normalizeMode）。
- * 兩步：① 構圖（舞台是背景＋去背角色，右欄是背景與角色動作卡片）→ ② 補線（修線畫布、線條設定與 QA）；
+ * 兩步：① 構圖（舞台是背景＋去背角色，右欄是背景與角色動作卡片）→ ② 補線（修線畫布＋缺口橘色圈；右欄 FinishPanel：
+ * 缺口檢查與自動補線、線條多寡、角色看起來對嗎、完成這一頁）；
  * 還沒有選定圖時補線停用（modeBlockers）。
  * 版面：BookBar＋三區 grid（> 1180 px 三欄；761–1180 兩欄、檢查面板在下；≤ 760 單欄、頁面清單橫向捲動）。
  */
@@ -579,10 +579,14 @@ export function EditorPage({ bookId }: { bookId: number }) {
       </p>
     );
     panel = (
-      <>
-        <LinePanel key={current.id} page={current} onPatch={(body) => patchPage(current.id, body)} />
-        <QAPanel book={b} page={current} qa={qa} generation={selectedGen} />
-      </>
+      <FinishPanel
+        book={b}
+        page={current}
+        qa={qa}
+        generation={selectedGen}
+        onPatch={(body) => patchPage(current.id, body)}
+        onGoCompose={() => go(current.id, "compose")}
+      />
     );
   }
 
