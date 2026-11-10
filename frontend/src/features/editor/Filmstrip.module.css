@@ -50,6 +50,9 @@
   height: 6px;
   background: var(--ok);
 }
+.all {
+  width: 100%;
+}
 .list {
   margin: 0;
   padding: 0;
@@ -176,6 +179,12 @@
   font-size: 15px;
   line-height: 1.6;
   color: var(--muted-2);
+}
+.confirmNote {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
 }
 .confirmActions {
   display: flex;

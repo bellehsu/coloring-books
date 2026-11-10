@@ -46,6 +46,13 @@ describe("BackgroundPanel", () => {
     expect(screen.getByText("約 10 秒")).toBeInTheDocument();
   });
 
+  it("shows the batch hint", () => {
+    setup();
+    expect(
+      screen.getByText("先寫好每一頁的場景描述，再按頁面清單上方的『產生所有背景』，可以減少等待"),
+    ).toBeInTheDocument();
+  });
+
   it("shows the queued count instead of the time hint", () => {
     setup({ activeCount: 2 });
     expect(screen.getByRole("status")).toHaveTextContent("本頁 2 張排隊或生成中");

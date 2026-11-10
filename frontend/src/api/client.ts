@@ -8,6 +8,7 @@ export type QA = S["QAOut"];
 export type Edits = S["EditsOut"];
 export type QueueStatus = S["QueueStatus"];
 export type PoseModes = S["PoseModesOut"];
+export type BatchBackgrounds = S["BatchBackgroundsOut"];
 /** 角色在背景上的位置（相對背景）：cx、cy 為角色中心 0–1，height 為角色高／背景高 0.1–1.0。 */
 export interface Placement {
   cx: number;

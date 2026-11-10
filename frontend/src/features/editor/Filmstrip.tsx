@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
+import { batchConfirmText, type BatchPlan } from "./batchBackgrounds";
 import styles from "./Filmstrip.module.css";
 
 export interface FilmstripProps {
@@ -22,6 +23,12 @@ export interface FilmstripProps {
   onMove: (pageId: number, dir: -1 | 1) => void;
   /** 使用者在確認對話框按下「刪除」後才呼叫。 */
   onDelete: (pageId: number) => void;
+  /** 「產生所有背景」的前端預估（planBatchBackgrounds）：按鈕狀態與確認對話框用。 */
+  bgPlan: BatchPlan;
+  /** 使用者在確認對話框按下產生後才呼叫。 */
+  onGenerateAll: () => void;
+  /** 產生所有背景進行中（等存檔＋POST）。 */
+  generatingAll?: boolean;
 }
 
 type Tone = "ok" | "warn" | "draft" | "busy";
@@ -43,8 +50,13 @@ export function Filmstrip({
   adding,
   onMove,
   onDelete,
+  bgPlan,
+  onGenerateAll,
+  generatingAll,
 }: FilmstripProps) {
   const [confirm, setConfirm] = useState<{ id: number; n: number } | null>(null);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const allN = bgPlan.queued.length;
   const passed = pages.filter((p) => p.status === "passed").length;
   const total = pages.length;
 
@@ -68,6 +80,15 @@ export function Filmstrip({
       >
         <div className={styles.fill} style={{ width: total ? `${(passed / total) * 100}%` : 0 }} />
       </div>
+      <Button
+        className={styles.all}
+        icon={<Icons.wand size={18} />}
+        disabled={allN === 0 || generatingAll}
+        title={allN === 0 ? "沒有需要產生背景的頁面" : undefined}
+        onClick={() => setConfirmAll(true)}
+      >
+        產生所有背景
+      </Button>
       <ol className={styles.list}>
         {pages.map((p, i) => {
           const n = i + 1;
@@ -118,6 +139,27 @@ export function Filmstrip({
             }}
           >
             刪除
+          </Button>
+        </div>
+      </Dialog>
+
+      <Dialog open={confirmAll} onClose={() => setConfirmAll(false)} title="產生所有背景？">
+        <p className={styles.confirmText}>{batchConfirmText(bgPlan)}</p>
+        <p className={styles.confirmNote}>
+          背景會依頁面順序排隊，一次產生一張；排隊時可以繼續編輯其他頁。
+          {bgPlan.estimate && "頁面的生成紀錄還在載入，頁數是估計值，實際以送出後的結果為準。"}
+        </p>
+        <div className={styles.confirmActions}>
+          <Button onClick={() => setConfirmAll(false)}>取消</Button>
+          <Button
+            variant="primary"
+            disabled={allN === 0 || generatingAll}
+            onClick={() => {
+              setConfirmAll(false);
+              onGenerateAll();
+            }}
+          >
+            產生 {allN} 頁背景
           </Button>
         </div>
       </Dialog>

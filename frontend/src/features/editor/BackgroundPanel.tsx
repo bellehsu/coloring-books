@@ -127,6 +127,7 @@ export function BackgroundPanel({ page, onPatch, beforeGenerate, onGenerate, gen
       <span className={styles.hintCenter} role="status">
         {activeCount > 0 ? `本頁 ${activeCount} 張排隊或生成中` : "約 10 秒"}
       </span>
+      <p className={styles.note2}>先寫好每一頁的場景描述，再按頁面清單上方的『產生所有背景』，可以減少等待</p>
     </section>
   );
 }
