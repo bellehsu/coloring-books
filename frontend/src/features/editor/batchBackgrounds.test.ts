@@ -39,6 +39,14 @@ describe("planBatchBackgrounds", () => {
     expect(plan.skipped).toEqual([{ pageId: 1, n: 1, reason: "已有背景" }]);
   });
 
+  it("舊流程：選用的是整頁候選圖（kind page）→ 已有背景；選用合成圖但沒背景欄位的不算", () => {
+    const pages = [page(1, { selected_generation_id: 20 }), page(2, { selected_generation_id: 21 }), page(3)];
+    const gens = [gen(20, { page_id: 1, kind: "page" }), gen(21, { page_id: 2, kind: "composite" })];
+    const plan = planBatchBackgrounds(pages, gens);
+    expect(plan.queued).toEqual([2, 3]);
+    expect(plan.skipped).toEqual([{ pageId: 1, n: 1, reason: "已有背景" }]);
+  });
+
   it("生成紀錄還沒載入：只用頁面欄位估計", () => {
     const plan = planBatchBackgrounds([page(1), page(2, { scene_prompt: "" }), page(3, { background_generation_id: 4 })], undefined);
     expect(plan).toEqual({

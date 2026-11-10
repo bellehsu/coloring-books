@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -231,6 +231,14 @@ export function EditorPage({ bookId }: { bookId: number }) {
   /** 產生所有背景：等存檔 → POST 整段期間停用按鈕；ref 擋住同一輪 render 前的第二次確認。 */
   const [generatingAll, setGeneratingAll] = useState(false);
   const generatingAllRef = useRef(false);
+  // 背景面板（掛載時）登記的「存好本頁場景描述／構圖強度」；產生所有背景前呼叫
+  const bgSaveRef = useRef<(() => Promise<unknown>) | null>(null);
+  const registerBgSave = useCallback((save: () => Promise<unknown>) => {
+    bgSaveRef.current = save;
+    return () => {
+      if (bgSaveRef.current === save) bgSaveRef.current = null;
+    };
+  }, []);
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -320,17 +328,19 @@ export function EditorPage({ bookId }: { bookId: number }) {
     generateBg.mutateAsync({ pageId }).catch((e: unknown) => toast.show(errMsg(e, "無法產生背景"), "error"));
 
   /**
-   * 產生所有背景：後端在 POST 當下讀每頁的場景描述與草圖，所以先等這本書的草圖（含畫板 debounce 中的）
-   * 與送出中的場景描述都寫完；任何一個失敗就不送出。結果（排入／略過頁數）以後端回應為準。
+   * 產生所有背景：後端在 POST 當下讀每頁的場景描述、構圖強度與草圖，所以先等這本書的草圖（含畫板 debounce 中的）
+   * 與送出中的場景描述／構圖強度都寫完；本頁之前存失敗的欄位先重送（同單張產生）。任何一個失敗就不送出。
+   * 結果（排入／略過頁數）以後端回應為準。
    */
   const generateAllBackgrounds = async () => {
     if (generatingAllRef.current) return;
     generatingAllRef.current = true;
     setGeneratingAll(true);
     try {
-      const scenes = pages.map((p) => sentFor(qc, p.id).scene?.p);
+      const current = bgSaveRef.current?.();
+      const fields = pages.flatMap((p) => [sentFor(qc, p.id).scene?.p, sentFor(qc, p.id).strength?.p]);
       try {
-        await Promise.all([sketchSaver.whenBookIdle(bookId), ...scenes]);
+        await Promise.all([sketchSaver.whenBookIdle(bookId), current, ...fields]);
       } catch {
         toast.show("草圖或場景描述尚未儲存，沒有產生背景；請重試", "error");
         return;
@@ -514,6 +524,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
         onGenerate={() => generateBackground(current.id)}
         generating={generateBg.isPending}
         activeCount={activeOf("background")}
+        registerSave={registerBgSave}
       />
     );
   } else if (mode === "pose") {

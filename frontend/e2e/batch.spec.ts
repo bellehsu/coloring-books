@@ -16,19 +16,22 @@ test("產生所有背景：有場景描述的頁各排一張背景，沒有的�
   const all = page.getByRole("button", { name: "產生所有背景" });
   await expect(all).toBeEnabled();
 
+  // 先掛上監聽，取消那一步送出的請求也會被算到
+  const batchUrl = `/api/books/${book.id}/backgrounds/batch`;
+  let posts = 0;
+  page.on("request", (r) => {
+    if (r.url().endsWith(batchUrl) && r.method() === "POST") posts++;
+  });
+
   // 取消：不送出
   await all.click();
   const dialog = page.getByRole("dialog", { name: "產生所有背景？" });
   await expect(dialog).toContainText("會為 2 頁產生背景（1 頁略過：第 3 頁沒有場景描述）");
   await dialog.getByRole("button", { name: "取消" }).click();
   await expect(dialog).toBeHidden();
+  expect(posts).toBe(0);
 
   // 確認：一次 POST，後端排入 2 頁、略過第 3 頁
-  const batchUrl = `/api/books/${book.id}/backgrounds/batch`;
-  let posts = 0;
-  page.on("request", (r) => {
-    if (r.url().endsWith(batchUrl) && r.method() === "POST") posts++;
-  });
   const answered = page.waitForResponse((r) => r.url().endsWith(batchUrl) && r.request().method() === "POST");
   await all.click();
   await dialog.getByRole("button", { name: "產生 2 頁背景" }).click();

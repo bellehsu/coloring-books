@@ -137,6 +137,42 @@ describe("BackgroundPanel", () => {
     expect(onPatch).toHaveBeenCalledTimes(3);
   });
 
+  it("registerSave: the registered save awaits pending fields and resends a failed scene", async () => {
+    const d = deferred();
+    const onPatch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockImplementationOnce(() => d.promise)
+      .mockResolvedValue(undefined);
+    let save: (() => Promise<unknown>) | null = null;
+    const off = vi.fn();
+    const registerSave = vi.fn((fn: () => Promise<unknown>) => {
+      save = fn;
+      return off;
+    });
+    const { unmount } = setup({ onPatch, registerSave });
+    expect(registerSave).toHaveBeenCalled();
+    await expect(save!()).resolves.toBeDefined(); // 沒改過 → 不送出
+    expect(onPatch).not.toHaveBeenCalled();
+    const box = screen.getByLabelText("場景描述");
+    fireEvent.change(box, { target: { value: "garden" } });
+    fireEvent.blur(box);
+    await waitFor(() => expect(onPatch).toHaveBeenCalledTimes(1)); // 失敗
+    fireEvent.change(screen.getByLabelText(/構圖強度/), { target: { value: "0.3" } });
+    let done = false;
+    const p = save!().then(() => (done = true));
+    // 重送場景描述（掛起）＋構圖強度
+    expect(onPatch).toHaveBeenNthCalledWith(2, { scene_prompt: "garden" });
+    expect(onPatch).toHaveBeenNthCalledWith(3, { controlnet_strength: 0.3 });
+    await Promise.resolve();
+    expect(done).toBe(false);
+    d.resolve(undefined);
+    await p;
+    expect(done).toBe(true);
+    unmount();
+    expect(off).toHaveBeenCalled();
+  });
+
   it("a double click during the save sends only one POST and disables the button", async () => {
     const d = deferred();
     const { props } = setup({ beforeGenerate: vi.fn(() => d.promise) });

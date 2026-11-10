@@ -23,6 +23,7 @@ export interface BatchPlan {
 
 /**
  * 前端預估「產生所有背景」會排入哪些頁：與後端同樣三個條件、同樣順序。
+ * 舊流程頁面（選用的是整頁候選圖，kind page）也算「已有背景」。
  * gens 是整本書未捨棄的生成紀錄（EditorPage 已載入的 useGenerations(bookId)）；
  * 後端另外會略過草圖檔案遺失的頁，前端無法預知，實際結果以回應為準。
  */
@@ -31,9 +32,16 @@ export function planBatchBackgrounds(pages: readonly Page[], gens: readonly Gene
   const skipped: BatchSkipItem[] = [];
   pages.forEach((p, i) => {
     const bgs = (gens ?? []).filter((g) => g.kind === "background" && g.page_id === p.id);
+    const legacy =
+      p.selected_generation_id != null &&
+      (gens ?? []).some((g) => g.id === p.selected_generation_id && g.kind === "page");
     let reason: string | null = null;
     if (!p.scene_prompt.trim()) reason = SKIP_NO_SCENE;
-    else if (p.background_generation_id != null || bgs.some((g) => g.status === "succeeded" && !g.discarded))
+    else if (
+      p.background_generation_id != null ||
+      legacy ||
+      bgs.some((g) => g.status === "succeeded" && !g.discarded)
+    )
       reason = SKIP_HAS_BACKGROUND;
     else if (bgs.some((g) => g.status === "queued" || g.status === "running")) reason = SKIP_GENERATING;
     if (reason) skipped.push({ pageId: p.id, n: i + 1, reason });
