@@ -21,6 +21,7 @@ from app.api.pages import _page_or_404, page_out, reset_review_when
 from app.api.schemas import (
     BackgroundCreate,
     BatchBackgroundsOut,
+    BatchMaterialsOut,
     BatchSkip,
     GenerationOut,
     PageOut,
@@ -259,6 +260,53 @@ def create_backgrounds_batch(
         )
 
 
+class _BookState:
+    """批次判斷用：整本書每頁的背景／角色動作生成紀錄，以及選了舊流程整頁候選圖的頁面。"""
+
+    def __init__(self, session: Session, book_id: int):
+        self.pages = session.exec(
+            select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
+        ).all()
+        self.gens: dict[GenKind, dict[int, list[Generation]]] = {
+            GenKind.BACKGROUND: {}, GenKind.POSE: {}
+        }
+        for g in session.exec(
+            select(Generation).where(
+                Generation.book_id == book_id,
+                col(Generation.kind).in_([GenKind.BACKGROUND, GenKind.POSE]),
+            )
+        ).all():
+            if g.page_id is not None:
+                self.gens[g.kind].setdefault(g.page_id, []).append(g)
+        selected_ids = [
+            p.selected_generation_id for p in self.pages if p.selected_generation_id is not None
+        ]
+        self.legacy_selected = set(
+            session.exec(
+                select(Generation.id).where(
+                    col(Generation.id).in_(selected_ids), Generation.kind == GenKind.PAGE
+                )
+            ).all()
+        ) if selected_ids else set()
+
+    def skip_reason(self, page: Page, kind: GenKind) -> str | None:
+        """該頁的這種素材為什麼不用排；要排回 None。"""
+        bg = kind == GenKind.BACKGROUND
+        if not (page.scene_prompt if bg else page.action_prompt).strip():
+            return "沒有場景描述" if bg else "沒有動作描述"
+        gens = self.gens[kind].get(page.id, [])
+        slot = page.background_generation_id if bg else page.pose_generation_id
+        if (
+            slot is not None
+            or page.selected_generation_id in self.legacy_selected  # 舊流程整頁候選圖
+            or any(g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens)
+        ):
+            return "已有背景" if bg else "已有角色動作"
+        if any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):
+            return "背景產生中" if bg else "角色動作產生中"
+        return None
+
+
 def _batch_backgrounds(
     book_id: int,
     session: Session,
@@ -269,56 +317,108 @@ def _batch_backgrounds(
     simple_available: bool,
 ) -> BatchBackgroundsOut:
     book = _book_or_404(session, book_id)
-    pages = session.exec(
-        select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
-    ).all()
-    backgrounds: dict[int, list[Generation]] = {}
-    for g in session.exec(
-        select(Generation).where(
-            Generation.book_id == book_id, Generation.kind == GenKind.BACKGROUND
-        )
-    ).all():
-        if g.page_id is not None:
-            backgrounds.setdefault(g.page_id, []).append(g)
-    selected_ids = [p.selected_generation_id for p in pages if p.selected_generation_id is not None]
-    legacy_selected = set(
-        session.exec(
-            select(Generation.id).where(
-                col(Generation.id).in_(selected_ids), Generation.kind == GenKind.PAGE
-            )
-        ).all()
-    ) if selected_ids else set()
-
+    state = _BookState(session, book_id)
     queued: list[GenerationOut] = []
     skipped: list[BatchSkip] = []
-    for page in pages:
-        gens = backgrounds.get(page.id, [])
-        if not page.scene_prompt.strip():
-            reason = "沒有場景描述"
-        elif (
-            page.background_generation_id is not None
-            or page.selected_generation_id in legacy_selected  # 舊流程整頁候選圖
-            or any(g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens)
-        ):
-            reason = "已有背景"
-        elif any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):
-            reason = "背景產生中"
-        else:
-            reason = None
-        sketch_bytes: bytes | None = None
-        if reason is None:
-            try:
-                sketch_bytes = _read_sketch(storage, page)
-            except (FileNotFoundError, ValueError):
-                reason = "草圖檔案遺失"
-        if reason is not None:
-            skipped.append(BatchSkip(page_id=page.id, position=page.position, reason=reason))
-            continue
-        queued.append(_enqueue_background(
-            session, storage, worker, book, page, sketch_bytes,
+    for page in state.pages:
+        out = _batch_background_page(
+            session, storage, worker, book, page, state,
             requested=requested, simple_available=simple_available,
-        ))
+        )
+        if isinstance(out, BatchSkip):
+            skipped.append(out)
+        else:
+            queued.append(out)
     return BatchBackgroundsOut(queued=queued, skipped=skipped)
+
+
+def _batch_background_page(
+    session: Session,
+    storage: Storage,
+    worker: GenerationWorker,
+    book: Book,
+    page: Page,
+    state: _BookState,
+    *,
+    requested: BackgroundStyle,
+    simple_available: bool,
+) -> GenerationOut | BatchSkip:
+    reason = state.skip_reason(page, GenKind.BACKGROUND)
+    sketch_bytes: bytes | None = None
+    if reason is None:
+        try:
+            sketch_bytes = _read_sketch(storage, page)
+        except (FileNotFoundError, ValueError):
+            reason = "草圖檔案遺失"
+    if reason is not None:
+        return BatchSkip(kind="background", page_id=page.id, position=page.position, reason=reason)
+    return _enqueue_background(
+        session, storage, worker, book, page, sketch_bytes,
+        requested=requested, simple_available=simple_available,
+    )
+
+
+@router.post("/books/{book_id}/materials/batch", status_code=202, response_model=BatchMaterialsOut)
+def create_materials_batch(
+    book_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+    worker: GenerationWorker = Depends(get_worker),
+) -> BatchMaterialsOut:
+    """「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
+    略過的頁面回報 kind 與原因；與背景批次共用鎖，同時多個呼叫不會重複排隊。"""
+    simple_available = _simple_available(request)
+    with _BATCH_LOCK:
+        book = _book_or_404(session, book_id)
+        state = _BookState(session, book_id)
+        char = (
+            session.get(Generation, book.character_generation_id)
+            if book.character_generation_id is not None
+            else None
+        )
+        has_character = char is not None and bool(char.image_path)
+        queued: list[GenerationOut] = []
+        skipped: list[BatchSkip] = []
+        for page in state.pages:
+            out = _batch_background_page(
+                session, storage, worker, book, page, state,
+                requested="simple", simple_available=simple_available,
+            )
+            (skipped if isinstance(out, BatchSkip) else queued).append(out)
+            reason = state.skip_reason(page, GenKind.POSE)
+            if reason is None and not has_character:
+                reason = "請先設定角色"
+            if reason is not None:
+                skipped.append(
+                    BatchSkip(kind="pose", page_id=page.id, position=page.position, reason=reason)
+                )
+            else:
+                queued.append(_enqueue_pose(session, storage, worker, book, page, page.action_prompt))
+        return BatchMaterialsOut(queued=queued, skipped=skipped)
+
+
+def _enqueue_pose(
+    session: Session, storage: Storage, worker: GenerationWorker, book: Book, page: Page, action: str
+) -> GenerationOut:
+    """精準（Qwen）角色動作：以角色參考圖編輯出新動作；呼叫端負責確認有角色。"""
+    char = session.get(Generation, book.character_generation_id)
+    variation = pick_variation(random.Random())
+    width, height = POSE_SIZE
+    gen = Generation(
+        book_id=book.id,
+        page_id=page.id,
+        kind=GenKind.POSE,
+        user_text=action,
+        prompt=qwen_pose_prompt(action, variation),
+        negative_prompt="",
+        seed=random.randint(0, MAX_SEED),
+        width=width,
+        height=height,
+        request_json="",
+    )
+    return _enqueue(session, storage, worker, gen, character_image=char.image_path,
+                    pose_mode="precise", variation=variation)
 
 
 @router.post("/pages/{page_id}/poses", status_code=202, response_model=GenerationOut)
@@ -342,30 +442,26 @@ def create_pose(
     )
     if char is None or not char.image_path:
         raise HTTPException(409, "請先設定角色")
-    variation: str | None = None
     if body.mode == "precise":
         detail = precise_unavailable_detail(getattr(request.app.state, "preflight", None))
         if detail is not None:
             raise HTTPException(503, detail)
-        variation = pick_variation(random.Random())
-        prompt, negative = qwen_pose_prompt(body.action, variation), ""
-    else:
-        prompt, negative = pose_prompt(book.character_description or "", body.action), POSE_NEGATIVE
+        return _enqueue_pose(session, storage, worker, book, page, body.action)
     width, height = POSE_SIZE
     gen = Generation(
         book_id=book.id,
         page_id=page.id,
         kind=GenKind.POSE,
         user_text=body.action,
-        prompt=prompt,
-        negative_prompt=negative,
+        prompt=pose_prompt(book.character_description or "", body.action),
+        negative_prompt=POSE_NEGATIVE,
         seed=random.randint(0, MAX_SEED),
         width=width,
         height=height,
         request_json="",
     )
     return _enqueue(session, storage, worker, gen, character_image=char.image_path,
-                    pose_mode=body.mode, variation=variation)
+                    pose_mode=body.mode, variation=None)
 
 
 def _pick(session: Session, page_id: int, gen_id: int, kind: GenKind) -> PageOut:

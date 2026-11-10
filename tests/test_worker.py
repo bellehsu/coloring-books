@@ -559,3 +559,57 @@ async def test_worker_stores_largest_component_mask_for_pose(env):
     g = get(sessions, gid)
     out = np.asarray(Image.open(storage.abs(g.mask_path)))
     assert int((out > 0).sum()) == 30 * 30
+
+
+def _page(sessions, **kw):
+    from app.models import Page
+
+    with sessions() as s:
+        p = Page(book_id=1, position=1, **kw)
+        s.add(p)
+        s.commit()
+        return p.id
+
+
+def _page_row(sessions, pid):
+    from app.models import Page
+
+    with sessions() as s:
+        return s.get(Page, pid)
+
+
+async def test_autoselect_fills_empty_slot(env):
+    worker, engine, sessions, storage = env
+    pid = _page(sessions)
+    gid = add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid)
+    assert await worker.run_once() is True
+    assert _page_row(sessions, pid).background_generation_id == gid
+    pose = add_gen(sessions, kind=GenKind.POSE, page_id=pid)
+    assert await worker.run_once() is True
+    assert _page_row(sessions, pid).pose_generation_id == pose
+
+
+async def test_autoselect_skips_pose_without_mask(env):
+    worker, engine, sessions, storage = env
+    engine.pose_mask = False
+    pid = _page(sessions)
+    add_gen(sessions, kind=GenKind.POSE, page_id=pid)
+    await worker.run_once()
+    assert _page_row(sessions, pid).pose_generation_id is None
+
+
+async def test_autoselect_never_replaces(env):
+    worker, engine, sessions, storage = env
+    pid = _page(sessions)
+    first = add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid, status=GenStatus.SUCCEEDED,
+                    image_path="books/1/generations/1.png")
+    with sessions() as s:
+        from app.models import Page
+
+        pg = s.get(Page, pid)
+        pg.background_generation_id = first
+        s.add(pg)
+        s.commit()
+    add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid)
+    assert await worker.run_once() is True
+    assert _page_row(sessions, pid).background_generation_id == first

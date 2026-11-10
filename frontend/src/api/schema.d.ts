@@ -223,6 +223,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/books/{book_id}/materials/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Materials Batch
+         * @description 「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
+         *     略過的頁面回報 kind 與原因；與背景批次共用鎖，同時多個呼叫不會重複排隊。
+         */
+        post: operations["create_materials_batch_api_books__book_id__materials_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pages/{page_id}/poses": {
         parameters: {
             query?: never;
@@ -815,8 +836,20 @@ export interface components {
             /** Skipped */
             skipped: components["schemas"]["BatchSkip"][];
         };
+        /** BatchMaterialsOut */
+        BatchMaterialsOut: {
+            /** Queued */
+            queued: components["schemas"]["GenerationOut"][];
+            /** Skipped */
+            skipped: components["schemas"]["BatchSkip"][];
+        };
         /** BatchSkip */
         BatchSkip: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "background" | "pose";
             /** Page Id */
             page_id: number;
             /** Position */
@@ -1936,6 +1969,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BatchBackgroundsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_materials_batch_api_books__book_id__materials_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchMaterialsOut"];
                 };
             };
             /** @description Validation Error */

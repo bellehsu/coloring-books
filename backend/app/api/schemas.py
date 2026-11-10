@@ -430,11 +430,17 @@ class AutofixOut(QAOut):
 
 
 class BatchSkip(BaseModel):
+    kind: Literal["background", "pose"]
     page_id: int
     position: int
     reason: str
 
 
 class BatchBackgroundsOut(BaseModel):
+    queued: list[GenerationOut]
+    skipped: list[BatchSkip]
+
+
+class BatchMaterialsOut(BaseModel):
     queued: list[GenerationOut]
     skipped: list[BatchSkip]

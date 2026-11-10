@@ -10,7 +10,7 @@ from sqlmodel import select
 
 from app.config import load_settings
 from app.main import create_app
-from app.models import CharacterCheck, Generation, GenKind, GenStatus, PageStatus
+from app.models import CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
 from app.services.compose import COMPOSE_VERSION, DEFAULT_PLACEMENT
 from app.services.engine import EngineError
 from app.services.layout import PaperSize, PrintMode, compute_layout
@@ -1117,6 +1117,7 @@ def test_batch_backgrounds_discarded_only_background_is_queued(client, app):
     b = new_book(client)
     p = new_page(client, b["id"], scene_prompt="公園")
     bg = gen_background(client, app, p["id"])
+    set_page(app, p["id"], background_generation_id=None)  # 自動選用的背景先取消選用才能捨棄
     assert client.patch(f"/api/generations/{bg}", json={"discarded": True}).status_code == 200
     out = batch(client, b["id"])
     assert [g["page_id"] for g in out["queued"]] == [p["id"]] and out["skipped"] == []
@@ -1152,7 +1153,9 @@ def test_batch_backgrounds_skips_legacy_page_selection(client, app):
     assert gen_row(app, ids[0]).kind == GenKind.PAGE
     out = batch(client, b["id"])
     assert out["queued"] == []
-    assert out["skipped"] == [{"page_id": p["id"], "position": p["position"], "reason": "已有背景"}]
+    assert out["skipped"] == [
+        {"kind": "background", "page_id": p["id"], "position": p["position"], "reason": "已有背景"}
+    ]
 
 
 def _state(app, page_id):
@@ -1282,3 +1285,74 @@ def test_upload_on_legacy_page_keeps_page_image(client, app):
     page = upload_bg(client, p["id"], png_bytes()).json()
     assert page["selected_generation_id"] == ids[0]
     assert page["background_generation_id"] is not None
+
+
+# ---- 產生全部素材 ----------------------------------------------------------------
+
+
+def materials(client, book_id):
+    r = client.post(f"/api/books/{book_id}/materials/batch")
+    assert r.status_code == 202, r.text
+    return r.json()
+
+
+def test_materials_batch_counts(client, app):
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p1 = new_page(client, b["id"], scene_prompt="公園", action_prompt="揮手")
+    p2 = new_page(client, b["id"], scene_prompt="海邊")
+    p3 = new_page(client, b["id"], scene_prompt="森林", action_prompt="跑步")
+    bg = gen_background(client, app, p3["id"])
+    picked(client, p3["id"], "background", bg)
+    out = materials(client, b["id"])
+    assert [(g["kind"], g["page_id"]) for g in out["queued"]] == [
+        ("background", p1["id"]), ("pose", p1["id"]),
+        ("background", p2["id"]), ("pose", p3["id"]),
+    ]
+    assert {(s["page_id"], s["kind"]): s["reason"] for s in out["skipped"]} == {
+        (p2["id"], "pose"): "沒有動作描述",
+        (p3["id"], "background"): "已有背景",
+    }
+    pose = next(g for g in out["queued"] if g["kind"] == "pose")
+    assert gen_row(app, pose["id"]).user_text == "揮手"
+    assert json.loads(gen_row(app, pose["id"]).request_json)["pose_mode"] == "precise"
+
+
+def test_materials_batch_twice_no_duplicates(client, app):
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p = new_page(client, b["id"], scene_prompt="公園", action_prompt="揮手")
+    assert len(materials(client, b["id"])["queued"]) == 2
+    out = materials(client, b["id"])
+    assert out["queued"] == []
+    assert {s["kind"]: s["reason"] for s in out["skipped"]} == {
+        "background": "背景產生中", "pose": "角色動作產生中",
+    }
+    assert {s["page_id"] for s in out["skipped"]} == {p["id"]}
+
+
+def test_materials_batch_needs_character(client, app):
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園", action_prompt="揮手")
+    out = materials(client, b["id"])
+    assert [g["kind"] for g in out["queued"]] == ["background"]
+    assert [(s["kind"], s["reason"]) for s in out["skipped"]] == [("pose", "請先設定角色")]
+    assert out["skipped"][0]["page_id"] == p["id"]
+
+
+def test_materials_batch_legacy_page_skips_both(client, app):
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p = new_page(client, b["id"], scene_prompt="公園", action_prompt="揮手")
+    with app.state.sessions() as s:
+        g = Generation(book_id=b["id"], page_id=p["id"], kind=GenKind.PAGE, user_text="u",
+                       prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                       request_json="", status=GenStatus.SUCCEEDED, image_path="x.png")
+        s.add(g)
+        s.commit()
+        pg = s.get(Page, p["id"])
+        pg.selected_generation_id = g.id
+        s.add(pg)
+        s.commit()
+    out = materials(client, b["id"])
+    assert out["queued"] == []
+    assert {s["kind"]: s["reason"] for s in out["skipped"]} == {
+        "background": "已有背景", "pose": "已有角色動作",
+    }

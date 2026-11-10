@@ -23,6 +23,7 @@ from app.services.engine import (
     GenerationEngine,
     GenerationRequest,
 )
+from app.services.autoselect import autoselect
 from app.services.compose import largest_component
 from app.services.scheduling import QueuedJob, family_of, plan_order
 from app.storage import Storage
@@ -272,6 +273,10 @@ class GenerationWorker:
                 error=None,
                 finished_at=utcnow(),
             )
+            with self.sessions() as s:
+                done = s.get(Generation, gen_id)
+                if done is not None:
+                    autoselect(s, done)
             self.last_error = None
             self.state = WorkerState.IDLE
         except EngineUnavailable as e:

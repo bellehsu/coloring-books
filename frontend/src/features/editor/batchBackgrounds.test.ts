@@ -111,7 +111,7 @@ describe("batchResultText", () => {
   it("有略過：加上「、略過 M 頁」", () => {
     expect(
       batchResultText(
-        { queued: [{} as Generation], skipped: [{ page_id: 3, position: 2, reason: "沒有場景描述" }] },
+        { queued: [{} as Generation], skipped: [{ kind: "background", page_id: 3, position: 2, reason: "沒有場景描述" }] },
         pages,
       ),
     ).toBe("已排入 1 頁背景、略過 1 頁");
@@ -122,8 +122,8 @@ describe("batchResultText", () => {
         {
           queued: [],
           skipped: [
-            { page_id: 2, position: 1, reason: "草圖檔案遺失" },
-            { page_id: 3, position: 2, reason: "已有背景" },
+            { kind: "background", page_id: 2, position: 1, reason: "草圖檔案遺失" },
+            { kind: "background", page_id: 3, position: 2, reason: "已有背景" },
           ],
         },
         pages,
