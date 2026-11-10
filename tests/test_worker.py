@@ -344,3 +344,24 @@ async def test_non_pose_has_no_mask_path(env):
     gid = add_gen(sessions)
     await worker.run_once()
     assert get(sessions, gid).mask_path is None
+
+
+async def test_worker_stores_largest_component_mask_for_pose(env):
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    worker, engine, sessions, storage = env
+    a = np.zeros((64, 64), np.uint8)
+    a[5:35, 5:35] = 255
+    a[55:60, 40:60] = 255
+    buf = io.BytesIO()
+    Image.fromarray(a, "L").save(buf, "PNG")
+    engine.mask_override = buf.getvalue()
+    rj = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="n", seed=7, width=64, height=64)
+    gid = add_gen(sessions, request_json=rj)
+    await worker.run_once()
+    g = get(sessions, gid)
+    out = np.asarray(Image.open(storage.abs(g.mask_path)))
+    assert int((out > 0).sum()) == 30 * 30

@@ -17,6 +17,7 @@ from app.services.engine import (
     GenerationEngine,
     GenerationRequest,
 )
+from app.services.compose import largest_component
 from app.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -210,7 +211,10 @@ class GenerationWorker:
             mask_rel = None
             if result.extra_images.get("mask"):
                 mask_rel = self.storage.generation_mask(gen.book_id, gen_id)
-                self.storage.write(mask_rel, result.extra_images["mask"])
+                mask_png = result.extra_images["mask"]
+                if req.kind == GenKind.POSE:
+                    mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
+                self.storage.write(mask_rel, mask_png)
             self._finish(
                 gen_id,
                 mask_path=mask_rel,

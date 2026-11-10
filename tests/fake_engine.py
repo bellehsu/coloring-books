@@ -37,6 +37,7 @@ class FakeEngine:
         self.progress_steps: list[tuple[int, int]] = []
         self.image: bytes = make_png()
         self.delay_s: float = 0.0
+        self.mask_override: bytes | None = None  # 指定時取代預設遮罩
         self.pose_mask: bool = True  # kind=pose 時是否附上遮罩（設 False 測失敗）
 
     async def generate(self, req: GenerationRequest, on_progress: ProgressFn | None = None) -> GenerationResult:
@@ -56,7 +57,7 @@ class FakeEngine:
         extra = {}
         if req.kind == GenKind.POSE and self.pose_mask:
             with Image.open(io.BytesIO(self.image)) as im:  # 遮罩與角色圖同尺寸（合成時會檢查）
-                extra["mask"] = make_mask_png(im.size)
+                extra["mask"] = self.mask_override or make_mask_png(im.size)
         return GenerationResult(
             image=self.image,
             extra_images=extra,
