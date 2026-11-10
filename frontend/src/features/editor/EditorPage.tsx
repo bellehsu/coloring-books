@@ -14,6 +14,7 @@ import {
   useGeneratePose,
   useGenerations,
   usePages,
+  usePoseModes,
   useQA,
   useReorderPages,
   useSelectBackground,
@@ -26,6 +27,7 @@ import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
+import { effectiveMode, readPoseMode, writePoseMode, type PoseMode } from "@/lib/poseMode";
 import { BackgroundPanel } from "./BackgroundPanel";
 import { BackgroundStage } from "./BackgroundStage";
 import { ComposePanel } from "./ComposePanel";
@@ -151,6 +153,26 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const reorder = useReorderPages(bookId);
   const generateBg = useGenerateBackground(bookId);
   const generatePose = useGeneratePose(bookId);
+
+  // ---------- 角色動作的產生方式：記住使用者選的；精準不可用時畫面與送出改用快速（不改寫記憶） ----------
+  // 面板只在資料載入後（client）出現，localStorage 在初始值讀取不會造成 hydration 差異
+  const [storedPoseMode, setStoredPoseMode] = useState<PoseMode>(readPoseMode);
+  const poseModesQ = usePoseModes(mode === "pose");
+  const poseAvail = poseModesQ.data;
+  const poseMode = effectiveMode(
+    storedPoseMode,
+    poseAvail && { precise: poseAvail.precise.available, fast: poseAvail.fast.available },
+  );
+  const preciseUnavailableReason =
+    poseAvail && !poseAvail.precise.available
+      ? poseAvail.precise.missing.length > 0
+        ? `精準模式缺少：${poseAvail.precise.missing.join("、")}`
+        : "精準模式目前無法使用"
+      : null;
+  const changePoseMode = (m: PoseMode) => {
+    setStoredPoseMode(m);
+    writePoseMode(m);
+  };
   const selectBg = useSelectBackground(bookId);
   const selectPose = useSelectPose(bookId);
   const compose = useCompose(bookId);
@@ -290,9 +312,9 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const generateBackground = (pageId: number) =>
     generateBg.mutateAsync({ pageId }).catch((e: unknown) => toast.show(errMsg(e, "無法產生背景"), "error"));
 
-  const generatePoseFor = (pageId: number, action: string) =>
+  const generatePoseFor = (pageId: number, action: string, m: PoseMode) =>
     generatePose
-      .mutateAsync({ pageId, action })
+      .mutateAsync({ pageId, action, mode: m })
       .catch((e: unknown) => toast.show(errMsg(e, "無法產生角色動作"), "error"));
 
   /**
@@ -466,9 +488,12 @@ export function EditorPage({ bookId }: { bookId: number }) {
         page={current}
         hasCharacter={hasCharacter}
         characterHref={characterHref}
-        onGenerate={(action) => generatePoseFor(current.id, action)}
+        onGenerate={(action, m) => generatePoseFor(current.id, action, m)}
         generating={generatePose.isPending}
         activeCount={activeOf("pose")}
+        mode={poseMode}
+        onModeChange={changePoseMode}
+        preciseUnavailableReason={preciseUnavailableReason}
       />
     );
   } else if (mode === "compose") {

@@ -49,4 +49,31 @@ describe("Segmented", () => {
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("radio", { name: "甲" })).toHaveAttribute("aria-checked", "true");
   });
+
+  it("disabled option: not clickable and skipped by arrow keys", async () => {
+    const user = userEvent.setup();
+    function H() {
+      const [v, setV] = useState<"a" | "b" | "c">("a");
+      return (
+        <Segmented
+          kind="radio"
+          label="模式"
+          options={[opts[0], { value: "b", label: "乙", disabled: true }, opts[2]]}
+          value={v}
+          onChange={setV}
+        />
+      );
+    }
+    render(<H />);
+    const b = screen.getByRole("radio", { name: "乙" });
+    expect(b).toBeDisabled();
+    await user.click(b);
+    expect(b).toHaveAttribute("aria-checked", "false");
+    screen.getByRole("radio", { name: "甲" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("radio", { name: "丙" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "丙" })).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("radio", { name: "甲" })).toHaveAttribute("aria-checked", "true");
+  });
 });

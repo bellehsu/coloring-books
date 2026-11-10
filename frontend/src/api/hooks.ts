@@ -7,7 +7,8 @@ import {
 import { api } from "./client";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
-import type { Book, Edits, ExportSummary, Generation, Page, QA, QueueStatus } from "./client";
+import type { Book, Edits, ExportSummary, Generation, Page, PoseModes, QA, QueueStatus } from "./client";
+import type { PoseMode } from "@/lib/poseMode";
 
 type S = components["schemas"];
 
@@ -24,6 +25,7 @@ export const qk = {
   qa: (pageId: number) => ["qa", pageId] as const,
   edits: (pageId: number) => ["edits", pageId] as const,
   exportSummary: (bookId: number) => ["exportSummary", bookId] as const,
+  poseModes: () => ["poseModes"] as const,
 };
 
 export interface GenFilter {
@@ -66,6 +68,15 @@ export const useQueue = () =>
     queryKey: qk.queue(),
     queryFn: () => api.get<QueueStatus>("/system/queue"),
     refetchInterval: 5000,
+  });
+
+/** 角色動作的精準／快速是否可用（後端快取的 preflight 結果）；一分鐘內不重抓。 */
+export const usePoseModes = (enabled = true) =>
+  useQuery({
+    queryKey: qk.poseModes(),
+    queryFn: () => api.get<PoseModes>("/system/pose-modes"),
+    staleTime: 60_000,
+    enabled,
   });
 
 export const useQA = (pageId: number, enabled = true) =>
@@ -307,12 +318,12 @@ export function useGenerateBackground(bookId: number) {
   });
 }
 
-/** 角色動作：新增一張（排隊，自動去背）→ generations, queue */
+/** 角色動作：新增一張（排隊，自動去背），一律帶產生方式 → generations, queue */
 export function useGeneratePose(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pageId, action }: { pageId: number; action: string }) =>
-      api.post<Generation>(`/pages/${pageId}/poses`, { action }),
+    mutationFn: ({ pageId, action, mode }: { pageId: number; action: string; mode: PoseMode }) =>
+      api.post<Generation>(`/pages/${pageId}/poses`, { action, mode } satisfies S["PoseCreate"]),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
 }

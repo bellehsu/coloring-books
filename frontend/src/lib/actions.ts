@@ -1,6 +1,6 @@
 export const ACTIONS: { label: string; phrase: string }[] = [
   { label: "站著", phrase: "standing" },
-  { label: "坐著", phrase: "sitting" },
+  { label: "坐著", phrase: "sitting on the ground" },
   { label: "走路", phrase: "walking" },
   { label: "跑步", phrase: "running" },
   { label: "揮手", phrase: "waving one hand" },

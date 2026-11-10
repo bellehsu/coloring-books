@@ -4,10 +4,17 @@ import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import type { Page } from "@/api/client";
 import { Button } from "@/components/ui/Button";
+import { Segmented } from "@/components/ui/Segmented";
 import { ACTIONS, hasPhrase, appendPhrase } from "@/lib/actions";
+import type { PoseMode } from "@/lib/poseMode";
 import styles from "./Inspector.module.css";
 
 export const MAX_ACTION = 300;
+
+const MODE_HINT: Record<PoseMode, string> = {
+  precise: "約 30 秒，角色最像、動作最準",
+  fast: "約 10 秒，可能和角色有落差",
+};
 
 export interface PosePanelProps {
   /** 呼叫端用 key={page.id}。 */
@@ -15,16 +22,32 @@ export interface PosePanelProps {
   /** 本書已設定角色；false 時停用並連到角色工作室。 */
   hasCharacter: boolean;
   characterHref: string;
-  /** POST /pages/{id}/poses {action}（一次一張）；失敗時呼叫端顯示 toast，promise 照常 resolve。 */
-  onGenerate: (action: string) => Promise<unknown>;
+  /** POST /pages/{id}/poses {action, mode}（一次一張）；失敗時呼叫端顯示 toast，promise 照常 resolve。 */
+  onGenerate: (action: string, mode: PoseMode) => Promise<unknown>;
   /** POST 進行中。 */
   generating: boolean;
   /** 本頁角色動作排隊中＋生成中的張數。 */
   activeCount: number;
+  /** 目前的產生方式（呼叫端已套用「精準不可用 → 快速」）。 */
+  mode: PoseMode;
+  /** 使用者切換產生方式；呼叫端負責記住（localStorage）。 */
+  onModeChange: (m: PoseMode) => void;
+  /** 精準模式不可用的原因；有值時停用「精準」並顯示。 */
+  preciseUnavailableReason: string | null;
 }
 
-/** 角色模式的面板：動作描述（1–300 字）、十個常用動作、產生角色動作（一次一張，整段停用防連點）。 */
-export function PosePanel({ page, hasCharacter, characterHref, onGenerate, generating, activeCount }: PosePanelProps) {
+/** 角色模式的面板：動作描述（1–300 字）、十個常用動作、產生方式（精準｜快速）、產生角色動作（一次一張，整段停用防連點）。 */
+export function PosePanel({
+  page,
+  hasCharacter,
+  characterHref,
+  onGenerate,
+  generating,
+  activeCount,
+  mode,
+  onModeChange,
+  preciseUnavailableReason,
+}: PosePanelProps) {
   const id = useId();
   const [action, setAction] = useState("");
   const [starting, setStarting] = useState(false);
@@ -36,7 +59,7 @@ export function PosePanel({ page, hasCharacter, characterHref, onGenerate, gener
     startingRef.current = true;
     setStarting(true);
     try {
-      await onGenerate(trimmed);
+      await onGenerate(trimmed, mode);
     } finally {
       startingRef.current = false;
       setStarting(false);
@@ -85,12 +108,33 @@ export function PosePanel({ page, hasCharacter, characterHref, onGenerate, gener
           );
         })}
       </div>
+      <div className={styles.field}>
+        <Segmented
+          kind="radio"
+          label="產生方式"
+          value={mode}
+          onChange={onModeChange}
+          describedBy={preciseUnavailableReason ? `${id}-mode ${id}-why` : `${id}-mode`}
+          options={[
+            { value: "precise", label: "精準", disabled: preciseUnavailableReason !== null },
+            { value: "fast", label: "快速" },
+          ]}
+        />
+        <span id={`${id}-mode`} className={styles.hint}>
+          {MODE_HINT[mode]}
+        </span>
+        {preciseUnavailableReason && (
+          <span id={`${id}-why`} className={styles.warnHint}>
+            {preciseUnavailableReason}
+          </span>
+        )}
+      </div>
       <Button variant="primary" size="lg" disabled={!hasCharacter || !trimmed || generating || starting} onClick={() => void generate()}>
         產生角色動作
       </Button>
       {hasCharacter ? (
         <span className={styles.hintCenter} role="status">
-          {activeCount > 0 ? `本頁 ${activeCount} 張排隊或生成中` : "約 10 秒"}
+          {activeCount > 0 ? `本頁 ${activeCount} 張排隊或生成中` : null}
         </span>
       ) : (
         <span className={styles.hintCenter}>

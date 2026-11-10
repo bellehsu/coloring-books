@@ -22,6 +22,7 @@ const gen = (id: number, o: O = {}): O => ({
   height: 1216,
   image_url: `/img/${id}.png`,
   mask_url: null,
+  pose_mode: null,
   error: null,
   elapsed_s: 3,
   queue_position: null,
@@ -207,5 +208,28 @@ describe("HistoryTray", () => {
   it("角色動作沒有紀錄時的提示", async () => {
     setup({ kind: "pose" });
     expect(await screen.findByText("還沒有角色動作。輸入動作後按「產生角色動作」。")).toBeInTheDocument();
+  });
+
+  it("角色動作：縮圖左上角顯示產生方式「精準」／「快速」（排隊中的也有）", async () => {
+    gens = [
+      gen(1, { kind: "pose", pose_mode: "fast" }),
+      gen(2, { kind: "pose", pose_mode: "precise" }),
+      gen(3, { kind: "pose", pose_mode: "precise", status: "queued", image_url: null, queue_position: 1 }),
+    ];
+    setup({ kind: "pose", selectedId: 2 });
+    await screen.findByRole("button", { name: "選 seed 101 為本頁角色動作" });
+    const cards = screen.getAllByRole("listitem");
+    expect(cards.map((li) => li.querySelector("[data-mode]")?.textContent)).toEqual(["精準", "精準", "快速"]);
+    expect(within(cards[1]).getByText("使用中")).toBeInTheDocument();
+    expect(within(cards[2]).getByText("快速")).toHaveAttribute("data-mode", "fast");
+  });
+
+  it("背景卡片沒有產生方式標記", async () => {
+    gens = [gen(1), gen(2, { pose_mode: null })];
+    setup({ selectedId: 1 });
+    await screen.findByRole("button", { name: "選 seed 102 為本頁背景" });
+    expect(screen.queryByText("精準")).not.toBeInTheDocument();
+    expect(screen.queryByText("快速")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-mode]")).toBeNull();
   });
 });
