@@ -21,6 +21,10 @@ class GenerationRequest:
     character_image: Path | None = None
     structure_image: Path | None = None
     structure_strength: float = 0.0
+    # 只用於 POSE："precise"（qwen_edit_pose_cutout）或 "fast"（sdxl_pose_cutout）。
+    # 預設 "fast"：Phase 5 的舊 request_json 沒有這個欄位，當時都是 SDXL。（API 的預設是 "precise"）
+    pose_mode: str = "fast"
+    variation: str | None = None  # 精準模式的動作變化語（已併入 prompt；另記錄在 params）
 
 
 @dataclass

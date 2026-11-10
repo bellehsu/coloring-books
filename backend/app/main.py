@@ -2,6 +2,8 @@
 
 啟動：uvicorn app.main:app --app-dir backend
 啟動時會跑一次 preflight 並寫入 log；失敗只記錄，不讓服務當機。
+preflight 結果快取在 app.state.preflight（啟動時與每次 GET /api/system/preflight 更新），
+角色動作的模式可用性（/api/system/pose-modes、POST /poses 的 503）只看這份快取。
 """
 
 from __future__ import annotations
@@ -12,11 +14,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .api import books, compose, export, generations, lineart, pages, review
+from .api.schemas import PoseModesOut
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
 from .services.comfy_client import ComfyClient
 from .services.comfy_engine import ComfyEngine
 from .services.engine import GenerationEngine
+from .services.pose_modes import availability
 from .services.preflight import format_report, run_preflight
 from .services.worker import GenerationWorker
 from .services.workflow_registry import WorkflowRegistry
@@ -52,11 +56,16 @@ def create_app(
         app.state.worker = GenerationWorker(
             gen_engine, app.state.sessions, app.state.storage, s.queue.retry_backoff_s
         )
+        app.state.preflight = None  # None＝狀態未知（兩種角色動作模式都算可用）
         try:
             if start_worker:
                 await app.state.worker.start()
-            report = await _preflight(app)
-            (log.info if report.ok else log.warning)("preflight\n%s", format_report(report))
+            try:
+                report = await _preflight(app)
+            except Exception:  # noqa: BLE001  preflight 失敗不可讓服務當機
+                log.exception("preflight failed")
+            else:
+                (log.info if report.ok else log.warning)("preflight\n%s", format_report(report))
             yield
         finally:
             await app.state.worker.stop()
@@ -72,9 +81,12 @@ def create_app(
     app.include_router(export.router)
 
     async def _preflight(app: FastAPI):
+        """跑 preflight 並更新快取 app.state.preflight。"""
         s: Settings = app.state.settings
         async with ComfyClient(s.comfy.url, request_timeout_s=s.comfy.request_timeout_s) as client:
-            return await run_preflight(client, app.state.registry)
+            report = await run_preflight(client, app.state.registry)
+        app.state.preflight = report
+        return report
 
     @app.get("/api/system/preflight")
     async def preflight(reload: bool = True) -> dict:
@@ -84,6 +96,11 @@ def create_app(
             if isinstance(app.state.engine, ComfyEngine):
                 app.state.engine.registry = app.state.registry
         return (await _preflight(app)).to_dict()
+
+    @app.get("/api/system/pose-modes", response_model=PoseModesOut)
+    def pose_modes() -> dict:
+        """角色動作精準／快速模式能不能用：只讀快取的 preflight，不連 ComfyUI。"""
+        return availability(app.state.preflight)
 
     return app
 

@@ -274,6 +274,25 @@ def test_demo_engine_kinds(kind, size, has_mask):
     assert res.params["kind"] == kind
 
 
+@pytest.mark.parametrize("mode", ["precise", "fast"])
+def test_demo_engine_pose_both_modes(mode):
+    """DemoEngine 兩種模式都回傳固定 832×1216 的角色圖與同尺寸遮罩。"""
+    import asyncio
+    import io
+
+    from PIL import Image
+
+    from app.models import GenKind
+    from app.services.engine import GenerationRequest
+
+    req = GenerationRequest(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=832, height=1216,
+                            pose_mode=mode)
+    res = asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req))
+    img = Image.open(io.BytesIO(res.image))
+    assert img.size == Image.open(io.BytesIO(res.extra_images["mask"])).size == (832, 1216)
+    assert res.params["pose_mode"] == mode
+
+
 def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
     """假後端可啟動：角色 → 背景 → 角色動作（有遮罩、去背圖）→ 確認合成 → QA 有缺口 → 自動補線後 0；
     資料寫在 --storage，不碰設定的 storage。"""
@@ -308,6 +327,8 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"}).status_code == 202
         pose = _wait_succeeded(c, book["id"], "pose", 1)[0]
         assert (pose["width"], pose["height"]) == (832, 1216)
+        assert pose["pose_mode"] == "precise"  # API 預設精準；ComfyUI 連不上時兩種模式都算可用
+        assert c.get("/api/system/pose-modes").json()["precise"]["available"] is True
         assert pose["cutout_url"]
         assert c.get(pose["cutout_url"]).status_code == 200
         assert c.post(f"/api/pages/{page['id']}/pose", json={"generation_id": pose["id"]}).status_code == 200

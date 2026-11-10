@@ -793,7 +793,7 @@
           "compose"
         ],
         "summary": "Create Pose",
-        "description": "產生一個角色動作（白底、自動去背）：角色描述＋動作文字，不帶場景描述；尺寸固定 POSE_SIZE。",
+        "description": "產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述。\n精準（Qwen）：以角色參考圖編輯出新動作，prompt 只有動作；快速（SDXL）：角色描述＋動作文字。\n精準模式依啟動／上次 preflight 的快取判斷可不可用（不即時連 ComfyUI），不可用回 503。",
         "operationId": "create_pose_api_pages__page_id__poses_post",
         "parameters": [
           {
@@ -2109,6 +2109,25 @@
           }
         }
       }
+    },
+    "/api/system/pose-modes": {
+      "get": {
+        "summary": "Pose Modes",
+        "description": "角色動作精準／快速模式能不能用：只讀快取的 preflight，不連 ComfyUI。",
+        "operationId": "pose_modes_api_system_pose_modes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoseModesOut"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2657,6 +2676,21 @@
             ],
             "title": "Cutout Url"
           },
+          "pose_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "precise",
+                  "fast"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pose Mode"
+          },
           "error": {
             "anyOf": [
               {
@@ -2733,6 +2767,7 @@
           "image_url",
           "mask_url",
           "cutout_url",
+          "pose_mode",
           "error",
           "elapsed_s",
           "queue_position",
@@ -3296,6 +3331,15 @@
             "maxLength": 300,
             "minLength": 1,
             "title": "Action"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "precise",
+              "fast"
+            ],
+            "title": "Mode",
+            "default": "precise"
           }
         },
         "type": "object",
@@ -3303,6 +3347,43 @@
           "action"
         ],
         "title": "PoseCreate"
+      },
+      "PoseModeStatus": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "available",
+          "missing"
+        ],
+        "title": "PoseModeStatus"
+      },
+      "PoseModesOut": {
+        "properties": {
+          "precise": {
+            "$ref": "#/components/schemas/PoseModeStatus"
+          },
+          "fast": {
+            "$ref": "#/components/schemas/PoseModeStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "precise",
+          "fast"
+        ],
+        "title": "PoseModesOut"
       },
       "PrintMode": {
         "type": "string",

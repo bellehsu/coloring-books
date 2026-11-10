@@ -211,7 +211,9 @@ export interface paths {
         put?: never;
         /**
          * Create Pose
-         * @description 產生一個角色動作（白底、自動去背）：角色描述＋動作文字，不帶場景描述；尺寸固定 POSE_SIZE。
+         * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述。
+         *     精準（Qwen）：以角色參考圖編輯出新動作，prompt 只有動作；快速（SDXL）：角色描述＋動作文字。
+         *     精準模式依啟動／上次 preflight 的快取判斷可不可用（不即時連 ComfyUI），不可用回 503。
          */
         post: operations["create_pose_api_pages__page_id__poses_post"];
         delete?: never;
@@ -668,6 +670,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/pose-modes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pose Modes
+         * @description 角色動作精準／快速模式能不能用：只讀快取的 preflight，不連 ComfyUI。
+         */
+        get: operations["pose_modes_api_system_pose_modes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -868,6 +890,8 @@ export interface components {
             mask_url: string | null;
             /** Cutout Url */
             cutout_url: string | null;
+            /** Pose Mode */
+            pose_mode: ("precise" | "fast") | null;
             /** Error */
             error: string | null;
             /** Elapsed S */
@@ -1065,6 +1089,24 @@ export interface components {
         PoseCreate: {
             /** Action */
             action: string;
+            /**
+             * Mode
+             * @default precise
+             * @enum {string}
+             */
+            mode: "precise" | "fast";
+        };
+        /** PoseModeStatus */
+        PoseModeStatus: {
+            /** Available */
+            available: boolean;
+            /** Missing */
+            missing: string[];
+        };
+        /** PoseModesOut */
+        PoseModesOut: {
+            precise: components["schemas"]["PoseModeStatus"];
+            fast: components["schemas"]["PoseModeStatus"];
         };
         /**
          * PrintMode
@@ -2638,6 +2680,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pose_modes_api_system_pose_modes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoseModesOut"];
                 };
             };
         };

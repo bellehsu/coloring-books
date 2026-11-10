@@ -62,6 +62,24 @@ def test_encode_decode_roundtrip(tmp_path):
     assert req.structure_image == (tmp_path / "books/1/s.png").resolve()
 
 
+def test_pose_mode_roundtrip_and_old_rows_are_fast(tmp_path):
+    storage = Storage(tmp_path)
+    text = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                          pose_mode="precise", variation="facing left")
+    d = json.loads(text)
+    assert d["pose_mode"] == "precise" and d["variation"] == "facing left"
+    req = decode_request(text, storage)
+    assert req.pose_mode == "precise" and req.variation == "facing left"
+    precise_plain = json.loads(encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1,
+                                              width=8, height=8, pose_mode="precise"))
+    assert "variation" in precise_plain and precise_plain["variation"] is None
+    # Phase 5 的舊列沒有 pose_mode → 快速
+    old = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="n", seed=1, width=8, height=8)
+    assert "pose_mode" not in json.loads(old)
+    req = decode_request(old, storage)
+    assert req.pose_mode == "fast" and req.variation is None
+
+
 def test_decode_null_images_and_bad_input(tmp_path):
     storage = Storage(tmp_path)
     req = decode_request(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1,

@@ -9,7 +9,7 @@ import json
 import random
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from PIL import Image
 from sqlalchemy import and_, case, null
 from sqlmodel import Session, col, select, update
@@ -32,8 +32,11 @@ from app.services.prompts import (
     POSE_NEGATIVE,
     POSE_SIZE,
     background_prompt,
+    pick_variation,
     pose_prompt,
+    qwen_pose_prompt,
 )
+from app.services.pose_modes import precise_unavailable_detail
 from app.services.worker import GenerationWorker, encode_request
 from app.storage import Storage
 
@@ -152,11 +155,14 @@ def create_background(
 def create_pose(
     page_id: int,
     body: PoseCreate,
+    request: Request,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
 ) -> GenerationOut:
-    """產生一個角色動作（白底、自動去背）：角色描述＋動作文字，不帶場景描述；尺寸固定 POSE_SIZE。"""
+    """產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述。
+    精準（Qwen）：以角色參考圖編輯出新動作，prompt 只有動作；快速（SDXL）：角色描述＋動作文字。
+    精準模式依啟動／上次 preflight 的快取判斷可不可用（不即時連 ComfyUI），不可用回 503。"""
     page = _page_or_404(session, page_id)
     book = _book_or_404(session, page.book_id)
     char = (
@@ -166,20 +172,30 @@ def create_pose(
     )
     if char is None or not char.image_path:
         raise HTTPException(409, "請先設定角色")
+    variation: str | None = None
+    if body.mode == "precise":
+        detail = precise_unavailable_detail(getattr(request.app.state, "preflight", None))
+        if detail is not None:
+            raise HTTPException(503, detail)
+        variation = pick_variation(random.Random())
+        prompt, negative = qwen_pose_prompt(body.action, variation), ""
+    else:
+        prompt, negative = pose_prompt(book.character_description or "", body.action), POSE_NEGATIVE
     width, height = POSE_SIZE
     gen = Generation(
         book_id=book.id,
         page_id=page.id,
         kind=GenKind.POSE,
         user_text=body.action,
-        prompt=pose_prompt(book.character_description or "", body.action),
-        negative_prompt=POSE_NEGATIVE,
+        prompt=prompt,
+        negative_prompt=negative,
         seed=random.randint(0, MAX_SEED),
         width=width,
         height=height,
         request_json="",
     )
-    return _enqueue(session, storage, worker, gen, character_image=char.image_path)
+    return _enqueue(session, storage, worker, gen, character_image=char.image_path,
+                    pose_mode=body.mode, variation=variation)
 
 
 def _pick(session: Session, page_id: int, gen_id: int, kind: GenKind) -> PageOut:

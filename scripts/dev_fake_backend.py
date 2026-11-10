@@ -5,6 +5,7 @@
 - character／page（舊流程）：白底、黑色粗外框的角色與幾個背景方塊（draw_demo）。
 - background：幾個大物件（太陽、雲、樹、草叢）＋上方一個不填色的大框（draw_background）。
 - pose：白底上的同一個角色，固定 832×1216，另附遮罩（角色處白、其他黑；draw_pose）。
+  精準／快速兩種模式畫法相同（params 記錄 pose_mode）。
 不填色的大框刻意留了一個缺口，讓 QA 偵測到「線條有缺口」、自動補線後缺口歸零。
 背景的缺口框在畫面上方，預設位置（DEFAULT_PLACEMENT）的角色不會蓋到它。
 
@@ -173,6 +174,17 @@ class DemoEngine:
             extra["mask"] = _png(mask)
         else:
             image = draw_demo(req.width, req.height, req.seed)
+        params = {
+            "kind": kind.value,
+            "seed": req.seed,
+            "width": image.width,
+            "height": image.height,
+            "has_character_image": req.character_image is not None,
+            "has_structure_image": req.structure_image is not None,
+            "structure_strength": req.structure_strength,
+        }
+        if kind == GenKind.POSE:
+            params["pose_mode"] = req.pose_mode
         return GenerationResult(
             image=_png(image),
             extra_images=extra,
@@ -182,15 +194,7 @@ class DemoEngine:
             workflow_version="demo",
             workflow_hash="demo",
             models=[],
-            params={
-                "kind": kind.value,
-                "seed": req.seed,
-                "width": image.width,
-                "height": image.height,
-                "has_character_image": req.character_image is not None,
-                "has_structure_image": req.structure_image is not None,
-                "structure_strength": req.structure_strength,
-            },
+            params=params,
         )
 
 

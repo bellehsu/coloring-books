@@ -106,6 +106,21 @@ class CharacterSelect(BaseModel):
     generation_id: int
 
 
+PoseMode = Literal["precise", "fast"]
+
+
+def pose_mode_of(gen: Generation) -> PoseMode | None:
+    """角色動作的模式（看 request_json，排隊中、還沒有 workflow_name 也算得出來）；
+    其他 kind 為 None。Phase 5 的舊列沒有 pose_mode（或內容讀不懂）→ "fast"。"""
+    if gen.kind != GenKind.POSE:
+        return None
+    try:
+        mode = json.loads(gen.request_json or "{}").get("pose_mode")
+    except (ValueError, AttributeError):
+        return "fast"
+    return "precise" if mode == "precise" else "fast"
+
+
 class GenerationOut(BaseModel):
     id: int
     book_id: int
@@ -121,6 +136,7 @@ class GenerationOut(BaseModel):
     image_url: str | None
     mask_url: str | None  # pose：去背遮罩
     cutout_url: str | None  # pose：裁好的去背 RGBA 圖
+    pose_mode: PoseMode | None  # pose：精準／快速；其他 kind 為 None
     error: str | None
     elapsed_s: float | None
     queue_position: int | None
@@ -150,6 +166,7 @@ class GenerationOut(BaseModel):
             image_url=f"/api/generations/{gen.id}/image" if gen.image_path else None,
             mask_url=f"/api/generations/{gen.id}/mask" if gen.mask_path else None,
             cutout_url=f"/api/generations/{gen.id}/cutout" if gen.mask_path else None,
+            pose_mode=pose_mode_of(gen),
             error=gen.error,
             elapsed_s=gen.elapsed_s,
             queue_position=queue_position,
@@ -184,6 +201,17 @@ class SelectGeneration(BaseModel):
 
 class PoseCreate(BaseModel):
     action: ActionStr  # 動作文字（不帶場景描述）
+    mode: PoseMode = "precise"  # 精準（Qwen）或快速（SDXL）；前端一律明確送出
+
+
+class PoseModeStatus(BaseModel):
+    available: bool
+    missing: list[str]  # 不可用時缺的模型檔、節點類別或錯誤
+
+
+class PoseModesOut(BaseModel):
+    precise: PoseModeStatus
+    fast: PoseModeStatus
 
 
 class PagePlacement(BaseModel):
