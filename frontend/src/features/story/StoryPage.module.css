@@ -23,9 +23,10 @@
 .cover { width: 100%; height: 100%; object-fit: cover; display: block; }
 .contain { width: 100%; height: 100%; object-fit: contain; display: block; background: var(--surface); }
 .retry { min-height: 44px; padding: 0 6px; border: 0; background: transparent; color: var(--danger); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
+/* 手機：每一列上下堆疊（頁碼、背景、動作、縮圖） */
 @media (max-width: 640px) {
-  .row { flex-direction: column; align-items: stretch; }
-  .num { flex-basis: auto; width: 44px; }
+  .row { flex-direction: column; align-items: stretch; gap: 12px; padding: 14px; }
+  .num { flex-basis: auto; width: 32px; height: 32px; font-size: 14px; }
   .field { flex-basis: auto; }
   .thumbs { justify-content: flex-start; }
   .actions > * { flex: 1 1 auto; }

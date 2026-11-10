@@ -10,7 +10,7 @@ backend/app/
   main.py                      FastAPI 進入點、lifespan（DB、worker、啟動 preflight）
   api/books.py                 書籍與角色 endpoints
   api/pages.py                 頁面（建立、排序、更新、刪除）endpoints
-  api/compose.py               頁面合成流程：背景（產生／上傳）、角色動作、位置、確認合成 endpoints
+  api/compose.py               頁面合成流程：背景（產生／上傳）、角色動作、位置、合成、產生全部素材 endpoints
   api/generations.py           生成紀錄、取消、佇列狀態 endpoints
   api/schemas.py               API 請求／回應 Pydantic 模型
   api/deps.py                  FastAPI 依賴（session、worker）
@@ -150,21 +150,22 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `playwright.config.ts` 會自動啟動兩個服務：假後端（`127.0.0.1:8010`，每次執行用新的暫存 storage）與 `next dev -p 3010`（`BACKEND_URL=http://127.0.0.1:8010`）。
   非 CI 時若這兩個埠已有服務就直接重用（資料會累積；測試不依賴既有資料）。
 - 只用 chromium，並以 `--disable-gpu --disable-software-rasterizer` 啟動：WSL2 上 headless chromium 的 GPU 行程常卡住，`requestAnimationFrame` 不觸發、點擊一直等不到。
-- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 產生並設定角色 → 新增頁、在畫板畫方框 → 產生背景並選用 →
-  點「揮手」，產生方式預設「精準」產生一張（送出 `mode:"precise"`、縮圖標「精準」），切到「快速」再產生一張（標「快速」），選用精準那張 →
-  合成：拖曳＋方向鍵移動角色後立刻「確認合成」（位置 PUT 故意變慢，檢查合成在最後一次位置寫完後才送出）→ 自動切到線稿、看到紅圈 →
-  自動補線後缺口 0 → QA 一致 → 標為通過 → 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）；
-  以及沒設角色時角色分頁停用、後端 409「請先設定角色」原樣顯示；
-  `/api/system/pose-modes` 回報精準不可用時「精準」停用並顯示「精準模式缺少：…」、改選「快速」，產生時送出 `mode:"fast"`。
-- `e2e/batch.spec.ts`：3 頁的書（2 頁有場景描述、1 頁沒有）按「產生所有背景」→ 確認對話框列出會產生 2 頁（簡潔）、略過第 3 頁 → 取消不送出、
-  確認後只送出一次（body `{style:"simple"}`）→ 第 1、2 頁各一張背景、第 3 頁沒有，按鈕變成停用（「沒有需要產生背景的頁面」）。
-- `e2e/bgstyle.spec.ts`：背景風格預設「簡潔」→ 產生一張（送出 `style:"simple"`、縮圖標「簡潔」）→ 切到「細緻」再產生一張（標「細緻」）→
-  重新整理後仍是細緻（localStorage）；以 API 上傳構圖草圖的頁「簡潔」停用、顯示「有構圖草圖時用細緻，才會照草圖構圖」、產生時送出細緻，
-  構圖強度拉到 0 後簡潔恢復可選。
-- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器（背景、畫構圖、角色、線稿模式）與合成分頁（角色移到邊緣外也一樣），
-  整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
+- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 「產生角色」（一次一張，按鈕改叫「再產生一張」）→ 選它、「用這個角色，開始寫故事 →」→
+  故事頁「＋ 新增一頁」、寫場景與中文動作（「抱著一顆紅色的球開心地跳」，檢查動作欄位連到「只寫動作，地點寫在背景…」提示）→
+  「產生全部素材（還有 2 張）」→ 縮圖出現、角色動作的 `user_text` 是原本的中文 → 頁面 ① 構圖：素材已自動選用、開頁自動合成 →
+  拖曳角色，放開後存位置並自動合成（「✓ 線稿已自動更新」）→ 「下一步：補線 →」→ ② 補線看到 1 個橘色圈 → 「自動補線」→
+  「✓ 線條都接好了」→ 「角色看起來對嗎？」按「對」→ 「完成這一頁 ✓」→ 頁面清單標「完成」→ 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）。
+  另外：構圖「上傳背景圖」傳 4000×800 的 PNG → 縮圖標「上傳」、舞台的背景已裁成頁面比例；
+  沒設角色時角色動作「換一張」停用，前端資料過期時後端 409「請先設定角色」原樣顯示。
+- `e2e/story.spec.ts`：「貼上整本故事」貼 3 頁（第 1 頁 CRLF 換行、全形數字）→ 預覽表 3 列拆對 → 匯入 → 3 列填好 →
+  「產生全部素材（還有 6 張）」→ 每頁的背景與角色動作縮圖都出現。
+- `e2e/batch.spec.ts`：`POST /books/{id}/materials/batch`（`upload_page_ids` 的頁略過背景、沒場景的頁略過）→ 排入的項目與略過原因 →
+  worker 完成後自動選用（只填空的欄位）→ 再呼叫一次不再排。
+- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色、故事（含貼上對話框）、頁面編輯器 ① 構圖與 ② 補線，整頁不可水平捲動。
+  390 時：故事每列上下堆疊；頁面清單變成「第 N 頁 / M」下拉選單（用它換頁）；背景與角色動作是舞台下方並排的精簡卡片，點了才展開、可收合；
+  舞台照樣可以拖曳角色。1440 時：頁面清單在左、卡片完整顯示。
 - `next dev` 同一個 `frontend/` 只能跑一份：`scripts/dev.sh`（或其他 `next dev`）還開著時 e2e 會出現「Another next dev server is already running」，先關掉它再跑。
-- 全部約 50 秒（第一次 `next dev` 編譯會再久一點）。
+- 全部約 35 秒（第一次 `next dev` 編譯會再久一點）。
 
 ## 內網部署
 
@@ -222,7 +223,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
 | POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |
 | PUT | `/pages/{page_id}/placement` | 儲存角色位置 `{cx, cy, height, flip}`（中心點與高度為背景的比例） |
-| POST | `/pages/{page_id}/compose` | 確認合成：產生／重用 `composite` 生成紀錄並設為選定 |
+| POST | `/pages/{page_id}/compose` | 合成（前端在擺位置、換素材後自動呼叫）：產生／重用 `composite` 生成紀錄並設為選定 |
 | GET | `/generations/{gen_id}/mask` | 下載角色動作的去背遮罩 |
 | GET | `/generations/{gen_id}/cutout` | 依遮罩去背並裁切的 RGBA PNG（合成預覽用） |
 | GET | `/generations/{gen_id}` | 取得生成紀錄（參數、seed、提示詞、耗時、錯誤） |
@@ -231,14 +232,14 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | POST | `/generations/{gen_id}/cancel` | 取消排隊中的任務 |
 | GET | `/pages/{page_id}/lineart` | 取得頁面線稿（內容大小 1-bit PNG，有快取） |
 | GET | `/pages/{page_id}/qa` | 取得線稿 QA 結果 |
-| GET | `/pages/{page_id}/qa/overlay.png` | QA 問題標示疊圖 |
+| GET | `/pages/{page_id}/qa/overlay.png` | QA 問題標示疊圖（前端已不使用：補線畫面用 `/qa` 的缺口座標自己畫橘色圈） |
 | GET | `/pages/{page_id}/lineart/edits` | 取得修改圖層 |
 | PUT | `/pages/{page_id}/lineart/edits` | 儲存修改圖層並重算 QA（已通過的頁面會退回草稿） |
 | POST | `/pages/{page_id}/lineart/autofix` | 自動補線縫（最多 3 輪） |
 | GET | `/generations/{gen_id}/lineart-preview` | 以指定細緻度／線寬預覽某張生成圖的線稿 |
 | POST | `/pages/{page_id}/character-check` | 標記角色是否一致（需帶 `generation_id`，選定圖片已更換則 409） |
-| POST | `/pages/{page_id}/pass` | 通過頁面（可帶 `force_reason` 強制通過） |
-| POST | `/pages/{page_id}/unpass` | 取消通過 |
+| POST | `/pages/{page_id}/pass` | 完成頁面（body 可以是 `{}`；QA 有缺口時後端自動記錄原因「使用者確認完成（N 個缺口）」，也可自帶 `force_reason`） |
+| POST | `/pages/{page_id}/unpass` | 取消完成 |
 | GET | `/books/{book_id}/export/summary` | 匯出摘要（可匯出頁、略過原因） |
 | GET | `/books/{book_id}/export.pdf` | 匯出書本 PDF（`include=passed|all`） |
 | GET | `/pages/{page_id}/print.png` | 單頁完整版面 1-bit PNG（300 DPI） |
@@ -250,8 +251,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - **細緻度與線寬**：每頁有 `line_detail`（`simple`／`standard`／`detailed`，對應 xdog sigma 1.5／1.2／0.8）與 `line_width_px`（300 DPI 像素，8–16，預設 11）。
 - **修改圖層**：存在選定生成圖上，格式為筆畫陣列 `{op, width_px, points}`。`op` 為 `draw`（畫黑線）或 `erase`（擦除）；`points` 用相對座標（0–1，相對於線稿內容大小）；`width_px` 以 300 DPI 像素計。換選別張圖就是另一份修改圖層。
 - **自動補線**：`POST /pages/{id}/lineart/autofix` 對每個缺口補一筆 `draw`，重算 QA，最多 3 輪；某輪缺口數沒有減少就停止並捨棄該輪。
-- **通過規則**：必須已選圖、角色確認為「一致」，且 QA 沒有錯誤；有錯誤時需填 `force_reason` 才能強制通過。已通過的頁面在下列情況會無條件退回草稿（值真的有變才算）：修改 `line_detail` 或 `line_width_px`、儲存修改圖層、自動補線、改選另一張圖（同時清除角色確認）；角色標記為不一致也會退回。改紙張尺寸或列印方式則不同：背景重算線稿後，只有新的 QA 有錯誤的頁面才會退回草稿，沒有錯誤的頁面維持已通過。
-- **PDF 版面**：頁面依 `position` 排序，預設只匯出已通過的頁（`include=all` 為所有已選圖的頁）。家用（`home`）每頁就是紙張大小，四周留 10 mm 白邊；印刷廠（`print_shop`）每頁為紙張加每邊 3 mm 出血。PDF 本身沒有 CropBox，也沒有裁切標記；裁切框與 5 mm 安全區只出現在 QA 疊圖（`GET /pages/{id}/qa/overlay.png`）與 BookOut 的版面欄位中。輸出為 1-bit、300 DPI。
+- **通過（完成）規則**：必須已選圖、角色確認為「一致」（畫面上的「對」）。QA 有錯誤（缺口）也能完成，不必填原因：前端先問一次「還有 N 個缺口…確定完成嗎？」，後端把 `forced_pass_reason` 記成「使用者確認完成（N 個缺口）」（帶了 `force_reason` 就用它）。已通過的頁面在下列情況會無條件退回草稿（值真的有變才算）：修改 `line_detail` 或 `line_width_px`、儲存修改圖層、自動補線、改選另一張圖（同時清除角色確認）；角色標記為不一致也會退回。改紙張尺寸或列印方式則不同：背景重算線稿後，只有新的 QA 有錯誤的頁面才會退回草稿，沒有錯誤的頁面維持已通過。
+- **PDF 版面**：頁面依 `position` 排序，預設只匯出已通過的頁（`include=all` 為所有已選圖的頁）。家用（`home`）每頁就是紙張大小，四周留 10 mm 白邊；印刷廠（`print_shop`）每頁為紙張加每邊 3 mm 出血。PDF 本身沒有 CropBox，也沒有裁切標記；裁切框與 5 mm 安全區只出現在 QA 疊圖（`GET /pages/{id}/qa/overlay.png`，前端已不使用）與 BookOut 的版面欄位中。輸出為 1-bit、300 DPI。
 - **改尺寸規則**：`PATCH /books/{id}` 只能改成同比例群組的紙張（A4／A5／B5 同組；Letter 與 SQUARE_21 各自獨立），否則 422。改紙張或列印方式後，背景會重算所有已選圖頁面的線稿，修改圖層（相對座標）沿用；已通過的頁面只有在新 QA 有錯誤時才退回草稿。缺口偵測以像素計算，換尺寸後可能出現新的缺口（實測 A4→A5 多出 19 個），因此改尺寸後請重新檢查 QA 並再跑自動補線。
 
 ## 常用指令
@@ -265,8 +266,9 @@ $PY scripts/check_env.py                                    # 環境（ComfyUI �
 $PY scripts/sync_comfy_model_paths.py --dry-run             # 預覽 extra_model_paths.yaml
 $PY scripts/sync_comfy_model_paths.py --install-dir --create-dirs
 $PY scripts/preflight.py                                    # 每個 workflow 缺什麼
-$PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml --dry-run
-$PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml
+# Phase 1 的 route_a workflow 已封存到 archive/：跑舊實驗要把 workflows_dir 指過去
+APP_PATHS__WORKFLOWS_DIR=archive/comfy_workflows $PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml --dry-run
+APP_PATHS__WORKFLOWS_DIR=archive/comfy_workflows $PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml
 $PY experiments/run_matrix.py summarize experiments/results/<run_dir>
 APP_COMFY__URL=http://127.0.0.1:8190 $VENV_ROOT/coloring-books/bin/uvicorn app.main:app --app-dir backend --port 8000
 ```

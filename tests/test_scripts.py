@@ -309,7 +309,7 @@ def test_demo_engine_pose_records_variation():
 
 
 def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
-    """假後端可啟動：角色 → 背景 → 角色動作（有遮罩、去背圖）→ 確認合成 → QA 有缺口 → 自動補線後 0；
+    """假後端可啟動：角色 → 背景 → 角色動作（有遮罩、去背圖）→ 合成 → QA 有缺口 → 自動補線後 0；
     資料寫在 --storage，不碰設定的 storage。"""
     import httpx
     from fastapi.testclient import TestClient
@@ -358,6 +358,69 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert fixed["autofix_added"] >= 1 and fixed["gap_count"] == 0
     assert (storage / "app.db").is_file()
     assert not (tmp_path / "storage" / "app.db").exists()
+
+
+def test_fake_backend_story_flow(settings_file, tmp_path, monkeypatch):
+    """e2e 用到的新流程經假後端都能跑：中文 action_prompt → 產生全部素材（上傳頁略過背景）→
+    worker 自動選用 → 合成 → 補線前就按完成（有缺口、不填原因，後端自動補原因）；上傳背景圖裁成頁面比例。"""
+    import io
+    import time
+
+    import httpx
+    from fastapi.testclient import TestClient
+    from PIL import Image
+
+    from app import main as app_main
+    from app.config import load_settings
+    from app.services.comfy_client import ComfyClient
+
+    def refused(request):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(app_main, "ComfyClient",
+                        lambda url, **kw: ComfyClient(url, transport=httpx.MockTransport(refused), **kw))
+    app = fake_backend.create_demo_app(tmp_path / "s", load_settings(settings_file),
+                                       engine=fake_backend.DemoEngine(delay_s=0.02))
+    with TestClient(app) as c:
+        book = c.post("/api/books", json={"title": "故事", "paper_size": "a4", "print_mode": "print_shop"}).json()
+        c.post(f"/api/books/{book['id']}/character/candidates", json={"description": "一隻圓圓的小貓"})
+        char = _wait_succeeded(c, book["id"], "character", 1)[0]
+        c.post(f"/api/books/{book['id']}/character", json={"generation_id": char["id"]})
+        p1 = c.post(f"/api/books/{book['id']}/pages",
+                    json={"scene_prompt": "陽光公園", "action_prompt": "抱著球開心地跳"}).json()
+        p2 = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "海邊", "action_prompt": "看書"}).json()
+
+        res = c.post(f"/api/books/{book['id']}/materials/batch", json={"upload_page_ids": [p2["id"]]})
+        assert res.status_code == 202, res.text
+        assert [(q["page_id"], q["kind"]) for q in res.json()["queued"]] == [
+            (p1["id"], "background"), (p1["id"], "pose"), (p2["id"], "pose")]
+        poses = _wait_succeeded(c, book["id"], "pose", 2)
+        assert {g["user_text"] for g in poses} == {"抱著球開心地跳", "看書"}
+        _wait_succeeded(c, book["id"], "background", 1)
+
+        deadline = time.monotonic() + 10
+        while True:
+            pages = {p["id"]: p for p in c.get(f"/api/books/{book['id']}/pages").json()}
+            if pages[p1["id"]]["background_generation_id"] and pages[p1["id"]]["pose_generation_id"]:
+                break
+            assert time.monotonic() < deadline, pages
+            time.sleep(0.05)
+        assert pages[p1["id"]]["compose_pending"] is True
+
+        sel = c.post(f"/api/pages/{p1['id']}/compose").json()["selected_generation_id"]
+        assert c.get(f"/api/pages/{p1['id']}/qa").json()["gap_count"] == 1
+        c.post(f"/api/pages/{p1['id']}/character-check", json={"generation_id": sel, "result": "consistent"})
+        passed = c.post(f"/api/pages/{p1['id']}/pass", json={})
+        assert passed.status_code == 200, passed.text
+        assert passed.json()["status"] == "passed"
+        assert c.get(f"/api/pages/{p1['id']}/qa").json()["forced_pass_reason"] == "使用者確認完成（1 個缺口）"
+
+        buf = io.BytesIO()
+        Image.new("L", (4000, 800), 200).save(buf, "PNG")
+        up = c.post(f"/api/pages/{p2['id']}/backgrounds/upload", files={"file": ("wide.png", buf.getvalue(), "image/png")})
+        assert up.status_code == 201, up.text
+        bg = c.get(f"/api/generations/{up.json()['background_generation_id']}").json()
+        assert bg["source"] == "upload" and (bg["width"], bg["height"]) == (864, 1216)
 
 
 def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch):

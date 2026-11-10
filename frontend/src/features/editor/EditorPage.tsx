@@ -27,6 +27,7 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
+import { PHONE_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
 import { createAutoCompose } from "./autoCompose";
 import { ComposePreview, ComposeStage, ComposeStatus } from "./ComposeStage";
 import { ComposeWorkspace } from "./ComposeWorkspace";
@@ -97,7 +98,8 @@ function createEditorAutoCompose() {
  * 兩步：① 構圖（舞台是背景＋去背角色，右欄是背景與角色動作卡片）→ ② 補線（修線畫布＋缺口橘色圈；右欄 FinishPanel：
  * 缺口檢查與自動補線、線條多寡、角色看起來對嗎、完成這一頁）；
  * 還沒有選定圖時補線停用（modeBlockers）。
- * 版面：BookBar＋三區 grid（> 1180 px 三欄；761–1180 兩欄、檢查面板在下；≤ 760 單欄、頁面清單橫向捲動）。
+ * 版面：BookBar＋三區 grid（> 1180 px 三欄；761–1180 兩欄、檢查面板在下；≤ 760 單欄、頁面清單橫向捲動；
+ * ≤ 640 px 手機：頁面清單改成「第 N 頁 / M」下拉選單，構圖卡片收成舞台下方的精簡卡片）。
  */
 export function EditorPage({ bookId }: { bookId: number }) {
   const router = useRouter();
@@ -106,6 +108,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const toast = useToast();
   const idPrefix = useId();
   const panelId = `${idPrefix}-stage`;
+  const phone = useMediaQuery(PHONE_QUERY);
 
   const book = useBook(bookId);
   const pagesQ = usePages(bookId);
@@ -540,6 +543,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           onBackgroundUploaded={(page) => {
             if (hasBoth(page)) autoCompose.schedule(page.id);
           }}
+          compact={phone}
         />
         <Button
           variant="primary"
@@ -602,6 +606,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
         adding={createPage.isPending}
         onMove={movePage}
         onDelete={removePage}
+        compact={phone}
       />
       <section aria-label="工作區" className={styles.work}>
         <StageHeader

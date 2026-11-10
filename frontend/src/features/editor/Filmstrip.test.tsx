@@ -56,7 +56,8 @@ describe("Filmstrip", () => {
     const bar = screen.getByRole("progressbar", { name: "整本進度" });
     expect(bar).toHaveAttribute("aria-valuenow", "1");
     expect(bar).toHaveAttribute("aria-valuemax", "4");
-    expect(within(pageButton(1)).getByText("通過")).toBeInTheDocument();
+    expect(bar).toHaveAttribute("aria-valuetext", "1 / 4 頁完成");
+    expect(within(pageButton(1)).getByText("完成")).toBeInTheDocument();
     expect(within(pageButton(2)).getByText("需要修線")).toBeInTheDocument();
     expect(within(pageButton(3)).getByText("草稿")).toBeInTheDocument();
     expect(within(pageButton(4)).getByText("生成中")).toBeInTheDocument();
@@ -119,6 +120,40 @@ describe("Filmstrip", () => {
     await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
     await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
     expect(p.onDelete).toHaveBeenCalledWith(3);
+  });
+
+  it("桌機（不是 compact）沒有頁面下拉選單", () => {
+    setup();
+    expect(screen.queryByRole("combobox", { name: "選擇頁面" })).not.toBeInTheDocument();
+  });
+
+  describe("compact（手機寬度）", () => {
+    it("清單改成「第 N 頁 / M」下拉選單，選別頁呼叫 onSelect", async () => {
+      const p = setup({ compact: true, currentId: 2 });
+      expect(screen.queryByRole("list")).not.toBeInTheDocument();
+      const select = screen.getByRole("combobox", { name: "選擇頁面" });
+      expect(select).toHaveValue("2");
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+        "第 1 頁 / 4",
+        "第 2 頁 / 4",
+        "第 3 頁 / 4",
+        "第 4 頁 / 4",
+      ]);
+      await userEvent.selectOptions(select, "第 3 頁 / 4");
+      expect(p.onSelect).toHaveBeenCalledWith(3);
+    });
+
+    it("顯示目前頁的狀態；目前頁的「⋯」選單與新增照常可用", async () => {
+      const p = setup({ compact: true, currentId: 1 });
+      expect(screen.getByText("完成")).toBeInTheDocument();
+      expect(screen.queryByText("需要修線")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "第 2 頁的更多動作" })).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "第 1 頁的更多動作" }));
+      await userEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "下移" }));
+      expect(p.onMove).toHaveBeenCalledWith(1, 1);
+      await userEvent.click(screen.getByRole("button", { name: "新增頁面" }));
+      expect(p.onAdd).toHaveBeenCalled();
+    });
   });
 
   it("沒有「產生所有背景」按鈕（改在故事頁「產生全部素材」）", () => {

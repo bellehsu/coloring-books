@@ -37,6 +37,8 @@ export interface ComposeWorkspaceProps {
   beforeReplaceBackground?: () => Promise<unknown>;
   /** 上傳的背景已成為這頁的背景（回傳更新後的頁）：EditorPage 用來排自動合成。 */
   onBackgroundUploaded?: (page: Page) => void;
+  /** 手機寬度（§4.5）：兩張卡片先收成並排的精簡卡片（縮圖＋標題），點了才展開。 */
+  compact?: boolean;
 }
 
 /**
@@ -44,13 +46,83 @@ export interface ComposeWorkspaceProps {
  * 背景：縮圖（單選）、「換一張」（Qwen，用本頁場景文字）、「上傳背景圖」、收合的場景文字編輯。
  * 角色動作：縮圖、「換一張」（用本頁動作文字；頁面沒寫就用最新一張的動作）、收合的動作文字編輯與常用動作。
  * 改過的文字在離開欄位或按「換一張」時存回頁面（PATCH），存好才產生。
+ * compact（手機）：收合時只顯示精簡卡片，展開後是完整卡片加「收合」按鈕；收合不會丟掉改到一半的文字。
  */
 export function ComposeWorkspace(props: ComposeWorkspaceProps) {
   return (
-    <>
+    <div className={styles.cards} data-compact={!!props.compact}>
       <BackgroundCard {...props} />
       <PoseCard {...props} />
-    </>
+    </div>
+  );
+}
+
+/**
+ * 手機的收合狀態：只有 compact 時才有作用。展開／收合會換掉按下的那顆按鈕，
+ * 焦點移到換上來的按鈕（「收合」或精簡卡片），鍵盤使用者不會掉回頁首。
+ */
+function useCollapse(compact: boolean | undefined) {
+  const [open, setOpen] = useState(false);
+  const moveFocus = useRef(false);
+  const toggle = (next: boolean) => {
+    moveFocus.current = true;
+    setOpen(next);
+  };
+  const focusTarget = (el: HTMLButtonElement | null) => {
+    if (el && moveFocus.current) {
+      moveFocus.current = false;
+      el.focus();
+    }
+  };
+  return { collapsed: !!compact && !open, expand: () => toggle(true), collapse: () => toggle(false), focusTarget };
+}
+
+/** 收合時的精簡卡片：目前選用的縮圖＋標題＋能做什麼，點了展開。 */
+function CompactCard({
+  title,
+  sub,
+  imageUrl,
+  contain,
+  onExpand,
+  buttonRef,
+}: {
+  title: string;
+  sub: string;
+  imageUrl: string | null | undefined;
+  contain?: boolean;
+  onExpand: () => void;
+  buttonRef: (el: HTMLButtonElement | null) => void;
+}) {
+  return (
+    <button ref={buttonRef} type="button" className={styles.compact} aria-expanded={false} onClick={onExpand}>
+      <span className={styles.compactThumb} data-contain={!!contain}>
+        {imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={imageUrl} alt="" className={styles.compactImg} />
+        )}
+      </span>
+      <span className={styles.compactText}>
+        <span className={styles.title}>{title} </span>
+        <span className={styles.compactSub}>{sub}</span>
+      </span>
+    </button>
+  );
+}
+
+/** 展開的卡片右上角（只在 compact）：收回精簡卡片。 */
+function CollapseButton({
+  title,
+  onCollapse,
+  buttonRef,
+}: {
+  title: string;
+  onCollapse: () => void;
+  buttonRef: (el: HTMLButtonElement | null) => void;
+}) {
+  return (
+    <button ref={buttonRef} type="button" className={styles.collapse} aria-expanded={true} aria-label={`收合${title}`} onClick={onCollapse}>
+      <Icons.chevron size={16} className={styles.collapseChev} />
+    </button>
   );
 }
 
@@ -116,8 +188,10 @@ function BackgroundCard({
   picking,
   beforeReplaceBackground,
   onBackgroundUploaded,
+  compact,
 }: ComposeWorkspaceProps) {
   const id = useId();
+  const fold = useCollapse(compact);
   const toast = useToast();
   const savePage = useSavePage(bookId, page.id);
   const scene = usePageText(page.scene_prompt, (v) => savePage({ scene_prompt: v }));
@@ -164,6 +238,17 @@ function BackgroundCard({
   const uploadBusy = uploading.busy || upload.isPending;
   const uploadDisabled = uploadBusy || !!picking;
 
+  if (fold.collapsed) {
+    return (
+      <CompactCard
+        title="背景"
+        sub={uploadBusy ? "上傳中…" : "換一張・上傳"}
+        imageUrl={background?.image_url}
+        onExpand={fold.expand}
+        buttonRef={fold.focusTarget}
+      />
+    );
+  }
   return (
     <section aria-labelledby={`${id}-h`} className={styles.card}>
       <div className={styles.head}>
@@ -171,6 +256,7 @@ function BackgroundCard({
           背景
         </h2>
         <span className={styles.info}>{info}</span>
+        {compact && <CollapseButton title="背景" onCollapse={fold.collapse} buttonRef={fold.focusTarget} />}
       </div>
       <Thumbs
         bookId={bookId}
@@ -231,8 +317,9 @@ function BackgroundCard({
   );
 }
 
-function PoseCard({ bookId, page, pose, onPickPose, picking }: ComposeWorkspaceProps) {
+function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeWorkspaceProps) {
   const id = useId();
+  const fold = useCollapse(compact);
   const toast = useToast();
   const book = useBook(bookId).data;
   const hasCharacter = book?.character_generation_id != null;
@@ -261,6 +348,18 @@ function PoseCard({ bookId, page, pose, onPickPose, picking }: ComposeWorkspaceP
         .catch((e: unknown) => toast.show(errMsg(e, "無法產生角色動作"), "error"));
     });
 
+  if (fold.collapsed) {
+    return (
+      <CompactCard
+        title="角色動作"
+        sub="換一張"
+        imageUrl={pose?.cutout_url ?? pose?.image_url}
+        contain
+        onExpand={fold.expand}
+        buttonRef={fold.focusTarget}
+      />
+    );
+  }
   return (
     <section aria-labelledby={`${id}-h`} className={styles.card}>
       <div className={styles.head}>
@@ -268,6 +367,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking }: ComposeWorkspaceP
           角色動作
         </h2>
         <span className={styles.info}>{info}</span>
+        {compact && <CollapseButton title="角色動作" onCollapse={fold.collapse} buttonRef={fold.focusTarget} />}
       </div>
       <Thumbs bookId={bookId} kind="pose" pageId={page.id} selectedId={page.pose_generation_id} onPick={onPickPose} picking={picking} />
       <Button

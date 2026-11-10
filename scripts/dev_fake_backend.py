@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """不需要 GPU／ComfyUI 的假生成後端：給前端開發與 e2e 測試用。
 
-真正的 FastAPI 後端（create_app）＋ DemoEngine：每張圖延遲 0.3 秒、回報 3 次進度，用 Pillow 畫彩色圖：
-- character／page（舊流程）：白底、黑色粗外框的角色與幾個背景方塊（draw_demo）。
+真正的 FastAPI 後端（create_app）＋ DemoEngine：每張圖延遲 0.3 秒、回報 3 次進度，用 Pillow 畫彩色圖。
+API 全是真的：上傳背景圖、故事頁的「產生全部素材」（materials/batch）、頁面的 action_prompt、
+不填原因的「完成這一頁」，以及 worker 在背景／角色動作完成時自動選用（欄位是空的才選）。
+- character（以及舊流程留下的其他種類）：白底、黑色粗外框的角色與幾個背景方塊（draw_demo）。
 - background：幾個大物件（太陽、雲、樹、草叢）＋上方一個不填色的大框（draw_background）。
 - pose：白底上的同一個角色，固定 832×1216，另附遮罩（角色處白、其他黑；draw_pose）。
 不填色的大框刻意留了一個缺口，讓 QA 偵測到「線條有缺口」、自動補線後缺口歸零。

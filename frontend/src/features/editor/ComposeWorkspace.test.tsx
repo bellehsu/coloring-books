@@ -112,7 +112,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 function setup(
-  o: { page?: Page; background?: Generation; pose?: Generation; picking?: boolean; beforeReplaceBackground?: () => Promise<void> } = {},
+  o: {
+    page?: Page;
+    background?: Generation;
+    pose?: Generation;
+    picking?: boolean;
+    beforeReplaceBackground?: () => Promise<void>;
+    compact?: boolean;
+  } = {},
 ) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onPickBackground = vi.fn();
@@ -129,6 +136,7 @@ function setup(
           onPickPose={onPickPose}
           picking={o.picking}
           beforeReplaceBackground={o.beforeReplaceBackground}
+          compact={o.compact}
         />
       </ToastProvider>
     </QueryClientProvider>,
@@ -317,5 +325,52 @@ describe("ComposeWorkspace", () => {
     const pose = card("角色動作");
     expect(await within(pose).findByRole("link", { name: "先設定角色" })).toHaveAttribute("href", "/books/1/character");
     expect(within(pose).getByRole("button", { name: "換一張角色動作" })).toBeDisabled();
+  });
+
+  describe("compact（手機寬度）", () => {
+    it("先收成精簡卡片：選用的縮圖＋標題，沒有展開的內容", () => {
+      const bg = gen(3);
+      const pose = gen(4, { kind: "pose", cutout_url: "/cut/4.png" });
+      gens = [bg, pose];
+      setup({
+        compact: true,
+        page: mkPage({ background_generation_id: 3, pose_generation_id: 4 }),
+        background: bg as unknown as Generation,
+        pose: pose as unknown as Generation,
+      });
+      const bgCard = screen.getByRole("button", { name: /^背景/ });
+      const poseCard = screen.getByRole("button", { name: /^角色動作/ });
+      expect(bgCard).toHaveAttribute("aria-expanded", "false");
+      expect(bgCard).toHaveTextContent("換一張・上傳");
+      expect(bgCard.querySelector("img")).toHaveAttribute("src", "/img/3.png");
+      expect(poseCard.querySelector("img")).toHaveAttribute("src", "/cut/4.png");
+      expect(screen.queryByRole("region")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "換一張背景" })).not.toBeInTheDocument();
+    });
+
+    it("點了展開完整卡片，「收合」收回；收合不會丟掉改到一半的文字", async () => {
+      setup({ compact: true });
+      await userEvent.click(screen.getByRole("button", { name: /^角色動作/ }));
+      const pose = card("角色動作");
+      expect(within(pose).getByRole("button", { name: "換一張角色動作" })).toBeInTheDocument();
+      // 按下的按鈕換掉了：焦點移到「收合」
+      expect(within(pose).getByRole("button", { name: "收合角色動作" })).toHaveFocus();
+      // 另一張還是收合的
+      expect(screen.getByRole("button", { name: /^背景/ })).toHaveAttribute("aria-expanded", "false");
+      const box = within(pose).getByLabelText("動作描述");
+      await userEvent.clear(box);
+      await userEvent.type(box, "跳");
+      await userEvent.click(within(pose).getByRole("button", { name: "收合角色動作" }));
+      expect(screen.queryByRole("region", { name: "角色動作" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^角色動作/ })).toHaveFocus();
+      await userEvent.click(screen.getByRole("button", { name: /^角色動作/ }));
+      expect(within(card("角色動作")).getByLabelText("動作描述")).toHaveValue("跳");
+    });
+
+    it("桌機（不是 compact）沒有精簡卡片與「收合」", () => {
+      setup();
+      expect(screen.queryByRole("button", { expanded: false })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^收合/ })).not.toBeInTheDocument();
+    });
   });
 });
