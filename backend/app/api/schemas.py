@@ -203,14 +203,9 @@ class PageCreate(BaseModel):
 class PageUpdate(BaseModel):
     scene_prompt: ScenePromptStr | None = None
     action_prompt: ActionPromptStr | None = None
-    controlnet_strength: float | None = Field(default=None, ge=0.0, le=0.6)
+    controlnet_strength: float | None = None  # 構圖草圖已停用：舊前端會送，照收但忽略
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
-
-
-class PageCandidatesCreate(BaseModel):
-    count: int = Field(default=4, ge=1, le=8)
-    seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
 
 class PageOrder(BaseModel):
@@ -252,19 +247,14 @@ def lineart_url(page_id: int, key: str | None) -> str:
     return f"/api/pages/{page_id}/lineart" + (f"?v={key}" if key else "")
 
 
-def _version(dt: datetime) -> int:
-    """防快取用的版本號：微秒時間戳。"""
-    return round(dt.timestamp() * 1_000_000)
-
-
 class PageOut(BaseModel):
     id: int
     book_id: int
     position: int
     scene_prompt: str
     action_prompt: str
-    controlnet_strength: float
-    sketch_url: str | None
+    controlnet_strength: float  # 構圖草圖已停用；舊資料的值照回
+    sketch_url: str | None  # 構圖草圖已停用：一律 None（欄位保留到前端移除）
     selected_generation_id: int | None
     background_generation_id: int | None
     pose_generation_id: int | None
@@ -306,11 +296,7 @@ class PageOut(BaseModel):
             scene_prompt=page.scene_prompt,
             action_prompt=page.action_prompt,
             controlnet_strength=page.controlnet_strength,
-            sketch_url=(
-                f"/api/pages/{page.id}/sketch?v={_version(page.updated_at)}"
-                if page.sketch_path
-                else None
-            ),
+            sketch_url=None,
             selected_generation_id=page.selected_generation_id,
             background_generation_id=page.background_generation_id,
             pose_generation_id=page.pose_generation_id,

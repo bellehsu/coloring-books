@@ -22,17 +22,19 @@
 - 後端啟動與 `GET /api/system/preflight` 時檢查：ComfyUI 是否可連線、每個 workflow 的 manifest 所需模型是否出現在 ComfyUI 的模型清單中、
   所需節點類別是否存在於 `/object_info`。檢查失敗要回報清楚的缺漏清單，不可讓整個服務當機。
 
-## 生成路線（Phase 1 結論：Route C 為唯一路線，2026-11-06）
-- Route C：SDXL Base 1.0 + IP-Adapter（ComfyUI_IPAdapter_plus，目前為僅維護狀態）+ ControlNet Union SDXL（xinsir，scribble 模式）
-  先生成**彩色**圖，再以 xdog 擷取線稿（`app.services.lineart_extract`）。沿用 `route_a_sdxl_ipadapter_cn` workflow。
-  預設參數與網站設計見 `docs/superpowers/specs/2026-11-06-coloring-book-web-design.md`（§10）；實驗紀錄見 `experiments/results/phase1_route_c*`。
-- 頁面合成流程（Phase 5，2026-11-09）：Route C 的頁面改為「背景（`sdxl_background`，無 IP-Adapter，選用 ControlNet scribble）
-  ＋角色動作（`sdxl_pose_cutout`，IP-Adapter＋ComfyUI 內建去背）→ 後端 Pillow 合成（`composite` generation）→ xdog 擷取」。
-  背景與角色動作每次各生成一張。設計見 `docs/superpowers/specs/2026-11-09-page-compose-flow-design.md`；
-  實驗紀錄見 `experiments/results/phase5_*`。`route_a_sdxl_ipadapter_cn` 保留給舊流程的整頁候選。
-- 角色動作模式（Phase 6，2026-11-10）：預設「精準」`qwen_edit_pose_cutout`（Qwen-Image-Edit-2511 GGUF + Lightning，需 ComfyUI-GGUF），「快速」為 `sdxl_pose_cutout`；校準紀錄見 `experiments/results/phase6_qwen_pose_calibration_20261110/`。
-- 背景風格（Phase 8，2026-11-10）：預設「簡潔」`qwen_background`（Qwen-Image-Edit-2511 無參考圖），「細緻」為 `sdxl_background`；有構圖草圖（強度>0）時一律細緻。
-- 已淘汰：Route A（直接生成黑白線稿）、Route B（以 Qwen-Image-Edit-2511 GGUF 整頁生成線稿；Qwen 現在用在角色動作的精準模式與「簡潔」背景）。`route_b_qwen_edit_2511_gguf` 已移到 `archive/comfy_workflows/`（preflight 不掃描）。
+## 生成路線（Phase 9 結論：全部使用 Qwen-Image-Edit-2511，2026-11-10）
+- 生成全部使用 Qwen-Image-Edit-2511（Q4_K_M GGUF + Lightning 4 步 LoRA，需 ComfyUI-GGUF）：角色參考圖 `qwen_character`（純文字生圖）、
+  背景 `qwen_background`（無參考圖）、角色動作 `qwen_edit_pose_cutout`（以角色參考圖編輯出新動作，BiRefNet 去背）；使用者輸入（中文或英文）
+  不翻譯，原樣放進英文樣板。頁面以合成產生：背景（Qwen 生成或使用者上傳）＋角色動作 → 後端 Pillow 合成（`composite` generation）
+  → xdog 擷取線稿（`app.services.lineart_extract`）。SDXL、IP-Adapter、ControlNet（含構圖草圖）已停用，workflow（`sdxl_text2img`、
+  `sdxl_background`、`sdxl_pose_cutout`、`route_a_sdxl_ipadapter_cn`）移到 `archive/comfy_workflows/`（preflight 不掃描）；
+  舊流程的頁面（選定圖是整頁 `page` generation）照常補線、匯出，也可以用新流程重做。設計見
+  `docs/superpowers/specs/2026-11-10-all-qwen-simplify-design.md`（更早的：`2026-11-06-coloring-book-web-design.md` §10、
+  `2026-11-09-page-compose-flow-design.md`）。實驗紀錄：Phase 1 路線比較 `experiments/results/phase1_route_c*`、Phase 5 合成 `phase5_*`、
+  Phase 6 Qwen 角色動作 `phase6_qwen_pose_calibration_20261110/`、Phase 7–8 Qwen 背景 `phase7_*`／`phase8_*`、
+  Phase 9 全 Qwen 校正與驗收 `phase9_*`。
+- 已淘汰：Route A（直接生成黑白線稿）、Route B（以 Qwen-Image-Edit-2511 GGUF 整頁生成線稿）、Route C 的 SDXL 生成（Phase 1–8）。
+  `route_b_qwen_edit_2511_gguf` 同樣在 `archive/comfy_workflows/`。
 - 生成層要可替換：網頁與 API 只使用邏輯參數；日後雲端 GPU 版本可能改用 diffusers 直接跑模型（目前範圍外，不實作）。
 
 ## 線稿後處理（確定性、可測試）

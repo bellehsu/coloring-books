@@ -6,6 +6,7 @@ from app.main import create_app
 from app.services.engine import EngineUnavailable
 from tests.fake_engine import FakeEngine
 from tests.test_api_books import candidates, new_book, run_jobs
+from tests.test_api_lineart import color_png, seed_generation, set_page
 from tests.test_api_pages import book_with_character, new_page
 
 
@@ -23,12 +24,6 @@ def app(settings_file, engine):
 def client(app):
     with TestClient(app) as c:
         yield c
-
-
-def page_candidates(client, page_id, **kw):
-    r = client.post(f"/api/pages/{page_id}/candidates", json=kw)
-    assert r.status_code == 202, r.text
-    return r.json()
 
 
 def test_generation_detail_progress_and_image(client, app):
@@ -50,10 +45,8 @@ def test_generation_detail_progress_and_image(client, app):
 def test_discard_and_list_filter(client, app):
     b, char_id = book_with_character(client, app)
     page = new_page(client, b["id"])
-    gens = page_candidates(client, page["id"], count=2, seed=5)
-    run_jobs(client, app, 2)
-    a, c = gens[0]["id"], gens[1]["id"]
-    assert client.post(f"/api/pages/{page['id']}/select", json={"generation_id": a}).status_code == 200
+    a, c = (seed_generation(app, b["id"], page["id"], color_png()) for _ in range(2))
+    set_page(app, page["id"], selected_generation_id=a)
     base = f"/api/books/{b['id']}/generations"
     ids = [g["id"] for g in client.get(base).json()]
     assert ids == sorted(ids, reverse=True) and {a, c, char_id} <= set(ids)

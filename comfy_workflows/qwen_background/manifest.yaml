@@ -5,7 +5,7 @@ route: C
 status: draft
 description: >
   Qwen-Image-Edit-2511（Q4_K_M GGUF）+ Lightning 4-step LoRA 當純文字生圖：TextEncodeQwenImageEditPlus 不接 image1，
-  生成不含角色、物件少而大的背景彩圖。沒有草圖（ControlNet），有草圖的頁面改用 sdxl_background。
+  生成不含角色、物件少而大的背景彩圖。不接構圖草圖（ControlNet 已隨 SDXL 停用）。
   NEGATIVE 為固定空字串（cfg = 1 時不起作用），不開放為參數。
 workflow_file: workflow_api.json
 notes: >

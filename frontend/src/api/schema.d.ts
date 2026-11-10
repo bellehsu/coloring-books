@@ -130,59 +130,6 @@ export interface paths {
         patch: operations["update_page_api_pages__page_id__patch"];
         trace?: never;
     };
-    "/api/pages/{page_id}/sketch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Sketch */
-        get: operations["get_sketch_api_pages__page_id__sketch_get"];
-        /** Upload Sketch */
-        put: operations["upload_sketch_api_pages__page_id__sketch_put"];
-        post?: never;
-        /** Delete Sketch */
-        delete: operations["delete_sketch_api_pages__page_id__sketch_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/pages/{page_id}/candidates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Page Candidates */
-        post: operations["create_page_candidates_api_pages__page_id__candidates_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/pages/{page_id}/select": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Select Generation */
-        post: operations["select_generation_api_pages__page_id__select_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/pages/{page_id}/backgrounds": {
         parameters: {
             query?: never;
@@ -575,26 +522,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/books/{book_id}/reference-sketch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reference Sketch
-         * @description 上傳參考圖 → xdog 擷取（sigma 1.2）→ 以 contain 放進繪本的 generation_size，白底黑線。不存檔。
-         */
-        post: operations["reference_sketch_api_books__book_id__reference_sketch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/pages/{page_id}/character-check": {
         parameters: {
             query?: never;
@@ -786,18 +713,8 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /** Body_reference_sketch_api_books__book_id__reference_sketch_post */
-        Body_reference_sketch_api_books__book_id__reference_sketch_post: {
-            /** File */
-            file: string;
-        };
         /** Body_upload_background_api_pages__page_id__backgrounds_upload_post */
         Body_upload_background_api_pages__page_id__backgrounds_upload_post: {
-            /** File */
-            file: string;
-        };
-        /** Body_upload_sketch_api_pages__page_id__sketch_put */
-        Body_upload_sketch_api_pages__page_id__sketch_put: {
             /** File */
             file: string;
         };
@@ -1042,16 +959,6 @@ export interface components {
          * @enum {string}
          */
         LineDetail: "simple" | "standard" | "detailed";
-        /** PageCandidatesCreate */
-        PageCandidatesCreate: {
-            /**
-             * Count
-             * @default 4
-             */
-            count: number;
-            /** Seed */
-            seed?: number | null;
-        };
         /** PageCreate */
         PageCreate: {
             /**
@@ -1635,173 +1542,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PageUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_sketch_api_pages__page_id__sketch_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    upload_sketch_api_pages__page_id__sketch_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_upload_sketch_api_pages__page_id__sketch_put"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_sketch_api_pages__page_id__sketch_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_page_candidates_api_pages__page_id__candidates_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PageCandidatesCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GenerationOut"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    select_generation_api_pages__page_id__select_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SelectGeneration"];
             };
         };
         responses: {
@@ -2553,41 +2293,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reference_sketch_api_books__book_id__reference_sketch_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                book_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_reference_sketch_api_books__book_id__reference_sketch_post"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {

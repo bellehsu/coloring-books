@@ -1,5 +1,4 @@
 import io
-from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,12 +7,14 @@ from sqlmodel import select
 
 from app.config import load_settings
 from app.main import create_app
-from app.models import Book, CharacterCheck, LineartEdit, Page, PageStatus, utcnow
+from app.models import (
+    Book, CharacterCheck, Generation, GenKind, GenStatus, LineartEdit, Page, PageStatus, utcnow,
+)
 from app.services.layout import PrintMode
 from app.services.qa import QA_MESSAGES, QAReport
-from tests.fake_engine import FakeEngine, make_png
+from tests.fake_engine import FakeEngine
 from tests.test_api_books import new_book, run_jobs
-from tests.test_api_pages import book_with_character, new_page, upload
+from tests.test_api_pages import book_with_character, new_page
 
 
 @pytest.fixture
@@ -46,17 +47,38 @@ def color_png(size=(832, 1216), gap=0) -> bytes:
     return buf.getvalue()
 
 
-def selected_page(client, app, *, gap=0, count=1, book_kw=None):
-    """建書＋角色＋一頁，產生 count 張候選並選第一張。回傳 (book, page, [gen ids])。"""
+def seed_generation(app, book_id, page_id, png: bytes, kind=GenKind.COMPOSITE) -> int:
+    """直接寫入一筆成功、有圖的 generation（預設合成圖，現行流程的頁面選定圖），回傳 id。不選用。"""
+    with Image.open(io.BytesIO(png)) as im:
+        width, height = im.size
+    with app.state.sessions() as s:
+        g = Generation(book_id=book_id, page_id=page_id, kind=kind, status=GenStatus.SUCCEEDED,
+                       user_text="", prompt="", negative_prompt="", seed=0, width=width, height=height,
+                       request_json="{}")
+        s.add(g)
+        s.flush()
+        rel = app.state.storage.generation_image(book_id, g.id)
+        app.state.storage.write(rel, png)
+        g.image_path = rel
+        s.commit()
+        return g.id
+
+
+def selected_page(client, app, *, gap=0, count=1, book_kw=None, page_kw=None, kind=GenKind.COMPOSITE):
+    """建書＋角色＋一頁，直接寫入 count 張已完成的選定圖候選（預設合成圖；彩色方塊）並選第一張。
+    回傳 (book, page, [gen ids])。"""
     app.state.engine.image = color_png(gap=gap)
     b, _ = book_with_character(client, app, **(book_kw or A5_HOME))
-    p = new_page(client, b["id"])
-    gens = client.post(f"/api/pages/{p['id']}/candidates", json={"count": count}).json()
-    run_jobs(client, app, count)
-    ids = [g["id"] for g in gens]
-    r = client.post(f"/api/pages/{p['id']}/select", json={"generation_id": ids[0]})
-    assert r.status_code == 200, r.text
-    return b, r.json(), ids
+    p = new_page(client, b["id"], **(page_kw or {}))
+    ids = [seed_generation(app, b["id"], p["id"], color_png(gap=gap), kind) for _ in range(count)]
+    set_page(app, p["id"], selected_generation_id=ids[0])
+    return b, page_out(client, b["id"], p["id"]), ids
+
+
+def legacy_page(client, app, **page_kw):
+    """舊流程頁面：選定圖是一張成功的整頁候選圖（kind PAGE）。建立整頁候選的端點已停用，
+    所以直接寫進 DB（與舊資料長得一樣）。回傳 (book, page, [gen id])，同 selected_page。"""
+    return selected_page(client, app, page_kw=page_kw, kind=GenKind.PAGE)
 
 
 def set_page(app, page_id, **values):
@@ -279,9 +301,9 @@ def test_edits_follow_generation(client, app):
     _, p, ids = selected_page(client, app, count=2)
     url = f"/api/pages/{p['id']}/lineart/edits"
     assert client.put(url, json=edits_body(ids[0], [DRAW])).status_code == 200
-    client.post(f"/api/pages/{p['id']}/select", json={"generation_id": ids[1]})
+    set_page(app, p["id"], selected_generation_id=ids[1])
     assert client.get(url).json() == {"generation_id": ids[1], "strokes": []}
-    client.post(f"/api/pages/{p['id']}/select", json={"generation_id": ids[0]})
+    set_page(app, p["id"], selected_generation_id=ids[0])
     assert client.get(url).json() == {"generation_id": ids[0], "strokes": [DRAW]}
 
 
@@ -373,20 +395,6 @@ def test_autofix_respects_edit_layer_limits(client, app, monkeypatch):
     assert len(client.get(f"/api/pages/{p['id']}/lineart/edits").json()["strokes"]) == 500
 
 
-def test_select_resets_character_check(client, app):
-    _, p, ids = selected_page(client, app, count=2)
-    make_passed(app, p["id"], forced_pass_reason="原因")
-    # 選同一張：不算換圖
-    r = client.post(f"/api/pages/{p['id']}/select", json={"generation_id": ids[0]})
-    assert r.json()["status"] == "passed" and r.json()["character_check"] == "consistent"
-    r = client.post(f"/api/pages/{p['id']}/select", json={"generation_id": ids[1]})
-    out = r.json()
-    assert out["status"] == "draft" and out["character_check"] is None
-    page = get_page(app, p["id"])
-    assert page.forced_pass_reason is None and page.passed_at is None
-    assert page.status == PageStatus.DRAFT
-
-
 def test_overlay_png(client, app):
     b, p, _ = selected_page(client, app, gap=12, book_kw={"paper_size": "a5", "print_mode": "print_shop"})
     qa = client.get(f"/api/pages/{p['id']}/qa").json()
@@ -419,53 +427,15 @@ def test_generation_preview(client, app):
     assert png(thin).size == im.size and thin.content != client.get(url).content
     assert client.get(url, params={"line_width_px": 17}).status_code == 422
     assert client.get(url, params={"detail": "fine"}).status_code == 422
-    p = new_page(client, b["id"])
-    queued = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 1}).json()[0]
+    p = new_page(client, b["id"], scene_prompt="公園")
+    queued = client.post(f"/api/pages/{p['id']}/backgrounds").json()
     assert client.get(f"/api/generations/{queued['id']}/lineart-preview").status_code == 404
     run_jobs(client, app)
     assert png(client.get(f"/api/generations/{queued['id']}/lineart-preview")).size == im.size
     assert client.get("/api/generations/999/lineart-preview").status_code == 404
 
 
-def test_reference_sketch(client):
-    b = new_book(client)
-    im = Image.new("RGB", (300, 200), (255, 255, 255))
-    ImageDraw.Draw(im).rectangle([40, 40, 260, 160], outline=(0, 0, 0), width=4)
-    buf = io.BytesIO()
-    im.save(buf, "PNG")
-    url = f"/api/books/{b['id']}/reference-sketch"
-    out = png(client.post(url, files={"file": ("ref.png", buf.getvalue(), "image/png")}))
-    assert list(out.size) == b["layout"]["generation_size"]
-    gray = out.convert("L")
-    assert gray.getpixel((0, 0)) == 255 and gray.getpixel((out.width - 1, out.height - 1)) == 255
-    assert gray.getextrema()[0] < 64  # 有黑線
-    r = client.post(url, files={"file": ("a.txt", b"not an image", "text/plain")})
-    assert r.status_code == 400
-
-
-def test_reference_sketch_downscales_large_upload_before_extracting(client, monkeypatch):
-    from app.api import lineart as lineart_api
-
-    b = new_book(client)
-    gw, gh = b["layout"]["generation_size"]
-    seen = []
-    real = lineart_api.extract
-    monkeypatch.setattr(lineart_api, "extract", lambda img, spec: seen.append(img.shape) or real(img, spec))
-    im = Image.new("RGB", (4000, 3000), (255, 255, 255))
-    ImageDraw.Draw(im).rectangle([400, 400, 3600, 2600], outline=(0, 0, 0), width=12)
-    buf = io.BytesIO()
-    im.save(buf, "PNG")
-    out = png(client.post(f"/api/books/{b['id']}/reference-sketch",
-                          files={"file": ("big.png", buf.getvalue(), "image/png")}))
-    assert list(out.size) == [gw, gh]
-    (h, w, _), = seen
-    assert w <= gw and h <= gh and (w == gw or h == gh)
-    assert out.convert("L").getextrema()[0] < 64
-    assert client.post("/api/books/999/reference-sketch",
-                       files={"file": ("ref.png", buf.getvalue(), "image/png")}).status_code == 404
-
-
-def test_page_out_aspect_and_sketch_version(client, app):
+def test_page_out_aspect_and_no_sketch_url(client, app):
     b, p, _ = selected_page(client, app)
     assert p["aspect_mismatch"] is False and p["lineart_url"]
     assert p["line_detail"] == "standard" and p["line_width_px"] == 11
@@ -478,14 +448,9 @@ def test_page_out_aspect_and_sketch_version(client, app):
     assert page_out(client, b["id"], p["id"])["aspect_mismatch"] is True
     r = client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "公園"})
     assert r.json()["aspect_mismatch"] is True
-
-    r1 = upload(client, p["id"], make_png((128, 128))).json()
-    page = get_page(app, p["id"])
-    v = round(page.updated_at.astimezone(timezone.utc).timestamp() * 1_000_000)
-    assert r1["sketch_url"] == f"/api/pages/{p['id']}/sketch?v={v}"
-    r2 = upload(client, p["id"], make_png((256, 256))).json()
-    assert r2["sketch_url"] != r1["sketch_url"]
-    assert client.get(r2["sketch_url"]).status_code == 200
+    # 舊資料留著的構圖草圖不再提供：sketch_url 一律 None（欄位保留到前端移除）
+    set_page(app, p["id"], sketch_path=f"books/{b['id']}/pages/{p['id']}/sketch.png")
+    assert page_out(client, b["id"], p["id"])["sketch_url"] is None
 
 
 def test_change_size_recomputes_and_demotes(client, app, monkeypatch):
@@ -494,9 +459,8 @@ def test_change_size_recomputes_and_demotes(client, app, monkeypatch):
 
     b, p1, ids1 = selected_page(client, app)
     p2 = new_page(client, b["id"])
-    g2 = client.post(f"/api/pages/{p2['id']}/candidates", json={"count": 1}).json()[0]["id"]
-    run_jobs(client, app, 1)
-    assert client.post(f"/api/pages/{p2['id']}/select", json={"generation_id": g2}).status_code == 200
+    g2 = seed_generation(app, b["id"], p2["id"], color_png())
+    set_page(app, p2["id"], selected_generation_id=g2)
 
     # 第一頁有一筆修線（相對座標 y=0.05，在方塊外的空白處）
     mark = {"op": "draw", "width_px": 12, "points": [[0.2, 0.05], [0.8, 0.05]]}

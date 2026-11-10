@@ -24,10 +24,8 @@ class Storage:
         return f"books/{book_id}/generations/{gen_id}_mask.png"
 
     def sketch(self, book_id: int, page_id: int) -> str:
+        """舊資料的構圖草圖位置（Phase 9 起不再寫入；頁面刪除時連同資料夾一起清掉）。"""
         return f"books/{book_id}/pages/{page_id}/sketch.png"
-
-    def sketch_snapshot(self, book_id: int, page_id: int, gen_id: int) -> str:
-        return f"books/{book_id}/pages/{page_id}/sketch_{gen_id}.png"
 
     def lineart(self, book_id: int, page_id: int, key: str) -> str:
         return f"books/{book_id}/pages/{page_id}/lineart_{key}.png"

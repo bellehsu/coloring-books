@@ -1,15 +1,5 @@
 import pytest
 
-from app.services.prompts import PAGE_STYLE, page_prompt
-
-
-def test_page_prompt_joins_parts():
-    assert page_prompt(" a bunny ", "in a park") == "a bunny, in a park, " + PAGE_STYLE
-
-
-def test_page_prompt_empty_scene():
-    assert page_prompt("a bunny", "  ") == "a bunny, " + PAGE_STYLE
-
 
 def test_pose_size():
     from app.services.prompts import POSE_SIZE

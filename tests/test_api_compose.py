@@ -23,7 +23,7 @@ from app.services.prompts import (
 from tests.fake_engine import FakeEngine, make_png
 from tests.test_api_books import new_book, run_jobs
 from tests.test_api_lineart import (
-    A5_HOME, DRAW, color_png, edits_body, get_page, make_passed, set_page,
+    A5_HOME, DRAW, color_png, edits_body, get_page, legacy_page, make_passed, set_page,
 )
 from tests.test_api_pages import book_with_character, new_page
 
@@ -98,30 +98,6 @@ def composites(app, page_id) -> list[Generation]:
 def summary_reason(client, book_id, page_id):
     s = client.get(f"/api/books/{book_id}/export/summary").json()
     return next((x["reason"] for x in s["skipped"] if x["page_id"] == page_id), None)
-
-
-def legacy_page(client, app, **page_kw):
-    """舊流程頁面：選定圖是一張成功的整頁候選圖（kind PAGE）。建立整頁候選的端點已停用，
-    所以直接寫進 DB（與舊資料長得一樣）。回傳 (book, page, [gen id])，同 test_api_lineart.selected_page。"""
-    app.state.engine.image = color_png()
-    b, _ = book_with_character(client, app, **A5_HOME)
-    p = new_page(client, b["id"], **page_kw)
-    width, height = compute_layout(PaperSize(b["paper_size"]), PrintMode(b["print_mode"])).generation_size
-    with app.state.sessions() as s:
-        g = Generation(book_id=b["id"], page_id=p["id"], kind=GenKind.PAGE, status=GenStatus.SUCCEEDED,
-                       user_text="", prompt="p", negative_prompt="", seed=1, width=width, height=height,
-                       request_json="{}")
-        s.add(g)
-        s.flush()
-        rel = app.state.storage.generation_image(b["id"], g.id)
-        app.state.storage.write(rel, color_png())
-        g.image_path = rel
-        pg = s.get(Page, p["id"])
-        pg.selected_generation_id = g.id
-        s.add(pg)
-        s.commit()
-        gid = g.id
-    return b, page_json(client, b["id"], p["id"]), [gid]
 
 
 # ---- 背景 ----------------------------------------------------------------------
@@ -858,19 +834,6 @@ def test_compose_new_placement_new_composite(client, app):
     assert len(composites(app, pid)) == 3
 
 
-def test_select_generation_accepts_composite(client, app):
-    b, p, bg, pose = compose_ready(client, app)
-    pid = p["id"]
-    gid = confirm(client, pid)["selected_generation_id"]
-    client.put(f"/api/pages/{pid}/placement", json={"cx": 0.3, "cy": 0.6, "height": 0.5, "flip": True})
-    gid2 = confirm(client, pid)["selected_generation_id"]
-    r = client.post(f"/api/pages/{pid}/select", json={"generation_id": gid})
-    assert r.status_code == 200 and r.json()["selected_generation_id"] == gid
-    for wrong in (bg, pose):
-        assert client.post(f"/api/pages/{pid}/select", json={"generation_id": wrong}).status_code == 409
-    assert gid2
-
-
 def test_delete_page_removes_composite_files_and_masks(client, app):
     b, p, bg, pose = compose_ready(client, app)
     gid = confirm(client, p["id"])["selected_generation_id"]
@@ -912,12 +875,12 @@ def test_compose_pending_tracks_selected_composite(client, app):
     d = DEFAULT_PLACEMENT.to_dict()
     r = client.put(f"/api/pages/{pid}/placement", json={**d, "cx": d["cx"] + 0.00001})
     assert r.json()["compose_pending"] is False
-    # 用 /select 選回某張合成圖，位置不同 → 待合成
+    # 選定圖是另一個位置的合成圖（例如舊資料）→ 待合成
     client.put(f"/api/pages/{pid}/placement", json=moved)
     gid2 = confirm(client, pid)["selected_generation_id"]
     assert gid2 != page["selected_generation_id"]
-    r = client.post(f"/api/pages/{pid}/select", json={"generation_id": page["selected_generation_id"]})
-    assert r.status_code == 200 and r.json()["compose_pending"] is True
+    set_page(app, pid, selected_generation_id=page["selected_generation_id"])
+    assert page_json(client, b["id"], pid)["compose_pending"] is True
 
 
 def test_compose_pending_on_legacy_page(client, app):

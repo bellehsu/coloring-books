@@ -1,20 +1,9 @@
 """提示詞樣板。Phase 9：角色、背景、角色動作全部走 Qwen-Image-Edit-2511（qwen_character／qwen_background／
 qwen_edit_pose_cutout）。Qwen 的 cfg 為 1 → 負向提示詞無效，排除條件寫在正向；生成紀錄的 negative_prompt 存空字串。
 使用者輸入（角色描述、場景、動作，中文或英文）不翻譯，原樣放進英文樣板。
-
-SDXL 時期剩下的整頁樣板（page_prompt、PAGE_NEGATIVE）還有舊流程 API 在用，由 Phase 9 的 Task 6 連同呼叫端一起移除。
 """
 import random
 from collections.abc import Sequence
-
-PAGE_STYLE = "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, full detailed background scene"
-PAGE_NEGATIVE = "plain background, empty background, white background, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
-
-
-def page_prompt(character_description: str, scene: str) -> str:
-    parts = [character_description.strip(), scene.strip(), PAGE_STYLE]
-    return ", ".join(p for p in parts if p)
-
 
 def pick_variation(options: Sequence[str], rng: random.Random, exclude: str | None = None) -> str | None:
     """從 options 隨機挑一個變化語；exclude（上一張用的）不挑，避免「再產生一張」時重複。

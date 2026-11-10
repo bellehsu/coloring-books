@@ -507,244 +507,6 @@
         }
       }
     },
-    "/api/pages/{page_id}/sketch": {
-      "put": {
-        "tags": [
-          "pages"
-        ],
-        "summary": "Upload Sketch",
-        "operationId": "upload_sketch_api_pages__page_id__sketch_put",
-        "parameters": [
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Page Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_upload_sketch_api_pages__page_id__sketch_put"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PageOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "pages"
-        ],
-        "summary": "Delete Sketch",
-        "operationId": "delete_sketch_api_pages__page_id__sketch_delete",
-        "parameters": [
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Page Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PageOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "pages"
-        ],
-        "summary": "Get Sketch",
-        "operationId": "get_sketch_api_pages__page_id__sketch_get",
-        "parameters": [
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Page Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/pages/{page_id}/candidates": {
-      "post": {
-        "tags": [
-          "pages"
-        ],
-        "summary": "Create Page Candidates",
-        "operationId": "create_page_candidates_api_pages__page_id__candidates_post",
-        "parameters": [
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Page Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PageCandidatesCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/GenerationOut"
-                  },
-                  "title": "Response Create Page Candidates Api Pages  Page Id  Candidates Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/pages/{page_id}/select": {
-      "post": {
-        "tags": [
-          "pages"
-        ],
-        "summary": "Select Generation",
-        "operationId": "select_generation_api_pages__page_id__select_post",
-        "parameters": [
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Page Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SelectGeneration"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PageOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/pages/{page_id}/backgrounds": {
       "post": {
         "tags": [
@@ -1864,57 +1626,6 @@
         }
       }
     },
-    "/api/books/{book_id}/reference-sketch": {
-      "post": {
-        "tags": [
-          "lineart"
-        ],
-        "summary": "Reference Sketch",
-        "description": "上傳參考圖 → xdog 擷取（sigma 1.2）→ 以 contain 放進繪本的 generation_size，白底黑線。不存檔。",
-        "operationId": "reference_sketch_api_books__book_id__reference_sketch_post",
-        "parameters": [
-          {
-            "name": "book_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Book Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_reference_sketch_api_books__book_id__reference_sketch_post"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/pages/{page_id}/character-check": {
       "post": {
         "tags": [
@@ -2449,20 +2160,6 @@
         ],
         "title": "BatchSkip"
       },
-      "Body_reference_sketch_api_books__book_id__reference_sketch_post": {
-        "properties": {
-          "file": {
-            "type": "string",
-            "contentMediaType": "application/octet-stream",
-            "title": "File"
-          }
-        },
-        "type": "object",
-        "required": [
-          "file"
-        ],
-        "title": "Body_reference_sketch_api_books__book_id__reference_sketch_post"
-      },
       "Body_upload_background_api_pages__page_id__backgrounds_upload_post": {
         "properties": {
           "file": {
@@ -2476,20 +2173,6 @@
           "file"
         ],
         "title": "Body_upload_background_api_pages__page_id__backgrounds_upload_post"
-      },
-      "Body_upload_sketch_api_pages__page_id__sketch_put": {
-        "properties": {
-          "file": {
-            "type": "string",
-            "contentMediaType": "application/octet-stream",
-            "title": "File"
-          }
-        },
-        "type": "object",
-        "required": [
-          "file"
-        ],
-        "title": "Body_upload_sketch_api_pages__page_id__sketch_put"
       },
       "BookCreate": {
         "properties": {
@@ -3220,32 +2903,6 @@
         ],
         "title": "LineDetail"
       },
-      "PageCandidatesCreate": {
-        "properties": {
-          "count": {
-            "type": "integer",
-            "maximum": 8.0,
-            "minimum": 1.0,
-            "title": "Count",
-            "default": 4
-          },
-          "seed": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "maximum": 4294967295.0,
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Seed"
-          }
-        },
-        "type": "object",
-        "title": "PageCandidatesCreate"
-      },
       "PageCreate": {
         "properties": {
           "scene_prompt": {
@@ -3519,9 +3176,7 @@
           "controlnet_strength": {
             "anyOf": [
               {
-                "type": "number",
-                "maximum": 0.6,
-                "minimum": 0.0
+                "type": "number"
               },
               {
                 "type": "null"

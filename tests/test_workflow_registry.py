@@ -133,47 +133,13 @@ def test_one_bad_workflow_does_not_block_others(tmp_path):
 
 # ---- 專案內真正的 workflow --------------------------------------------------------
 
-def test_repo_route_a_loads():
-    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    a = reg.get("route_a_sdxl_ipadapter_cn")
-    assert a.ok, a.errors
-    built = a.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png", "structure_image": "s.png"})
-    assert built.params["controlnet_type"] == "canny/lineart/anime_lineart/mlsd"
-
-
 def test_repo_registry_has_no_retired_routes():
+    """Phase 9：SDXL（含 IP-Adapter、ControlNet）與 Route B 的 workflow 都在 archive/，不會被登錄。"""
     reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    assert "route_b_qwen_edit_2511_gguf" not in reg.entries
-    assert "sdxl_text2img" in reg.entries
-    assert "route_a_sdxl_ipadapter_cn" in reg.entries
-
-
-def test_repo_compose_workflows_load():
-    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    bg = reg.get("sdxl_background")
-    assert bg.ok, bg.errors
-    built = bg.build_prompt({"prompt": "x", "seed": 1, "structure_image": "s.png"})
-    assert built.params["controlnet_strength"] == 0.0
-    assert built.params["controlnet_type"] == "hed/pidi/scribble/ted"
-    assert built.params["controlnet_end_percent"] == 0.5
-    assert len(built.output_node_ids) == 1
-    assert not any(n["class_type"].startswith("IPAdapter") for n in built.prompt.values())
-
-    pose = reg.get("sdxl_pose_cutout")
-    assert pose.ok, pose.errors
-    built = pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png"})
-    assert built.params["ipadapter_weight"] == 0.55
-    assert built.params["ipadapter_end_at"] == 0.6
-    assert len(built.output_node_ids) == 2
-    assert "background_removal/birefnet.safetensors" in {
-        f"{m['folder']}/{m['filename']}" for m in pose.models}
-    with pytest.raises(ParameterError):
-        pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png", "ipadapter_weight": 5.0})
-
-
-def _src(prompt, title, inp):
-    by_title = {n["_meta"]["title"]: nid for nid, n in prompt.items()}
-    return prompt[by_title[title]]["inputs"][inp][0], by_title
+    retired = {"route_b_qwen_edit_2511_gguf", "sdxl_text2img", "sdxl_background", "sdxl_pose_cutout",
+               "route_a_sdxl_ipadapter_cn"}
+    assert not retired & set(reg.entries)
+    assert retired <= {p.name for p in (REPO / "archive" / "comfy_workflows").iterdir()}
 
 
 def _assert_no_orphans(prompt):
@@ -182,24 +148,6 @@ def _assert_no_orphans(prompt):
     orphans = [nid for nid, n in prompt.items()
                if nid not in refs and n["class_type"] != "SaveImage"]
     assert not orphans, orphans
-
-
-def test_repo_compose_workflows_wiring():
-    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    bg = reg.get("sdxl_background").build_prompt(
-        {"prompt": "x", "seed": 1, "structure_image": "s.png"}).prompt
-    src, t = _src(bg, "SAMPLER", "model")
-    assert src == t["CKPT"]
-    assert _src(bg, "SAMPLER", "positive")[0] == t["APPLY_CONTROLNET"]
-    assert _src(bg, "SAMPLER", "negative")[0] == t["APPLY_CONTROLNET"]
-    _assert_no_orphans(bg)
-
-    pose = reg.get("sdxl_pose_cutout").build_prompt(
-        {"prompt": "x", "seed": 1, "character_image": "c.png"}).prompt
-    src, t = _src(pose, "SAMPLER", "model")
-    assert src == t["IPADAPTER"]
-    assert _src(pose, "IPADAPTER", "image")[0] == t["CHARACTER_REF"]
-    _assert_no_orphans(pose)
 
 
 def test_qwen_pose_manifest_loads_and_maps_titles():
