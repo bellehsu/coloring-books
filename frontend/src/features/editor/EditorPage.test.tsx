@@ -283,6 +283,7 @@ beforeEach(() => {
         pages = pages.map((p) =>
           p.id === Number(m![1]) ? { ...p, selected_generation_id: made.id, compose_pending: false } : p,
         );
+        edits = []; // 新的合成圖還沒有補過的線
         return j(pages.find((p) => p.id === Number(m![1])));
       }
       m = url.match(/^\/api\/pages\/(\d+)\/select$/);
@@ -649,7 +650,7 @@ describe("EditorPage", () => {
     expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2", { scroll: false });
   });
 
-  it("有補過的線：第一次自動合成前先問；取消不合成，繼續才合成，之後這頁不再問", async () => {
+  it("有補過的線：自動合成前先問；取消不合成，繼續才合成；新合成圖上又補了線 → 再問", async () => {
     const { o, g } = composedReady();
     pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
     gens = [...g, mkGen(50, { kind: "composite" })];
@@ -669,14 +670,46 @@ describe("EditorPage", () => {
     const again = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
     await userEvent.click(within(again).getByRole("button", { name: "繼續" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
-    // 新合成圖上又補了線，再移動：這頁已經同意過，不再問
+    // 新合成圖還沒補線：再移動不問
+    await userEvent.click(within(screen.getByTestId("compose-stage")).getByRole("button", { name: "stub-nudge" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(2), { timeout: 2000 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // 新合成圖上又補了線，再移動：同意只算那一張合成圖 → 再問；取消就不合成
     edits = [{ op: "draw", width_px: 11, points: [[0.4, 0.4]] }];
     await act(async () => {
       await lastQc.invalidateQueries({ queryKey: qk.edits(1) });
     });
     await userEvent.click(within(screen.getByTestId("compose-stage")).getByRole("button", { name: "stub-nudge" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(2), { timeout: 2000 });
+    const third = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
+    await userEvent.click(within(third).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(2);
+  });
+
+  it("拖完有補線的頁、馬上換到別頁：不在別頁問；回到那頁才問，繼續後才合成", async () => {
+    const a = composedReady(1, 3, 4);
+    const b = composedReady(2, 5, 6);
+    pages[0] = mkPage(1, { ...a.o, selected_generation_id: 50 });
+    pages[1] = mkPage(2, { ...b.o, selected_generation_id: 51 });
+    gens = [...a.g, ...b.g, mkGen(50, { kind: "composite" }), mkGen(51, { kind: "composite", page_id: 2 })];
+    edits = [{ op: "draw", width_px: 11, points: [[0.5, 0.5]] }];
+    setup();
+    const stage = await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-move" }));
+    await userEvent.click(pageButton(2));
+    await waitFor(() => expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-bg", "/img/5.png"));
+    // debounce 過了：第 1 頁要問，但畫面是第 2 頁 → 不跳出、不合成
+    await act(() => new Promise((r) => setTimeout(r, 900)));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
+    expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(0);
+    // 回到第 1 頁才問
+    await userEvent.click(pageButton(1));
+    const dialog = await screen.findByRole("dialog", { name: "清掉補過的線？" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "繼續" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(0);
   });
 
   it("沒有補過的線：不問，直接合成", async () => {

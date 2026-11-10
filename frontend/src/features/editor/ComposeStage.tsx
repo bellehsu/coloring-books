@@ -217,7 +217,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
               onPointerDown={begin("resize")}
               onPointerMove={move}
               onPointerUp={end}
-                onPointerCancel={cancel}
+              onPointerCancel={cancel}
               onLostPointerCapture={cancel}
             />
           )}

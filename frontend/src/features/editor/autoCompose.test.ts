@@ -80,16 +80,50 @@ describe("createAutoCompose", () => {
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(compose).not.toHaveBeenCalled();
     expect(ac.status(1)).toBe("idle");
-    // 使用者沒同意過 → 下次再問；這次繼續 → 合成
+    // 使用者沒同意過 → 下次再問（問的是這一頁）；這次繼續 → 合成
     ac.schedule(1);
+    ac.schedule(1); // 一連串的變化只問一次
     await vi.advanceTimersByTimeAsync(600);
     expect(confirm).toHaveBeenCalledTimes(2);
+    expect(confirm).toHaveBeenLastCalledWith(1);
     expect(compose).toHaveBeenCalledTimes(1);
-    // 同意過一次：這頁這個 session 不再問
+  });
+
+  it("consent covers one composite: line edits drawn on the new composite are asked about again", async () => {
+    let edited = true;
+    const confirm = vi.fn(async () => true);
+    const compose = vi.fn(async () => {
+      edited = false; // 新的合成圖還沒有補過的線
+    });
+    const { ac } = make({ hasLineEdits: () => edited, confirm, compose });
+    ac.schedule(1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(compose).toHaveBeenCalledTimes(1);
+    // 新合成圖沒有補線：不問
+    ac.schedule(1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(compose).toHaveBeenCalledTimes(2);
+    // 在新合成圖上補了線，再移動：要再問，取消就不合成
+    edited = true;
+    confirm.mockResolvedValueOnce(false);
     ac.schedule(1);
     await vi.advanceTimersByTimeAsync(600);
     expect(confirm).toHaveBeenCalledTimes(2);
     expect(compose).toHaveBeenCalledTimes(2);
+  });
+
+  it("consent survives a failed compose: the retry does not ask again", async () => {
+    const confirm = vi.fn(async () => true);
+    const compose = vi.fn().mockRejectedValueOnce(new Error("409")).mockResolvedValue(undefined);
+    const { ac } = make({ hasLineEdits: () => true, confirm, compose });
+    ac.schedule(1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(ac.status(1)).toBe("error");
+    await ac.flush(1);
+    expect(compose).toHaveBeenCalledTimes(2);
+    expect(confirm).toHaveBeenCalledTimes(1);
   });
 
   it("no line edits → never asks; the other page still asks for its own edits", async () => {

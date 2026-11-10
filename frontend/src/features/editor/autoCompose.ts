@@ -4,8 +4,9 @@
  *
  * - 每頁各自計時：在第 2 頁拖完馬上換到第 3 頁，第 2 頁照樣合成，第 3 頁不受影響。
  * - 同一頁一次只跑一個合成；跑的時候又有變化 → 跑完再合成一次（位置以最後存的為準）。
- * - 這頁的選定圖有補過的線（hasLineEdits）時，這個 session 第一次合成前先問（confirm）；
- *   取消就不合成、回到 idle，下次有變化再問。同意過一次之後這頁不再問。
+ * - 這頁的選定圖有補過的線（hasLineEdits）時，合成前先問（confirm(pageId)）；取消就不合成、回到 idle，
+ *   下次有變化再問。同意只算那一張合成圖：合成成功後就失效，之後在新合成圖上補的線，下次移動前會再問。
+ *   合成失敗時同意還在（重試不再問）。
  * - 合成失敗停在 error，不自動重試；flush（「更新失敗，重試」）或下一次 schedule 再試。
  */
 export type AutoComposeStatus = "idle" | "pending" | "running" | "error";
@@ -17,8 +18,8 @@ export interface AutoComposeOptions {
   compose: (pageId: number) => Promise<void>;
   /** 這頁目前的選定圖有沒有補過的線（合成會換掉選定圖，補的線跟著不見）。 */
   hasLineEdits: (pageId: number) => boolean;
-  /** 問使用者要不要清掉補過的線；true = 繼續。 */
-  confirm: () => Promise<boolean>;
+  /** 問使用者要不要清掉這頁補過的線；true = 繼續。 */
+  confirm: (pageId: number) => Promise<boolean>;
 }
 
 export interface AutoCompose {
@@ -44,7 +45,7 @@ interface PageState {
   /** 合成中又有到期的變化：跑完再合成一次。 */
   again: boolean;
   error: boolean;
-  /** 使用者已同意清掉這頁補過的線。 */
+  /** 使用者已同意清掉這頁目前選定圖上補過的線（合成成功後失效）。 */
   confirmed: boolean;
 }
 
@@ -71,12 +72,13 @@ export function createAutoCompose({ delayMs = 600, compose, hasLineEdits, confir
   /** 一次合成（必要時先問）。 */
   const once = async (pageId: number, s: PageState) => {
     if (!s.confirmed && hasLineEdits(pageId)) {
-      if (!(await confirm())) return; // 取消：不合成、不算失敗
+      if (!(await confirm(pageId))) return; // 取消：不合成、不算失敗
       s.confirmed = true;
     }
     try {
       await compose(pageId);
       s.error = false;
+      s.confirmed = false; // 選定圖換成新的合成圖：之後補的線要再問
     } catch {
       s.error = true;
     }

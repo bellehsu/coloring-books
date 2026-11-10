@@ -79,25 +79,17 @@ type PagePatch = Partial<Pick<Page, "line_detail" | "line_width_px">>;
 interface AutoComposeDeps {
   compose: (pageId: number) => Promise<void>;
   hasLineEdits: (pageId: number) => boolean;
-  /** 開「清掉補過的線？」對話框，回傳使用者的選擇。 */
-  ask: () => Promise<boolean>;
+  /** 要問這頁「清掉補過的線？」，回傳使用者的選擇（等到那頁在畫面上才問）。 */
+  ask: (pageId: number) => Promise<boolean>;
 }
 
-/**
- * 編輯器的 autoCompose：只建立一次（計時跨 render 與換頁），回呼由 effect 換成最新 render 的版本。
- * 確認框同時只開一個：兩頁同時要問時排隊。
- */
+/** 編輯器的 autoCompose：只建立一次（計時跨 render 與換頁），回呼由 effect 換成最新 render 的版本。 */
 function createEditorAutoCompose() {
   let deps: AutoComposeDeps = { compose: async () => {}, hasLineEdits: () => true, ask: async () => false };
-  let asking: Promise<unknown> = Promise.resolve();
   const ac = createAutoCompose({
     compose: (pageId) => deps.compose(pageId),
     hasLineEdits: (pageId) => deps.hasLineEdits(pageId),
-    confirm: () => {
-      const answer = asking.then(() => deps.ask());
-      asking = answer.catch(() => {});
-      return answer;
-    },
+    confirm: (pageId) => deps.ask(pageId),
   });
   return { ac, setDeps: (d: AutoComposeDeps) => void (deps = d) };
 }
@@ -252,15 +244,18 @@ export function EditorPage({ bookId }: { bookId: number }) {
     const data = qc.getQueryData<Edits>(qk.edits(pageId));
     return data?.generation_id === sel ? data.strokes.length > 0 : true;
   };
-  /** 「清掉補過的線？」對話框開著時，回覆給 autoCompose 的函式。 */
-  const [lossAnswer, setLossAnswer] = useState<((ok: boolean) => void) | null>(null);
+  /**
+   * 等著問「清掉補過的線？」的頁 → 回覆給 autoCompose 的函式。每頁同時最多一個（每頁一次只跑一個合成）。
+   * 只在那頁是目前頁時開對話框：拖完馬上換頁，要等使用者回到那頁才問（那頁的合成也等著）。
+   */
+  const [lossAsks, setLossAsks] = useState<ReadonlyMap<number, (ok: boolean) => void>>(() => new Map());
   const [auto] = useState(createEditorAutoCompose);
   const autoCompose = auto.ac;
   useEffect(() => {
     auto.setDeps({
       compose: composeNow,
       hasLineEdits,
-      ask: () => new Promise<boolean>((resolve) => setLossAnswer(() => resolve)),
+      ask: (pageId) => new Promise<boolean>((resolve) => setLossAsks((m) => new Map(m).set(pageId, resolve))),
     });
   });
   useEffect(() => autoCompose.connect(), [autoCompose]);
@@ -280,10 +275,18 @@ export function EditorPage({ bookId }: { bookId: number }) {
     () => (current ? autoCompose.status(current.id) : "idle"),
     () => "idle" as const,
   );
-  const answerLoss = (ok: boolean) => {
-    lossAnswer?.(ok);
-    setLossAnswer(null);
+  /** 回覆這頁的提問（使用者按了，或頁面刪除時當作取消）。 */
+  const settleAsk = (pageId: number, ok: boolean) => {
+    const resolve = lossAsks.get(pageId);
+    if (!resolve) return;
+    resolve(ok);
+    setLossAsks((m) => {
+      const next = new Map(m);
+      next.delete(pageId);
+      return next;
+    });
   };
+  const askingCurrent = current != null && lossAsks.has(current.id);
 
   // 背景與角色動作都選好、但選定圖不是它們的合成圖（「產生全部素材」自動選用、合成前離開等）：
   // 開著這頁時自動合成一次。舊流程圖片不自動換掉；有補過的線不自動問（等使用者動了才問）。
@@ -366,6 +369,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     // 切頁前先標記刪除中：畫布卸載時 flush 的草圖先停著，不和 DELETE 賽跑、不跳出誤導的「草圖儲存失敗」
     sketchSaver.beginDelete(id);
     autoCompose.forget(id); // 還在等的自動合成不送
+    settleAsk(id, false);
     // 先切到相鄰頁（樂觀），避免刪除完成前後閃到別頁；失敗就留在相鄰頁並提示
     if (id === current?.id && neighbor) selectPage(neighbor.id);
     deletePage.mutate(id, {
@@ -431,11 +435,11 @@ export function EditorPage({ bookId }: { bookId: number }) {
       {body}
       <ExportDrawer open={exportOpen} onClose={() => setExportOpen(false)} book={b} />
       <BookSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} book={b} />
-      <Dialog open={lossAnswer !== null} onClose={() => answerLoss(false)} title="清掉補過的線？">
+      <Dialog open={askingCurrent} onClose={() => settleAsk(current!.id, false)} title="清掉補過的線？">
         <p className={styles.confirmText}>移動角色會清掉這頁補過的線，要繼續嗎？</p>
         <div className={styles.confirmActions}>
-          <Button onClick={() => answerLoss(false)}>取消</Button>
-          <Button variant="primary" onClick={() => answerLoss(true)}>
+          <Button onClick={() => settleAsk(current!.id, false)}>取消</Button>
+          <Button variant="primary" onClick={() => settleAsk(current!.id, true)}>
             繼續
           </Button>
         </div>
