@@ -1,4 +1,4 @@
-/* 候選圖列（舞台下方）。 */
+/* 背景／角色動作歷史（舞台下方）。 */
 .tray {
   background: var(--surface);
   border-top: 1px solid var(--line);
@@ -91,7 +91,7 @@
   cursor: progress;
 }
 .thumb {
-  aspect-ratio: 864 / 1216;
+  aspect-ratio: 864 / 1216; /* 預設；實際比例由元件依 generation 尺寸以 style 覆寫 */
   border-radius: 6px;
   background: var(--bg);
   display: grid;
@@ -163,6 +163,10 @@
   place-items: center;
   cursor: pointer;
 }
-.iconBtn:hover {
+.iconBtn:hover:not(:disabled) {
   background: var(--chip-bg);
+}
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

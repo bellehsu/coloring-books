@@ -146,3 +146,57 @@ def test_repo_registry_has_no_retired_routes():
     assert "route_b_qwen_edit_2511_gguf" not in reg.entries
     assert "sdxl_text2img" in reg.entries
     assert "route_a_sdxl_ipadapter_cn" in reg.entries
+
+
+def test_repo_compose_workflows_load():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    bg = reg.get("sdxl_background")
+    assert bg.ok, bg.errors
+    built = bg.build_prompt({"prompt": "x", "seed": 1, "structure_image": "s.png"})
+    assert built.params["controlnet_strength"] == 0.0
+    assert built.params["controlnet_type"] == "hed/pidi/scribble/ted"
+    assert built.params["controlnet_end_percent"] == 0.5
+    assert len(built.output_node_ids) == 1
+    assert not any(n["class_type"].startswith("IPAdapter") for n in built.prompt.values())
+
+    pose = reg.get("sdxl_pose_cutout")
+    assert pose.ok, pose.errors
+    built = pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png"})
+    assert built.params["ipadapter_weight"] == 0.55
+    assert built.params["ipadapter_end_at"] == 0.6
+    assert len(built.output_node_ids) == 2
+    assert "background_removal/birefnet.safetensors" in {
+        f"{m['folder']}/{m['filename']}" for m in pose.models}
+    with pytest.raises(ParameterError):
+        pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png", "ipadapter_weight": 5.0})
+
+
+def _src(prompt, title, inp):
+    by_title = {n["_meta"]["title"]: nid for nid, n in prompt.items()}
+    return prompt[by_title[title]]["inputs"][inp][0], by_title
+
+
+def _assert_no_orphans(prompt):
+    refs = {v[0] for n in prompt.values() for v in n["inputs"].values()
+            if isinstance(v, list) and len(v) == 2}
+    orphans = [nid for nid, n in prompt.items()
+               if nid not in refs and n["class_type"] != "SaveImage"]
+    assert not orphans, orphans
+
+
+def test_repo_compose_workflows_wiring():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    bg = reg.get("sdxl_background").build_prompt(
+        {"prompt": "x", "seed": 1, "structure_image": "s.png"}).prompt
+    src, t = _src(bg, "SAMPLER", "model")
+    assert src == t["CKPT"]
+    assert _src(bg, "SAMPLER", "positive")[0] == t["APPLY_CONTROLNET"]
+    assert _src(bg, "SAMPLER", "negative")[0] == t["APPLY_CONTROLNET"]
+    _assert_no_orphans(bg)
+
+    pose = reg.get("sdxl_pose_cutout").build_prompt(
+        {"prompt": "x", "seed": 1, "character_image": "c.png"}).prompt
+    src, t = _src(pose, "SAMPLER", "model")
+    assert src == t["IPADAPTER"]
+    assert _src(pose, "IPADAPTER", "image")[0] == t["CHARACTER_REF"]
+    _assert_no_orphans(pose)

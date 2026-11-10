@@ -7,6 +7,15 @@ export type Generation = S["GenerationOut"];
 export type QA = S["QAOut"];
 export type Edits = S["EditsOut"];
 export type QueueStatus = S["QueueStatus"];
+/** 角色在背景上的位置（相對背景）：cx、cy 為角色中心 0–1，height 為角色高／背景高 0.1–1.0。 */
+export interface Placement {
+  cx: number;
+  cy: number;
+  height: number;
+  flip: boolean;
+}
+/** 同後端預設：中心 0.66、高 0.6 → 底緣 0.96，貼近下方。 */
+export const DEFAULT_PLACEMENT: Placement = { cx: 0.5, cy: 0.66, height: 0.6, flip: false };
 /** 後端 export/summary 沒有 response model，型別在此手寫（見 backend/app/api/export.py）。 */
 export interface ExportSummary {
   total: number;

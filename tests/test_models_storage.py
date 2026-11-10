@@ -153,3 +153,31 @@ def test_storage_lineart_and_preview_paths(tmp_path):
     st = Storage(tmp_path)
     assert st.lineart(3, 4, "abc") == "books/3/pages/4/lineart_abc.png"
     assert st.preview(9, "qa") == "cache/previews/9_qa.png"
+
+
+def test_compose_kinds_and_fields_roundtrip(tmp_path):
+    engine = make_engine(tmp_path / "t.db")
+    init_db(engine)
+    make = session_factory(engine)
+    with make() as s:
+        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME)
+        s.add(book)
+        s.commit()
+        for kind in (GenKind.BACKGROUND, GenKind.POSE, GenKind.COMPOSITE):
+            s.add(Generation(book_id=book.id, kind=kind, user_text="u", prompt="p", negative_prompt="n",
+                             seed=1, width=8, height=8, request_json="{}", mask_path="m.png"))
+        s.add(Page(book_id=book.id, position=1, background_generation_id=1, pose_generation_id=2,
+                   placement_json='{"cx": 0.5}'))
+        s.commit()
+    with make() as s:
+        from sqlmodel import select
+        kinds = [g.kind for g in s.exec(select(Generation).order_by(Generation.id))]
+        assert kinds == [GenKind.BACKGROUND, GenKind.POSE, GenKind.COMPOSITE]
+        assert GenKind.BACKGROUND.value == "background" and GenKind.POSE.value == "pose"
+        assert s.get(Generation, 1).mask_path == "m.png"
+        p = s.exec(select(Page)).one()
+        assert (p.background_generation_id, p.pose_generation_id, p.placement_json) == (1, 2, '{"cx": 0.5}')
+
+
+def test_generation_mask_path():
+    assert Storage("/x").generation_mask(3, 7) == "books/3/generations/7_mask.png"

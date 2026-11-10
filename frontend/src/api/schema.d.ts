@@ -180,6 +180,121 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pages/{page_id}/backgrounds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Background
+         * @description 產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。
+         */
+        post: operations["create_background_api_pages__page_id__backgrounds_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/poses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Pose
+         * @description 產生一個角色動作（白底、自動去背）：角色描述＋動作文字，不帶場景描述；尺寸固定 POSE_SIZE。
+         */
+        post: operations["create_pose_api_pages__page_id__poses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/background": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Select Background */
+        post: operations["select_background_api_pages__page_id__background_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/pose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Select Pose */
+        post: operations["select_pose_api_pages__page_id__pose_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/placement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save Placement
+         * @description 位置草稿（拖拉時自動存）；不產生合成圖、不改頁面狀態。
+         */
+        put: operations["save_placement_api_pages__page_id__placement_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/compose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Compose
+         * @description 用頁面目前的背景、角色動作與位置（沒存過就用預設）產生合成圖並設為選定圖片。
+         *     完全相同的既有合成圖直接選回（修線一起回來）；換了圖就退回草稿、清角色檢查。
+         */
+        post: operations["confirm_compose_api_pages__page_id__compose_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/generations/{gen_id}": {
         parameters: {
             query?: never;
@@ -207,6 +322,43 @@ export interface paths {
         };
         /** Get Generation Image */
         get: operations["get_generation_image_api_generations__gen_id__image_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/generations/{gen_id}/mask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Generation Mask */
+        get: operations["get_generation_mask_api_generations__gen_id__mask_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/generations/{gen_id}/cutout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Generation Cutout
+         * @description 角色動作的去背圖：裁到遮罩外接框的 RGBA PNG（alpha＝遮罩）。
+         */
+        get: operations["get_generation_cutout_api_generations__gen_id__cutout_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -682,7 +834,7 @@ export interface components {
          * GenKind
          * @enum {string}
          */
-        GenKind: "character" | "page";
+        GenKind: "character" | "page" | "background" | "pose" | "composite";
         /**
          * GenStatus
          * @enum {string}
@@ -712,6 +864,10 @@ export interface components {
             height: number;
             /** Image Url */
             image_url: string | null;
+            /** Mask Url */
+            mask_url: string | null;
+            /** Cutout Url */
+            cutout_url: string | null;
             /** Error */
             error: string | null;
             /** Elapsed S */
@@ -834,6 +990,11 @@ export interface components {
             sketch_url: string | null;
             /** Selected Generation Id */
             selected_generation_id: number | null;
+            /** Background Generation Id */
+            background_generation_id: number | null;
+            /** Pose Generation Id */
+            pose_generation_id: number | null;
+            placement: components["schemas"]["PagePlacement"] | null;
             status: components["schemas"]["PageStatus"];
             line_detail: components["schemas"]["LineDetail"];
             /** Line Width Px */
@@ -845,6 +1006,8 @@ export interface components {
             needs_fix: boolean | null;
             /** Aspect Mismatch */
             aspect_mismatch: boolean;
+            /** Compose Pending */
+            compose_pending: boolean;
             /**
              * Created At
              * Format: date-time
@@ -855,6 +1018,23 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * PagePlacement
+         * @description 角色在背景上的位置（相對背景）：cx、cy 為角色中心，height 為角色高度／背景高度。
+         */
+        PagePlacement: {
+            /** Cx */
+            cx: number;
+            /** Cy */
+            cy: number;
+            /** Height */
+            height: number;
+            /**
+             * Flip
+             * @default false
+             */
+            flip: boolean;
         };
         /**
          * PageStatus
@@ -880,6 +1060,11 @@ export interface components {
         PassIn: {
             /** Force Reason */
             force_reason?: string | null;
+        };
+        /** PoseCreate */
+        PoseCreate: {
+            /** Action */
+            action: string;
         };
         /**
          * PrintMode
@@ -1516,6 +1701,208 @@ export interface operations {
             };
         };
     };
+    create_background_api_pages__page_id__backgrounds_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_pose_api_pages__page_id__poses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoseCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    select_background_api_pages__page_id__background_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectGeneration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    select_pose_api_pages__page_id__pose_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectGeneration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_placement_api_pages__page_id__placement_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PagePlacement"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_compose_api_pages__page_id__compose_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_generation_api_generations__gen_id__get: {
         parameters: {
             query?: never;
@@ -1583,6 +1970,68 @@ export interface operations {
         };
     };
     get_generation_image_api_generations__gen_id__image_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gen_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_generation_mask_api_generations__gen_id__mask_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gen_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_generation_cutout_api_generations__gen_id__cutout_get: {
         parameters: {
             query?: never;
             header?: never;

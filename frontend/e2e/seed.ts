@@ -27,10 +27,12 @@ export async function createPage(request: APIRequestContext, bookId: number, sce
   return ok<Page>(await request.post(`/api/books/${bookId}/pages`, { data: { scene_prompt: scene } }));
 }
 
+type Kind = "character" | "background" | "pose";
+
 async function waitSucceeded(
   request: APIRequestContext,
   bookId: number,
-  kind: "character" | "page",
+  kind: Kind,
   ids: number[],
 ): Promise<Generation[]> {
   let gens: Generation[] = [];
@@ -56,16 +58,24 @@ export async function setCharacter(request: APIRequestContext, bookId: number): 
   await ok(await request.post(`/api/books/${bookId}/character`, { data: { generation_id: gen.id } }));
 }
 
-/** 產生 count 張頁面候選，選第一張。 */
-export async function generateAndSelect(
+/** 合成流程：產生並選用 1 張背景、1 個角色動作（需已設定角色），存一個位置草稿；confirm 時再確認合成。 */
+export async function composePage(
   request: APIRequestContext,
   bookId: number,
   pageId: number,
-  count = 2,
+  {
+    confirm = false,
+    placement = { cx: 0.45, cy: 0.66, height: 0.6, flip: false },
+  }: { confirm?: boolean; placement?: { cx: number; cy: number; height: number; flip: boolean } } = {},
 ): Promise<void> {
-  const created = await ok<Generation[]>(await request.post(`/api/pages/${pageId}/candidates`, { data: { count } }));
-  const gens = await waitSucceeded(request, bookId, "page", created.map((g) => g.id));
-  await ok(await request.post(`/api/pages/${pageId}/select`, { data: { generation_id: gens[0].id } }));
+  const bg = await ok<Generation>(await request.post(`/api/pages/${pageId}/backgrounds`));
+  const pose = await ok<Generation>(await request.post(`/api/pages/${pageId}/poses`, { data: { action: "waving one hand" } }));
+  await waitSucceeded(request, bookId, "background", [bg.id]);
+  await waitSucceeded(request, bookId, "pose", [pose.id]);
+  await ok(await request.post(`/api/pages/${pageId}/background`, { data: { generation_id: bg.id } }));
+  await ok(await request.post(`/api/pages/${pageId}/pose`, { data: { generation_id: pose.id } }));
+  await ok(await request.put(`/api/pages/${pageId}/placement`, { data: placement }));
+  if (confirm) await ok(await request.post(`/api/pages/${pageId}/compose`));
 }
 
 /** 每次執行都不同的書名（本機重用伺服器時資料會累積）。 */

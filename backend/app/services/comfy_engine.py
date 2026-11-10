@@ -18,6 +18,8 @@ from app.services.workflow_registry import ParameterError, WorkflowNotReady, Wor
 
 CHARACTER_WORKFLOW = "sdxl_text2img"
 PAGE_WORKFLOW = "route_a_sdxl_ipadapter_cn"
+BACKGROUND_WORKFLOW = "sdxl_background"
+POSE_WORKFLOW = "sdxl_pose_cutout"
 UPLOAD_SUBFOLDER = "coloring_books"
 
 # 頁面生成的固定參數（Phase 1 實驗結論）
@@ -80,7 +82,10 @@ class ComfyEngine:
     async def _generate(self, req: GenerationRequest, on_progress: ProgressFn | None) -> GenerationResult:
         if req.kind == GenKind.PAGE and req.character_image is None:
             raise EngineError("頁面生成需要角色參考圖")
-        name = PAGE_WORKFLOW if req.kind == GenKind.PAGE else CHARACTER_WORKFLOW
+        if req.kind == GenKind.POSE and req.character_image is None:
+            raise EngineError("角色動作需要角色參考圖")
+        name = {GenKind.PAGE: PAGE_WORKFLOW, GenKind.BACKGROUND: BACKGROUND_WORKFLOW,
+                GenKind.POSE: POSE_WORKFLOW}.get(req.kind, CHARACTER_WORKFLOW)
         entry = self.registry.get(name)
 
         async with self.client_factory() as client:
@@ -90,6 +95,25 @@ class ComfyEngine:
                                else _white_png(req.width, req.height))
                 struct_ref = await self._upload(client, struct_data, "struct")
                 values = page_params(req, char_ref, struct_ref)
+            elif req.kind == GenKind.BACKGROUND:
+                struct_data = (req.structure_image.read_bytes() if req.structure_image
+                               else _white_png(req.width, req.height))
+                struct_ref = await self._upload(client, struct_data, "struct")
+                values = {
+                    "prompt": req.prompt, "negative_prompt": req.negative_prompt, "seed": req.seed,
+                    "width": req.width, "height": req.height, "structure_image": struct_ref,
+                    "controlnet_type": PAGE_FIXED["controlnet_type"],
+                    "controlnet_end_percent": PAGE_FIXED["controlnet_end_percent"],
+                    "controlnet_strength": req.structure_strength if req.structure_image else 0.0,
+                }
+            elif req.kind == GenKind.POSE:
+                char_ref = await self._upload(client, req.character_image.read_bytes(), "char")
+                values = {
+                    "prompt": req.prompt, "negative_prompt": req.negative_prompt, "seed": req.seed,
+                    "width": req.width, "height": req.height, "character_image": char_ref,
+                    "ipadapter_weight": PAGE_FIXED["ipadapter_weight"],
+                    "ipadapter_end_at": PAGE_FIXED["ipadapter_end_at"],
+                }
             else:
                 values = {"prompt": req.prompt, "negative_prompt": req.negative_prompt, "seed": req.seed,
                           "width": req.width, "height": req.height}
@@ -104,9 +128,21 @@ class ComfyEngine:
             files = [f for f in result.files if f.node_id in built.output_node_ids and f.type == "output"]
             if not files:
                 raise EngineError("ComfyUI 沒有輸出圖片")
-            image = await client.download(files[0])
+            # manifest outputs 依序對應 output_node_ids；用 title 決定每個輸出的用途
+            titles = {nid: o["title"] for nid, o in zip(built.output_node_ids, entry.manifest["outputs"])}
+            by_title = {}
+            for f in files:
+                by_title.setdefault(titles[f.node_id], f)
+            main = by_title.get("OUTPUT", files[0])
+            image = await client.download(main)
+            extra: dict[str, bytes] = {}
+            if "MASK" in by_title:
+                extra["mask"] = await client.download(by_title["MASK"])
+            elif req.kind == GenKind.POSE:
+                raise EngineError("去背失敗：沒有遮罩輸出")
             return GenerationResult(
                 image=image, elapsed_s=time.monotonic() - started, engine="comfyui",
                 workflow_name=built.workflow_name, workflow_version=built.workflow_version,
                 workflow_hash=built.workflow_hash, models=built.models, params=built.params,
+                extra_images=extra,
             )

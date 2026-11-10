@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.models import Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
+from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
 from app.services.qa import QA_MESSAGES, QAReport
@@ -16,6 +17,7 @@ from app.services.qa import QA_MESSAGES, QAReport
 TitleStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 DescriptionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=800)]
 ScenePromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=800)]
+ActionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 
 
 class BookCreate(BaseModel):
@@ -117,6 +119,8 @@ class GenerationOut(BaseModel):
     width: int
     height: int
     image_url: str | None
+    mask_url: str | None  # pose：去背遮罩
+    cutout_url: str | None  # pose：裁好的去背 RGBA 圖
     error: str | None
     elapsed_s: float | None
     queue_position: int | None
@@ -144,6 +148,8 @@ class GenerationOut(BaseModel):
             width=gen.width,
             height=gen.height,
             image_url=f"/api/generations/{gen.id}/image" if gen.image_path else None,
+            mask_url=f"/api/generations/{gen.id}/mask" if gen.mask_path else None,
+            cutout_url=f"/api/generations/{gen.id}/cutout" if gen.mask_path else None,
             error=gen.error,
             elapsed_s=gen.elapsed_s,
             queue_position=queue_position,
@@ -176,6 +182,26 @@ class SelectGeneration(BaseModel):
     generation_id: int
 
 
+class PoseCreate(BaseModel):
+    action: ActionStr  # 動作文字（不帶場景描述）
+
+
+class PagePlacement(BaseModel):
+    """角色在背景上的位置（相對背景）：cx、cy 為角色中心，height 為角色高度／背景高度。"""
+
+    cx: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    cy: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    height: float = Field(ge=0.1, le=1.0, allow_inf_nan=False)
+    flip: bool = False
+
+    def to_placement(self) -> Placement:
+        return Placement(cx=self.cx, cy=self.cy, height=self.height, flip=self.flip)
+
+    @classmethod
+    def from_json(cls, text: str | None) -> "PagePlacement | None":
+        return None if not text else cls(**Placement.from_dict(json.loads(text)).to_dict())
+
+
 def lineart_url(page_id: int, key: str | None) -> str:
     return f"/api/pages/{page_id}/lineart" + (f"?v={key}" if key else "")
 
@@ -193,6 +219,9 @@ class PageOut(BaseModel):
     controlnet_strength: float
     sketch_url: str | None
     selected_generation_id: int | None
+    background_generation_id: int | None
+    pose_generation_id: int | None
+    placement: PagePlacement | None  # 位置草稿；None＝還沒存過（前端用預設位置）
     status: PageStatus
     line_detail: LineDetail
     line_width_px: int
@@ -200,6 +229,8 @@ class PageOut(BaseModel):
     lineart_url: str | None  # 有選圖才有；?v= 為目前輸入對應的線稿 key
     needs_fix: bool | None  # 目前線稿的 QA 有錯誤；還沒算過（或參數已改、尚未重算）為 None
     aspect_mismatch: bool  # 選定圖的寬高 ≠ 繪本目前的 generation_size
+    # 已選背景與角色動作，但選定圖不是用目前背景＋角色動作＋位置合成的（需要按「確認合成」）
+    compose_pending: bool
     created_at: datetime
     updated_at: datetime
 
@@ -210,6 +241,7 @@ class PageOut(BaseModel):
         *,
         current_lineart_key: str | None = None,
         aspect_mismatch: bool = False,
+        compose_pending: bool = False,
     ) -> "PageOut":
         """current_lineart_key：依目前選圖／參數／修改圖層算出的 key（pages.page_outs 會給）。
         沒給時退回頁面上快取的 key，needs_fix 直接看 qa_json。"""
@@ -232,6 +264,9 @@ class PageOut(BaseModel):
                 else None
             ),
             selected_generation_id=page.selected_generation_id,
+            background_generation_id=page.background_generation_id,
+            pose_generation_id=page.pose_generation_id,
+            placement=PagePlacement.from_json(page.placement_json),
             status=page.status,
             line_detail=page.line_detail,
             line_width_px=page.line_width_px,
@@ -239,6 +274,7 @@ class PageOut(BaseModel):
             lineart_url=lineart_url(page.id, key) if selected else None,
             needs_fix=needs_fix,
             aspect_mismatch=aspect_mismatch if selected else False,
+            compose_pending=compose_pending,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )

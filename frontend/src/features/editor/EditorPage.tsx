@@ -1,22 +1,23 @@
 "use client";
 
-import { useEffect, useId, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Generation, Page } from "@/api/client";
+import { DEFAULT_PLACEMENT, type Generation, type Page, type Placement } from "@/api/client";
 import {
   useBook,
-  useCancelGeneration,
+  useCompose,
   useCreatePage,
   useDeletePage,
+  useGenerateBackground,
+  useGeneratePose,
   useGenerations,
-  usePageCandidates,
   usePages,
   useQA,
   useReorderPages,
-  useSelectGeneration,
-  useUpdateGeneration,
+  useSelectBackground,
+  useSelectPose,
   useUpdatePage,
 } from "@/api/hooks";
 import { AppBar } from "@/components/shell/AppBar";
@@ -25,25 +26,37 @@ import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
-import { guidesFromLayout } from "@/lib/raster";
-import { CandidateTray } from "./CandidateTray";
+import { BackgroundPanel } from "./BackgroundPanel";
+import { BackgroundStage } from "./BackgroundStage";
+import { ComposePanel } from "./ComposePanel";
+import { ComposeStage } from "./ComposeStage";
 import { peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 import { forgetDeletedPage, forgetPageId } from "./forgetPage";
 import { errMsg } from "./errMsg";
 import { BookSettingsDialog } from "@/features/books/BookSettingsDialog";
 import { ExportDrawer } from "./ExportDrawer";
 import { Filmstrip } from "./Filmstrip";
-import { GeneratePanel } from "./GeneratePanel";
+import { HistoryTray, type HistoryKind } from "./HistoryTray";
 import { Inspector } from "./Inspector";
 import { LineFixStage } from "./LineFixStage";
 import { LinePanel } from "./LinePanel";
 import { QACompare } from "./QACompare";
 import { onBeforeUnload } from "./pendingWrites";
+import { placementSaverFor } from "./placementSaver";
+import { PosePanel } from "./PosePanel";
+import { PoseStage } from "./PoseStage";
 import { QAPanel } from "./QAPanel";
-import { uploadReference } from "./referenceSketch";
-import { SketchCanvas } from "./SketchCanvas";
-import { sketchSaverFor, type SketchSaver } from "./sketchSaver";
-import { StageHeader, tabIdOf, type EditorMode } from "./StageHeader";
+import { sketchSaverFor } from "./sketchSaver";
+import {
+  allowedMode,
+  DEFAULT_MODE,
+  isEditorMode,
+  modeBlockers,
+  StageHeader,
+  tabIdOf,
+  type EditorMode,
+  type ModeGate,
+} from "./StageHeader";
 import { ZoomControls } from "./LineFixCanvas";
 import styles from "./EditorPage.module.css";
 
@@ -59,14 +72,15 @@ function parseNav(sp: URLSearchParams): Nav {
   const m = sp.get("mode");
   return {
     page: Number.isInteger(n) && n > 0 ? n : null,
-    mode: m === "line" || m === "qa" ? m : "sketch",
+    mode: isEditorMode(m) ? m : DEFAULT_MODE,
   };
 }
 
 type PagePatch = Partial<Pick<Page, "scene_prompt" | "controlnet_strength" | "line_detail" | "line_width_px">>;
 
 /**
- * 頁面編輯器（/books/{id}/editor?page=<id>&mode=<sketch|line|qa>）。
+ * 頁面編輯器（/books/{id}/editor?page=<id>&mode=<background|pose|compose|line|qa>）。
+ * 模式：背景 → 角色 → 合成 → 線稿與修線 → QA 檢查；前一步沒完成時後面的分頁停用（modeBlockers）。
  * 版面：BookBar＋三區 grid（> 1180 px 三欄；761–1180 兩欄、檢查面板在下；≤ 760 單欄、頁面清單橫向捲動）。
  */
 export function EditorPage({ bookId }: { bookId: number }) {
@@ -79,7 +93,8 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const book = useBook(bookId);
   const pagesQ = usePages(bookId);
-  const bookGens = useGenerations(bookId, { kind: "page" });
+  const bookGens = useGenerations(bookId);
+  const hasCharacter = book.data?.character_generation_id != null;
 
   // ---------- 目前頁與模式：本機狀態為準（立即反應），寫回網址；網址被外部改變時跟著改 ----------
   // 我們寫過、網址還沒追上的 query string（依序）。router.replace 可能晚到：較早的那幾個到了要忽略，
@@ -102,24 +117,31 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const pages = pagesQ.data ?? [];
   const current = pages.find((p) => p.id === nav.page) ?? pages[0] ?? null;
   const hasSel = current?.selected_generation_id != null;
-  const mode: EditorMode = hasSel ? nav.mode : "sketch";
+  const gateOf = (p: Page | null | undefined): ModeGate => ({
+    hasCharacter,
+    backgroundId: p?.background_generation_id ?? null,
+    poseId: p?.pose_generation_id ?? null,
+    selectedId: p?.selected_generation_id ?? null,
+  });
+  const mode: EditorMode = allowedMode(nav.mode, gateOf(current));
 
   const go = (page: number, m: EditorMode) => {
     setNav({ page, mode: m });
     const q = new URLSearchParams();
     q.set("page", String(page));
-    if (m !== "sketch") q.set("mode", m);
+    if (m !== DEFAULT_MODE) q.set("mode", m);
     const next = q.toString();
     if (next !== qs) setWrites((w) => [...w, next]);
     router.replace(`${pathname}?${next}`, { scroll: false });
   };
-  /** 換頁：目標頁沒選圖就回到構圖模式（否則選圖後會突然跳到修線）。 */
+  /** 換頁：目標頁不能用目前的模式就回到背景（否則之後條件成立時會突然跳過去）。 */
   const selectPage = (id: number) => {
     const target = pages.find((p) => p.id === id);
-    go(id, target?.selected_generation_id != null ? nav.mode : "sketch");
+    go(id, allowedMode(mode, gateOf(target)));
   };
 
-  const pageGens = useGenerations(bookId, { kind: "page", pageId: current?.id, includeDiscarded: true });
+  // 本頁所有種類（背景、角色動作、合成、舊流程 page）：找選定圖／選用的背景與動作、算排隊數
+  const pageGens = useGenerations(bookId, { pageId: current?.id, includeDiscarded: true });
   const qaQ = useQA(current?.id ?? 0, current != null && hasSel);
   const qa = hasSel ? qaQ.data : undefined;
 
@@ -127,10 +149,11 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const updatePage = useUpdatePage(bookId);
   const deletePage = useDeletePage(bookId);
   const reorder = useReorderPages(bookId);
-  const candidates = usePageCandidates(bookId);
-  const select = useSelectGeneration(bookId);
-  const updateGen = useUpdateGeneration(bookId);
-  const cancel = useCancelGeneration(bookId);
+  const generateBg = useGenerateBackground(bookId);
+  const generatePose = useGeneratePose(bookId);
+  const selectBg = useSelectBackground(bookId);
+  const selectPose = useSelectPose(bookId);
+  const compose = useCompose(bookId);
 
   // ---------- 草圖存檔：每頁依呼叫順序（只保留最新），SketchCanvas 卸載後才呼叫也照樣送出 ----------
   const qc = useQueryClient();
@@ -138,6 +161,17 @@ export function EditorPage({ bookId }: { bookId: number }) {
   useEffect(() => {
     sketchSaver.setErrorHandler((e) => toast.show(errMsg(e, "草圖儲存失敗"), "error"));
   }, [sketchSaver, toast]);
+
+  // ---------- 角色位置：自動存（每頁依序、只保留最新）；畫面用這個 session 最後存的值 ----------
+  const placementSaver = placementSaverFor(qc);
+  useEffect(() => {
+    placementSaver.setErrorHandler((e) => toast.show(errMsg(e, "位置儲存失敗"), "error"));
+  }, [placementSaver, toast]);
+  const savedPlacement = useSyncExternalStore(
+    placementSaver.subscribe,
+    () => (current ? placementSaver.latest(current.id) : undefined),
+    () => undefined,
+  );
 
   // 關分頁／重新整理：草圖或修線還沒存好（送出中、失敗、畫布 debounce 中）就請瀏覽器確認
   useEffect(() => {
@@ -155,8 +189,19 @@ export function EditorPage({ bookId }: { bookId: number }) {
   }, [qc, sketchSaver, pagesQ.data]);
 
   const [zoom, setZoom] = useState(1);
-  /** 選圖前正在等修線寫入（候選圖暫時不能點）。 */
+  /** 改選背景／角色動作或合成前，正在等舊選圖的修線寫入（歷史托盤暫時不能點）。 */
   const [flushingSelect, setFlushingSelect] = useState(false);
+  /**
+   * 正在確認合成（等修線 → 等位置 → POST compose）的頁面 id。以頁為單位：合成中換頁，另一頁照常可用。
+   * ref 擋住同一輪 render 前的第二次點擊。
+   */
+  const [confirmingIds, setConfirmingIds] = useState<ReadonlySet<number>>(() => new Set());
+  const confirmingRef = useRef(new Set<number>());
+  /** 非同步流程結束時用來判斷使用者是否已換頁。 */
+  const currentIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    currentIdRef.current = current?.id ?? null;
+  });
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -181,7 +226,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
     );
   }
 
-  const hasCharacter = b.character_generation_id != null;
   const characterHref = `/books/${bookId}/character`;
   const busyPageIds = new Set(
     (bookGens.data ?? []).filter(isActive).map((g) => g.page_id).filter((x): x is number => x != null),
@@ -194,7 +238,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
       {
         onSuccess: (p) => {
           forgetPageId(qc, p.id); // 後端若沿用了已刪除頁的 id，不要讓舊頁的狀態串過來
-          go(p.id, "sketch");
+          go(p.id, DEFAULT_MODE);
         },
         onError: (e) => toast.show(errMsg(e, "無法新增頁面"), "error"),
       },
@@ -238,47 +282,73 @@ export function EditorPage({ bookId }: { bookId: number }) {
       await sketchSaver.whenIdle(pageId);
     } catch (e) {
       // 寫入失敗的原因已由 saver 的錯誤 toast 顯示；這裡說明「沒有產生」，畫布下方有重試
-      toast.show("草圖尚未儲存，沒有產生候選圖；請按畫板下方的「重試」", "error");
+      toast.show("草圖尚未儲存，沒有產生背景；請按畫板下方的「重試」", "error");
       throw e;
     }
   };
 
-  const generate = (pageId: number) =>
-    candidates
-      .mutateAsync({ pageId, count: 4 })
-      .catch((e: unknown) => toast.show(errMsg(e, "無法產生候選圖"), "error"));
+  const generateBackground = (pageId: number) =>
+    generateBg.mutateAsync({ pageId }).catch((e: unknown) => toast.show(errMsg(e, "無法產生背景"), "error"));
 
-  const pickGen = async (g: Generation) => {
-    // 等修線寫入期間再點（連點）一律忽略，避免送出兩次 select
-    if (!current || flushingSelect || select.isPending) return;
-    const pageId = current.id;
-    // 先讓舊選圖的修線寫完：選圖後才到的 PUT 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」
-    const sel = current.selected_generation_id;
-    const pendingEdits = sel != null ? peekEditsQueue(qc, pageId, sel) : undefined;
-    if (pendingEdits?.busy()) {
-      setFlushingSelect(true);
-      try {
-        await pendingEdits.flush();
-      } catch {
-        /* 失敗已提示過 */
-      } finally {
-        setFlushingSelect(false);
-      }
+  const generatePoseFor = (pageId: number, action: string) =>
+    generatePose
+      .mutateAsync({ pageId, action })
+      .catch((e: unknown) => toast.show(errMsg(e, "無法產生角色動作"), "error"));
+
+  /**
+   * 先讓目前選圖的修線寫完：改選背景／動作（合成圖會被清掉）或確認新合成後才到的 PUT
+   * 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」。失敗已提示過，不擋後續動作。
+   */
+  const flushSelectedEdits = async (page: Page) => {
+    const sel = page.selected_generation_id;
+    const pendingEdits = sel != null ? peekEditsQueue(qc, page.id, sel) : undefined;
+    if (!pendingEdits?.busy()) return;
+    setFlushingSelect(true);
+    try {
+      await pendingEdits.flush();
+    } catch {
+      /* 失敗已提示過 */
+    } finally {
+      setFlushingSelect(false);
     }
-    select.mutate(
+  };
+
+  const picking = selectBg.isPending || selectPose.isPending || flushingSelect;
+
+  /** 歷史托盤選用：背景 → POST /background、角色動作 → POST /pose。合成圖永遠不走 /select。 */
+  const pickHistory = async (kind: HistoryKind, g: Generation) => {
+    // 等修線寫入期間再點（連點）一律忽略，避免送出兩次
+    if (!current || picking) return;
+    const pageId = current.id;
+    await flushSelectedEdits(current);
+    const m = kind === "background" ? selectBg : selectPose;
+    m.mutate(
       { pageId, generationId: g.id },
-      { onError: (e) => toast.show(errMsg(e, "無法選擇這張圖"), "error") },
+      { onError: (e) => toast.show(errMsg(e, kind === "background" ? "無法選用這張背景" : "無法選用這個角色動作"), "error") },
     );
   };
 
-  const toggleDiscard = (g: Generation) =>
-    updateGen.mutate(
-      { id: g.id, discarded: !g.discarded },
-      { onError: (e) => toast.show(errMsg(e, "無法更新"), "error") },
-    );
+  const savePlacement = (pageId: number, p: Placement) => placementSaver.savePlacement(pageId, p);
 
-  const cancelGen = (g: Generation) =>
-    cancel.mutate(g.id, { onError: (e) => toast.show(errMsg(e, "無法取消"), "error") });
+  /** 確認合成：等舊選圖的修線 → useCompose（內含等位置寫完）→ 成功後切到線稿與修線（還在這頁時）。 */
+  const confirmCompose = async () => {
+    if (!current || confirmingRef.current.has(current.id)) return;
+    const pageId = current.id;
+    confirmingRef.current.add(pageId);
+    setConfirmingIds(new Set(confirmingRef.current));
+    try {
+      await flushSelectedEdits(current);
+      await compose.mutateAsync({ pageId });
+      if (currentIdRef.current === pageId) go(pageId, "line");
+    } catch (e) {
+      // useCompose 在位置寫入失敗時丟一般 Error（不是 ApiError），errMsg 會吃掉它的訊息
+      const msg = placementSaver.failed(pageId) ? "位置尚未儲存，沒有合成；請重試" : errMsg(e, "無法合成");
+      toast.show(msg, "error");
+    } finally {
+      confirmingRef.current.delete(pageId);
+      setConfirmingIds(new Set(confirmingRef.current));
+    }
+  };
 
   const shell = (body: ReactNode) => (
     <>
@@ -286,7 +356,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
       <BookBar book={b} current="pages" onExport={() => setExportOpen(true)} onSettings={() => setSettingsOpen(true)} />
       {!hasCharacter && (
         <p className={styles.notice}>
-          這本繪本還沒設定角色，不能產生頁面圖片。<Link href={characterHref}>前往角色工作室</Link>
+          這本繪本還沒設定角色，不能產生角色動作。<Link href={characterHref}>前往角色工作室</Link>
         </p>
       )}
       {body}
@@ -299,7 +369,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     return shell(
       <div className={styles.empty}>
         <h2 className={styles.emptyTitle}>這本繪本還沒有頁面</h2>
-        <p className={styles.emptyText}>新增一頁，畫構圖或直接寫場景描述，再產生候選圖。</p>
+        <p className={styles.emptyText}>新增一頁，先產生背景與角色動作，再把角色擺到背景上合成。</p>
         <Button variant="primary" size="lg" icon={<Icons.plus size={18} />} disabled={createPage.isPending} onClick={addPage}>
           新增頁面
         </Button>
@@ -309,33 +379,48 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const index = pages.indexOf(current);
   const gens = pageGens.data ?? [];
-  const selectedGen = gens.find((g) => g.id === current.selected_generation_id);
-  const activeCount = gens.filter(isActive).length;
-  const items = checklist(current, qa, { seed: selectedGen?.seed });
-  const [gw, gh] = b.layout.generation_size;
+  const byId = (id: number | null) => (id == null ? undefined : gens.find((g) => g.id === id));
+  const selectedGen = byId(current.selected_generation_id);
+  const backgroundGen = byId(current.background_generation_id);
+  const poseGen = byId(current.pose_generation_id);
+  const activeOf = (kind: Generation["kind"]) => gens.filter((g) => g.kind === kind && isActive(g)).length;
+  const items = checklist(current, qa, { selectedKind: selectedGen?.kind });
+  const confirming = confirmingIds.has(current.id);
   const contentPx = b.layout.content_px;
+  const placement: Placement = savedPlacement ?? current.placement ?? DEFAULT_PLACEMENT;
+  const loadingMsg = pageGens.isError ? (
+    <p role="alert" className={styles.stageMsg}>
+      {errMsg(pageGens.error, "無法載入圖片")}
+    </p>
+  ) : (
+    <p className={styles.stageMsg} aria-busy="true">
+      載入中…
+    </p>
+  );
 
   let stage: ReactNode;
-  if (mode === "sketch") {
-    const pageId = current.id;
-    // 這個 session 存過（可能還在送、或失敗）→ 用最後存的內容；null＝空白。沒存過才用伺服器的 sketch_url。
-    const pending = sketchSaver.latestUrl(pageId);
-    const sketchSeed = pending !== undefined ? pending : current.sketch_url;
-    stage = (
-      <>
-        <SketchCanvas
-          key={pageId}
-          width={gw}
-          height={gh}
-          guides={guidesFromLayout(b.layout)}
-          initialUrl={sketchSeed}
-          onSave={(blob) => sketchSaver.save(bookId, pageId, blob)}
-          onUploadReference={(file) => uploadReference(bookId, file)}
-          register={(h) => sketchSaver.register(bookId, pageId, h)}
+  if (mode === "background") {
+    stage = <BackgroundStage bookId={bookId} page={current} layout={b.layout} background={backgroundGen} />;
+  } else if (mode === "pose") {
+    stage = <PoseStage pose={poseGen} />;
+  } else if (mode === "compose") {
+    // 分頁啟用時兩個 id 都有；圖片缺漏（沒有圖、沒有遮罩 → 沒有 cutout_url）由 ComposeStage 說明要重新產生
+    stage =
+      backgroundGen && poseGen ? (
+        <ComposeStage
+          backgroundUrl={backgroundGen.image_url}
+          cutoutUrl={poseGen.cutout_url}
+          placement={placement}
+          onChange={(p) => savePlacement(current.id, p)}
+          disabled={confirming}
         />
-        <SketchSaveStatus saver={sketchSaver} pageId={pageId} />
-      </>
-    );
+      ) : pageGens.data && !pageGens.isFetching ? (
+        <p role="alert" className={styles.stageMsg}>
+          找不到選用的背景或角色動作，請回到前面的步驟重新選擇
+        </p>
+      ) : (
+        loadingMsg
+      );
   } else if (mode === "line") {
     stage = qa ? (
       <LineFixStage
@@ -362,18 +447,39 @@ export function EditorPage({ bookId }: { bookId: number }) {
   }
 
   let panel: ReactNode;
-  if (mode === "sketch") {
+  if (mode === "background") {
     panel = (
-      <GeneratePanel
+      <BackgroundPanel
+        key={current.id}
+        page={current}
+        onPatch={(body) => patchPage(current.id, body)}
+        beforeGenerate={() => flushSketch(current.id)}
+        onGenerate={() => generateBackground(current.id)}
+        generating={generateBg.isPending}
+        activeCount={activeOf("background")}
+      />
+    );
+  } else if (mode === "pose") {
+    panel = (
+      <PosePanel
         key={current.id}
         page={current}
         hasCharacter={hasCharacter}
         characterHref={characterHref}
-        onPatch={(body) => patchPage(current.id, body)}
-        beforeGenerate={() => flushSketch(current.id)}
-        onGenerate={() => generate(current.id)}
-        generating={candidates.isPending}
-        activeCount={activeCount}
+        onGenerate={(action) => generatePoseFor(current.id, action)}
+        generating={generatePose.isPending}
+        activeCount={activeOf("pose")}
+      />
+    );
+  } else if (mode === "compose") {
+    panel = (
+      <ComposePanel
+        key={current.id}
+        page={current}
+        placement={placement}
+        onPlacementChange={(p) => savePlacement(current.id, p)}
+        onConfirm={confirmCompose}
+        confirming={confirming}
       />
     );
   } else if (mode === "line") {
@@ -381,6 +487,20 @@ export function EditorPage({ bookId }: { bookId: number }) {
   } else {
     panel = <QAPanel book={b} page={current} qa={qa} generation={selectedGen} />;
   }
+
+  // 背景／角色模式：舞台下方是該種類的歷史托盤（合成圖沒有托盤，不可 /select）
+  const trayKind: HistoryKind | null = mode === "background" || mode === "pose" ? mode : null;
+  const trayFor = (kind: HistoryKind) => (
+    <HistoryTray
+      key={`${kind}-${current.id}`}
+      bookId={bookId}
+      kind={kind}
+      pageId={current.id}
+      selectedId={kind === "background" ? current.background_generation_id : current.pose_generation_id}
+      onPick={(g) => void pickHistory(kind, g)}
+      picking={picking}
+    />
+  );
 
   return shell(
     <div className={styles.ws}>
@@ -399,7 +519,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
         <StageHeader
           mode={mode}
           onModeChange={(m) => go(current.id, m)}
-          hasSelection={hasSel}
+          blockers={modeBlockers(gateOf(current))}
           gapCount={qa?.gap_count ?? 0}
           idPrefix={idPrefix}
           panelId={panelId}
@@ -411,38 +531,11 @@ export function EditorPage({ bookId }: { bookId: number }) {
           )}
           {stage}
         </div>
-        {mode !== "qa" && (
-          <CandidateTray
-            generations={gens}
-            selectedId={current.selected_generation_id}
-            onSelect={(g) => void pickGen(g)}
-            onToggleDiscard={toggleDiscard}
-            onCancel={cancelGen}
-            selecting={select.isPending || flushingSelect}
-          />
-        )}
+        {trayKind && trayFor(trayKind)}
       </section>
       <Inspector title={`第 ${index + 1} 頁進度`} items={items}>
         {panel}
       </Inspector>
     </div>,
-  );
-}
-
-/** 草圖最後一次寫入失敗時，畫布下方持續顯示（toast 會消失）＋重試。 */
-function SketchSaveStatus({ saver, pageId }: { saver: SketchSaver; pageId: number }) {
-  const failed = useSyncExternalStore(
-    saver.subscribe,
-    () => saver.failed(pageId),
-    () => false,
-  );
-  if (!failed) return null;
-  return (
-    <p role="alert" data-testid="sketch-save-failed" className={`${styles.saveFailed} ${styles.sketchSaveFailed}`}>
-      草圖尚未儲存
-      <button type="button" className={styles.retry} onClick={() => saver.retry(pageId)}>
-        重試
-      </button>
-    </p>
   );
 }

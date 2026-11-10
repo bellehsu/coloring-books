@@ -207,8 +207,13 @@ class GenerationWorker:
             )
             rel = self.storage.generation_image(gen.book_id, gen_id)
             self.storage.write(rel, result.image)
+            mask_rel = None
+            if result.extra_images.get("mask"):
+                mask_rel = self.storage.generation_mask(gen.book_id, gen_id)
+                self.storage.write(mask_rel, result.extra_images["mask"])
             self._finish(
                 gen_id,
+                mask_path=mask_rel,
                 status=GenStatus.SUCCEEDED,
                 image_path=rel,
                 engine=result.engine,

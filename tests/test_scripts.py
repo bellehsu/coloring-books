@@ -181,6 +181,57 @@ def test_demo_image_has_one_leak_that_autofix_closes(paper, mode):
     assert evaluate(fixed, LINE_WIDTH_DEFAULT).gap_count == 0
 
 
+@pytest.mark.parametrize(("paper", "mode"), [("a4", "print_shop"), ("a4", "home"), ("a5", "home"),
+                                             ("letter", "print_shop"), ("square_21", "home")])
+@pytest.mark.parametrize("placement", ["default", "e2e", "moved_left", "flipped"])
+def test_demo_composite_has_one_leak_that_autofix_closes(paper, mode, placement):
+    """新流程：背景＋角色動作經 compose()（預設位置與 e2e 移動後的位置）→ 真正的線稿流程，
+    仍要有背景框上的那個缺口（角色沒蓋到它、也沒多出別的缺口），補上 bridges 後歸零。"""
+    from dataclasses import replace
+
+    import numpy as np
+
+    from app.services.compose import DEFAULT_PLACEMENT, compose
+    from app.services.layout import PaperSize, PrintMode, compute_layout
+    from app.services.lineart_render import LINE_WIDTH_DEFAULT, Stroke, apply_strokes, render_base
+    from app.services.qa import evaluate
+
+    pl = {"default": DEFAULT_PLACEMENT,
+          "e2e": replace(DEFAULT_PLACEMENT, cx=0.47, cy=0.68),  # flow.spec.ts 拖曳＋方向鍵後的位置
+          "moved_left": replace(DEFAULT_PLACEMENT, cx=DEFAULT_PLACEMENT.cx - 0.05),
+          "flipped": replace(DEFAULT_PLACEMENT, flip=True)}[placement]
+    lay = compute_layout(PaperSize(paper), PrintMode(mode))
+    bg = fake_backend.draw_background(*lay.generation_size, seed=3)
+    assert bg.size == tuple(lay.generation_size)
+    pose, mask = fake_backend.draw_pose(seed=1)
+    out = compose(bg, pose, mask, pl)
+    ink, _ = render_base(np.asarray(out), lay.content_px, "standard", LINE_WIDTH_DEFAULT)
+    report = evaluate(ink, LINE_WIDTH_DEFAULT)
+    assert report.gap_count == 1 and "gaps" in report.errors
+    fx0, fy0, fx1, _ = fake_backend.BG_GAP_FRAME
+    (x, y), = report.gaps
+    assert abs(x - (fx0 + fx1) / 2) < 0.05 and abs(y - fy0) < 0.05
+    fixed = apply_strokes(ink, [Stroke("draw", LINE_WIDTH_DEFAULT, b) for b in report.bridges])
+    assert evaluate(fixed, LINE_WIDTH_DEFAULT).gap_count == 0
+
+
+def test_demo_pose_mask_matches_character():
+    """角色動作：固定 POSE_SIZE、白底；遮罩同尺寸，角色（含黑色外框）處白、其他黑。"""
+    import numpy as np
+
+    from app.services.prompts import POSE_SIZE
+
+    pose, mask = fake_backend.draw_pose(seed=2)
+    assert pose.size == mask.size == POSE_SIZE and mask.mode == "L"
+    rgb = np.asarray(pose).astype(int)
+    m = np.asarray(mask)
+    assert set(np.unique(m)) <= {0, 255} and (m == 255).any()
+    non_white = (rgb < 250).any(axis=2)
+    # 遮罩外全是白底；角色的每個非白像素（填色與外框）都在遮罩內
+    assert not non_white[m == 0].any()
+    assert non_white[m == 255].mean() > 0.99
+
+
 def test_demo_engine_reports_progress_and_size():
     import asyncio
     import io
@@ -196,10 +247,36 @@ def test_demo_engine_reports_progress_and_size():
     assert steps == [(1, 3), (2, 3), (3, 3)]
     assert Image.open(io.BytesIO(res.image)).size == (864, 1216)
     assert res.engine == "demo" and res.params["seed"] == 5
+    assert res.extra_images == {}
+
+
+@pytest.mark.parametrize(("kind", "size", "has_mask"), [
+    ("background", (1024, 1024), False),
+    ("pose", (832, 1216), True),
+    ("character", (1024, 1024), False),
+])
+def test_demo_engine_kinds(kind, size, has_mask):
+    """background 依請求尺寸；pose 固定 832×1216 並附同尺寸遮罩（worker 存成 mask_path）。"""
+    import asyncio
+    import io
+
+    from PIL import Image
+
+    from app.models import GenKind
+    from app.services.engine import GenerationRequest
+
+    req = GenerationRequest(kind=GenKind(kind), prompt="p", negative_prompt="", seed=1, width=size[0], height=size[1])
+    res = asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req))
+    assert Image.open(io.BytesIO(res.image)).size == size
+    assert set(res.extra_images) == ({"mask"} if has_mask else set())
+    if has_mask:
+        assert Image.open(io.BytesIO(res.extra_images["mask"])).size == size
+    assert res.params["kind"] == kind
 
 
 def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
-    """假後端可啟動：角色 → 頁面候選 → 選圖 → QA 有缺口 → 自動補線後 0；資料寫在 --storage，不碰設定的 storage。"""
+    """假後端可啟動：角色 → 背景 → 角色動作（有遮罩、去背圖）→ 確認合成 → QA 有缺口 → 自動補線後 0；
+    資料寫在 --storage，不碰設定的 storage。"""
     import httpx
     from fastapi.testclient import TestClient
 
@@ -223,14 +300,26 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert c.post(f"/api/books/{book['id']}/character", json={"generation_id": chars[0]["id"]}).status_code == 200
 
         page = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "park"}).json()
-        assert c.post(f"/api/pages/{page['id']}/candidates", json={"count": 1}).status_code == 202
-        gen = _wait_succeeded(c, book["id"], "page", 1)[0]
-        assert (gen["width"], gen["height"]) == (864, 1216)
-        assert c.post(f"/api/pages/{page['id']}/select", json={"generation_id": gen["id"]}).status_code == 200
+        assert c.post(f"/api/pages/{page['id']}/backgrounds").status_code == 202
+        bg = _wait_succeeded(c, book["id"], "background", 1)[0]
+        assert (bg["width"], bg["height"]) == (864, 1216)
+        assert c.post(f"/api/pages/{page['id']}/background", json={"generation_id": bg["id"]}).status_code == 200
+
+        assert c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"}).status_code == 202
+        pose = _wait_succeeded(c, book["id"], "pose", 1)[0]
+        assert (pose["width"], pose["height"]) == (832, 1216)
+        assert pose["cutout_url"]
+        assert c.get(pose["cutout_url"]).status_code == 200
+        assert c.post(f"/api/pages/{page['id']}/pose", json={"generation_id": pose["id"]}).status_code == 200
+
+        composed = c.post(f"/api/pages/{page['id']}/compose")
+        assert composed.status_code == 200, composed.text
+        sel = composed.json()["selected_generation_id"]
+        assert sel is not None
 
         qa = c.get(f"/api/pages/{page['id']}/qa").json()
-        assert qa["gap_count"] >= 1
-        fixed = c.post(f"/api/pages/{page['id']}/lineart/autofix", json={"generation_id": gen["id"]}).json()
+        assert qa["gap_count"] == 1
+        fixed = c.post(f"/api/pages/{page['id']}/lineart/autofix", json={"generation_id": sel}).json()
         assert fixed["autofix_added"] >= 1 and fixed["gap_count"] == 0
     assert (storage / "app.db").is_file()
     assert not (tmp_path / "storage" / "app.db").exists()
@@ -388,3 +477,17 @@ def test_dev_sh_rejects_comfy_port_mismatch(tmp_path):
                         "APP_COMFY__URL": f"http://127.0.0.1:{port}",
                         "COMFY_START_CMD": "comfy launch -- --listen 127.0.0.1 --port 1"})
     assert r.returncode == 1 and "請讓兩者一致" in r.stderr
+
+
+def test_dev_sh_allows_loopback_ip_origin(tmp_path):
+    # 用 http://127.0.0.1:3000 開頁面時，Next dev 會擋 /_next/*，頁面不會 hydrate；dev.sh 要自動允許
+    import shutil
+
+    npm = shutil.which("npm")
+    if npm is None or not (REPO / "frontend" / "node_modules").is_dir():
+        pytest.skip("需要 npm 與 frontend/node_modules")
+    r = _dev("--frontend-only", "--dry-run", tmp_path=tmp_path,
+             env_extra={"PATH": f"{Path(npm).parent}:/usr/bin:/bin", "FRONTEND_PORT": str(_free_port())})
+    assert r.returncode == 0, r.stderr
+    line = next(l for l in r.stdout.splitlines() if "允許的開發來源" in l)
+    assert "127.0.0.1" in line.split("：", 1)[1].split(",")

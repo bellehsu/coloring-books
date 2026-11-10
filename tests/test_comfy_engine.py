@@ -4,7 +4,7 @@ import pytest
 
 from app.models import GenKind
 from app.services.comfy_engine import (
-    CHARACTER_WORKFLOW, PAGE_FIXED, PAGE_WORKFLOW, ComfyEngine, page_params,
+    BACKGROUND_WORKFLOW, CHARACTER_WORKFLOW, PAGE_FIXED, POSE_WORKFLOW, PAGE_WORKFLOW, ComfyEngine, page_params,
 )
 from app.services.engine import EngineError, EngineUnavailable, GenerationRequest
 from app.services.workflow_registry import WorkflowRegistry
@@ -94,3 +94,53 @@ async def test_engine_errors_mapped(tmp_path):
 def test_text2img_manifest_loads():
     entry = WorkflowRegistry(REPO / "comfy_workflows").load().get("sdxl_text2img")
     assert entry.ok, entry.errors
+
+
+async def test_background_with_sketch_uses_page_strength(tmp_path):
+    fake = FakeComfy()
+    res = await make_engine(fake).generate(
+        make_req(tmp_path, kind=GenKind.BACKGROUND, character=False, structure=True, strength=0.35))
+    assert res.workflow_name == BACKGROUND_WORKFLOW == "sdxl_background"
+    sent = fake.prompts[0]["prompt"]
+    assert by_title(sent, "APPLY_CONTROLNET")["strength"] == 0.35
+    assert by_title(sent, "APPLY_CONTROLNET")["end_percent"] == 0.5
+    assert by_title(sent, "UNION_TYPE")["type"] == "hed/pidi/scribble/ted"
+    assert by_title(sent, "LATENT")["width"] == 640 and by_title(sent, "LATENT")["height"] == 896
+    assert len(fake.uploads) == 1
+    assert res.extra_images == {}
+    assert not any("IPAdapter" in n["class_type"] for n in sent.values())
+
+
+async def test_background_without_sketch_uses_white_and_zero_strength(tmp_path):
+    fake = FakeComfy()
+    await make_engine(fake).generate(
+        make_req(tmp_path, kind=GenKind.BACKGROUND, character=False, structure=False, strength=0.4))
+    sent = fake.prompts[0]["prompt"]
+    assert by_title(sent, "APPLY_CONTROLNET")["strength"] == 0.0
+    assert len(fake.uploads) == 1
+
+
+async def test_pose_sends_ip_params_and_downloads_both_outputs(tmp_path):
+    fake = FakeComfy()
+    res = await make_engine(fake).generate(
+        make_req(tmp_path, kind=GenKind.POSE, structure=False))
+    assert res.workflow_name == POSE_WORKFLOW == "sdxl_pose_cutout"
+    sent = fake.prompts[0]["prompt"]
+    assert by_title(sent, "IPADAPTER")["weight"] == 0.55
+    assert by_title(sent, "IPADAPTER")["end_at"] == 0.6
+    assert by_title(sent, "LATENT")["width"] == 640 and by_title(sent, "LATENT")["height"] == 896
+    assert len(fake.uploads) == 1  # 只有角色參考圖
+    assert res.image == fake.image
+    assert res.extra_images == {"mask": fake.mask_image}
+
+
+async def test_pose_without_character_image_errors(tmp_path):
+    with pytest.raises(EngineError, match="角色動作需要角色參考圖"):
+        await make_engine(FakeComfy()).generate(make_req(tmp_path, kind=GenKind.POSE, character=False))
+
+
+async def test_pose_missing_mask_output_errors(tmp_path):
+    fake = FakeComfy()
+    fake.skip_output_titles = {"MASK"}
+    with pytest.raises(EngineError, match="去背失敗：沒有遮罩輸出"):
+        await make_engine(fake).generate(make_req(tmp_path, kind=GenKind.POSE))

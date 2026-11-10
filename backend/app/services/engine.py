@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -33,6 +33,7 @@ class GenerationResult:
     workflow_hash: str
     models: list[str]
     params: dict
+    extra_images: dict[str, bytes] = field(default_factory=dict)  # 例如 pose 的 "mask"
 
 
 class EngineError(Exception):

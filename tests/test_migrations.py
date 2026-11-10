@@ -51,6 +51,9 @@ def test_legacy_db_is_stamped_and_upgraded(tmp_path):
         assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == head_revision(eng)
         row = c.exec_driver_sql("SELECT line_width_px, line_detail, qa_note FROM page").one()
         assert tuple(row) == (11, "STANDARD", "")
+        row = c.exec_driver_sql(
+            "SELECT background_generation_id, pose_generation_id, placement_json FROM page").one()
+        assert tuple(row) == (None, None, None)
     init_db(eng)
 
 
@@ -104,9 +107,9 @@ def test_upgrade_from_0002_rebuilds_with_autoincrement_and_keeps_rows(tmp_path):
         before = _dump(c)
         for t in AUTOINCREMENT_TABLES:
             assert "AUTOINCREMENT" not in table_sql(c, t)
-    init_db(eng)
+    command.upgrade(alembic_config(eng), "0003")
     with eng.connect() as c:
-        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == head_revision(eng)
+        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0003"
         assert _dump(c) == before
         for t in AUTOINCREMENT_TABLES:
             assert "AUTOINCREMENT" in table_sql(c, t), t
@@ -139,3 +142,25 @@ def test_upgrade_from_0002_rebuilds_with_autoincrement_and_keeps_rows(tmp_path):
         assert c.exec_driver_sql("SELECT max(id) FROM page").scalar() == 4
         assert c.exec_driver_sql("SELECT max(id) FROM generation").scalar() == 32
     init_db(eng)  # 冪等
+
+
+def test_upgrade_to_head_keeps_generation_and_accepts_new_kinds(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    _seed_0002(eng)
+    init_db(eng)
+    ts = "'2026-11-09 00:00:00'"
+    with eng.begin() as c:
+        row = c.exec_driver_sql("SELECT id, kind, image_path, mask_path FROM generation WHERE id = 10").one()
+        assert tuple(row) == (10, "PAGE", "books/1/generations/10.png", None)
+        for kind in ("BACKGROUND", "POSE", "COMPOSITE"):
+            c.exec_driver_sql(
+                "INSERT INTO generation (book_id, page_id, kind, status, discarded, user_text, prompt, "
+                f"negative_prompt, seed, width, height, request_json, created_at) VALUES (1, 1, '{kind}', "
+                f"'QUEUED', 0, 'u', 'p', 'n', 1, 8, 8, '{{}}', {ts})"
+            )
+        assert c.exec_driver_sql("SELECT count(*) FROM generation WHERE kind IN ('BACKGROUND','POSE','COMPOSITE')").scalar() == 3
+    # 0004 重建資料表後仍保留 AUTOINCREMENT（刪掉的 id 不可沿用）
+    with eng.connect() as c:
+        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0004"
+        for t in AUTOINCREMENT_TABLES:
+            assert "AUTOINCREMENT" in table_sql(c, t), t

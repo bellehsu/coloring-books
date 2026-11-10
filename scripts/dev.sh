@@ -45,8 +45,8 @@ BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
 # 允許區網其他電腦用本機的主機名稱／IP 開開發伺服器（Next 預設會擋 /_next/* 與 HMR WebSocket）。
-# 自動加入：主機名稱、完整網域名稱、區網 IPv4；dev.env 的 DEV_ALLOWED_ORIGINS 會再附加上去。
-auto_origins="$(hostname 2>/dev/null || true),$(hostname -f 2>/dev/null || true),$(hostname -I 2>/dev/null | tr ' ' ',' || true)"
+# 自動加入：127.0.0.1（Next 只預設允許 localhost）、主機名稱、完整網域名稱、區網 IPv4；dev.env 的 DEV_ALLOWED_ORIGINS 會再附加上去。
+auto_origins="127.0.0.1,$(hostname 2>/dev/null || true),$(hostname -f 2>/dev/null || true),$(hostname -I 2>/dev/null | tr ' ' ',' || true)"
 DEV_ALLOWED_ORIGINS="$(tr 'A-Z' 'a-z' <<<"$auto_origins,${DEV_ALLOWED_ORIGINS:-}" | tr -s ',' | sed 's/^,//; s/,$//')"
 export DEV_ALLOWED_ORIGINS
 

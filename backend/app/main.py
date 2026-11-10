@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import books, export, generations, lineart, pages, review
+from .api import books, compose, export, generations, lineart, pages, review
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
 from .services.comfy_client import ComfyClient
@@ -65,6 +65,7 @@ def create_app(
     app = FastAPI(title="Coloring Books", lifespan=lifespan)
     app.include_router(books.router)
     app.include_router(pages.router)
+    app.include_router(compose.router)
     app.include_router(generations.router)
     app.include_router(lineart.router)
     app.include_router(review.router)

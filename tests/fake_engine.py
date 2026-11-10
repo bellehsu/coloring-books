@@ -7,12 +7,22 @@ from collections import deque
 
 from PIL import Image
 
+from app.models import GenKind
 from app.services.engine import GenerationRequest, GenerationResult, ProgressFn
 
 
 def make_png(size: tuple[int, int] = (8, 8)) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", size, (255, 255, 255)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def make_mask_png(size: tuple[int, int] = (8, 8)) -> bytes:
+    """白底黑字的遮罩替身（黑色一塊代表字）。"""
+    img = Image.new("L", size, 255)
+    img.paste(0, (2, 2, size[0] - 2, size[1] - 2))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
     return buf.getvalue()
 
 
@@ -27,6 +37,7 @@ class FakeEngine:
         self.progress_steps: list[tuple[int, int]] = []
         self.image: bytes = make_png()
         self.delay_s: float = 0.0
+        self.pose_mask: bool = True  # kind=pose 時是否附上遮罩（設 False 測失敗）
 
     async def generate(self, req: GenerationRequest, on_progress: ProgressFn | None = None) -> GenerationResult:
         import asyncio
@@ -42,8 +53,13 @@ class FakeEngine:
             raise outcome
         if self.error is not None:
             raise self.error
+        extra = {}
+        if req.kind == GenKind.POSE and self.pose_mask:
+            with Image.open(io.BytesIO(self.image)) as im:  # 遮罩與角色圖同尺寸（合成時會檢查）
+                extra["mask"] = make_mask_png(im.size)
         return GenerationResult(
             image=self.image,
+            extra_images=extra,
             elapsed_s=0.25,
             engine="fake",
             workflow_name="fake_wf",

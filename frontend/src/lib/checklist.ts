@@ -1,11 +1,11 @@
-import type { Page, QA } from "@/api/client";
+import type { Generation, Page, QA } from "@/api/client";
 
 /**
  * done 完成（綠勾）、todo 待辦（空圈）、warn 需處理（橘色驚嘆號）、
  * skip 刻意不做（灰色，例如不畫構圖草圖；不是錯誤）。
  */
 export type CheckState = "done" | "todo" | "warn" | "skip";
-export type CheckKey = "sketch" | "selected" | "closed" | "character" | "passed";
+export type CheckKey = "background" | "pose" | "composite" | "closed" | "character" | "passed";
 
 export interface CheckItem {
   key: CheckKey;
@@ -15,20 +15,39 @@ export interface CheckItem {
 }
 
 /**
- * 頁面進度清單（純函式）。qa 未載入時給 undefined。
+ * 頁面進度清單（純函式，6 項）。qa 未載入時給 undefined。
+ * opts.selectedKind：選定圖的 generation kind（composite＝新流程合成圖；page＝舊流程圖片）；不知道時省略。
  * 沒選圖時 QA 一律忽略（可能是舊圖的快取）。QA 的 status／character_check 比頁面列表新，優先採用。
+ * page.compose_pending（後端算）：選定圖不是目前背景＋角色動作＋位置的合成圖 → 合成 warn「待重新合成」。
  */
-export function checklist(page: Page, qa: QA | undefined, opts: { seed?: number } = {}): CheckItem[] {
+export function checklist(
+  page: Page,
+  qa: QA | undefined,
+  opts: { selectedKind?: Generation["kind"] } = {},
+): CheckItem[] {
   const selected = page.selected_generation_id != null;
   const q = selected ? qa : undefined;
+  const hasBg = page.background_generation_id != null;
+  const hasPose = page.pose_generation_id != null;
 
-  const sketch: CheckItem = page.sketch_url
-    ? { key: "sketch", label: "構圖草圖", state: "done", note: "已畫" }
-    : { key: "sketch", label: "構圖草圖", state: "skip", note: "未畫（不使用構圖）" };
+  const background: CheckItem = hasBg
+    ? { key: "background", label: "背景", state: "done", note: "已選" }
+    : { key: "background", label: "背景", state: "todo", note: "還沒選背景" };
 
-  const sel: CheckItem = selected
-    ? { key: "selected", label: "選定圖片", state: "done", note: opts.seed != null ? `seed ${opts.seed}` : "已選" }
-    : { key: "selected", label: "選定圖片", state: "todo", note: "還沒選圖" };
+  const pose: CheckItem = hasPose
+    ? { key: "pose", label: "角色動作", state: "done", note: "已選" }
+    : { key: "pose", label: "角色動作", state: "todo", note: "還沒選角色動作" };
+
+  let composite: CheckItem = { key: "composite", label: "合成", state: "todo", note: "" };
+  if (selected && page.compose_pending) {
+    // 選定圖不是用目前背景＋角色動作＋位置合成的（改了位置，或舊流程頁面選了新素材）；不影響通過狀態
+    composite = { ...composite, state: "warn", note: "待重新合成" };
+  } else if (selected) {
+    const note = opts.selectedKind === "composite" ? "已合成" : opts.selectedKind === "page" ? "舊流程圖片" : "";
+    composite = { ...composite, state: "done", note };
+  } else if (hasBg && hasPose) {
+    composite = { ...composite, note: "請確認合成" };
+  }
 
   let closed: CheckItem = { key: "closed", label: "線條封閉", state: "todo", note: "" };
   if (selected) {
@@ -51,5 +70,5 @@ export function checklist(page: Page, qa: QA | undefined, opts: { seed?: number 
       ? { key: "passed", label: "通過 QA", state: "done", note: q?.forced_pass_reason ? "強制通過" : "完成" }
       : { key: "passed", label: "通過 QA", state: "todo", note: "" };
 
-  return [sketch, sel, closed, character, passed];
+  return [background, pose, composite, closed, character, passed];
 }

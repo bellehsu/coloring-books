@@ -744,6 +744,302 @@
         }
       }
     },
+    "/api/pages/{page_id}/backgrounds": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Create Background",
+        "description": "產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。",
+        "operationId": "create_background_api_pages__page_id__backgrounds_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/poses": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Create Pose",
+        "description": "產生一個角色動作（白底、自動去背）：角色描述＋動作文字，不帶場景描述；尺寸固定 POSE_SIZE。",
+        "operationId": "create_pose_api_pages__page_id__poses_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoseCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/background": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Select Background",
+        "operationId": "select_background_api_pages__page_id__background_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectGeneration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/pose": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Select Pose",
+        "operationId": "select_pose_api_pages__page_id__pose_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectGeneration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/placement": {
+      "put": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Save Placement",
+        "description": "位置草稿（拖拉時自動存）；不產生合成圖、不改頁面狀態。",
+        "operationId": "save_placement_api_pages__page_id__placement_put",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PagePlacement"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/compose": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Confirm Compose",
+        "description": "用頁面目前的背景、角色動作與位置（沒存過就用預設）產生合成圖並設為選定圖片。\n完全相同的既有合成圖直接選回（修線一起回來）；換了圖就退回草稿、清角色檢查。",
+        "operationId": "confirm_compose_api_pages__page_id__compose_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/generations/{gen_id}": {
       "get": {
         "tags": [
@@ -843,6 +1139,87 @@
         ],
         "summary": "Get Generation Image",
         "operationId": "get_generation_image_api_generations__gen_id__image_get",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generations/{gen_id}/mask": {
+      "get": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Get Generation Mask",
+        "operationId": "get_generation_mask_api_generations__gen_id__mask_get",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generations/{gen_id}/cutout": {
+      "get": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Get Generation Cutout",
+        "description": "角色動作的去背圖：裁到遮罩外接框的 RGBA PNG（alpha＝遮罩）。",
+        "operationId": "get_generation_cutout_api_generations__gen_id__cutout_get",
         "parameters": [
           {
             "name": "gen_id",
@@ -2178,7 +2555,10 @@
         "type": "string",
         "enum": [
           "character",
-          "page"
+          "page",
+          "background",
+          "pose",
+          "composite"
         ],
         "title": "GenKind"
       },
@@ -2255,6 +2635,28 @@
             ],
             "title": "Image Url"
           },
+          "mask_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask Url"
+          },
+          "cutout_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cutout Url"
+          },
           "error": {
             "anyOf": [
               {
@@ -2329,6 +2731,8 @@
           "width",
           "height",
           "image_url",
+          "mask_url",
+          "cutout_url",
           "error",
           "elapsed_s",
           "queue_position",
@@ -2641,6 +3045,38 @@
             ],
             "title": "Selected Generation Id"
           },
+          "background_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Generation Id"
+          },
+          "pose_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pose Generation Id"
+          },
+          "placement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PagePlacement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/PageStatus"
           },
@@ -2687,6 +3123,10 @@
             "type": "boolean",
             "title": "Aspect Mismatch"
           },
+          "compose_pending": {
+            "type": "boolean",
+            "title": "Compose Pending"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -2707,6 +3147,9 @@
           "controlnet_strength",
           "sketch_url",
           "selected_generation_id",
+          "background_generation_id",
+          "pose_generation_id",
+          "placement",
           "status",
           "line_detail",
           "line_width_px",
@@ -2714,10 +3157,46 @@
           "lineart_url",
           "needs_fix",
           "aspect_mismatch",
+          "compose_pending",
           "created_at",
           "updated_at"
         ],
         "title": "PageOut"
+      },
+      "PagePlacement": {
+        "properties": {
+          "cx": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Cx"
+          },
+          "cy": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Cy"
+          },
+          "height": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.1,
+            "title": "Height"
+          },
+          "flip": {
+            "type": "boolean",
+            "title": "Flip",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "cx",
+          "cy",
+          "height"
+        ],
+        "title": "PagePlacement",
+        "description": "角色在背景上的位置（相對背景）：cx、cy 為角色中心，height 為角色高度／背景高度。"
       },
       "PageStatus": {
         "type": "string",
@@ -2809,6 +3288,21 @@
         },
         "type": "object",
         "title": "PassIn"
+      },
+      "PoseCreate": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "PoseCreate"
       },
       "PrintMode": {
         "type": "string",

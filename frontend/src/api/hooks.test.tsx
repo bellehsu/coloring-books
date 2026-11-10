@@ -2,7 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useGenerations, useQueue, useSelectGeneration, qk } from "./hooks";
+import { placementSaverFor } from "@/features/editor/placementSaver";
+import {
+  useCompose,
+  useGenerateBackground,
+  useGeneratePose,
+  useGenerations,
+  useQueue,
+  useSelectBackground,
+  useSelectGeneration,
+  useSelectPose,
+  qk,
+} from "./hooks";
 
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -67,5 +78,92 @@ describe("mutations", () => {
     expect(keys).toContain(JSON.stringify(qk.qa(5)));
     expect(keys).toContain(JSON.stringify(qk.edits(5)));
     expect(keys).toContain(JSON.stringify(qk.book(1)));
+  });
+});
+
+describe("compose-flow hooks", () => {
+  function run() {
+    const f = vi.fn().mockImplementation(async () => jsonRes({ id: 5, book_id: 1 }));
+    vi.stubGlobal("fetch", f);
+    const { client, wrapper } = setup();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const keys = () => spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    return { f, wrapper, keys };
+  }
+
+  it("useGenerateBackground POST /pages/5/backgrounds，invalidate generations 與 queue", async () => {
+    const { f, wrapper, keys } = run();
+    const { result } = renderHook(() => useGenerateBackground(1), { wrapper });
+    await act(async () => { await result.current.mutateAsync({ pageId: 5 }); });
+    expect(f.mock.calls[0][0]).toBe("/api/pages/5/backgrounds");
+    expect(f.mock.calls[0][1].method).toBe("POST");
+    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
+    expect(keys()).toContain(JSON.stringify(qk.queue()));
+  });
+
+  it("useGeneratePose POST /pages/5/poses 帶 action", async () => {
+    const { f, wrapper, keys } = run();
+    const { result } = renderHook(() => useGeneratePose(1), { wrapper });
+    await act(async () => { await result.current.mutateAsync({ pageId: 5, action: "揮手" }); });
+    expect(f.mock.calls[0][0]).toBe("/api/pages/5/poses");
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ action: "揮手" });
+    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
+  });
+
+  it.each([
+    ["useSelectBackground", useSelectBackground, "background"],
+    ["useSelectPose", useSelectPose, "pose"],
+  ] as const)("%s POST /pages/5/%s 帶 generation_id，invalidate 頁面", async (_n, hook, path) => {
+    const { f, wrapper, keys } = run();
+    const { result } = renderHook(() => hook(1), { wrapper });
+    await act(async () => { await result.current.mutateAsync({ pageId: 5, generationId: 9 }); });
+    expect(f.mock.calls[0][0]).toBe(`/api/pages/5/${path}`);
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ generation_id: 9 });
+    for (const k of [qk.generationsOf(1), qk.pages(1), qk.qa(5), qk.edits(5), qk.book(1), qk.exportSummary(1)])
+      expect(keys()).toContain(JSON.stringify(k));
+  });
+
+  it("useCompose POST /pages/5/compose 無 body，invalidate pages、qa、edits、book、exportSummary", async () => {
+    const { f, wrapper, keys } = run();
+    const { result } = renderHook(() => useCompose(1), { wrapper });
+    await act(async () => { await result.current.mutateAsync({ pageId: 5 }); });
+    expect(f.mock.calls[0][0]).toBe("/api/pages/5/compose");
+    expect(f.mock.calls[0][1].body).toBeUndefined();
+    for (const k of [qk.generationsOf(1), qk.pages(1), qk.qa(5), qk.edits(5), qk.book(1), qk.exportSummary(1)])
+      expect(keys()).toContain(JSON.stringify(k));
+  });
+
+  it("useCompose 等位置 PUT 送完才 POST compose", async () => {
+    const order: string[] = [];
+    let release: () => void = () => {};
+    const f = vi.fn().mockImplementation((url: string) => {
+      order.push(url);
+      if (url.endsWith("/placement"))
+        return new Promise<Response>((r) => (release = () => r(jsonRes({ id: 5, book_id: 1 }))));
+      return Promise.resolve(jsonRes({ id: 5, book_id: 1 }));
+    });
+    vi.stubGlobal("fetch", f);
+    const { client, wrapper } = setup();
+    placementSaverFor(client).savePlacement(5, { cx: 0.3, cy: 0.6, height: 0.5, flip: false });
+    const { result } = renderHook(() => useCompose(1), { wrapper });
+    let p: Promise<unknown> = Promise.resolve();
+    act(() => { p = result.current.mutateAsync({ pageId: 5 }); });
+    await act(async () => { await Promise.resolve(); });
+    expect(order).toEqual(["/api/pages/5/placement"]);
+    await act(async () => { release(); await p; });
+    expect(order).toEqual(["/api/pages/5/placement", "/api/pages/5/compose"]);
+  });
+
+  it("useCompose：最後一次位置寫入失敗 → 拒絕且不送 compose", async () => {
+    const f = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ detail: "壞了" }), { status: 500, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", f);
+    const { client, wrapper } = setup();
+    placementSaverFor(client).savePlacement(5, { cx: 0.3, cy: 0.6, height: 0.5, flip: false });
+    const { result } = renderHook(() => useCompose(1), { wrapper });
+    await act(async () => {
+      await expect(result.current.mutateAsync({ pageId: 5 })).rejects.toThrow("位置尚未儲存，請重試");
+    });
+    expect(f.mock.calls.map((c) => c[0])).toEqual(["/api/pages/5/placement"]);
   });
 });
