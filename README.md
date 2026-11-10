@@ -82,6 +82,9 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
 
 - 後端必須以單一 process 執行（不要用 `uvicorn --workers N`）：生成 worker 在 process 內，且啟動時會把 `running` 的任務重新排隊。
 - 生成任務由 FastAPI 內的單一背景 worker 依序執行，狀態存在 SQLite。
+- 佇列依模型家族分組：Qwen（精準角色動作）與 SDXL（背景、快速角色動作、角色與舊流程頁面候選）。worker 優先挑和上一個任務同家族的任務
+  （同家族內最舊的先），減少 ComfyUI 換模型的時間；等待超過 `queue.max_wait_s`（預設 180 秒，可用 `APP_QUEUE__MAX_WAIT_S` 覆寫）
+  的任務不論家族都最先執行，不會一直被插隊。重啟後還不知道上一個家族，先依建立時間（最舊的先）。生成紀錄的 `queue_position` 就是實際執行順序。
 - ComfyUI 離線時任務保持 `queued`，不會失敗；`GET /api/system/queue` 的 `state` 會顯示 `engine_unavailable`，ComfyUI 恢復後自動續跑。
 - `config/settings.yaml` 預設 `comfy.url` 為 `http://127.0.0.1:8188`；以 `APP_COMFY__URL` 覆寫（8188 若已被其他服務佔用，可改用 8190 等埠）。
 
@@ -139,6 +142,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
   自動補線後缺口 0 → QA 一致 → 標為通過 → 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）；
   以及沒設角色時角色分頁停用、後端 409「請先設定角色」原樣顯示；
   `/api/system/pose-modes` 回報精準不可用時「精準」停用並顯示「精準模式缺少：…」、改選「快速」，產生時送出 `mode:"fast"`。
+- `e2e/batch.spec.ts`：3 頁的書（2 頁有場景描述、1 頁沒有）按「產生所有背景」→ 確認對話框列出會產生 2 頁、略過第 3 頁 → 確認後只送出一次 →
+  第 1、2 頁各一張背景、第 3 頁沒有，按鈕變成停用（「沒有需要產生背景的頁面」）。
 - `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器（背景、畫構圖、角色、線稿模式）與合成分頁（角色移到邊緣外也一樣），
   整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
 - `next dev` 同一個 `frontend/` 只能跑一份：`scripts/dev.sh`（或其他 `next dev`）還開著時 e2e 會出現「Another next dev server is already running」，先關掉它再跑。
@@ -164,6 +169,11 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 3. **合成**：拖曳、拉角落、方向鍵調整角色位置與大小，可水平翻轉；位置自動儲存。按「確認合成」後，後端用 Pillow
    把去背角色貼到背景上，存成一筆 `composite` 生成紀錄並設為本頁 `selected_generation_id`。
 4. **線稿、QA、匯出**：與之前相同（xdog 擷取 → 後處理 → 補線 → 角色一致確認 → 通過 → PDF）。
+
+**一次做很多頁時**：先在每一頁寫好場景描述（需要的話畫構圖），按頁面清單上方的「產生所有背景」，確認後整本書一次排好背景；
+再一頁一頁做角色動作。背景（SDXL）會一批連續跑完，之後的精準角色動作（Qwen）不必和背景輪流換模型，整體等待較短。
+「產生所有背景」會略過沒有場景描述、已有背景（已選用，或歷史裡有成功且未捨棄的）、背景產生中的頁，確認對話框列出會產生幾頁與略過的頁；
+連按兩次也不會重複排隊。
 
 背景與角色動作的歷史紀錄每頁各自保存。改選另一張背景或角色動作時，若本頁目前用的是合成圖，會清除選定並退回草稿；
 同一組背景、角色、位置再按確認會重用原本的合成圖。舊流程的整頁候選（`/pages/{id}/candidates`）仍保留，已選的舊頁面不受影響。
@@ -192,6 +202,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
 | POST | `/pages/{page_id}/candidates` | 產生頁面候選（非同步，202） |
 | POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202；可用構圖草圖） |
+| POST | `/books/{book_id}/backgrounds/batch` | 依頁面順序替每一頁排一張背景（無 body，202）：`{queued: Generation[], skipped: [{page_id, position, reason}]}`；`reason` 為「沒有場景描述」「已有背景」「背景產生中」「草圖檔案遺失」 |
 | POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩；`mode`：`"precise"`（預設，Qwen）或 `"fast"`（SDXL），其他值 422（非同步，202；未設角色 409；精準不可用 503「精準模式缺少：…」） |
 | POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
 | POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |
