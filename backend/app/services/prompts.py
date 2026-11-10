@@ -73,3 +73,24 @@ def qwen_pose_prompt(action: str, variation: str | None = None) -> str:
 
 def pick_variation(rng: random.Random) -> str | None:
     return rng.choice(QWEN_POSE_VARIATIONS) if QWEN_POSE_VARIATIONS else None
+
+
+# --- 簡潔背景（qwen_background）：Qwen-Image-Edit-2511 當純文字生圖 ---
+# 措辭為 experiments/results/phase7_qwen_background_20261110_1104 的 QA1。
+# cfg 1 → 負向提示詞無效，排除條件寫在正向；生成紀錄的 negative_prompt 存空字串。
+QWEN_BACKGROUND_TEMPLATE = (
+    "{scene}. {variation}Simple coloring book background, a few large simple objects, lots of empty space, "
+    "children's picture book illustration, flat colors, thick clean black outlines, simple shapes. "
+    "Empty scene, no people, no animals, no characters, no text."
+)
+# 構圖變化語（「再產生一張」用）；GPU 校正通過才填入（Task 3），空的時候不加。
+QWEN_BACKGROUND_VARIATIONS: tuple[str, ...] = ()
+
+
+def qwen_background_prompt(scene: str, variation: str | None = None) -> str:
+    var = f"{variation.strip()}. " if variation and variation.strip() else ""
+    return QWEN_BACKGROUND_TEMPLATE.format(scene=scene.strip(), variation=var)
+
+
+def pick_background_variation(rng: random.Random) -> str | None:
+    return rng.choice(QWEN_BACKGROUND_VARIATIONS) if QWEN_BACKGROUND_VARIATIONS else None

@@ -7,9 +7,9 @@ from app.services.worker import encode_request
 NOW = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _rj(kind, pose_mode=None):
+def _rj(kind, pose_mode=None, background_style=None):
     return encode_request(kind=kind, prompt="p", negative_prompt="n", seed=1, width=8, height=8,
-                          pose_mode=pose_mode)
+                          pose_mode=pose_mode, background_style=background_style)
 
 
 def test_family_of():
@@ -21,6 +21,18 @@ def test_family_of():
     assert family_of(GenKind.POSE, "[1, 2]") == "sdxl"  # 不是物件
     # kind 以參數為準：非 POSE 即使帶 precise 也是 sdxl
     assert family_of(GenKind.BACKGROUND, _rj(GenKind.POSE, "precise")) == "sdxl"
+
+
+def test_family_of_background_style():
+    B = GenKind.BACKGROUND
+    assert family_of(B, _rj(B, background_style="simple")) == "qwen"
+    assert family_of(B, _rj(B, background_style="detailed")) == "sdxl"
+    assert family_of(B, _rj(B)) == "sdxl"  # 舊列沒有 background_style
+    assert family_of(B, "{not json") == "sdxl"
+    assert family_of(B, "[1, 2]") == "sdxl"
+    # kind 以參數為準：非 BACKGROUND 帶 simple 不算 qwen
+    assert family_of(GenKind.PAGE, _rj(B, background_style="simple")) == "sdxl"
+    assert family_of(GenKind.CHARACTER, _rj(B, background_style="simple")) == "sdxl"
 
 
 def _job(i, family, age_s):

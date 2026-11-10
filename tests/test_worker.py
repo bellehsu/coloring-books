@@ -80,6 +80,34 @@ def test_pose_mode_roundtrip_and_old_rows_are_fast(tmp_path):
     assert req.pose_mode == "fast" and req.variation is None
 
 
+def test_encode_decode_background_style_roundtrip(tmp_path):
+    storage = Storage(tmp_path)
+    text = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                          background_style="simple", background_style_requested="simple",
+                          variation="wide view")
+    d = json.loads(text)
+    assert d["background_style"] == "simple" and d["background_style_requested"] == "simple"
+    assert d["variation"] == "wide view"
+    assert "pose_mode" not in d
+    req = decode_request(text, storage)
+    assert req.background_style == "simple" and req.variation == "wide view"
+    # 退回 detailed：兩個風格都要記錄；沒有變化語也寫 variation=None
+    d = json.loads(encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="n", seed=1, width=8,
+                                  height=8, background_style="detailed", background_style_requested="simple"))
+    assert (d["background_style"], d["background_style_requested"]) == ("detailed", "simple")
+    assert "variation" in d and d["variation"] is None
+
+
+def test_decode_old_background_row_is_detailed(tmp_path):
+    storage = Storage(tmp_path)
+    old = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="n", seed=1, width=8, height=8,
+                         structure_image="books/1/s.png", structure_strength=0.4)
+    d = json.loads(old)
+    assert "background_style" not in d and "background_style_requested" not in d and "variation" not in d
+    req = decode_request(old, storage)
+    assert req.background_style == "detailed" and req.variation is None
+
+
 def test_decode_null_images_and_bad_input(tmp_path):
     storage = Storage(tmp_path)
     req = decode_request(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1,

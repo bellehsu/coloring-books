@@ -4,7 +4,7 @@ import pytest
 
 from app.models import GenKind
 from app.services.comfy_engine import (
-    BACKGROUND_WORKFLOW, CHARACTER_WORKFLOW, PAGE_FIXED, POSE_WORKFLOWS, PAGE_WORKFLOW, ComfyEngine, page_params,
+    BACKGROUND_WORKFLOWS, CHARACTER_WORKFLOW, PAGE_FIXED, POSE_WORKFLOWS, PAGE_WORKFLOW, ComfyEngine, page_params,
 )
 from app.services.engine import EngineError, EngineUnavailable, GenerationRequest
 from app.services.workflow_registry import WorkflowRegistry
@@ -101,7 +101,7 @@ async def test_background_with_sketch_uses_page_strength(tmp_path):
     fake = FakeComfy()
     res = await make_engine(fake).generate(
         make_req(tmp_path, kind=GenKind.BACKGROUND, character=False, structure=True, strength=0.35))
-    assert res.workflow_name == BACKGROUND_WORKFLOW == "sdxl_background"
+    assert res.workflow_name == BACKGROUND_WORKFLOWS["detailed"] == "sdxl_background"
     sent = fake.prompts[0]["prompt"]
     assert by_title(sent, "APPLY_CONTROLNET")["strength"] == 0.35
     assert by_title(sent, "APPLY_CONTROLNET")["end_percent"] == 0.5
@@ -194,3 +194,45 @@ async def test_precise_pose_records_variation_in_params(tmp_path):
 async def test_unknown_pose_mode_errors(tmp_path):
     with pytest.raises(EngineError, match="未知的角色動作模式"):
         await make_engine(FakeComfy()).generate(make_req(tmp_path, kind=GenKind.POSE, pose_mode="qwen"))
+
+
+async def test_background_simple_routes_to_qwen(tmp_path):
+    fake = FakeComfy()
+    res = await make_engine(fake).generate(
+        make_req(tmp_path, kind=GenKind.BACKGROUND, character=False, structure=True, strength=0.35,
+                 width=864, height=1216, background_style="simple"))
+    assert res.workflow_name == BACKGROUND_WORKFLOWS["simple"] == "qwen_background"
+    assert res.params == {"prompt": "a cat", "seed": 7, "width": 864, "height": 1216}
+    assert fake.uploads == []  # 不上傳結構圖
+    sent = fake.prompts[0]["prompt"]
+    assert by_title(sent, "POSITIVE")["prompt"] == "a cat"
+    assert by_title(sent, "NEGATIVE")["prompt"] == ""
+    assert by_title(sent, "SAMPLER")["seed"] == 7
+    assert by_title(sent, "LATENT")["width"] == 864 and by_title(sent, "LATENT")["height"] == 1216
+    assert not any(n["class_type"] in ("LoadImage", "ControlNetApplyAdvanced") for n in sent.values())
+    assert res.extra_images == {}
+    assert "qwen-image-edit-2511-Q4_K_M.gguf" in res.models
+
+
+async def test_background_detailed_unchanged(tmp_path):
+    fake = FakeComfy()
+    res = await make_engine(fake).generate(
+        make_req(tmp_path, kind=GenKind.BACKGROUND, character=False, structure=True, strength=0.35,
+                 background_style="detailed"))
+    assert res.workflow_name == "sdxl_background"
+    assert len(fake.uploads) == 1
+    p = res.params
+    assert (p["prompt"], p["negative_prompt"], p["seed"], p["width"], p["height"]) == (
+        "a cat", "color", 7, 640, 896)
+    assert p["structure_image"] == f"coloring_books/{fake.uploads[0]['name']}"
+    assert by_title(fake.prompts[0]["prompt"], "STRUCTURE_IMAGE")["image"] == p["structure_image"]
+    assert (p["controlnet_strength"], p["controlnet_end_percent"], p["controlnet_type"]) == (
+        0.35, 0.5, "hed/pidi/scribble/ted")
+    # 預設（舊列）也是 detailed
+    assert make_req(tmp_path, kind=GenKind.BACKGROUND).background_style == "detailed"
+
+
+async def test_background_unknown_style_errors(tmp_path):
+    with pytest.raises(EngineError, match="背景風格"):
+        await make_engine(FakeComfy()).generate(
+            make_req(tmp_path, kind=GenKind.BACKGROUND, character=False, background_style="fancy"))

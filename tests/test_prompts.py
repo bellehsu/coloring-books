@@ -59,3 +59,37 @@ def test_qwen_pose_prompt():
     assert "running, facing slightly to the left." in v
     assert prompts.QWEN_POSE_VARIATIONS == ()
     assert pick_variation(random.Random(1)) is None
+
+
+QA1_TAIL = ("Simple coloring book background, a few large simple objects, lots of empty space, children's "
+            "picture book illustration, flat colors, thick clean black outlines, simple shapes. Empty scene, "
+            "no people, no animals, no characters, no text.")
+
+
+def test_qwen_background_prompt():
+    from app.services.prompts import qwen_background_prompt
+
+    assert qwen_background_prompt("in a park") == f"in a park. {QA1_TAIL}"
+    assert qwen_background_prompt("  in a park ") == f"in a park. {QA1_TAIL}"
+    v = qwen_background_prompt("in a park", variation="wide view")
+    assert "in a park. wide view. Simple coloring book background" in v
+    assert v == f"in a park. wide view. {QA1_TAIL}"
+
+
+def test_pick_background_variation_empty_returns_none():
+    import random
+
+    from app.services import prompts
+    from app.services.prompts import pick_background_variation
+
+    assert prompts.QWEN_BACKGROUND_VARIATIONS == ()
+    assert pick_background_variation(random.Random(1)) is None
+
+
+def test_pick_background_variation_uses_list(monkeypatch):
+    import random
+
+    from app.services import prompts
+
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b"))
+    assert prompts.pick_background_variation(random.Random(1)) in ("a", "b")

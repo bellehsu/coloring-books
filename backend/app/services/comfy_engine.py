@@ -18,7 +18,8 @@ from app.services.workflow_registry import ParameterError, WorkflowNotReady, Wor
 
 CHARACTER_WORKFLOW = "sdxl_text2img"
 PAGE_WORKFLOW = "route_a_sdxl_ipadapter_cn"
-BACKGROUND_WORKFLOW = "sdxl_background"
+# 背景：風格 → workflow（GenerationRequest.background_style；排入佇列時已決定）
+BACKGROUND_WORKFLOWS: dict[str, str] = {"simple": "qwen_background", "detailed": "sdxl_background"}
 # 角色動作：模式 → workflow（GenerationRequest.pose_mode）
 POSE_WORKFLOWS: dict[str, str] = {"precise": "qwen_edit_pose_cutout", "fast": "sdxl_pose_cutout"}
 UPLOAD_SUBFOLDER = "coloring_books"
@@ -89,9 +90,12 @@ class ComfyEngine:
             if req.pose_mode not in POSE_WORKFLOWS:
                 raise EngineError(f"未知的角色動作模式：{req.pose_mode}")
             name = POSE_WORKFLOWS[req.pose_mode]
+        elif req.kind == GenKind.BACKGROUND:
+            if req.background_style not in BACKGROUND_WORKFLOWS:
+                raise EngineError(f"未知的背景風格：{req.background_style}")
+            name = BACKGROUND_WORKFLOWS[req.background_style]
         else:
-            name = {GenKind.PAGE: PAGE_WORKFLOW, GenKind.BACKGROUND: BACKGROUND_WORKFLOW}.get(
-                req.kind, CHARACTER_WORKFLOW)
+            name = PAGE_WORKFLOW if req.kind == GenKind.PAGE else CHARACTER_WORKFLOW
         entry = self.registry.get(name)
 
         async with self.client_factory() as client:
@@ -101,6 +105,9 @@ class ComfyEngine:
                                else _white_png(req.width, req.height))
                 struct_ref = await self._upload(client, struct_data, "struct")
                 values = page_params(req, char_ref, struct_ref)
+            elif req.kind == GenKind.BACKGROUND and req.background_style == "simple":
+                # Qwen 純文字生圖：沒有結構圖／ControlNet／negative_prompt（steps、cfg、LoRA 用 manifest 預設）
+                values = {"prompt": req.prompt, "seed": req.seed, "width": req.width, "height": req.height}
             elif req.kind == GenKind.BACKGROUND:
                 struct_data = (req.structure_image.read_bytes() if req.structure_image
                                else _white_png(req.width, req.height))
