@@ -57,7 +57,6 @@ def create_app(
             app.state.sessions,
             app.state.storage,
             s.queue.retry_backoff_s,
-            max_wait_s=s.queue.max_wait_s,
         )
         app.state.preflight = None  # None＝還沒檢查過
         try:

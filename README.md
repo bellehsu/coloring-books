@@ -81,13 +81,7 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
 
 - 後端必須以單一 process 執行（不要用 `uvicorn --workers N`）：生成 worker 在 process 內，且啟動時會把 `running` 的任務重新排隊。
 - 生成任務由 FastAPI 內的單一背景 worker 依序執行，狀態存在 SQLite。
-- 佇列依模型家族分組：Qwen（精準角色動作、簡潔背景）與 SDXL（細緻背景、快速角色動作、角色與舊流程頁面候選）。worker 優先挑和上一個任務同家族的任務
-  （同家族內最舊的先），減少 ComfyUI 換模型的時間；等待超過 `queue.max_wait_s`（預設 180 秒，可用 `APP_QUEUE__MAX_WAIT_S` 覆寫）
-  的任務不論家族都最先執行，不會一直被插隊。重啟後還不知道上一個家族，先依建立時間（最舊的先）。生成紀錄的 `queue_position` 就是實際執行順序。
-  「等待過久」以上一次取任務的時間判斷：任務執行中顯示的順位（例如「第 1 位」）不會中途改變，下一個被取走的就是它；
-  防插隊因此最多晚一個任務生效。佇列清空（閒置）後改用現在時間。
-  一頁一頁做時，「快速」角色動作（SDXL）配「簡潔」背景（Qwen）會讓每頁流程在 SDXL／Qwen 之間交替、換模型較多；
-  「精準」角色動作配「簡潔」背景則同屬 Qwen，不必換模型。
+- 佇列為先進先出（依建立時間，最舊的先）；生成紀錄的 `queue_position` 就是實際執行順序。舊版留下、仍在排隊的整頁（`page`）與 SDXL 任務（快速角色動作、細緻背景）會在後端啟動時標為 `cancelled`（錯誤「這種生成已停用」）。
 - ComfyUI 離線時任務保持 `queued`，不會失敗；`GET /api/system/queue` 的 `state` 會顯示 `engine_unavailable`，ComfyUI 恢復後自動續跑。
 - `config/settings.yaml` 預設 `comfy.url` 為 `http://127.0.0.1:8188`；以 `APP_COMFY__URL` 覆寫（8188 若已被其他服務佔用，可改用 8190 等埠）。
 
