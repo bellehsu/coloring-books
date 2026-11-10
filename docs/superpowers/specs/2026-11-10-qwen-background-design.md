@@ -73,7 +73,7 @@ There is no negative prompt (cfg 1 ignores it), so `negative_prompt` is stored a
 `family_of`: a BACKGROUND whose `background_style == "simple"` → `qwen`. Nothing else changes.
 
 ### 3.5 Variety for 「再產生一張」
-In the spike, two seeds gave almost the same layout. Calibrate a small list of composition variations (viewpoint or framing phrases), add one to the prompt at random per generation, and record it in request_json as `variation`. Adopt the list only if a GPU calibration (6 scenes × 2 seeds) meets all of these:
+In the spike, two seeds gave almost the same layout. Calibrate a small list of composition variations (viewpoint or framing phrases), add one to the prompt at random per generation (never the phrase of the page's most recent simple background, so 「再產生一張」 always changes the composition; added after the final review), and record it in request_json as `variation`. Adopt the list only if a GPU calibration (6 scenes × 2 seeds) meets all of these:
 - line-art metrics within 20% of QA1 (gaps ≤ about 11.5, tiny regions ≤ about 99);
 - no people or animals;
 - two generations of the same scene look clearly different.
