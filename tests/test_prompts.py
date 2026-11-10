@@ -43,3 +43,19 @@ def test_pose_prompt_has_character_and_action_but_no_scene():
     assert "park" not in p and "scene" not in p
     assert "scenery" in POSE_NEGATIVE
     assert POSE_SIZE == (832, 1216)
+
+
+def test_qwen_pose_prompt():
+    import random
+
+    from app.services import prompts
+    from app.services.prompts import pick_variation, qwen_pose_prompt
+
+    p = qwen_pose_prompt("  waving one hand ")
+    assert p.startswith("Make this exact character waving one hand.")
+    assert "no shadow" in p and "plain pure white background" in p
+    assert "{action}" not in p
+    v = qwen_pose_prompt("running", "facing slightly to the left")
+    assert "running, facing slightly to the left." in v
+    assert prompts.QWEN_POSE_VARIATIONS == ()
+    assert pick_variation(random.Random(1)) is None

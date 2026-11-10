@@ -1,4 +1,5 @@
 """提示詞組合：頁面與角色參考圖的固定樣板。"""
+import random
 
 PAGE_STYLE = "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, full detailed background scene"
 PAGE_NEGATIVE = "plain background, empty background, white background, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
@@ -49,3 +50,26 @@ def pose_prompt(character_description: str, action: str) -> str:
         f"{character_description.strip()}, {action.strip()}, full body, {BACKGROUND_STYLE}, "
         "(isolated on pure white background:1.3), centered"
     )
+
+
+# --- 精準模式（qwen_edit_pose_cutout）：指令式編輯參考圖 ---
+# 校正見 experiments/results/phase6_qwen_pose_calibration_20261110：
+# 以 phase5 比較實驗的措辭（最貼近參考圖的耳朵與圍巾垂墜）只加「no shadow」最好（V6）；
+# 改寫圍巾／手臂會讓坐姿失效、耳朵走樣；加朝向等隨機變化會讓一致性下降 → 不採用（VARIATIONS 為空）。
+QWEN_POSE_TEMPLATE = (
+    "Make this exact character {action}. Keep the same character design, proportions, colors, scarf and "
+    "ears unchanged. Full body, centered, plain pure white background, no shadow, no cast shadow, "
+    "children's picture book illustration, flat colors, thick clean black outlines."
+)
+QWEN_POSE_VARIATIONS: tuple[str, ...] = ()
+
+
+def qwen_pose_prompt(action: str, variation: str | None = None) -> str:
+    act = action.strip()
+    if variation:
+        act = f"{act}, {variation.strip()}"
+    return QWEN_POSE_TEMPLATE.format(action=act)
+
+
+def pick_variation(rng: random.Random) -> str | None:
+    return rng.choice(QWEN_POSE_VARIATIONS) if QWEN_POSE_VARIATIONS else None
