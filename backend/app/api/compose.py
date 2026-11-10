@@ -17,8 +17,8 @@ from sqlmodel import Session, col, select, update
 from app.api.books import MAX_SEED, _book_or_404
 from app.api.deps import get_session, get_storage, get_worker
 from app.api.pages import _page_or_404, page_out, reset_review_when
-from app.api.schemas import GenerationOut, PageOut, PagePlacement, PoseCreate, SelectGeneration
-from app.models import Generation, GenKind, GenStatus, Page, utcnow
+from app.api.schemas import BatchBackgroundsOut, BatchSkip, GenerationOut, PageOut, PagePlacement, PoseCreate, SelectGeneration
+from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
 from app.services.compose import (
     COMPOSE_VERSION,
     Placement,
@@ -116,22 +116,22 @@ def _enqueue(
     return _out(gen, worker)
 
 
-@router.post("/pages/{page_id}/backgrounds", status_code=202, response_model=GenerationOut)
-def create_background(
-    page_id: int,
-    session: Session = Depends(get_session),
-    storage: Storage = Depends(get_storage),
-    worker: GenerationWorker = Depends(get_worker),
+def _read_sketch(storage: Storage, page: Page) -> bytes | None:
+    """頁面草圖的位元組；沒有草圖回 None，檔案遺失丟 FileNotFoundError／ValueError。"""
+    if not page.sketch_path:
+        return None
+    return storage.abs(page.sketch_path).read_bytes()
+
+
+def _enqueue_background(
+    session: Session,
+    storage: Storage,
+    worker: GenerationWorker,
+    book: Book,
+    page: Page,
+    sketch_bytes: bytes | None,
 ) -> GenerationOut:
-    """產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。"""
-    page = _page_or_404(session, page_id)
-    book = _book_or_404(session, page.book_id)
-    sketch_bytes: bytes | None = None
-    if page.sketch_path:
-        try:
-            sketch_bytes = storage.abs(page.sketch_path).read_bytes()
-        except (FileNotFoundError, ValueError) as e:
-            raise HTTPException(409, "草圖檔案遺失，請重新上傳") from e
+    """單張與批次共用：用頁面場景描述與草圖快照排一筆背景。"""
     width, height = compute_layout(book.paper_size, book.print_mode).generation_size
     gen = Generation(
         book_id=book.id,
@@ -149,6 +149,73 @@ def create_background(
         session, storage, worker, gen,
         sketch_bytes=sketch_bytes, structure_strength=page.controlnet_strength,
     )
+
+
+@router.post("/pages/{page_id}/backgrounds", status_code=202, response_model=GenerationOut)
+def create_background(
+    page_id: int,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+    worker: GenerationWorker = Depends(get_worker),
+) -> GenerationOut:
+    """產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。"""
+    page = _page_or_404(session, page_id)
+    book = _book_or_404(session, page.book_id)
+    try:
+        sketch_bytes = _read_sketch(storage, page)
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(409, "草圖檔案遺失，請重新上傳") from e
+    return _enqueue_background(session, storage, worker, book, page, sketch_bytes)
+
+
+@router.post(
+    "/books/{book_id}/backgrounds/batch", status_code=202, response_model=BatchBackgroundsOut
+)
+def create_backgrounds_batch(
+    book_id: int,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+    worker: GenerationWorker = Depends(get_worker),
+) -> BatchBackgroundsOut:
+    """替整本書每一頁排一張背景；沒場景描述、已有背景、背景產生中、草圖遺失的頁面略過並回報原因。"""
+    book = _book_or_404(session, book_id)
+    pages = session.exec(
+        select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
+    ).all()
+    backgrounds: dict[int, list[Generation]] = {}
+    for g in session.exec(
+        select(Generation).where(
+            Generation.book_id == book_id, Generation.kind == GenKind.BACKGROUND
+        )
+    ).all():
+        if g.page_id is not None:
+            backgrounds.setdefault(g.page_id, []).append(g)
+
+    queued: list[GenerationOut] = []
+    skipped: list[BatchSkip] = []
+    for page in pages:
+        gens = backgrounds.get(page.id, [])
+        if not page.scene_prompt.strip():
+            reason = "沒有場景描述"
+        elif page.background_generation_id is not None or any(
+            g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens
+        ):
+            reason = "已有背景"
+        elif any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):
+            reason = "背景產生中"
+        else:
+            reason = None
+        sketch_bytes: bytes | None = None
+        if reason is None:
+            try:
+                sketch_bytes = _read_sketch(storage, page)
+            except (FileNotFoundError, ValueError):
+                reason = "草圖檔案遺失"
+        if reason is not None:
+            skipped.append(BatchSkip(page_id=page.id, position=page.position, reason=reason))
+            continue
+        queued.append(_enqueue_background(session, storage, worker, book, page, sketch_bytes))
+    return BatchBackgroundsOut(queued=queued, skipped=skipped)
 
 
 @router.post("/pages/{page_id}/poses", status_code=202, response_model=GenerationOut)

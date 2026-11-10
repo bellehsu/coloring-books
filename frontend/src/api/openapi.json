@@ -787,6 +787,49 @@
         }
       }
     },
+    "/api/books/{book_id}/backgrounds/batch": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Create Backgrounds Batch",
+        "description": "替整本書每一頁排一張背景；沒場景描述、已有背景、背景產生中、草圖遺失的頁面略過並回報原因。",
+        "operationId": "create_backgrounds_batch_api_books__book_id__backgrounds_batch_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchBackgroundsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/pages/{page_id}/poses": {
       "post": {
         "tags": [
@@ -2249,6 +2292,53 @@
           "autofix_added"
         ],
         "title": "AutofixOut"
+      },
+      "BatchBackgroundsOut": {
+        "properties": {
+          "queued": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationOut"
+            },
+            "type": "array",
+            "title": "Queued"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/BatchSkip"
+            },
+            "type": "array",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "skipped"
+        ],
+        "title": "BatchBackgroundsOut"
+      },
+      "BatchSkip": {
+        "properties": {
+          "page_id": {
+            "type": "integer",
+            "title": "Page Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "position",
+          "reason"
+        ],
+        "title": "BatchSkip"
       },
       "Body_reference_sketch_api_books__book_id__reference_sketch_post": {
         "properties": {

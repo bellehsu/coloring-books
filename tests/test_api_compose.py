@@ -768,3 +768,79 @@ def test_cutout_is_cacheable(client, app):
     r = client.get(f"/api/generations/{pose}/cutout")
     assert r.status_code == 200
     assert r.headers["cache-control"] == "private, max-age=86400"
+
+
+# ---- 批次背景 ------------------------------------------------------------------
+
+
+def batch(client, book_id):
+    r = client.post(f"/api/books/{book_id}/backgrounds/batch")
+    assert r.status_code == 202, r.text
+    return r.json()
+
+
+def test_batch_backgrounds_skip_reasons_and_order(client, app):
+    b = new_book(client)
+    pages = [new_page(client, b["id"], scene_prompt=t) for t in ("  ", "有背景", "已選", "排隊中", "新的一頁", "另一頁")]
+    ok_bg = gen_background(client, app, pages[1]["id"])
+    picked_bg = gen_background(client, app, pages[2]["id"])
+    picked(client, pages[2]["id"], "background", picked_bg)
+    gen_background(client, app, pages[3]["id"], run=False)
+    # 把順序反過來，確認依 position 走
+    ids = [p["id"] for p in pages]
+    client.post(f"/api/books/{b['id']}/pages/order", json={"page_ids": ids[::-1]})
+    out = batch(client, b["id"])
+    reasons = {s["page_id"]: s["reason"] for s in out["skipped"]}
+    assert reasons == {
+        ids[0]: "沒有場景描述",
+        ids[1]: "已有背景",
+        ids[2]: "已有背景",
+        ids[3]: "背景產生中",
+    }
+    assert [s["position"] for s in out["skipped"]] == sorted(s["position"] for s in out["skipped"])
+    assert [g["page_id"] for g in out["queued"]] == [ids[5], ids[4]]
+    assert all(g["kind"] == "background" and g["status"] == "queued" for g in out["queued"])
+    assert ok_bg
+
+
+def test_batch_backgrounds_twice_second_is_all_in_progress(client, app):
+    b = new_book(client)
+    pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(3)]
+    assert len(batch(client, b["id"])["queued"]) == 3
+    out = batch(client, b["id"])
+    assert out["queued"] == []
+    assert {s["page_id"]: s["reason"] for s in out["skipped"]} == {
+        p["id"]: "背景產生中" for p in pages
+    }
+
+
+def test_batch_backgrounds_discarded_only_background_is_queued(client, app):
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    bg = gen_background(client, app, p["id"])
+    assert client.patch(f"/api/generations/{bg}", json={"discarded": True}).status_code == 200
+    out = batch(client, b["id"])
+    assert [g["page_id"] for g in out["queued"]] == [p["id"]] and out["skipped"] == []
+
+
+def test_batch_backgrounds_snapshots_sketch(client, app):
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    upload(client, p["id"], make_png((128, 128)))
+    gid = batch(client, b["id"])["queued"][0]["id"]
+    assert json.loads(gen_row(app, gid).request_json)["structure_image"]
+
+
+def test_batch_backgrounds_missing_sketch_file_is_skipped(client, app):
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    upload(client, p["id"], make_png((128, 128)))
+    for f in app.state.storage.root.rglob("sketch*.png"):
+        f.unlink()
+    out = batch(client, b["id"])
+    assert out["queued"] == []
+    assert [s["reason"] for s in out["skipped"]] == ["草圖檔案遺失"]
+
+
+def test_batch_backgrounds_unknown_book(client):
+    assert client.post("/api/books/999/backgrounds/batch").status_code == 404

@@ -200,6 +200,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/books/{book_id}/backgrounds/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Backgrounds Batch
+         * @description 替整本書每一頁排一張背景；沒場景描述、已有背景、背景產生中、草圖遺失的頁面略過並回報原因。
+         */
+        post: operations["create_backgrounds_batch_api_books__book_id__backgrounds_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pages/{page_id}/poses": {
         parameters: {
             query?: never;
@@ -730,6 +750,22 @@ export interface components {
             lineart_url: string;
             /** Autofix Added */
             autofix_added: number;
+        };
+        /** BatchBackgroundsOut */
+        BatchBackgroundsOut: {
+            /** Queued */
+            queued: components["schemas"]["GenerationOut"][];
+            /** Skipped */
+            skipped: components["schemas"]["BatchSkip"][];
+        };
+        /** BatchSkip */
+        BatchSkip: {
+            /** Page Id */
+            page_id: number;
+            /** Position */
+            position: number;
+            /** Reason */
+            reason: string;
         };
         /** Body_reference_sketch_api_books__book_id__reference_sketch_post */
         Body_reference_sketch_api_books__book_id__reference_sketch_post: {
@@ -1761,6 +1797,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenerationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_backgrounds_batch_api_books__book_id__backgrounds_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchBackgroundsOut"];
                 };
             };
             /** @description Validation Error */
