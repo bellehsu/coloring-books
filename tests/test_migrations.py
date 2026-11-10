@@ -161,6 +161,24 @@ def test_upgrade_to_head_keeps_generation_and_accepts_new_kinds(tmp_path):
         assert c.exec_driver_sql("SELECT count(*) FROM generation WHERE kind IN ('BACKGROUND','POSE','COMPOSITE')").scalar() == 3
     # 0004 重建資料表後仍保留 AUTOINCREMENT（刪掉的 id 不可沿用）
     with eng.connect() as c:
-        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0004"
+        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0005"
         for t in AUTOINCREMENT_TABLES:
             assert "AUTOINCREMENT" in table_sql(c, t), t
+
+
+def test_migration_0005_adds_action_prompt(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    _seed_0002(eng)
+    command.upgrade(alembic_config(eng), "0004")
+    with eng.connect() as c:
+        assert "action_prompt" not in {col["name"] for col in inspect(c).get_columns("page")}
+    command.upgrade(alembic_config(eng), "0005")
+    with eng.connect() as c:
+        cols = {col["name"]: col for col in inspect(c).get_columns("page")}
+        assert "action_prompt" in cols and cols["action_prompt"]["nullable"] is False
+        assert c.exec_driver_sql("SELECT count(*) FROM page").scalar() > 0
+        assert c.exec_driver_sql("SELECT DISTINCT action_prompt FROM page").all() == [("",)]
+        assert "AUTOINCREMENT" in table_sql(c, "page")
+    command.downgrade(alembic_config(eng), "0004")
+    with eng.connect() as c:
+        assert "action_prompt" not in {col["name"] for col in inspect(c).get_columns("page")}

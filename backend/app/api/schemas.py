@@ -18,6 +18,7 @@ from app.services.qa import QA_MESSAGES, QAReport
 TitleStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 DescriptionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=800)]
 ScenePromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=800)]
+ActionPromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]
 ActionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 
 
@@ -192,10 +193,12 @@ class GenerationOut(BaseModel):
 
 class PageCreate(BaseModel):
     scene_prompt: ScenePromptStr = ""
+    action_prompt: ActionPromptStr = ""
 
 
 class PageUpdate(BaseModel):
     scene_prompt: ScenePromptStr | None = None
+    action_prompt: ActionPromptStr | None = None
     controlnet_strength: float | None = Field(default=None, ge=0.0, le=0.6)
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
@@ -268,6 +271,7 @@ class PageOut(BaseModel):
     book_id: int
     position: int
     scene_prompt: str
+    action_prompt: str
     controlnet_strength: float
     sketch_url: str | None
     selected_generation_id: int | None
@@ -309,6 +313,7 @@ class PageOut(BaseModel):
             book_id=page.book_id,
             position=page.position,
             scene_prompt=page.scene_prompt,
+            action_prompt=page.action_prompt,
             controlnet_strength=page.controlnet_strength,
             sketch_url=(
                 f"/api/pages/{page.id}/sketch?v={_version(page.updated_at)}"

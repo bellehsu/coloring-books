@@ -298,7 +298,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   // ---------- 動作 ----------
   const addPage = () =>
     createPage.mutate(
-      { scene_prompt: "" },
+      { scene_prompt: "", action_prompt: "" },
       {
         onSuccess: (p) => {
           forgetPageId(qc, p.id); // 後端若沿用了已刪除頁的 id，不要讓舊頁的狀態串過來

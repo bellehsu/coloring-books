@@ -85,6 +85,7 @@ class Page(SQLModel, table=True):
     book_id: int = Field(foreign_key="book.id", index=True)
     position: int
     scene_prompt: str = ""
+    action_prompt: str = Field(default="", sa_column_kwargs={"server_default": ""})
     controlnet_strength: float = 0.4
     sketch_path: str | None = None
     selected_generation_id: int | None = None

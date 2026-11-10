@@ -337,3 +337,20 @@ def test_deleted_page_and_generation_ids_are_never_reused(client, app):
     new_gens = client.post(f"/api/pages/{c['id']}/candidates", json={"count": 2}).json()
     assert not {g["id"] for g in new_gens} & {g["id"] for g in old_gens}
     assert min(g["id"] for g in new_gens) > max(g["id"] for g in old_gens)
+
+
+def test_patch_action_prompt(client):
+    p = new_page(client, new_book(client)["id"])
+    assert p["action_prompt"] == ""
+    r = client.patch(f"/api/pages/{p['id']}", json={"action_prompt": "抱著一本書往上爬"})
+    assert r.status_code == 200 and r.json()["action_prompt"] == "抱著一本書往上爬"
+    got = client.get(f"/api/books/{p['book_id']}/pages").json()
+    assert got[0]["action_prompt"] == "抱著一本書往上爬"
+    assert client.patch(f"/api/pages/{p['id']}", json={"action_prompt": "動" * 301}).status_code == 422
+
+
+def test_create_page_with_texts(client):
+    b = new_book(client)
+    r = client.post(f"/api/books/{b['id']}/pages", json={"scene_prompt": "森林", "action_prompt": "揮手"})
+    assert r.status_code == 201
+    assert r.json()["scene_prompt"] == "森林" and r.json()["action_prompt"] == "揮手"

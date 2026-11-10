@@ -3205,6 +3205,12 @@
             "maxLength": 800,
             "title": "Scene Prompt",
             "default": ""
+          },
+          "action_prompt": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Action Prompt",
+            "default": ""
           }
         },
         "type": "object",
@@ -3243,6 +3249,10 @@
           "scene_prompt": {
             "type": "string",
             "title": "Scene Prompt"
+          },
+          "action_prompt": {
+            "type": "string",
+            "title": "Action Prompt"
           },
           "controlnet_strength": {
             "type": "number",
@@ -3369,6 +3379,7 @@
           "book_id",
           "position",
           "scene_prompt",
+          "action_prompt",
           "controlnet_strength",
           "sketch_url",
           "selected_generation_id",
@@ -3444,6 +3455,18 @@
               }
             ],
             "title": "Scene Prompt"
+          },
+          "action_prompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Prompt"
           },
           "controlnet_strength": {
             "anyOf": [

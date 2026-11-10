@@ -195,7 +195,7 @@ export function useSetCharacter(bookId: number) {
 export function useCreatePage(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (b: S["PageCreate"] = { scene_prompt: "" }) =>
+    mutationFn: (b: S["PageCreate"] = { scene_prompt: "", action_prompt: "" }) =>
       api.post<Page>(`/books/${bookId}/pages`, b),
     onSuccess: () =>
       Promise.all([

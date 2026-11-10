@@ -121,7 +121,7 @@ def create_page(
 ) -> PageOut:
     _book_or_404(session, book_id)
     top = session.exec(select(func.max(Page.position)).where(Page.book_id == book_id)).one()
-    page = Page(book_id=book_id, position=0 if top is None else top + 1, scene_prompt=body.scene_prompt)
+    page = Page(book_id=book_id, position=0 if top is None else top + 1, scene_prompt=body.scene_prompt, action_prompt=body.action_prompt)
     session.add(page)
     session.commit()
     return page_out(session, page)
@@ -162,6 +162,8 @@ def update_page(
     page = _page_or_404(session, page_id)
     if body.scene_prompt is not None:
         page.scene_prompt = body.scene_prompt
+    if body.action_prompt is not None:
+        page.action_prompt = body.action_prompt
     if body.controlnet_strength is not None:
         page.controlnet_strength = body.controlnet_strength
     lines_changed = False

@@ -1067,6 +1067,11 @@ export interface components {
              * @default
              */
             scene_prompt: string;
+            /**
+             * Action Prompt
+             * @default
+             */
+            action_prompt: string;
         };
         /** PageOrder */
         PageOrder: {
@@ -1083,6 +1088,8 @@ export interface components {
             position: number;
             /** Scene Prompt */
             scene_prompt: string;
+            /** Action Prompt */
+            action_prompt: string;
             /** Controlnet Strength */
             controlnet_strength: number;
             /** Sketch Url */
@@ -1144,6 +1151,8 @@ export interface components {
         PageUpdate: {
             /** Scene Prompt */
             scene_prompt?: string | null;
+            /** Action Prompt */
+            action_prompt?: string | null;
             /** Controlnet Strength */
             controlnet_strength?: number | null;
             line_detail?: components["schemas"]["LineDetail"] | null;
