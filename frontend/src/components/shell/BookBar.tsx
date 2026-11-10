@@ -19,7 +19,7 @@ const PRINT: Record<Book["print_mode"], string> = {
 
 export interface BookBarProps {
   book: Book;
-  current: "character" | "pages" | "export";
+  current: "character" | "story" | "pages" | "export";
   onExport?: () => void;
   onSettings?: () => void;
 }
@@ -27,6 +27,7 @@ export interface BookBarProps {
 export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
   const hasCharacter = book.character_generation_id != null;
   const charHref = `/books/${book.id}/character`;
+  const storyHref = `/books/${book.id}/story`;
   const pagesHref = `/books/${book.id}/editor`;
   const pagesLabel = hasCharacter ? `頁面 ${book.stats.passed} / ${book.stats.pages}` : "頁面";
   const hintId = `pages-hint-${book.id}`;
@@ -58,6 +59,31 @@ export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
         <li aria-hidden="true" className={styles.sep} />
         <li>
           {!hasCharacter ? (
+            <button
+              type="button"
+              aria-disabled="true"
+              aria-describedby={hintId}
+              title="請先設定角色"
+              className={`${styles.pill} ${styles.todo} ${styles.disabled}`}
+            >
+              <span className={`${styles.badge} ${styles.badgeTodo}`}>2</span>
+              故事
+            </button>
+          ) : current === "story" ? (
+            <span aria-current="step" className={`${styles.pill} ${styles.now}`}>
+              <span className={`${styles.badge} ${styles.badgeNow}`}>2</span>
+              故事
+            </span>
+          ) : (
+            <Link href={storyHref} className={`${styles.pill} ${styles.todo}`}>
+              <span className={`${styles.badge} ${styles.badgeTodo}`}>2</span>
+              故事
+            </Link>
+          )}
+        </li>
+        <li aria-hidden="true" className={styles.sep} />
+        <li>
+          {!hasCharacter ? (
             <>
               <button
                 type="button"
@@ -66,7 +92,7 @@ export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
                 title="請先設定角色"
                 className={`${styles.pill} ${styles.todo} ${styles.disabled}`}
               >
-                <span className={`${styles.badge} ${styles.badgeTodo}`}>2</span>
+                <span className={`${styles.badge} ${styles.badgeTodo}`}>3</span>
                 頁面
               </button>
               <span id={hintId} className={styles.srOnly}>
@@ -75,12 +101,12 @@ export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
             </>
           ) : current === "pages" ? (
             <span aria-current="step" className={`${styles.pill} ${styles.now}`}>
-              <span className={`${styles.badge} ${styles.badgeNow}`}>2</span>
+              <span className={`${styles.badge} ${styles.badgeNow}`}>3</span>
               {pagesLabel}
             </span>
           ) : (
             <Link href={pagesHref} className={`${styles.pill} ${styles.todo}`}>
-              <span className={`${styles.badge} ${styles.badgeTodo}`}>2</span>
+              <span className={`${styles.badge} ${styles.badgeTodo}`}>3</span>
               {pagesLabel}
             </Link>
           )}
@@ -93,7 +119,7 @@ export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
             aria-current={current === "export" ? "step" : undefined}
             className={`${styles.pill} ${current === "export" ? styles.now : styles.todo}`}
           >
-            <span className={`${styles.badge} ${current === "export" ? styles.badgeNow : styles.badgeTodo}`}>3</span>
+            <span className={`${styles.badge} ${current === "export" ? styles.badgeNow : styles.badgeTodo}`}>4</span>
             匯出
           </button>
         </li>

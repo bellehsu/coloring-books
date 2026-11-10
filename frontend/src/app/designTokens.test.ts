@@ -26,6 +26,19 @@ describe("design tokens", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("4–14px 的圓角用 --radius-* token，不寫死（2–3px 的細條、999px／50% 膠囊與圓形除外）", () => {
+    const offenders: string[] = [];
+    for (const f of cssFiles(SRC)) {
+      readFileSync(f, "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          const m = line.match(/border-radius:\s*(\d+)px/);
+          if (m && Number(m[1]) >= 4 && Number(m[1]) <= 14) offenders.push(`${path.relative(SRC, f)}:${i + 1}`);
+        });
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("元件用到的 var(--x) 都在 globals.css（或同一個 CSS 檔的元件區域變數）定義", () => {
     const globals = readFileSync(path.join(SRC, "app", "globals.css"), "utf8");
     const definedIn = (css: string) => new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));

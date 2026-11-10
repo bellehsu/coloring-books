@@ -1,43 +1,118 @@
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { QueuePill } from "./QueuePill";
+import { act, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueuePill, resetQueueTracker } from "./QueuePill";
 
 const useQueue = vi.fn();
 vi.mock("@/api/hooks", () => ({ useQueue: () => useQueue() }));
 
-const q = (o: object) => ({ data: { state: "idle", last_error: null, queued: 0, running_id: null, ...o } });
+type Kind = "character" | "background" | "pose";
+const q = (o: object = {}, pending: Kind[] = [], recent: object[] = []) => ({
+  data: {
+    state: "idle",
+    last_error: null,
+    queued: 0,
+    running_id: null,
+    pending: pending.map((kind) => ({ kind })),
+    recent,
+    ...o,
+  },
+});
+const busy = (n: number, kind: Kind = "pose", recent: object[] = []) =>
+  q({ state: "running", queued: n - 1, running_id: 1 }, Array(n).fill(kind), recent);
 
 describe("QueuePill", () => {
-  beforeEach(() => useQueue.mockReset());
-  it("引擎無法連線", () => {
-    useQueue.mockReturnValue(q({ state: "engine_unavailable", queued: 2 }));
-    render(<QueuePill />);
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useQueue.mockReset();
+    resetQueueTracker();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("引擎無法連線／服務已停止（含 last_error）", () => {
+    useQueue.mockReturnValue(q({ state: "engine_unavailable", queued: 2 }, ["pose", "pose"]));
+    const { rerender } = render(<QueuePill />);
     expect(screen.getByText("生成引擎無法連線")).toBeInTheDocument();
-  });
-  it("有排隊", () => {
-    useQueue.mockReturnValue(q({ state: "running", queued: 2 }));
-    render(<QueuePill />);
-    expect(screen.getByText("生成佇列 2 張")).toBeInTheDocument();
-  });
-  it("執行中且無排隊也算 1 張", () => {
-    useQueue.mockReturnValue(q({ state: "running", running_id: 5 }));
-    render(<QueuePill />);
-    expect(screen.getByText("生成佇列 1 張")).toBeInTheDocument();
-  });
-  it("服務已停止與 last_error", () => {
     useQueue.mockReturnValue(q({ state: "stopped", last_error: "boom" }));
-    render(<QueuePill />);
+    rerender(<QueuePill />);
     expect(screen.getByText("生成服務已停止")).toBeInTheDocument();
     expect(screen.getByText("（boom）")).toBeInTheDocument();
   });
-  it("空閒", () => {
-    useQueue.mockReturnValue(q({}));
-    render(<QueuePill />);
-    expect(screen.getByText("佇列空閒")).toBeInTheDocument();
-  });
-  it("尚未載入時顯示空閒", () => {
+
+  it("尚未載入時顯示閒置", () => {
     useQueue.mockReturnValue({ data: undefined });
     render(<QueuePill />);
-    expect(screen.getByText("佇列空閒")).toBeInTheDocument();
+    expect(screen.getByText("GPU 閒置")).toBeInTheDocument();
+  });
+
+  it("pill shows 閒置 / 生成中 2/6 · 剩約 2 分鐘 / 就緒 then 閒置", () => {
+    useQueue.mockReturnValue(q());
+    const { rerender } = render(<QueuePill />);
+    expect(screen.getByText("GPU 閒置")).toBeInTheDocument();
+
+    // 6 張進來，每張估 25 秒
+    useQueue.mockReturnValue(busy(6));
+    rerender(<QueuePill />);
+    expect(screen.getByText("生成中 1/6 · 剩約 3 分鐘")).toBeInTheDocument();
+
+    // 完成 1 張：最近一張角色動作耗時 24 s → 剩 5 張 × 24 s = 120 s → 2/6、剩約 2 分鐘
+    useQueue.mockReturnValue(busy(5, "pose", [{ kind: "pose", elapsed_s: 24 }]));
+    rerender(<QueuePill />);
+    expect(screen.getByText("生成中 2/6 · 剩約 2 分鐘")).toBeInTheDocument();
+
+    // 剩最後一張且不到 1 分鐘
+    useQueue.mockReturnValue(busy(1));
+    rerender(<QueuePill />);
+    expect(screen.getByText("生成中 6/6 · 剩不到 1 分鐘")).toBeInTheDocument();
+
+    useQueue.mockReturnValue(q());
+    rerender(<QueuePill />);
+    expect(screen.getByText("GPU 就緒")).toBeInTheDocument();
+    act(() => void vi.advanceTimersByTime(5 * 60_000 - 1));
+    expect(screen.getByText("GPU 就緒")).toBeInTheDocument();
+    act(() => void vi.advanceTimersByTime(2));
+    expect(screen.getByText("GPU 閒置")).toBeInTheDocument();
+  });
+
+  it("中途再加入工作時 m 變大；清空後重新計數", () => {
+    useQueue.mockReturnValue(busy(2));
+    const { rerender } = render(<QueuePill />);
+    expect(screen.getByText(/生成中 1\/2/)).toBeInTheDocument();
+    useQueue.mockReturnValue(busy(1));
+    rerender(<QueuePill />);
+    expect(screen.getByText(/生成中 2\/2/)).toBeInTheDocument();
+    useQueue.mockReturnValue(busy(3)); // 又加入 2 張
+    rerender(<QueuePill />);
+    expect(screen.getByText(/生成中 2\/4/)).toBeInTheDocument();
+    useQueue.mockReturnValue(q());
+    rerender(<QueuePill />);
+    useQueue.mockReturnValue(busy(1));
+    rerender(<QueuePill />);
+    expect(screen.getByText(/生成中 1\/1/)).toBeInTheDocument();
+  });
+
+  it("換頁（膠囊卸載再掛上）不會把 n/m 重新算起", () => {
+    useQueue.mockReturnValue(busy(3));
+    const first = render(<QueuePill />);
+    expect(screen.getByText(/生成中 1\/3/)).toBeInTheDocument();
+    useQueue.mockReturnValue(busy(2));
+    first.rerender(<QueuePill />);
+    expect(screen.getByText(/生成中 2\/3/)).toBeInTheDocument();
+    first.unmount();
+    render(<QueuePill />);
+    expect(screen.getByText(/生成中 2\/3/)).toBeInTheDocument();
+  });
+
+  it("就緒期間換頁仍顯示就緒，時間到才變閒置", () => {
+    useQueue.mockReturnValue(busy(1));
+    const first = render(<QueuePill />);
+    useQueue.mockReturnValue(q());
+    first.rerender(<QueuePill />);
+    expect(screen.getByText("GPU 就緒")).toBeInTheDocument();
+    first.unmount();
+    act(() => void vi.advanceTimersByTime(60_000));
+    render(<QueuePill />);
+    expect(screen.getByText("GPU 就緒")).toBeInTheDocument();
+    act(() => void vi.advanceTimersByTime(4 * 60_000));
+    expect(screen.getByText("GPU 閒置")).toBeInTheDocument();
   });
 });

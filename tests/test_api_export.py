@@ -11,8 +11,9 @@ from app.main import create_app
 from app.models import Generation, PageStatus
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from tests.fake_engine import FakeEngine
-from tests.test_api_books import run_jobs
-from tests.test_api_lineart import A5_HOME, color_png, get_page, make_passed, set_page
+from tests.test_api_lineart import (
+    A5_HOME, color_png, get_page, make_passed, page_out, seed_generation, set_page,
+)
 from tests.test_api_pages import book_with_character, new_page
 
 
@@ -28,16 +29,14 @@ def client(app):
 
 
 def book_pages(client, app, n=3, **kw):
+    """建書＋角色＋n 頁，每頁直接寫入一張已完成的合成圖並選用（彩色方塊，沒有缺口）。"""
     app.state.engine.image = color_png()
     b, _ = book_with_character(client, app, **(kw or A5_HOME))
     pages = []
     for _ in range(n):
         p = new_page(client, b["id"])
-        g = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 1}).json()
-        run_jobs(client, app, 1)
-        r = client.post(f"/api/pages/{p['id']}/select", json={"generation_id": g[0]["id"]})
-        assert r.status_code == 200, r.text
-        pages.append(r.json())
+        set_page(app, p["id"], selected_generation_id=seed_generation(app, b["id"], p["id"], color_png()))
+        pages.append(page_out(client, b["id"], p["id"]))
     return b, pages
 
 

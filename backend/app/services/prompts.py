@@ -1,67 +1,59 @@
-"""提示詞組合：頁面與角色參考圖的固定樣板。"""
+"""提示詞樣板。Phase 9：角色、背景、角色動作全部走 Qwen-Image-Edit-2511（qwen_character／qwen_background／
+qwen_edit_pose_cutout）。Qwen 的 cfg 為 1 → 負向提示詞無效，排除條件寫在正向；生成紀錄的 negative_prompt 存空字串。
+使用者輸入（角色描述、場景、動作，中文或英文）不翻譯，原樣放進英文樣板。
+"""
 import random
+from collections.abc import Sequence
 
-PAGE_STYLE = "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, full detailed background scene"
-PAGE_NEGATIVE = "plain background, empty background, white background, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
-# 角色負向：前段壓制彩色背景、場景與多視角設定圖（Phase 3 實驗 phase3_character_prompt_20261106_154833，v4）
-CHARACTER_NEGATIVE = "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped"
-
-
-def page_prompt(character_description: str, scene: str) -> str:
-    parts = [character_description.strip(), scene.strip(), PAGE_STYLE]
-    return ", ".join(p for p in parts if p)
-
-
-def character_prompt(description: str) -> str:
-    # 不寫「character reference」：會讓模型畫成多視角設定圖。白底以 ComfyUI 權重語法加強。
-    return (
-        f"single full body front view of {description.strip()}, standing, "
-        "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, "
-        "(isolated on pure white background:1.3), centered, whole body visible from head to feet"
-    )
+def pick_variation(options: Sequence[str], rng: random.Random, exclude: str | None = None) -> str | None:
+    """從 options 隨機挑一個變化語；exclude（上一張用的）不挑，避免「再產生一張」時重複。
+    排除後沒得挑（清單只有一個）就從整份清單挑；exclude 不在清單裡照常挑；清單是空的回 None。"""
+    if not options:
+        return None
+    choices = [v for v in options if v != exclude] or list(options)
+    return rng.choice(choices)
 
 
-# --- 頁面合成流程（背景＋角色動作）；初始文字取自 phase5_compose_spike_20261109，Task 6 校正後可改 ---
-BACKGROUND_STYLE = "children's picture book illustration, flat colors, thick clean black outlines, simple shapes"
-# 背景提示詞經 Task 6 校正（experiments/results/phase5_background_prompt_20261109）：
-# 加權強調「簡單、少量大物件」＋負向壓制繁複細節，缺口平均 67 → 42、過小區域約減半。
-BACKGROUND_NEGATIVE = (
-    "cluttered, busy, intricate details, many small objects, tiny details, hatching, crosshatching, pattern, "
-    "people, person, character, girl, boy, child, animal, rabbit, photo, realistic, 3d render, gradient, "
-    "soft shading, texture, noise, blurry, text, watermark"
+# --- 角色參考圖（qwen_character）：Qwen 純文字生圖，白底全身單一角色 ---
+# 樣板、變化語與尺寸由 phase9 Task 1 在 GPU 上校正（experiments/results/phase9_all_qwen_20261110_1700）。
+# {variation} 為「<變化語>. 」或空字串。
+QWEN_CHARACTER_TEMPLATE = (
+    "Single full body front view of {description}, standing. {variation}Children's picture book illustration, "
+    "flat colors, thick clean black outlines, simple shapes. Plain pure white background, no ground, no shadow, "
+    "centered, whole body visible from head to feet. Only one character, no other characters, no character sheet, "
+    "no multiple views, no text."
 )
-POSE_NEGATIVE = "colored background, scenery, landscape, ground, multiple views, character sheet, cropped, photo, realistic, 3d render, gradient, soft shading, texture, noise, blurry, text, watermark, multiple characters"
-POSE_SIZE = (832, 1216)
+# 變化語（每張隨機一個，不重複這本書上一張）：通用措辭、不提手腳，交通工具與物品類角色也適用（VG）。
+QWEN_CHARACTER_VARIATIONS: tuple[str, ...] = (
+    "Big head and small body, gentle smile",
+    "Slightly taller and slimmer proportions, big happy smile",
+    "Chubby round shape, cheerful laughing expression",
+    "Turned slightly to one side, playful happy expression",
+)
+QWEN_CHARACTER_SIZE = (832, 1216)  # 直式、16 的倍數
 
 
-def background_prompt(scene: str) -> str:
-    parts = [
-        scene.strip(),
-        "(simple coloring book background:1.2), (a few large simple objects:1.3), lots of empty space",
-        BACKGROUND_STYLE,
-        "no people",
-    ]
-    return ", ".join(p for p in parts if p)
+def qwen_character_prompt(description: str, variation: str | None = None) -> str:
+    var = f"{variation.strip()}. " if variation and variation.strip() else ""
+    return QWEN_CHARACTER_TEMPLATE.format(description=description.strip(), variation=var)
 
 
-def pose_prompt(character_description: str, action: str) -> str:
-    # 不帶場景描述：背景另外生成，這裡只要白底角色
-    return (
-        f"{character_description.strip()}, {action.strip()}, full body, {BACKGROUND_STYLE}, "
-        "(isolated on pure white background:1.3), centered"
-    )
+def pick_character_variation(rng: random.Random, exclude: str | None = None) -> str | None:
+    return pick_variation(QWEN_CHARACTER_VARIATIONS, rng, exclude)
 
 
-# --- 精準模式（qwen_edit_pose_cutout）：指令式編輯參考圖 ---
-# 校正見 experiments/results/phase6_qwen_pose_calibration_20261110：
-# 以 phase5 比較實驗的措辭（最貼近參考圖的耳朵與圍巾垂墜）只加「no shadow」最好（V6）；
-# 改寫圍巾／手臂會讓坐姿失效、耳朵走樣；加朝向等隨機變化會讓一致性下降 → 不採用（VARIATIONS 為空）。
+# --- 角色動作（qwen_edit_pose_cutout）：指令式編輯參考圖 ---
+# 以 phase6_qwen_pose_calibration_20261110 的 V6 為底。phase9 Task 1：原本寫死的「scarf and ears」會替沒有圍巾的
+# 角色加上圍巾 → 改通用措辭；動作文字含地點時 Qwen 會畫出場景 → 加「即使動作提到地點也只畫角色」。
+# 加朝向等隨機變化會讓一致性下降 → 不採用（VARIATIONS 為空）。
 QWEN_POSE_TEMPLATE = (
-    "Make this exact character {action}. Keep the same character design, proportions, colors, scarf and "
-    "ears unchanged. Full body, centered, plain pure white background, no shadow, no cast shadow, "
-    "children's picture book illustration, flat colors, thick clean black outlines."
+    "Make this exact character {action}. Draw only the character, even if the action mentions a place: no ground, "
+    "no floor, no scenery, no background objects. Keep the same character design, proportions, colors, clothing and "
+    "accessories unchanged. Full body, centered, plain pure white background, no shadow, no cast shadow, children's "
+    "picture book illustration, flat colors, thick clean black outlines."
 )
 QWEN_POSE_VARIATIONS: tuple[str, ...] = ()
+POSE_SIZE = (832, 1216)  # 角色動作固定尺寸（直式、16 的倍數）
 
 
 def qwen_pose_prompt(action: str, variation: str | None = None) -> str:
@@ -71,8 +63,8 @@ def qwen_pose_prompt(action: str, variation: str | None = None) -> str:
     return QWEN_POSE_TEMPLATE.format(action=act)
 
 
-def pick_variation(rng: random.Random) -> str | None:
-    return rng.choice(QWEN_POSE_VARIATIONS) if QWEN_POSE_VARIATIONS else None
+def pick_pose_variation(rng: random.Random) -> str | None:
+    return pick_variation(QWEN_POSE_VARIATIONS, rng)
 
 
 # --- 簡潔背景（qwen_background）：Qwen-Image-Edit-2511 當純文字生圖 ---
@@ -99,9 +91,5 @@ def qwen_background_prompt(scene: str, variation: str | None = None) -> str:
 
 
 def pick_background_variation(rng: random.Random, exclude: str | None = None) -> str | None:
-    """隨機挑一個構圖變化語；exclude（同頁上一張簡潔背景用的）不挑，避免再產生時構圖重複。
-    排除後沒得挑（清單只有一個）就從整份清單挑。"""
-    if not QWEN_BACKGROUND_VARIATIONS:
-        return None
-    choices = [v for v in QWEN_BACKGROUND_VARIATIONS if v != exclude] or list(QWEN_BACKGROUND_VARIATIONS)
-    return rng.choice(choices)
+    """exclude 為同頁上一張簡潔背景用的變化語，避免再產生時構圖重複。"""
+    return pick_variation(QWEN_BACKGROUND_VARIATIONS, rng, exclude)

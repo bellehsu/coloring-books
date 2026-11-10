@@ -94,7 +94,9 @@ describe("placementSaverFor", () => {
     const onError = vi.fn();
     s.setErrorHandler(onError);
     s.savePlacement(1, at(0.2));
+    expect(s.isGone(1)).toBe(false);
     forgetDeletedPage(qc, 1);
+    expect(s.isGone(1)).toBe(true);
     gates[0].release(404);
     await tick();
     expect(onError).not.toHaveBeenCalled();
@@ -102,6 +104,7 @@ describe("placementSaverFor", () => {
     s.savePlacement(1, at(0.4));
     expect(gates).toHaveLength(1);
     forgetPageId(qc, 1);
+    expect(s.isGone(1)).toBe(false);
     s.savePlacement(1, at(0.4));
     expect(gates).toHaveLength(2);
   });

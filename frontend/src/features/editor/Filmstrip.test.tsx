@@ -41,10 +41,6 @@ function setup(o: Partial<FilmstripProps> = {}) {
     onAdd: vi.fn(),
     onMove: vi.fn(),
     onDelete: vi.fn(),
-    bgPlan: { queued: [3, 4], skipped: [{ pageId: 1, n: 1, reason: "已有背景" }], estimate: false },
-    bgStyle: "simple",
-    bgSketchCount: 0,
-    onGenerateAll: vi.fn(),
     ...o,
   };
   render(<Filmstrip {...props} />);
@@ -60,7 +56,8 @@ describe("Filmstrip", () => {
     const bar = screen.getByRole("progressbar", { name: "整本進度" });
     expect(bar).toHaveAttribute("aria-valuenow", "1");
     expect(bar).toHaveAttribute("aria-valuemax", "4");
-    expect(within(pageButton(1)).getByText("通過")).toBeInTheDocument();
+    expect(bar).toHaveAttribute("aria-valuetext", "1 / 4 頁完成");
+    expect(within(pageButton(1)).getByText("完成")).toBeInTheDocument();
     expect(within(pageButton(2)).getByText("需要修線")).toBeInTheDocument();
     expect(within(pageButton(3)).getByText("草稿")).toBeInTheDocument();
     expect(within(pageButton(4)).getByText("生成中")).toBeInTheDocument();
@@ -125,70 +122,42 @@ describe("Filmstrip", () => {
     expect(p.onDelete).toHaveBeenCalledWith(3);
   });
 
-  it("產生所有背景：N = 0 時停用並以 title 說明", () => {
-    setup({ bgPlan: { queued: [], skipped: [{ pageId: 1, n: 1, reason: "已有背景" }], estimate: false } });
-    const b = screen.getByRole("button", { name: "產生所有背景" });
-    expect(b).toBeDisabled();
-    expect(b).toHaveAttribute("title", "沒有需要產生背景的頁面");
+  it("桌機（不是 compact）沒有頁面下拉選單", () => {
+    setup();
+    expect(screen.queryByRole("combobox", { name: "選擇頁面" })).not.toBeInTheDocument();
   });
 
-  it("產生所有背景：送出中停用", () => {
-    setup({ generatingAll: true });
-    expect(screen.getByRole("button", { name: "產生所有背景" })).toBeDisabled();
-  });
-
-  it("產生所有背景：確認對話框列出頁數與略過的頁；取消不呼叫", async () => {
-    const p = setup({
-      bgPlan: {
-        queued: [3, 4],
-        skipped: [
-          { pageId: 1, n: 1, reason: "已有背景" },
-          { pageId: 2, n: 2, reason: "沒有場景描述" },
-        ],
-        estimate: false,
-      },
+  describe("compact（手機寬度）", () => {
+    it("清單改成「第 N 頁 / M」下拉選單，選別頁呼叫 onSelect", async () => {
+      const p = setup({ compact: true, currentId: 2 });
+      expect(screen.queryByRole("list")).not.toBeInTheDocument();
+      const select = screen.getByRole("combobox", { name: "選擇頁面" });
+      expect(select).toHaveValue("2");
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+        "第 1 頁 / 4",
+        "第 2 頁 / 4",
+        "第 3 頁 / 4",
+        "第 4 頁 / 4",
+      ]);
+      await userEvent.selectOptions(select, "第 3 頁 / 4");
+      expect(p.onSelect).toHaveBeenCalledWith(3);
     });
-    const b = screen.getByRole("button", { name: "產生所有背景" });
-    expect(b).toBeEnabled();
-    expect(b).not.toHaveAttribute("title");
-    await userEvent.click(b);
-    const dlg = screen.getByRole("dialog", { name: "產生所有背景？" });
-    expect(dlg).toHaveTextContent("會為 2 頁產生背景（簡潔；2 頁略過：第 1 頁已有背景、第 2 頁沒有場景描述）");
-    expect(dlg).not.toHaveTextContent("估計");
-    await userEvent.click(within(dlg).getByRole("button", { name: "取消" }));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(p.onGenerateAll).not.toHaveBeenCalled();
+
+    it("顯示目前頁的狀態；目前頁的「⋯」選單與新增照常可用", async () => {
+      const p = setup({ compact: true, currentId: 1 });
+      expect(screen.getByText("完成")).toBeInTheDocument();
+      expect(screen.queryByText("需要修線")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "第 2 頁的更多動作" })).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "第 1 頁的更多動作" }));
+      await userEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "下移" }));
+      expect(p.onMove).toHaveBeenCalledWith(1, 1);
+      await userEvent.click(screen.getByRole("button", { name: "新增頁面" }));
+      expect(p.onAdd).toHaveBeenCalled();
+    });
   });
 
-  it("產生所有背景：確認後呼叫 onGenerateAll 並關閉對話框", async () => {
-    const p = setup();
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 2 頁背景" }));
-    expect(p.onGenerateAll).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
-  it("產生所有背景：生成紀錄還沒載入時，確認對話框說明是估計值", async () => {
-    setup({ bgPlan: { queued: [3], skipped: [], estimate: true } });
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    const dlg = screen.getByRole("dialog");
-    expect(dlg).toHaveTextContent("會為 1 頁產生背景（簡潔）");
-    expect(dlg).toHaveTextContent("頁數是估計值，實際以送出後的結果為準");
-  });
-
-  it("產生所有背景：確認對話框顯示風格與有草圖的頁數", async () => {
-    setup({ bgStyle: "simple", bgSketchCount: 1 });
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent(
-      "會為 2 頁產生背景（簡潔，有草圖的 1 頁用細緻；1 頁略過：第 1 頁已有背景）",
-    );
-  });
-
-  it("產生所有背景：細緻時不提草圖", async () => {
-    setup({ bgStyle: "detailed", bgSketchCount: 1, bgPlan: { queued: [3, 4], skipped: [], estimate: false } });
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    const dlg = screen.getByRole("dialog");
-    expect(dlg).toHaveTextContent("會為 2 頁產生背景（細緻）");
-    expect(dlg).not.toHaveTextContent("有草圖");
+  it("沒有「產生所有背景」按鈕（改在故事頁「產生全部素材」）", () => {
+    setup();
+    expect(screen.queryByRole("button", { name: "產生所有背景" })).not.toBeInTheDocument();
   });
 });

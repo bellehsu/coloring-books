@@ -88,15 +88,15 @@ function drag(el: Element, from: [number, number], to: [number, number], extra: 
 }
 
 describe("LineFixCanvas", () => {
-  it("修線工具列：補線（預設）、擦除、復原；可插入 toolbarExtra（自動補線）", () => {
-    setup({ toolbarExtra: <button type="button">自動補線</button> });
+  it("修線工具列：補線（預設）、擦除、復原（自動補線在右欄，不在工具列）", () => {
+    setup();
     const bar = screen.getByRole("toolbar", { name: "修線工具" });
     const draw = within(bar).getByRole("button", { name: "補線" });
     const erase = within(bar).getByRole("button", { name: "擦除" });
     expect(draw).toHaveAttribute("aria-pressed", "true");
     expect(erase).toHaveAttribute("aria-pressed", "false");
     expect(within(bar).getByRole("button", { name: "復原" })).toBeDisabled();
-    expect(within(bar).getByRole("button", { name: "自動補線" })).toBeInTheDocument();
+    expect(within(bar).queryByRole("button", { name: "自動補線" })).not.toBeInTheDocument();
     fireEvent.click(erase);
     expect(erase).toHaveAttribute("aria-pressed", "true");
   });
@@ -258,7 +258,7 @@ describe("LineFixCanvas", () => {
     expect(calls).toContainEqual(["stroke", "#ffffff", 24]);
   });
 
-  it("缺口紅圈：位置用相對座標（%），直徑 30 px 螢幕尺寸；狀態列顯示數量", () => {
+  it("缺口橘色圈：位置用相對座標（%），直徑 30 px 螢幕尺寸；狀態列顯示數量", () => {
     const { container } = setup({
       gaps: [
         [0.25, 0.5],

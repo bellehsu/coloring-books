@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -17,66 +16,11 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/books/1/editor",
 }));
 
-// ---------- 畫布換成可操作的替身（畫布本身在 Task 7/8 測過） ----------
-const sketchSaves: ((b: Blob | null) => void)[] = [];
-vi.mock("./SketchCanvas", async (orig) => {
-  const real = await orig<typeof import("./SketchCanvas")>();
-  return {
-    ...real,
-    SketchCanvas: function StubSketch(p: {
-      initialUrl: string | null;
-      onSave: (b: Blob | null) => void;
-      width: number;
-      register?: (h: { flush(): void; dirty(): boolean }) => () => void;
-    }) {
-      sketchSaves.push(p.onSave);
-      // 跟真的畫布一樣：落筆後 1 秒才存檔；register 的 flush 立即存、卸載時有未存變更也存
-      const dirty = useRef(false);
-      const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-      const saveRef = useRef(p.onSave);
-      const registerRef = useRef(p.register);
-      useEffect(() => {
-        const flush = () => {
-          clearTimeout(timer.current);
-          if (!dirty.current) return;
-          dirty.current = false;
-          saveRef.current(new Blob(["drawn"], { type: "image/png" }));
-        };
-        const off = registerRef.current?.({ flush, dirty: () => dirty.current });
-        return () => {
-          flush();
-          off?.();
-        };
-      }, []);
-      const draw = () => {
-        dirty.current = true;
-        clearTimeout(timer.current);
-        timer.current = setTimeout(() => {
-          dirty.current = false;
-          saveRef.current(new Blob(["drawn"], { type: "image/png" }));
-        }, 1000);
-      };
-      return (
-        <div data-testid="sketch" data-initial={p.initialUrl ?? ""} data-width={p.width}>
-          <button type="button" onClick={draw}>
-            stub-draw-sketch
-          </button>
-          <button type="button" onClick={() => p.onSave(new Blob(["x"], { type: "image/png" }))}>
-            stub-save
-          </button>
-          <button type="button" onClick={() => p.onSave(null)}>
-            stub-clear
-          </button>
-        </div>
-      );
-    },
-  };
-});
+// ---------- 修線畫布換成可操作的替身（畫布本身另有測試） ----------
 type LineProps = {
   lineartUrl: string;
   strokes: unknown[];
   onChange: (s: unknown[]) => void;
-  toolbarExtra?: React.ReactNode;
   zoom?: number;
   pending?: boolean;
   gaps: unknown[];
@@ -94,99 +38,39 @@ vi.mock("./LineFixCanvas", async (orig) => {
         >
           stub-draw
         </button>
-        {p.toolbarExtra}
         {p.statusOverride ?? <p role="status">{p.gaps.length} 個缺口</p>}
       </div>
     ),
   };
 });
 
-// ---------- Task 9–11 的面板與合成舞台換成替身：這裡只測 EditorPage 傳進去的回呼 ----------
-type BgPanelProps = import("./BackgroundPanel").BackgroundPanelProps;
-type PosePanelProps = import("./PosePanel").PosePanelProps;
-type ComposePanelProps = import("./ComposePanel").ComposePanelProps;
+// ---------- 合成舞台換成替身：這裡只測 EditorPage 傳進去的回呼與狀態列（背景／角色動作卡片用真的） ----------
 type ComposeStageProps = import("./ComposeStage").ComposeStageProps;
-type PoseStageProps = import("./PoseStage").PoseStageProps;
-vi.mock("./PoseStage", () => ({
-  PoseStage: (p: PoseStageProps) => <div data-testid="pose-stage" data-pose={p.pose?.id ?? ""} />,
-}));
-// realBgPanel = true 時用真的背景面板（產生所有背景要等面板裡的場景描述／構圖強度存好）
-let realBgPanel = false;
-vi.mock("./BackgroundPanel", async (orig) => {
-  const real = await orig<typeof import("./BackgroundPanel")>();
+vi.mock("./ComposeStage", async (orig) => {
+  const real = await orig<typeof import("./ComposeStage")>();
   return {
     ...real,
-    BackgroundPanel: (p: BgPanelProps) =>
-      realBgPanel ? (
-        <real.BackgroundPanel {...p} />
-      ) : (
-        <section
-          data-testid="background-panel"
-          data-page={p.page.id}
-          data-active={p.activeCount}
-          data-style={p.style}
-          data-reason={p.simpleUnavailableReason ?? ""}
-          data-has-sketch={String(!!p.hasSketch)}
-        >
-          <button
-            type="button"
-            disabled={p.generating}
-            onClick={() => void p.beforeGenerate().then(() => p.onGenerate(p.style), () => {})}
-          >
-            stub-generate-background
-          </button>
-          <button type="button" onClick={() => p.onStyleChange("detailed")}>
-            stub-style-detailed
-          </button>
-        </section>
-      ),
+    ComposeStage: (p: ComposeStageProps) => (
+      <div
+        data-testid="compose-stage"
+        data-bg={p.backgroundUrl ?? ""}
+        data-cutout={p.cutoutUrl ?? ""}
+        data-placement={JSON.stringify(p.placement)}
+      >
+        <button type="button" onClick={() => p.onChange({ ...p.placement, cx: 0.25 })}>
+          stub-move
+        </button>
+        <button type="button" onClick={() => p.onChange({ ...p.placement, cx: p.placement.cx + 0.01 })}>
+          stub-nudge
+        </button>
+        <button type="button" onClick={() => p.onChange({ ...p.placement, flip: !p.placement.flip })}>
+          stub-flip
+        </button>
+        {p.status}
+      </div>
+    ),
   };
 });
-vi.mock("./PosePanel", () => ({
-  PosePanel: (p: PosePanelProps) => (
-    <section
-      data-testid="pose-panel"
-      data-active={p.activeCount}
-      data-has-character={String(p.hasCharacter)}
-      data-mode={p.mode}
-      data-reason={p.preciseUnavailableReason ?? ""}
-    >
-      <button type="button" disabled={p.generating} onClick={() => void p.onGenerate("waving one hand", p.mode)}>
-        stub-generate-pose
-      </button>
-      <button type="button" onClick={() => p.onModeChange("fast")}>
-        stub-mode-fast
-      </button>
-    </section>
-  ),
-}));
-vi.mock("./ComposePanel", () => ({
-  ComposePanel: (p: ComposePanelProps) => (
-    <section data-testid="compose-panel" data-placement={JSON.stringify(p.placement)} data-confirming={String(p.confirming)}>
-      <button type="button" onClick={() => p.onPlacementChange({ ...p.placement, flip: !p.placement.flip })}>
-        stub-flip
-      </button>
-      <button type="button" onClick={() => void p.onConfirm()}>
-        stub-confirm
-      </button>
-    </section>
-  ),
-}));
-vi.mock("./ComposeStage", () => ({
-  ComposeStage: (p: ComposeStageProps) => (
-    <div
-      data-testid="compose-stage"
-      data-bg={p.backgroundUrl ?? ""}
-      data-cutout={p.cutoutUrl ?? ""}
-      data-disabled={String(!!p.disabled)}
-      data-placement={JSON.stringify(p.placement)}
-    >
-      <button type="button" onClick={() => p.onChange({ ...p.placement, cx: 0.25 })}>
-        stub-move
-      </button>
-    </div>
-  ),
-}));
 
 // ---------- 假後端 ----------
 type O = Record<string, unknown>;
@@ -221,6 +105,7 @@ const mkPage = (id: number, o: O = {}): O => ({
   book_id: 1,
   position: id - 1,
   scene_prompt: `scene ${id}`,
+  action_prompt: `action ${id}`,
   controlnet_strength: 0.4,
   sketch_url: null,
   selected_generation_id: null,
@@ -293,10 +178,8 @@ let genStatus: number;
 let failWith: Record<string, number>;
 /** POST /books/1/pages 回傳的新頁 id（測 id 被沿用）。 */
 let nextPageId: number;
-/** GET /system/pose-modes 的回應。 */
-let poseModes: O;
-/** GET /system/background-styles 的回應。 */
-let bgStyles: O;
+/** POST /books/1/pages 建立的新頁要多帶的欄位（測 id 被沿用時新頁已有素材）。 */
+let newPageExtra: O;
 
 const j = (data: unknown, status = 200) =>
   new Response(data === undefined ? null : JSON.stringify(data), {
@@ -306,7 +189,6 @@ const j = (data: unknown, status = 200) =>
 
 beforeEach(() => {
   search = "";
-  realBgPanel = false;
   book = mkBook();
   pages = [mkPage(1), mkPage(2), mkPage(3)];
   gens = [];
@@ -316,13 +198,8 @@ beforeEach(() => {
   genStatus = 202;
   failWith = {};
   nextPageId = 10;
-  poseModes = { precise: { available: true, missing: [] }, fast: { available: true, missing: [] } };
-  bgStyles = { simple: { available: true, missing: [] }, detailed: { available: true, missing: [] } };
+  newPageExtra = {};
   localStorage.clear();
-  sketchSaves.length = 0;
-  let blobN = 0;
-  URL.createObjectURL = vi.fn(() => `blob:${++blobN}`);
-  URL.revokeObjectURL = vi.fn();
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -337,7 +214,7 @@ beforeEach(() => {
       if (url === "/api/books/1" && method === "GET") return book ? j(book) : j({ detail: "找不到這本繪本" }, 404);
       if (url === "/api/books/1/pages" && method === "GET") return j(pages);
       if (url === "/api/books/1/pages" && method === "POST") {
-        const p = mkPage(nextPageId, { position: pages.length, scene_prompt: "" });
+        const p = mkPage(nextPageId, { position: pages.length, scene_prompt: "", ...newPageExtra });
         pages = [...pages, p];
         return j(p, 201);
       }
@@ -347,8 +224,6 @@ beforeEach(() => {
         return j(pages);
       }
       if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0, running_id: null });
-      if (url === "/api/system/pose-modes") return j(poseModes);
-      if (url === "/api/system/background-styles") return j(bgStyles);
       if (url.startsWith("/api/books/1/generations")) {
         const q = new URL(url, "http://x").searchParams;
         let list = gens;
@@ -356,35 +231,6 @@ beforeEach(() => {
         if (q.get("page_id")) list = list.filter((x) => x.page_id === Number(q.get("page_id")));
         if (q.get("include_discarded") !== "true") list = list.filter((x) => !x.discarded);
         return j(list);
-      }
-      if (url === "/api/books/1/backgrounds/batch" && method === "POST") {
-        // 同後端：沒場景描述、已有背景（選用或歷史裡成功未捨棄）、背景產生中 → 略過
-        const queued: O[] = [];
-        const skipped: O[] = [];
-        for (const p of pages) {
-          const bgs = gens.filter((g) => g.kind === "background" && g.page_id === p.id);
-          const reason = !String(p.scene_prompt).trim()
-            ? "沒有場景描述"
-            : p.background_generation_id != null || bgs.some((g) => g.status === "succeeded" && !g.discarded)
-              ? "已有背景"
-              : bgs.some((g) => g.status === "queued" || g.status === "running")
-                ? "背景產生中"
-                : null;
-          if (reason) {
-            skipped.push({ page_id: p.id, position: p.position, reason });
-            continue;
-          }
-          const made = mkGen(30 + gens.length, {
-            kind: "background",
-            page_id: p.id,
-            status: "queued",
-            image_url: null,
-            queue_position: queued.length + 1,
-          });
-          gens = [...gens, made];
-          queued.push(made);
-        }
-        return j({ queued, skipped }, 202);
       }
       let m = url.match(/^\/api\/pages\/(\d+)$/);
       if (m && method === "PATCH") {
@@ -395,12 +241,11 @@ beforeEach(() => {
         pages = pages.filter((p) => p.id !== Number(m![1]));
         return j(undefined, 204);
       }
-      m = url.match(/^\/api\/pages\/(\d+)\/sketch$/);
-      if (m && !pages.some((p) => p.id === Number(m![1]))) return j({ detail: "找不到頁面" }, 404);
+      m = url.match(/^\/api\/pages\/(\d+)\/backgrounds\/upload$/);
       if (m) {
-        pages = pages.map((p) =>
-          p.id === Number(m![1]) ? { ...p, sketch_url: method === "PUT" ? `/api/pages/${m![1]}/sketch?v=2` : null } : p,
-        );
+        const made = mkGen(70 + gens.length, { kind: "background", page_id: Number(m[1]), source: "upload" });
+        gens = [...gens, made];
+        pages = pages.map((p) => (p.id === Number(m![1]) ? { ...p, background_generation_id: made.id } : p));
         return j(pages.find((p) => p.id === Number(m![1])));
       }
       m = url.match(/^\/api\/pages\/(\d+)\/(backgrounds|poses)$/);
@@ -433,7 +278,10 @@ beforeEach(() => {
       if (m) {
         const made = mkGen(50 + gens.length, { kind: "composite", page_id: Number(m[1]) });
         gens = [...gens, made];
-        pages = pages.map((p) => (p.id === Number(m![1]) ? { ...p, selected_generation_id: made.id } : p));
+        pages = pages.map((p) =>
+          p.id === Number(m![1]) ? { ...p, selected_generation_id: made.id, compose_pending: false } : p,
+        );
+        edits = []; // 新的合成圖還沒有補過的線
         return j(pages.find((p) => p.id === Number(m![1])));
       }
       m = url.match(/^\/api\/pages\/(\d+)\/select$/);
@@ -448,6 +296,17 @@ beforeEach(() => {
       if (m && method === "PUT") {
         edits = (body as { strokes: O[] }).strokes;
         return j(mkQA({ gap_count: 2, gaps: [[0.1, 0.1], [0.2, 0.2]], lineart_url: "/api/pages/1/lineart?v=b" }));
+      }
+      m = url.match(/^\/api\/pages\/(\d+)\/character-check$/);
+      if (m) {
+        const result = (body as { result: string }).result;
+        pages = pages.map((p) => (p.id === Number(m![1]) ? { ...p, character_check: result } : p));
+        return j(pages.find((p) => p.id === Number(m![1])));
+      }
+      m = url.match(/^\/api\/pages\/(\d+)\/pass$/);
+      if (m) {
+        pages = pages.map((p) => (p.id === Number(m![1]) ? { ...p, status: "passed" } : p));
+        return j(pages.find((p) => p.id === Number(m![1])));
       }
       m = url.match(/^\/api\/pages\/(\d+)\/lineart\/autofix$/);
       if (m) {
@@ -491,6 +350,20 @@ const pageButton = (n: number) => screen.getByRole("button", { name: new RegExp(
 const progressTitle = () => screen.getByRole("region", { name: "本頁進度" });
 const calledWith = (method: string, url: string) => calls.filter((c) => c.method === method && c.url === url);
 
+const composeTab = () => screen.getByRole("tab", { name: "① 構圖" });
+const lineTab = () => screen.getByRole("tab", { name: /② 補線/ });
+const bgCard = () => screen.getByRole("region", { name: "背景" });
+const poseCard = () => screen.getByRole("region", { name: "角色動作" });
+/** 有背景＋角色動作（含去背圖）的頁。 */
+const composedReady = (id = 1, bg = 3, pose = 4) => {
+  const o = { background_generation_id: bg, pose_generation_id: pose };
+  const g = [
+    mkGen(bg, { kind: "background", page_id: id }),
+    mkGen(pose, { kind: "pose", page_id: id, mask_url: `/api/generations/${pose}/mask`, cutout_url: `/api/generations/${pose}/cutout` }),
+  ];
+  return { o, g };
+};
+
 describe("EditorPage", () => {
   it("沒有 ?page 時選第一頁", async () => {
     setup();
@@ -515,98 +388,100 @@ describe("EditorPage", () => {
     expect(await screen.findByText("第 1 頁進度")).toBeInTheDocument();
   });
 
-  it("五個模式分頁；預設「背景」：舞台是背景（草圖畫板）、面板是背景面板、下方是背景歷史", async () => {
+  it("兩個步驟分頁；預設「① 構圖」：右邊是背景與角色動作卡片，沒有底部歷史托盤", async () => {
     setup();
     const tabs = await screen.findAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["背景", "角色", "合成", "線稿與修線", "QA 檢查"]);
-    expect(screen.getByRole("tab", { name: "背景" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("sketch")).toBeInTheDocument();
-    expect(screen.getByTestId("background-panel")).toHaveAttribute("data-page", "1");
-    expect(screen.getByRole("region", { name: "背景歷史" })).toBeInTheDocument();
+    expect(tabs.map((t) => t.textContent)).toEqual(["① 構圖", "② 補線"]);
+    expect(composeTab()).toHaveAttribute("aria-selected", "true");
+    expect(bgCard()).toBeInTheDocument();
+    expect(poseCard()).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /歷史/ })).not.toBeInTheDocument();
+    // 還沒有素材：舞台說明要先選
+    expect(await screen.findByText("先選好背景和角色動作")).toBeInTheDocument();
   });
 
-  it("進度清單 6 項", async () => {
+  it("進度清單 3 項：構圖、補線、完成", async () => {
     setup();
     const items = within(await screen.findByRole("region", { name: "本頁進度" })).getAllByRole("listitem");
-    expect(items).toHaveLength(6);
-    expect(items.map((li) => li.querySelector("span + span")?.firstChild?.textContent)).toEqual([
-      "背景",
-      "角色動作",
-      "合成",
-      "線條封閉",
-      "角色外型",
-      "通過 QA",
-    ]);
+    expect(items.map((li) => li.querySelector("span + span")?.firstChild?.textContent)).toEqual(["構圖", "補線", "完成"]);
+    expect(within(progressTitle()).getByText("還沒選背景")).toBeInTheDocument();
   });
 
-  it("沒有背景時「合成」停用並說明；沒選圖時「線稿與修線」「QA 檢查」停用並說明；點了不會切換", async () => {
+  it("沒選圖時「② 補線」與「下一步：補線 →」停用並說明「請先擺好角色位置」；點了不會切換", async () => {
     setup();
-    const compose = await screen.findByRole("tab", { name: "合成" });
-    const line = screen.getByRole("tab", { name: /線稿與修線/ });
-    const qa = screen.getByRole("tab", { name: /QA 檢查/ });
-    expect(screen.getByRole("tab", { name: "角色" })).not.toHaveAttribute("aria-disabled");
-    expect(compose).toHaveAttribute("aria-disabled", "true");
-    expect(compose).toHaveAccessibleDescription("請先選好背景與角色動作");
-    expect(line).toHaveAttribute("aria-disabled", "true");
-    expect(qa).toHaveAttribute("aria-disabled", "true");
-    expect(line).toHaveAccessibleDescription("請先確認合成");
-    await userEvent.click(compose);
-    await userEvent.click(line);
-    expect(screen.getByRole("tab", { name: "背景" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("sketch")).toBeInTheDocument();
+    await screen.findAllByRole("tab");
+    expect(composeTab()).not.toHaveAttribute("aria-disabled");
+    expect(lineTab()).toHaveAttribute("aria-disabled", "true");
+    expect(lineTab()).toHaveAccessibleDescription("請先擺好角色位置");
+    const next = screen.getByRole("button", { name: "下一步：補線 →" });
+    expect(next).toBeDisabled();
+    expect(next).toHaveAccessibleDescription("請先擺好角色位置");
+    await userEvent.click(lineTab());
+    expect(composeTab()).toHaveAttribute("aria-selected", "true");
     expect(replace).not.toHaveBeenCalled();
   });
 
-  it("只有背景、沒有角色動作 → 「合成」說明「請先選好角色動作」", async () => {
+  it("只有背景或只有角色動作：舞台說明缺哪一個", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3 });
+    pages[1] = mkPage(2, { pose_generation_id: 4 });
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", page_id: 2, cutout_url: "/api/generations/4/cutout" })];
     setup();
-    expect(await screen.findByRole("tab", { name: "合成" })).toHaveAccessibleDescription("請先選好角色動作");
+    // 有什麼就顯示什麼：只有背景 → 背景圖＋說明
+    expect(await screen.findByText("先選好角色動作")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "背景圖" })).toHaveAttribute("src", "/img/3.png");
+    await userEvent.click(pageButton(2));
+    expect(await screen.findByText("先選好背景")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "角色動作" })).toHaveAttribute("src", "/api/generations/4/cutout");
+    expect(screen.queryByTestId("compose-stage")).not.toBeInTheDocument();
   });
 
-  it("只有角色動作 → 「合成」說明「請先選好背景」", async () => {
-    pages[0] = mkPage(1, { pose_generation_id: 4 });
+  it("舊網址的模式：mode=background／pose → 構圖；mode=qa → 補線", async () => {
+    search = "page=1&mode=pose";
     setup();
-    expect(await screen.findByRole("tab", { name: "合成" })).toHaveAccessibleDescription("請先選好背景");
-  });
-
-  it("legacy page keeps line/QA tabs：舊流程頁（選定圖是 page）線稿／QA 可用、合成停用；改選背景不清掉舊圖", async () => {
-    pages[0] = mkPage(1, { selected_generation_id: 5 });
-    gens = [mkGen(5), mkGen(6, { kind: "background" })];
+    await screen.findAllByRole("tab");
+    expect(composeTab()).toHaveAttribute("aria-selected", "true");
+    cleanup();
+    search = "page=1&mode=background";
     setup();
-    const line = await screen.findByRole("tab", { name: /線稿與修線/ });
-    expect(line).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByRole("tab", { name: /QA 檢查/ })).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByRole("tab", { name: "合成" })).toHaveAttribute("aria-disabled", "true");
-    await waitFor(() => expect(within(progressTitle()).getByText("舊流程圖片")).toBeInTheDocument());
-    // 舊的候選圖（kind page）不出現在背景歷史
-    expect(screen.queryByRole("button", { name: /seed 105/ })).not.toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: "選 seed 106 為本頁背景" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(1));
-    await waitFor(() => expect(within(progressTitle()).getByText("已選")).toBeInTheDocument());
-    expect(within(progressTitle()).getByText("舊流程圖片")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /線稿與修線/ })).not.toHaveAttribute("aria-disabled");
-    await userEvent.click(screen.getByRole("tab", { name: /線稿與修線/ }));
-    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
-    expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
-  });
-
-  it("舊流程頁：網址 mode=qa 照常開 QA", async () => {
+    await screen.findAllByRole("tab");
+    expect(composeTab()).toHaveAttribute("aria-selected", "true");
+    cleanup();
     search = "page=1&mode=qa";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5)];
     setup();
-    expect(await screen.findByTestId("qa-compare")).toBeInTheDocument();
+    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
+    expect(lineTab()).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("finish-panel")).toBeInTheDocument();
   });
 
-  it("有選圖：QA 分頁顯示缺口數；切到修線顯示畫布、縮放與自動補線，網址帶 mode", async () => {
+  it("legacy page keeps line tab：舊流程頁（選定圖是 page）可以補線；改選背景不清掉舊圖", async () => {
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5), mkGen(6, { kind: "background" })];
+    setup();
+    await screen.findAllByRole("tab");
+    expect(lineTab()).not.toHaveAttribute("aria-disabled");
+    await waitFor(() => expect(within(progressTitle()).getByText("舊流程圖片")).toBeInTheDocument());
+    // 舊的候選圖（kind page）不出現在背景縮圖
+    expect(await within(bgCard()).findAllByRole("radio")).toHaveLength(1);
+    await userEvent.click(within(bgCard()).getByRole("radio", { name: "背景第 1 張" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(1));
+    await waitFor(() => expect(within(bgCard()).getByRole("radio", { name: "背景第 1 張" })).toHaveAttribute("aria-checked", "true"));
+    expect(within(progressTitle()).getByText("舊流程圖片")).toBeInTheDocument();
+    expect(lineTab()).not.toHaveAttribute("aria-disabled");
+    await userEvent.click(lineTab());
+    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
+    expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
+  });
+
+  it("有選圖：② 補線分頁顯示缺口數；切到補線顯示畫布、縮放與完成面板（只有一個自動補線，在面板），網址帶 mode=line", async () => {
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5)];
     setup();
-    const qaTab = await screen.findByRole("tab", { name: /QA 檢查/ });
-    await waitFor(() => expect(within(qaTab).getByText("3")).toBeInTheDocument());
-    const line = screen.getByRole("tab", { name: /線稿與修線/ });
-    expect(line).not.toHaveAttribute("aria-disabled");
-    await userEvent.click(line);
+    await screen.findAllByRole("tab");
+    await waitFor(() => expect(within(lineTab()).getByText("3")).toBeInTheDocument());
+    expect(lineTab()).not.toHaveAttribute("aria-disabled");
+    await userEvent.click(lineTab());
     expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=line", { scroll: false });
     const canvas = await screen.findByTestId("linefix");
     expect(canvas).toHaveAttribute("data-url", "/api/pages/1/lineart?v=a");
@@ -614,23 +489,34 @@ describe("EditorPage", () => {
     expect(screen.getByRole("group", { name: "縮放" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "放大" }));
     expect(canvas).toHaveAttribute("data-zoom", "1.5");
-    expect(screen.getByRole("radiogroup", { name: "細緻度" })).toBeInTheDocument();
+    const panel = await screen.findByTestId("finish-panel");
+    expect(within(panel).getByRole("radiogroup", { name: "線條多寡" })).toBeInTheDocument();
+    expect(within(panel).getByText("還有 3 個缺口")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "自動補線" })).toHaveLength(1);
+    expect(within(panel).getByRole("button", { name: "自動補線" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "背景" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /歷史/ })).not.toBeInTheDocument();
   });
 
-  it("網址 mode=line 但沒選圖 → 背景模式", async () => {
+  it("「下一步：補線 →」切到 ② 補線", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    await userEvent.click(await screen.findByRole("button", { name: "下一步：補線 →" }));
+    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=line", { scroll: false });
+    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
+  });
+
+  it("網址 mode=line 但沒選圖 → 構圖", async () => {
     search = "page=1&mode=line";
     setup();
-    expect(await screen.findByTestId("sketch")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "背景" })).toHaveAttribute("aria-selected", "true");
+    await screen.findAllByRole("tab");
+    expect(composeTab()).toHaveAttribute("aria-selected", "true");
+    expect(bgCard()).toBeInTheDocument();
   });
 
-  it("網址 mode=compose 但沒有背景 → 背景模式", async () => {
-    search = "page=1&mode=compose";
-    setup();
-    expect(await screen.findByTestId("sketch")).toBeInTheDocument();
-  });
-
-  it("修線：每筆依序 PUT（帶 generation_id），回應更新 QA；自動補線顯示「已補 N 條」並併入筆畫", async () => {
+  it("修線：每筆依序 PUT（帶 generation_id），回應更新 QA；面板的自動補線顯示「已補 N 條線」並併入畫布筆畫", async () => {
     search = "page=1&mode=line";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5)];
@@ -640,11 +526,18 @@ describe("EditorPage", () => {
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(1));
     expect(calledWith("PUT", "/api/pages/1/lineart/edits")[0].body).toMatchObject({ generation_id: 5 });
     await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-gaps", "2"));
-    await userEvent.click(screen.getByRole("button", { name: "自動補線" }));
-    expect(await screen.findByText("已補 1 條")).toBeInTheDocument();
+    expect(within(screen.getByTestId("finish-panel")).getByText("還有 2 個缺口")).toBeInTheDocument();
+    await userEvent.click(within(screen.getByTestId("finish-panel")).getByRole("button", { name: "自動補線" }));
+    expect(await screen.findByText("已補 1 條線")).toBeInTheDocument();
+    expect(calledWith("POST", "/api/pages/1/lineart/autofix")).toHaveLength(1);
     expect(calledWith("POST", "/api/pages/1/lineart/autofix")[0].body).toEqual({ generation_id: 5 });
     await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "2"));
     expect(screen.getByTestId("linefix")).toHaveAttribute("data-gaps", "0");
+    expect(within(screen.getByTestId("finish-panel")).getByText("✓ 線條都接好了")).toBeInTheDocument();
+    // 補上的線已在畫布上：下一筆送出的是 2＋1 筆，不會蓋掉補上的線
+    await userEvent.click(within(screen.getByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(2));
+    expect((calledWith("PUT", "/api/pages/1/lineart/edits")[1].body as { strokes: unknown[] }).strokes).toHaveLength(3);
   });
 
   it("修線寫入中切走再回來：沿用同一個佇列，不從伺服器舊資料重設筆畫", async () => {
@@ -660,198 +553,294 @@ describe("EditorPage", () => {
     // 寫入還在路上時 edits 被重抓（例如改線寬）→ 快取變成伺服器的舊狀態（0 筆）
     await act(() => qc.refetchQueries({ queryKey: qk.edits(1) }));
     expect((qc.getQueryData(qk.edits(1)) as { strokes: unknown[] }).strokes).toHaveLength(0);
-    await userEvent.click(screen.getByRole("tab", { name: "背景" }));
-    await userEvent.click(screen.getByRole("tab", { name: /線稿與修線/ }));
+    await userEvent.click(composeTab());
+    await userEvent.click(lineTab());
     expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "2");
     await act(async () => release());
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(2));
     expect((calledWith("PUT", "/api/pages/1/lineart/edits")[1].body as { strokes: unknown[] }).strokes).toHaveLength(2);
   });
 
-  it("背景歷史：點選呼叫 POST /background（不是 /select），出現「使用中」", async () => {
-    gens = [mkGen(5, { kind: "background" }), mkGen(6, { kind: "background" }), mkGen(7, { kind: "pose" })];
+  it("背景卡片：點縮圖呼叫 POST /background（不是 /select），變成選用的；合成圖與角色動作不在背景縮圖裡", async () => {
+    gens = [
+      mkGen(5, { kind: "background" }),
+      mkGen(6, { kind: "background" }),
+      mkGen(7, { kind: "pose" }),
+      mkGen(9, { kind: "composite" }),
+    ];
     setup();
-    await userEvent.click(await screen.findByRole("button", { name: "選 seed 105 為本頁背景" }));
+    await waitFor(() => expect(within(bgCard()).getAllByRole("radio")).toHaveLength(2));
+    await userEvent.click(within(bgCard()).getByRole("radio", { name: "背景第 1 張" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(1));
     expect(calledWith("POST", "/api/pages/1/background")[0].body).toEqual({ generation_id: 5 });
-    const btn = await screen.findByRole("button", { name: "選 seed 105 為本頁背景" });
-    await waitFor(() => expect(within(btn).getByText("使用中")).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: /seed 107/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(within(bgCard()).getByRole("radio", { name: "背景第 1 張" })).toHaveAttribute("aria-checked", "true"));
+    expect(within(bgCard()).getByText("AI 產生 · 第 1 張")).toBeInTheDocument();
     expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
   });
 
-  it("角色模式：角色動作歷史、點選呼叫 POST /pose；產生送出 {action}", async () => {
+  it("角色動作卡片：點縮圖呼叫 POST /pose；「換一張」只送出頁面的動作文字（沒有產生方式）並顯示排隊中", async () => {
     gens = [mkGen(5, { kind: "background" }), mkGen(7, { kind: "pose", width: 832, height: 1216, mask_url: "/api/generations/7/mask" })];
     setup();
-    await userEvent.click(await screen.findByRole("tab", { name: "角色" }));
-    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=pose", { scroll: false });
-    expect(screen.getByRole("region", { name: "角色動作歷史" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "背景歷史" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("pose-panel")).toHaveAttribute("data-has-character", "true");
-    expect(screen.getByTestId("pose-stage")).toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: "選 seed 107 為本頁角色動作" }));
+    await screen.findByRole("region", { name: "角色動作" });
+    await userEvent.click(await within(poseCard()).findByRole("radio", { name: "角色動作第 1 張" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/pose")).toHaveLength(1));
     expect(calledWith("POST", "/api/pages/1/pose")[0].body).toEqual({ generation_id: 7 });
-    await waitFor(() => expect(screen.getByTestId("pose-stage")).toHaveAttribute("data-pose", "7"));
-    await userEvent.click(screen.getByRole("button", { name: "stub-generate-pose" }));
+    await waitFor(() =>
+      expect(within(poseCard()).getByRole("radio", { name: "角色動作第 1 張" })).toHaveAttribute("aria-checked", "true"),
+    );
+    await userEvent.click(within(poseCard()).getByRole("button", { name: "換一張角色動作" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/poses")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "waving one hand", mode: "precise" });
-    await waitFor(() => expect(screen.getByTestId("pose-panel")).toHaveAttribute("data-active", "1"));
+    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "action 1" });
+    expect(await within(poseCard()).findByText("排隊第 1 位")).toBeInTheDocument();
   });
 
-  it("角色模式：精準不可用 → 退回快速並說明缺漏，產生送出 mode:fast（不寫入記憶）", async () => {
-    search = "page=1&mode=pose";
-    poseModes = {
-      precise: { available: false, missing: ["ComfyUI-GGUF", "unet/qwen-image-edit-2511-Q4_K_M.gguf"] },
-      fast: { available: true, missing: [] },
-    };
+  it("drag end triggers compose without a confirm button：放開 → 存位置 → 自動合成（等位置寫完），留在 ① 構圖", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
     setup();
-    const panel = await screen.findByTestId("pose-panel");
-    await waitFor(() => expect(panel).toHaveAttribute("data-mode", "fast"));
-    expect(panel).toHaveAttribute("data-reason", "精準模式缺少：ComfyUI-GGUF、unet/qwen-image-edit-2511-Q4_K_M.gguf");
-    await userEvent.click(screen.getByRole("button", { name: "stub-generate-pose" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/1/poses")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "waving one hand", mode: "fast" });
-    expect(localStorage.getItem("coloring.poseMode")).toBeNull();
-  });
-
-  it("角色模式：精準不可用但沒有缺漏清單 → 「精準模式目前無法使用」", async () => {
-    search = "page=1&mode=pose";
-    poseModes = { precise: { available: false, missing: [] }, fast: { available: true, missing: [] } };
-    setup();
-    const panel = await screen.findByTestId("pose-panel");
-    await waitFor(() => expect(panel).toHaveAttribute("data-reason", "精準模式目前無法使用"));
-    expect(panel).toHaveAttribute("data-mode", "fast");
-  });
-
-  it("角色模式：切到快速後重新掛載仍是快速（localStorage）", async () => {
-    search = "page=1&mode=pose";
-    setup();
-    const panel = await screen.findByTestId("pose-panel");
-    await waitFor(() => expect(calls.some((c) => c.url === "/api/system/pose-modes")).toBe(true));
-    expect(panel).toHaveAttribute("data-mode", "precise");
-    expect(panel).toHaveAttribute("data-reason", "");
-    await userEvent.click(screen.getByRole("button", { name: "stub-mode-fast" }));
-    expect(screen.getByTestId("pose-panel")).toHaveAttribute("data-mode", "fast");
-    cleanup();
-    setup();
-    expect(await screen.findByTestId("pose-panel")).toHaveAttribute("data-mode", "fast");
-  });
-
-  it("合成模式：舞台拿到背景與去背圖；移動 → PUT placement；確認合成（舞台停用）→ 切到線稿與修線", async () => {
-    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    gens = [
-      mkGen(3, { kind: "background" }),
-      mkGen(4, {
-        kind: "pose",
-        width: 832,
-        height: 1216,
-        mask_url: "/api/generations/4/mask",
-        cutout_url: "/api/generations/4/cutout",
-      }),
-    ];
-    setup();
-    await waitFor(() => expect(within(progressTitle()).getByText("請確認合成")).toBeInTheDocument());
-    const tab = screen.getByRole("tab", { name: "合成" });
-    expect(tab).not.toHaveAttribute("aria-disabled");
-    await userEvent.click(tab);
-    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=compose", { scroll: false });
     const stage = await screen.findByTestId("compose-stage");
     expect(stage).toHaveAttribute("data-bg", "/img/3.png");
     expect(stage).toHaveAttribute("data-cutout", "/api/generations/4/cutout");
-    expect(stage).toHaveAttribute("data-disabled", "false");
     expect(JSON.parse(stage.getAttribute("data-placement")!)).toEqual({ cx: 0.5, cy: 0.66, height: 0.6, flip: false });
-    expect(screen.queryByRole("region", { name: /歷史/ })).not.toBeInTheDocument();
+    expect(await within(stage).findByText("✓ 線稿已自動更新")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /確認合成/ })).not.toBeInTheDocument();
     let release!: () => void;
     gate["PUT /api/pages/1/placement"] = new Promise<void>((r) => (release = r));
     await userEvent.click(within(stage).getByRole("button", { name: "stub-move" }));
-    // 畫面立即用新位置（不等伺服器）
-    expect(JSON.parse(screen.getByTestId("compose-panel").getAttribute("data-placement")!)).toMatchObject({ cx: 0.25 });
+    // 畫面立即用新位置（不等伺服器），狀態列顯示更新中
+    expect(JSON.parse(screen.getByTestId("compose-stage").getAttribute("data-placement")!)).toMatchObject({ cx: 0.25 });
+    expect(within(screen.getByTestId("compose-stage")).getByText("更新中…")).toBeInTheDocument();
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(1));
     expect(calledWith("PUT", "/api/pages/1/placement")[0].body).toEqual({ cx: 0.25, cy: 0.66, height: 0.6, flip: false });
-    // 位置還在送 → 確認合成要等它
-    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
-    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "true");
-    // 確認期間舞台不能改位置（合成結果＝畫面）
-    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "true");
-    await act(async () => {});
+    // debounce 過了，但位置還在送 → 合成要等它
+    await act(() => new Promise((r) => setTimeout(r, 700)));
     expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
     await act(async () => release());
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
-    await waitFor(() => expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=line", { scroll: false }));
-    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
-    await waitFor(() => expect(within(progressTitle()).getByText("已合成")).toBeInTheDocument());
+    const order = calls.map((c) => `${c.method} ${c.url}`);
+    expect(order.indexOf("PUT /api/pages/1/placement")).toBeLessThan(order.indexOf("POST /api/pages/1/compose"));
+    expect(await within(screen.getByTestId("compose-stage")).findByText("✓ 線稿已自動更新")).toBeInTheDocument();
+    // 不切到補線、不走 /select
+    expect(composeTab()).toHaveAttribute("aria-selected", "true");
+    expect(replace).not.toHaveBeenCalledWith(expect.stringContaining("mode=line"), expect.anything());
     expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
   });
 
-  it("確認合成中換到另一頁：只有正在合成的那頁停用，另一頁的舞台與確認按鈕照常可用", async () => {
-    search = "page=1&mode=compose";
-    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    pages[1] = mkPage(2, { background_generation_id: 5, pose_generation_id: 6 });
-    const cut = (id: number, page_id: number) =>
-      mkGen(id, { kind: "pose", page_id, mask_url: `/api/generations/${id}/mask`, cutout_url: `/api/generations/${id}/cutout` });
-    gens = [mkGen(3, { kind: "background" }), cut(4, 1), mkGen(5, { kind: "background", page_id: 2 }), cut(6, 2)];
-    let release!: () => void;
-    gate["POST /api/pages/1/compose"] = new Promise<void>((r) => (release = r));
+  it("連續調整只合成一次（debounce）", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
     setup();
-    await screen.findByTestId("compose-stage");
-    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
-    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "true");
-    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "true");
+    const stage = await screen.findByTestId("compose-stage");
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-nudge" }));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-nudge" }));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-flip" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(3));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1);
+  });
+
+  it("拖完馬上換頁（debounce 內）：只合成拖過的那頁，另一頁不變", async () => {
+    const a = composedReady(1, 3, 4);
+    const b = composedReady(2, 5, 6);
+    pages[0] = mkPage(1, { ...a.o, selected_generation_id: 50 });
+    pages[1] = mkPage(2, { ...b.o, selected_generation_id: 51 });
+    gens = [...a.g, ...b.g, mkGen(50, { kind: "composite" }), mkGen(51, { kind: "composite", page_id: 2 })];
+    setup();
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
     await userEvent.click(pageButton(2));
     await waitFor(() => expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-bg", "/img/5.png"));
-    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "false");
-    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "false");
-    // 第 2 頁照常可以確認合成
-    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(1));
-    await waitFor(() => expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2&mode=line", { scroll: false }));
-    // 第 1 頁的合成較晚結束：不會把畫面切回第 1 頁
-    await act(async () => release());
-    await act(async () => {});
-    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2&mode=line", { scroll: false });
+    // 第 2 頁沒動過：狀態列不是「更新中…」、位置是預設
+    expect(within(screen.getByTestId("compose-stage")).queryByText("更新中…")).not.toBeInTheDocument();
+    expect(JSON.parse(screen.getByTestId("compose-stage").getAttribute("data-placement")!)).toEqual({
+      cx: 0.5,
+      cy: 0.66,
+      height: 0.6,
+      flip: false,
+    });
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(0);
+    expect(calledWith("PUT", "/api/pages/2/placement")).toHaveLength(0);
+    expect(pages[1]).toMatchObject({ selected_generation_id: 51, placement: null });
+    // 畫面停在第 2 頁
+    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2", { scroll: false });
   });
 
-  it("compose_pending：進度清單的合成顯示「待重新合成」", async () => {
-    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 50, compose_pending: true });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose" }), mkGen(50, { kind: "composite" })];
+  it("有補過的線：自動合成前先問；取消不合成，繼續才合成；新合成圖上又補了線 → 再問", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    edits = [{ op: "draw", width_px: 11, points: [[0.5, 0.5]] }];
     setup();
-    await waitFor(() => expect(within(progressTitle()).getByText("待重新合成")).toBeInTheDocument());
+    const stage = await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-move" }));
+    const dialog = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
+    expect(dialog).toHaveTextContent("移動角色會清掉這頁補過的線，要繼續嗎？");
+    await userEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
+    expect(within(screen.getByTestId("compose-stage")).queryByText("更新失敗，重試")).not.toBeInTheDocument();
+    // 再動一次：還沒同意過 → 再問；這次繼續
+    await userEvent.click(within(screen.getByTestId("compose-stage")).getByRole("button", { name: "stub-nudge" }));
+    const again = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
+    await userEvent.click(within(again).getByRole("button", { name: "繼續" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
+    // 新合成圖還沒補線：再移動不問
+    await userEvent.click(within(screen.getByTestId("compose-stage")).getByRole("button", { name: "stub-nudge" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(2), { timeout: 2000 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // 新合成圖上又補了線，再移動：同意只算那一張合成圖 → 再問；取消就不合成
+    edits = [{ op: "draw", width_px: 11, points: [[0.4, 0.4]] }];
+    await act(async () => {
+      await lastQc.invalidateQueries({ queryKey: qk.edits(1) });
+    });
+    await userEvent.click(within(screen.getByTestId("compose-stage")).getByRole("button", { name: "stub-nudge" }));
+    const third = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
+    await userEvent.click(within(third).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(2);
   });
 
-  it("合成模式：位置從伺服器的草稿開始", async () => {
-    search = "page=1&mode=compose";
+  it("拖完有補線的頁、馬上換到別頁：不在別頁問；回到那頁才問，繼續後才合成", async () => {
+    const a = composedReady(1, 3, 4);
+    const b = composedReady(2, 5, 6);
+    pages[0] = mkPage(1, { ...a.o, selected_generation_id: 50 });
+    pages[1] = mkPage(2, { ...b.o, selected_generation_id: 51 });
+    gens = [...a.g, ...b.g, mkGen(50, { kind: "composite" }), mkGen(51, { kind: "composite", page_id: 2 })];
+    edits = [{ op: "draw", width_px: 11, points: [[0.5, 0.5]] }];
+    setup();
+    const stage = await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-move" }));
+    await userEvent.click(pageButton(2));
+    await waitFor(() => expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-bg", "/img/5.png"));
+    // debounce 過了：第 1 頁要問，但畫面是第 2 頁 → 不跳出、不合成
+    await act(() => new Promise((r) => setTimeout(r, 900)));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
+    expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(0);
+    // 回到第 1 頁才問
+    await userEvent.click(pageButton(1));
+    const dialog = await screen.findByRole("dialog", { name: "清掉補過的線？" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "繼續" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(0);
+  });
+
+  it("沒有補過的線：不問，直接合成", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    const stage = await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-flip" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("合成失敗：狀態列「更新失敗，重試」，按了重新合成", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    failWith["POST /api/pages/1/compose"] = 409;
+    setup();
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    const retry = await within(screen.getByTestId("compose-stage")).findByRole("button", { name: "更新失敗，重試" }, { timeout: 2000 });
+    expect(await screen.findByText("伺服器壞了")).toBeInTheDocument(); // 後端的原因用 toast 顯示
+    delete failWith["POST /api/pages/1/compose"];
+    await userEvent.click(retry);
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(2));
+    expect(await within(screen.getByTestId("compose-stage")).findByText("✓ 線稿已自動更新")).toBeInTheDocument();
+  });
+
+  it("「下一步：補線 →」先把還在等的合成做完再切換", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    await userEvent.click(screen.getByRole("button", { name: "下一步：補線 →" }));
+    // 不用等 debounce：馬上合成，合成完才切到補線
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 400 });
+    await waitFor(() => expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=line", { scroll: false }));
+    const order = calls.map((c) => `${c.method} ${c.url}`);
+    expect(order.indexOf("POST /api/pages/1/compose")).toBeGreaterThan(-1);
+    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
+  });
+
+  it("背景與角色動作都選好但還沒合成（例如「產生全部素材」自動選用）：打開就自動合成", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, compose_pending: true });
+    gens = g;
+    setup();
+    await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await waitFor(() => expect(lineTab()).not.toHaveAttribute("aria-disabled"));
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1);
+  });
+
+  it("只有背景時角色動作自動選用送達 → 自動合成", async () => {
+    pages[0] = mkPage(1, { background_generation_id: 3 });
+    gens = [
+      mkGen(3, { kind: "background" }),
+      mkGen(4, { kind: "pose", status: "running", image_url: null, progress: 0.5 }),
+    ];
+    setup();
+    expect(await screen.findByText("角色動作產生中…")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "背景圖" })).toHaveAttribute("src", "/img/3.png");
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
+    // 工作完成，後端自動選用
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, compose_pending: true });
+    await act(async () => {
+      await lastQc.invalidateQueries();
+    });
+    await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+  });
+
+  it("構圖：位置從伺服器的草稿開始；翻轉 → PUT placement → 自動合成", async () => {
     pages[0] = mkPage(1, {
       background_generation_id: 3,
       pose_generation_id: 4,
+      selected_generation_id: 50,
       placement: { cx: 0.3, cy: 0.5, height: 0.4, flip: true },
     });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m" })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" }), mkGen(50, { kind: "composite" })];
     setup();
     const stage = await screen.findByTestId("compose-stage");
     expect(JSON.parse(stage.getAttribute("data-placement")!)).toEqual({ cx: 0.3, cy: 0.5, height: 0.4, flip: true });
     await userEvent.click(screen.getByRole("button", { name: "stub-flip" }));
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(1));
     expect(calledWith("PUT", "/api/pages/1/placement")[0].body).toMatchObject({ flip: false });
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
   });
 
-  it("位置寫入失敗時確認合成：不送 compose，提示位置尚未儲存", async () => {
-    search = "page=1&mode=compose";
-    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m" })];
+  it("位置寫入失敗：不合成，狀態列顯示「位置尚未儲存」與「更新失敗，重試」；位置重試成功後自動合成", async () => {
+    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 50 });
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" }), mkGen(50, { kind: "composite" })];
     failWith["PUT /api/pages/1/placement"] = 500;
     setup();
     await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(1));
-    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
-    await waitFor(() => expect(screen.getByText(/位置尚未儲存/)).toBeInTheDocument());
+    const stage = screen.getByTestId("compose-stage");
+    expect(await within(stage).findByRole("button", { name: "更新失敗，重試" }, { timeout: 2000 })).toBeInTheDocument();
+    expect(within(stage).getByTestId("placement-save-failed")).toHaveTextContent("位置尚未儲存");
     expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
-    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "false");
+    delete failWith["PUT /api/pages/1/placement"];
+    await userEvent.click(within(stage).getByRole("button", { name: "重試" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(2));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await waitFor(() => expect(within(stage).queryByTestId("placement-save-failed")).not.toBeInTheDocument());
   });
 
-  it("合成模式：角色動作沒有遮罩（後端 cutout_url 為 null）→ 舞台拿不到去背圖（由舞台說明要重新產生）", async () => {
-    search = "page=1&mode=compose";
+  it("構圖：角色動作沒有遮罩（後端 cutout_url 為 null）→ 舞台拿不到去背圖（由舞台說明要重新產生）", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
     gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: null, cutout_url: null })];
     setup();
@@ -860,8 +849,7 @@ describe("EditorPage", () => {
     expect(stage).toHaveAttribute("data-bg", "/img/3.png");
   });
 
-  it("合成模式：背景沒有圖 → 舞台拿到 null（說明而不是一直載入中）", async () => {
-    search = "page=1&mode=compose";
+  it("構圖：背景沒有圖 → 舞台拿到 null（說明而不是一直載入中）", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
     gens = [mkGen(3, { kind: "background", image_url: null }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
     setup();
@@ -870,26 +858,26 @@ describe("EditorPage", () => {
     expect(stage).toHaveAttribute("data-cutout", "/c");
   });
 
-  it("合成模式：選用的背景不在這頁的紀錄裡 → 說明，不是一直載入中", async () => {
-    search = "page=1&mode=compose";
+  it("構圖：選用的背景不在這頁的紀錄裡 → 說明，不是一直載入中", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
     gens = [mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
     setup();
-    expect(await screen.findByText("找不到選用的背景或角色動作，請回到前面的步驟重新選擇")).toBeInTheDocument();
+    expect(await screen.findByText("找不到選用的背景或角色動作，請重新選一張")).toBeInTheDocument();
     expect(screen.queryByTestId("compose-stage")).not.toBeInTheDocument();
   });
 
-  it("已合成的頁改選不同背景 → 選圖被清空，線稿／QA 停用", async () => {
+  it("已合成的頁改選不同背景 → 選圖被清空，② 補線停用，接著自動合成", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 9 });
     gens = [mkGen(3, { kind: "background" }), mkGen(8, { kind: "background" }), mkGen(4, { kind: "pose" }), mkGen(9, { kind: "composite" })];
     setup();
     await waitFor(() => expect(within(progressTitle()).getByText("已合成")).toBeInTheDocument());
-    expect(screen.getByRole("tab", { name: /線稿與修線/ })).not.toHaveAttribute("aria-disabled");
-    // 合成圖不出現在任何托盤
-    expect(screen.queryByRole("button", { name: /seed 109/ })).not.toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: "選 seed 108 為本頁背景" }));
-    await waitFor(() => expect(screen.getByRole("tab", { name: /線稿與修線/ })).toHaveAttribute("aria-disabled", "true"));
-    expect(within(progressTitle()).getByText("請確認合成")).toBeInTheDocument();
+    expect(lineTab()).not.toHaveAttribute("aria-disabled");
+    await userEvent.click(await within(bgCard()).findByRole("radio", { name: "背景第 2 張" }));
+    await waitFor(() => expect(lineTab()).toHaveAttribute("aria-disabled", "true"));
+    expect(within(progressTitle()).queryByText("已合成")).not.toBeInTheDocument();
+    // 改選完自動合成新的
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await waitFor(() => expect(lineTab()).not.toHaveAttribute("aria-disabled"));
   });
 
   it("Filmstrip 刪除：確認後 DELETE，選到相鄰頁", async () => {
@@ -918,241 +906,75 @@ describe("EditorPage", () => {
     expect(await screen.findByText("第 4 頁進度")).toBeInTheDocument();
   });
 
-  it("產生背景：POST backgrounds；排隊中顯示在背景歷史；後端 409 訊息顯示在 toast", async () => {
+  it("背景「換一張」：POST backgrounds（不帶風格）；排隊中顯示在背景卡片；後端 409 訊息顯示在 toast", async () => {
     setup();
-    await userEvent.click(await screen.findByRole("button", { name: "stub-generate-background" }));
+    await screen.findByRole("region", { name: "背景" });
+    await userEvent.click(within(bgCard()).getByRole("button", { name: "換一張背景" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(1));
-    expect(await screen.findByText("排隊第 1 位")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId("background-panel")).toHaveAttribute("data-active", "1"));
+    expect(calledWith("POST", "/api/pages/1/backgrounds")[0].body).toEqual({});
+    expect(await within(bgCard()).findByText("排隊第 1 位")).toBeInTheDocument();
 
     genStatus = 409;
-    await userEvent.click(screen.getByRole("button", { name: "stub-generate-background" }));
+    await userEvent.click(within(bgCard()).getByRole("button", { name: "換一張背景" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("請先設定角色");
   });
 
-  it("產生所有背景：確認對話框列出頁數與略過的頁 → POST batch → toast；各頁歷史與排隊數更新", async () => {
-    pages = [mkPage(1), mkPage(2), mkPage(3, { scene_prompt: "" })];
+  it("上傳背景圖：POST upload 後變成本頁背景，縮圖有「上傳」標記", async () => {
     setup();
-    await userEvent.click(await screen.findByRole("button", { name: "產生所有背景" }));
-    const dlg = screen.getByRole("dialog", { name: "產生所有背景？" });
-    expect(dlg).toHaveTextContent("會為 2 頁產生背景（簡潔；1 頁略過：第 3 頁沒有場景描述）");
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(0);
-    await userEvent.click(within(dlg).getByRole("button", { name: "產生 2 頁背景" }));
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    expect(await screen.findByText("已排入 2 頁背景、略過 1 頁")).toBeInTheDocument();
-    // 本頁的歷史與排隊數、頁面清單的「生成中」都重抓
-    expect(await screen.findByText("排隊第 1 位")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId("background-panel")).toHaveAttribute("data-active", "1"));
-    await waitFor(() => expect(within(pageButton(2)).getByText("生成中")).toBeInTheDocument());
-    expect(within(pageButton(3)).queryByText("生成中")).not.toBeInTheDocument();
-    // 都排入或略過了 → 再按也沒有可產生的頁
-    await waitFor(() => expect(screen.getByRole("button", { name: "產生所有背景" })).toBeDisabled());
-  });
-
-  it("背景風格：預設簡潔；產生背景與產生所有背景都送 {style: simple}", async () => {
-    setup();
-    const panel = await screen.findByTestId("background-panel");
-    expect(panel).toHaveAttribute("data-style", "simple");
-    expect(panel).toHaveAttribute("data-reason", "");
-    await userEvent.click(screen.getByRole("button", { name: "stub-generate-background" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/backgrounds")[0].body).toEqual({ style: "simple" });
-    await userEvent.click(await screen.findByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^產生 \d 頁背景$/ }));
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")[0].body).toEqual({ style: "simple" });
-  });
-
-  it("背景風格：記住的細緻 → 批次 POST 帶 detailed，確認對話框顯示（細緻）", async () => {
-    localStorage.setItem("coloring.bgStyle", "detailed");
-    setup();
-    expect(await screen.findByTestId("background-panel")).toHaveAttribute("data-style", "detailed");
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    const dlg = screen.getByRole("dialog", { name: "產生所有背景？" });
-    expect(dlg).toHaveTextContent("會為 3 頁產生背景（細緻）");
-    await userEvent.click(within(dlg).getByRole("button", { name: "產生 3 頁背景" }));
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")[0].body).toEqual({ style: "detailed" });
-  });
-
-  it("背景風格：面板切到細緻 → 記住（localStorage），確認對話框與批次 POST 跟著改", async () => {
-    setup();
-    await userEvent.click(await screen.findByRole("button", { name: "stub-style-detailed" }));
-    expect(localStorage.getItem("coloring.bgStyle")).toBe("detailed");
-    expect(screen.getByTestId("background-panel")).toHaveAttribute("data-style", "detailed");
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("會為 3 頁產生背景（細緻）");
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")[0].body).toEqual({ style: "detailed" });
-  });
-
-  it("背景風格：簡潔不可用 → 面板拿到缺漏清單；批次用細緻（不改寫記憶）", async () => {
-    bgStyles = {
-      simple: { available: false, missing: ["ComfyUI-GGUF", "unet/qwen-image-edit-2511-Q4_K_M.gguf"] },
-      detailed: { available: true, missing: [] },
-    };
-    setup();
-    const panel = await screen.findByTestId("background-panel");
-    await waitFor(() =>
-      expect(panel).toHaveAttribute("data-reason", "簡潔風格缺少：ComfyUI-GGUF、unet/qwen-image-edit-2511-Q4_K_M.gguf"),
+    await screen.findByRole("region", { name: "背景" });
+    await userEvent.upload(
+      within(bgCard()).getByLabelText("上傳背景圖"),
+      new File(["png"], "mine.png", { type: "image/png" }),
     );
-    // 面板拿到的是記住的風格；被迫細緻由面板（effectiveBgStyle）決定
-    expect(panel).toHaveAttribute("data-style", "simple");
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("會為 3 頁產生背景（細緻）");
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")[0].body).toEqual({ style: "detailed" });
-    expect(localStorage.getItem("coloring.bgStyle")).toBeNull();
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(1));
+    const thumb = await within(bgCard()).findByRole("radio", { name: "背景第 1 張（上傳的圖片）" });
+    await waitFor(() => expect(thumb).toHaveAttribute("aria-checked", "true"));
+    expect(within(bgCard()).getByText("上傳的圖片")).toBeInTheDocument();
   });
 
-  it("背景風格：簡潔不可用但沒有缺漏清單 → 「簡潔風格目前無法使用」", async () => {
-    bgStyles = { simple: { available: false, missing: [] }, detailed: { available: true, missing: [] } };
+  it("角色動作已選好時上傳背景圖 → 自動合成", async () => {
+    pages[0] = mkPage(1, { pose_generation_id: 4 });
+    gens = [mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
     setup();
-    const panel = await screen.findByTestId("background-panel");
-    await waitFor(() => expect(panel).toHaveAttribute("data-reason", "簡潔風格目前無法使用"));
+    await screen.findByRole("region", { name: "背景" });
+    await userEvent.upload(
+      within(bgCard()).getByLabelText("上傳背景圖"),
+      new File(["png"], "mine.png", { type: "image/png" }),
+    );
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(1));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
   });
 
-  it("背景風格：確認對話框算出有草圖（強度 > 0）的排入頁數", async () => {
-    pages = [
-      mkPage(1, { sketch_url: "/api/pages/1/sketch?v=1" }),
-      mkPage(2, { sketch_url: "/api/pages/2/sketch?v=1", controlnet_strength: 0 }),
-      mkPage(3, { sketch_url: "/api/pages/3/sketch?v=1", background_generation_id: 9 }),
-    ];
+  it("補線面板「不太像，換一張」記錄 inconsistent 並切回 ① 構圖", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
     setup();
-    await userEvent.click(await screen.findByRole("button", { name: "產生所有背景" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("會為 2 頁產生背景（簡潔，有草圖的 1 頁用細緻；1 頁略過：第 3 頁已有背景）");
+    const panel = await screen.findByTestId("finish-panel");
+    await userEvent.click(within(panel).getByRole("button", { name: "不太像，換一張" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/character-check")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/character-check")[0].body).toMatchObject({ generation_id: 5, result: "inconsistent" });
+    await waitFor(() => expect(composeTab()).toHaveAttribute("aria-selected", "true"));
+    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1", { scroll: false });
   });
 
-  it("背景風格：本頁有沒有草圖（伺服器的 sketch_url，或這個 session 剛存的草圖）傳給面板", async () => {
-    pages = [mkPage(1), mkPage(2, { sketch_url: "/api/pages/2/sketch?v=1" })];
+  it("補線面板：角色對 → 完成這一頁（有缺口先問一次）→ POST /pass 空 body → 已完成", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
     setup();
-    const panel = await screen.findByTestId("background-panel");
-    expect(panel).toHaveAttribute("data-has-sketch", "false");
-    // 存檔一送出就算有草圖（不等 PUT 完成與 pages 重抓）
-    let release!: () => void;
-    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
-    await userEvent.click(screen.getByRole("button", { name: "stub-save" }));
-    await waitFor(() => expect(screen.getByTestId("background-panel")).toHaveAttribute("data-has-sketch", "true"));
-    // 清空也一樣立即反應
-    await userEvent.click(screen.getByRole("button", { name: "stub-clear" }));
-    await waitFor(() => expect(screen.getByTestId("background-panel")).toHaveAttribute("data-has-sketch", "false"));
-    release();
-    await userEvent.click(pageButton(2));
-    await waitFor(() => expect(screen.getByTestId("background-panel")).toHaveAttribute("data-has-sketch", "true"));
-  });
-
-  it("產生所有背景：取消不送出", async () => {
-    setup();
-    await userEvent.click(await screen.findByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "取消" }));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(0);
-  });
-
-  it("產生所有背景：已選背景、歷史裡有背景、背景產生中都不算 → 停用並說明", async () => {
-    pages = [mkPage(1, { background_generation_id: 5 }), mkPage(2), mkPage(3)];
-    gens = [
-      mkGen(5, { kind: "background", page_id: 1 }),
-      mkGen(6, { kind: "background", page_id: 2 }),
-      mkGen(7, { kind: "background", page_id: 3, status: "queued", image_url: null, queue_position: 1 }),
-    ];
-    setup();
-    const b = await screen.findByRole("button", { name: "產生所有背景" });
-    await waitFor(() => expect(b).toBeDisabled());
-    expect(b).toHaveAttribute("title", "沒有需要產生背景的頁面");
-  });
-
-  it("產生所有背景：先把畫板上未存的草圖存完（PUT 完成）才 POST batch", async () => {
-    setup();
-    await userEvent.click(await screen.findByRole("button", { name: "stub-draw-sketch" }));
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    const order = calls.map((c) => `${c.method} ${c.url}`);
-    expect(order.indexOf("PUT /api/pages/1/sketch")).toBeGreaterThan(-1);
-    expect(order.indexOf("PUT /api/pages/1/sketch")).toBeLessThan(order.indexOf("POST /api/books/1/backgrounds/batch"));
-  });
-
-  it("產生所有背景：草圖存檔失敗就不送出，提示原因", async () => {
-    failWith["PUT /api/pages/1/sketch"] = 500;
-    setup();
-    await userEvent.click(await screen.findByRole("button", { name: "stub-draw-sketch" }));
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    expect(await screen.findByText("草圖或場景描述尚未儲存，沒有產生背景；請重試")).toBeInTheDocument();
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(0);
-  });
-
-  it("產生所有背景：送出中的場景描述 PATCH 完成後才 POST batch", async () => {
-    realBgPanel = true;
-    let release!: () => void;
-    gate["PATCH /api/pages/1"] = new Promise<void>((r) => (release = r));
-    setup();
-    const box = await screen.findByLabelText("場景描述");
-    await userEvent.clear(box);
-    await userEvent.type(box, "森林");
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" })); // 離開欄位 → PATCH（卡住）
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
-    await act(async () => {});
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(0);
-    await act(async () => release());
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1);
-    expect(calledWith("PATCH", "/api/pages/1")[0].body).toEqual({ scene_prompt: "森林" });
-  });
-
-  it("產生所有背景：本頁場景描述之前存失敗 → 先重送；再失敗就不送出並提示", async () => {
-    realBgPanel = true;
-    failWith["PATCH /api/pages/1"] = 500;
-    setup();
-    const box = await screen.findByLabelText("場景描述");
-    await userEvent.clear(box);
-    await userEvent.type(box, "森林");
-    await userEvent.tab(); // 離開欄位 → PATCH 失敗
-    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    expect(await screen.findByText("草圖或場景描述尚未儲存，沒有產生背景；請重試")).toBeInTheDocument();
-    expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(2);
-    expect(calledWith("PATCH", "/api/pages/1")[1].body).toEqual({ scene_prompt: "森林" });
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(0);
-    // 這次存成功 → 送出
-    delete failWith["PATCH /api/pages/1"];
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(3);
-  });
-
-  it("產生所有背景：送出中的構圖強度 PATCH 完成後才 POST batch", async () => {
-    realBgPanel = true;
-    let release!: () => void;
-    gate["PATCH /api/pages/1"] = new Promise<void>((r) => (release = r));
-    setup();
-    const slider = await screen.findByLabelText(/構圖強度/);
-    fireEvent.change(slider, { target: { value: "0.2" } });
-    fireEvent.keyUp(slider, { key: "ArrowLeft" });
-    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
-    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    await act(async () => {});
-    expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(0);
-    await act(async () => release());
-    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
-    expect(calledWith("PATCH", "/api/pages/1")).toEqual([
-      expect.objectContaining({ body: { controlnet_strength: 0.2 } }),
-    ]);
-  });
-
-  it("產生所有背景：後端錯誤顯示在 toast", async () => {
-    failWith["POST /api/books/1/backgrounds/batch"] = 500;
-    setup();
-    await userEvent.click(await screen.findByRole("button", { name: "產生所有背景" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
-    expect(await screen.findByText("伺服器壞了")).toBeInTheDocument();
+    const panel = await screen.findByTestId("finish-panel");
+    await within(panel).findByText("還有 3 個缺口");
+    expect(within(panel).getByRole("button", { name: "完成這一頁 ✓" })).toBeDisabled();
+    await userEvent.click(within(panel).getByRole("button", { name: "對" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "完成這一頁 ✓" })).toBeEnabled());
+    await userEvent.click(within(panel).getByRole("button", { name: "完成這一頁 ✓" }));
+    const dlg = await screen.findByRole("dialog");
+    expect(dlg).toHaveTextContent("還有 3 個缺口，小朋友塗色時顏色可能漏出去。確定完成嗎？");
+    await userEvent.click(within(dlg).getByRole("button", { name: "完成" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/pass")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/pass")[0].body).toEqual({});
+    expect(await within(screen.getByTestId("finish-panel")).findByText("已完成")).toBeInTheDocument();
   });
 
   it("線條設定：細緻度立即 PATCH；線寬顯示 mm、放開時 PATCH", async () => {
@@ -1170,29 +992,6 @@ describe("EditorPage", () => {
     await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")[1]?.body).toEqual({ line_width_px: 16 }));
   });
 
-  it("構圖草圖存檔依呼叫順序：PUT 完成前的 DELETE 會等它", async () => {
-    let release!: () => void;
-    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
-    setup();
-    const sk = await screen.findByTestId("sketch");
-    expect(sk).toHaveAttribute("data-width", "864");
-    await userEvent.click(within(sk).getByRole("button", { name: "stub-save" }));
-    await userEvent.click(within(sk).getByRole("button", { name: "stub-clear" }));
-    expect(calls.filter((c) => c.url === "/api/pages/1/sketch").map((c) => c.method)).toEqual(["PUT"]);
-    await act(async () => release());
-    await waitFor(() =>
-      expect(calls.filter((c) => c.url === "/api/pages/1/sketch").map((c) => c.method)).toEqual(["PUT", "DELETE"]),
-    );
-  });
-
-  it("換頁時草圖畫布以新頁重新掛載", async () => {
-    pages[1] = mkPage(2, { sketch_url: "/api/pages/2/sketch?v=1" });
-    setup();
-    expect(await screen.findByTestId("sketch")).toHaveAttribute("data-initial", "");
-    await userEvent.click(pageButton(2));
-    expect(screen.getByTestId("sketch")).toHaveAttribute("data-initial", "/api/pages/2/sketch?v=1");
-  });
-
   it("aspect_mismatch 時舞台上方提示", async () => {
     pages[0] = mkPage(1, { selected_generation_id: 5, aspect_mismatch: true });
     gens = [mkGen(5)];
@@ -1200,24 +999,15 @@ describe("EditorPage", () => {
     expect(await screen.findByText("繪本尺寸已變更，這張圖的比例不同，建議重新生成")).toBeInTheDocument();
   });
 
-  it("書沒有角色：「角色」分頁停用並說明，提示連到角色工作室；背景照常可用", async () => {
+  it("書沒有角色：提示連到角色工作室；構圖照常可用，角色動作「換一張」停用", async () => {
     book = mkBook({ character_generation_id: null, character_description: null });
     setup();
-    const pose = await screen.findByRole("tab", { name: "角色" });
-    expect(pose).toHaveAttribute("aria-disabled", "true");
-    expect(pose).toHaveAccessibleDescription("請先在角色工作室設定角色");
-    await userEvent.click(pose);
-    expect(screen.getByRole("tab", { name: "背景" })).toHaveAttribute("aria-selected", "true");
-    const links = screen.getAllByRole("link", { name: /角色工作室/ });
+    await screen.findAllByRole("tab");
+    expect(composeTab()).toHaveAttribute("aria-selected", "true");
+    const links = screen.getAllByRole("link", { name: /角色工作室|先設定角色/ });
     expect(links[0]).toHaveAttribute("href", "/books/1/character");
-    expect(screen.getByTestId("background-panel")).toBeInTheDocument();
-  });
-
-  it("書沒有角色：網址 mode=pose → 背景模式", async () => {
-    search = "page=1&mode=pose";
-    book = mkBook({ character_generation_id: null, character_description: null });
-    setup();
-    expect(await screen.findByTestId("background-panel")).toBeInTheDocument();
+    expect(within(poseCard()).getByRole("button", { name: "換一張角色動作" })).toBeDisabled();
+    expect(within(bgCard()).getByRole("button", { name: "換一張背景" })).not.toBeDisabled();
   });
 
   it("沒有頁面：空狀態，按新增頁面", async () => {
@@ -1236,41 +1026,7 @@ describe("EditorPage", () => {
     expect(screen.getByRole("link", { name: "回到我的繪本" })).toHaveAttribute("href", "/");
   });
 
-  it("QA 模式放 QACompare／QAPanel 插槽，歷史托盤隱藏", async () => {
-    search = "page=1&mode=qa";
-    pages[0] = mkPage(1, { selected_generation_id: 5 });
-    gens = [mkGen(5)];
-    setup();
-    expect(await screen.findByTestId("qa-compare")).toBeInTheDocument();
-    expect(screen.getByTestId("qa-panel")).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: /歷史/ })).not.toBeInTheDocument();
-  });
-
   // ---------- fix round 1 ----------
-
-  it("草圖 PUT 還沒完成就換頁再回來：畫布用待送的 blob seed，不用舊的 sketch_url", async () => {
-    pages[0] = mkPage(1, { sketch_url: "/api/pages/1/sketch?v=1" });
-    let release!: () => void;
-    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
-    setup();
-    const sk = await screen.findByTestId("sketch");
-    expect(sk).toHaveAttribute("data-initial", "/api/pages/1/sketch?v=1");
-    await userEvent.click(within(sk).getByRole("button", { name: "stub-save" }));
-    await userEvent.click(pageButton(2));
-    await userEvent.click(pageButton(1));
-    expect(screen.getByTestId("sketch")).toHaveAttribute("data-initial", "blob:1");
-    await act(async () => release());
-  });
-
-  it("清空草圖（DELETE 待送）後重新掛載 → 空白畫布", async () => {
-    pages[0] = mkPage(1, { sketch_url: "/api/pages/1/sketch?v=1" });
-    gate["DELETE /api/pages/1/sketch"] = new Promise<void>(() => {});
-    setup();
-    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-clear" }));
-    await userEvent.click(pageButton(2));
-    await userEvent.click(pageButton(1));
-    expect(screen.getByTestId("sketch")).toHaveAttribute("data-initial", "");
-  });
 
   it("修線重新掛載時 edits 正在重抓 → 等它完成，不用舊快取 seed", async () => {
     search = "page=1&mode=line";
@@ -1278,19 +1034,19 @@ describe("EditorPage", () => {
     gens = [mkGen(5)];
     setup();
     expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "0");
-    await userEvent.click(screen.getByRole("tab", { name: "背景" }));
+    await userEvent.click(composeTab());
     // 畫布不在時伺服器的修改圖層變了（例如 QA 面板自動補線）
     edits = [{ op: "draw", width_px: 11, points: [[0.1, 0.1], [0.2, 0.2]] }];
     let release!: () => void;
     gate["GET /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
-    await userEvent.click(screen.getByRole("tab", { name: /線稿與修線/ }));
+    await userEvent.click(lineTab());
     expect(screen.queryByTestId("linefix")).not.toBeInTheDocument();
     expect(screen.getByText("載入修線圖層中…")).toBeInTheDocument();
     await act(async () => release());
     expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "1");
   });
 
-  it("改選背景前先等修線寫入完成（修線→背景分頁→點背景）", async () => {
+  it("改選背景前先等修線寫入完成（補線→構圖→點背景縮圖）", async () => {
     search = "page=1&mode=line";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5), mkGen(6, { kind: "background" })];
@@ -1298,13 +1054,120 @@ describe("EditorPage", () => {
     gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
     setup();
     await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
-    await userEvent.click(screen.getByRole("tab", { name: "背景" }));
-    await userEvent.click(await screen.findByRole("button", { name: "選 seed 106 為本頁背景" }));
+    await userEvent.click(composeTab());
+    await userEvent.click(await within(bgCard()).findByRole("radio", { name: "背景第 1 張" }));
     await act(async () => {});
     expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(0);
     await act(async () => release());
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(1));
   });
+
+  it("上傳背景圖前先等修線寫入完成（補線→構圖→上傳）", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    let release!: () => void;
+    gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await userEvent.click(composeTab());
+    const input = within(await screen.findByRole("region", { name: "背景" })).getByLabelText("上傳背景圖");
+    await userEvent.upload(input, new File(["png"], "mine.png", { type: "image/png" }));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(0);
+    // 等修線期間不能再上傳或點縮圖
+    expect(within(bgCard()).getByLabelText(/上傳背景圖|上傳中/)).toBeDisabled();
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(1));
+    const order = calls.map((c) => `${c.method} ${c.url}`);
+    expect(order.indexOf("PUT /api/pages/1/lineart/edits")).toBeLessThan(order.indexOf("POST /api/pages/1/backgrounds/upload"));
+  });
+
+  it("第 1 頁等修線寫入時換到第 2 頁：第 2 頁的縮圖照常可選（等待狀態是每頁各自的）", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5), mkGen(6, { kind: "background" }), mkGen(7, { kind: "background", page_id: 2 })];
+    let release!: () => void;
+    gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await userEvent.click(composeTab());
+    await userEvent.click(await within(bgCard()).findByRole("radio", { name: "背景第 1 張" }));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(0);
+    await userEvent.click(pageButton(2));
+    const pick2 = await within(bgCard()).findByRole("radio", { name: "背景第 1 張" });
+    await waitFor(() => expect(pick2).not.toHaveAttribute("aria-disabled"));
+    await userEvent.click(pick2);
+    await waitFor(() => expect(calledWith("POST", "/api/pages/2/background")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(0);
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(1));
+  });
+
+  it("合成進行中刪除那頁：合成回來的 404 不跳「無法合成」", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    let releaseCompose!: () => void;
+    gate["POST /api/pages/1/compose"] = new Promise<void>((r) => (releaseCompose = r));
+    gate["DELETE /api/pages/1"] = new Promise<void>(() => {}); // 刪除還沒回來
+    failWith["POST /api/pages/1/compose"] = 404;
+    setup();
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await userEvent.click(screen.getByRole("button", { name: "第 1 頁的更多動作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
+    await waitFor(() => expect(calledWith("DELETE", "/api/pages/1")).toHaveLength(1));
+    await act(async () => releaseCompose());
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByText("伺服器壞了")).not.toBeInTheDocument();
+    expect(screen.queryByText(/無法合成/)).not.toBeInTheDocument();
+  });
+
+  it("合成失敗後又在舊合成圖上補線：重試前再問一次", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    edits = [{ op: "draw", width_px: 11, points: [[0.5, 0.5]] }];
+    failWith["POST /api/pages/1/compose"] = 500;
+    setup();
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    const ask = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
+    await userEvent.click(within(ask).getByRole("button", { name: "繼續" }));
+    const retry = await within(screen.getByTestId("compose-stage")).findByRole("button", { name: "更新失敗，重試" }, { timeout: 2000 });
+    // 在同一張舊合成圖上多補一筆
+    edits = [...edits, { op: "draw", width_px: 11, points: [[0.4, 0.4]] }];
+    await act(async () => {
+      await lastQc.invalidateQueries({ queryKey: qk.edits(1) });
+    });
+    delete failWith["POST /api/pages/1/compose"];
+    await userEvent.click(retry);
+    const again = await screen.findByRole("dialog", { name: "清掉補過的線？" });
+    await userEvent.click(within(again).getByRole("button", { name: "取消" }));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1);
+  });
+
+  it("開著編輯器時素材才完成（worker 自動選用）：不用重新整理，舞台填上並自動合成", async () => {
+    gens = [
+      mkGen(3, { kind: "background", status: "queued", image_url: null, queue_position: 0 }),
+      mkGen(4, { kind: "pose", status: "queued", image_url: null, queue_position: 1 }),
+    ];
+    setup();
+    expect(await screen.findByText("背景與角色動作產生中…")).toBeInTheDocument();
+    // worker 完成兩張並自動選用（後端改了 pages，前端沒有任何寫入）
+    const { o, g } = composedReady();
+    gens = g;
+    pages[0] = mkPage(1, { ...o, compose_pending: true });
+    await waitFor(() => expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-bg", "/img/3.png"), {
+      timeout: 4000,
+    });
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    expect(await within(screen.getByTestId("compose-stage")).findByText("✓ 線稿已自動更新")).toBeInTheDocument();
+  }, 10000);
 
   it("網址晚到：忽略我們較早寫的網址；外部改變才跟著改", async () => {
     setup();
@@ -1335,7 +1198,7 @@ describe("EditorPage", () => {
 
   // ---------- fix round 2 ----------
 
-  it("修線中自動補線：edits 背景重抓（pending）時畫布不卸載，完成後顯示「已補 N 條」", async () => {
+  it("修線中自動補線：edits 背景重抓（pending）時畫布不卸載，完成後顯示「已補 N 條線」", async () => {
     search = "page=1&mode=line";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5)];
@@ -1343,13 +1206,13 @@ describe("EditorPage", () => {
     expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "0");
     let release!: () => void;
     gate["GET /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
-    await userEvent.click(screen.getByRole("button", { name: "自動補線" }));
+    await userEvent.click(within(await screen.findByTestId("finish-panel")).getByRole("button", { name: "自動補線" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/lineart/autofix")).toHaveLength(1));
     await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits").length).toBeGreaterThan(1));
     expect(screen.getByTestId("linefix")).toBeInTheDocument();
     expect(screen.queryByText("載入修線圖層中…")).not.toBeInTheDocument();
     await act(async () => release());
-    expect(await screen.findByText("已補 1 條")).toBeInTheDocument();
+    expect(await screen.findByText("已補 1 條線")).toBeInTheDocument();
     expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1");
   });
 
@@ -1380,8 +1243,8 @@ describe("EditorPage", () => {
     gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
     setup();
     await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
-    await userEvent.click(screen.getByRole("tab", { name: "背景" }));
-    const pick = await screen.findByRole("button", { name: "選 seed 106 為本頁背景" });
+    await userEvent.click(composeTab());
+    const pick = await within(bgCard()).findByRole("radio", { name: "背景第 1 張" });
     await userEvent.click(pick);
     await userEvent.click(pick);
     await act(async () => release());
@@ -1416,63 +1279,6 @@ describe("EditorPage", () => {
 
   // ---------- final review fixes ----------
 
-  it("畫完 1 秒內就按產生背景：先把草圖存完（PUT 完成）才 POST backgrounds", async () => {
-    let release!: () => void;
-    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
-    setup();
-    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-draw-sketch" }));
-    await userEvent.click(screen.getByRole("button", { name: "stub-generate-background" }));
-    // 沒等 debounce：按下產生就立即送出草圖
-    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/sketch")).toHaveLength(1));
-    await act(async () => {});
-    expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(0);
-    await act(async () => release());
-    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(1));
-    const order = calls.map((c) => `${c.method} ${c.url}`);
-    expect(order.indexOf("PUT /api/pages/1/sketch")).toBeLessThan(order.indexOf("POST /api/pages/1/backgrounds"));
-    expect(calledWith("PUT", "/api/pages/1/sketch")).toHaveLength(1); // debounce 不再重送
-  });
-
-  it("草圖存檔失敗：不產生、提示；畫布下方持續顯示「草圖尚未儲存」，按重試再送一次", async () => {
-    failWith["PUT /api/pages/1/sketch"] = 500;
-    setup();
-    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-draw-sketch" }));
-    await userEvent.click(screen.getByRole("button", { name: "stub-generate-background" }));
-    expect(await screen.findByText(/草圖尚未儲存，沒有產生背景/)).toBeInTheDocument();
-    expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(0);
-    const line = screen.getByTestId("sketch-save-failed");
-    expect(line).toHaveTextContent("草圖尚未儲存");
-    delete failWith["PUT /api/pages/1/sketch"];
-    await userEvent.click(within(line).getByRole("button", { name: "重試" }));
-    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/sketch")).toHaveLength(2));
-    await waitFor(() => expect(screen.queryByTestId("sketch-save-failed")).not.toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: "stub-generate-background" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(1));
-  });
-
-  it("beforeunload：草圖還在送或畫布有未存變更時攔下離開；都存好就不攔", async () => {
-    let release!: () => void;
-    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
-    setup();
-    const unload = () => {
-      const e = new Event("beforeunload", { cancelable: true });
-      window.dispatchEvent(e);
-      return e.defaultPrevented;
-    };
-    const sk = await screen.findByTestId("sketch");
-    expect(unload()).toBe(false);
-    await userEvent.click(within(sk).getByRole("button", { name: "stub-draw-sketch" }));
-    expect(unload()).toBe(true); // debounce 中
-    await userEvent.click(within(sk).getByRole("button", { name: "stub-save" }));
-    expect(unload()).toBe(true); // PUT 送出中
-    await act(async () => release());
-    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/sketch").length).toBeGreaterThan(0));
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 1100)); // 讓 debounce 的存檔也送完
-    });
-    await waitFor(() => expect(unload()).toBe(false));
-  });
-
   it("修線寫入失敗：缺口文字換成「修線尚未儲存」＋重試，重試送出最新筆畫；離開頁面會被攔", async () => {
     search = "page=1&mode=line";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
@@ -1495,51 +1301,18 @@ describe("EditorPage", () => {
     expect(within(screen.getByTestId("linefix")).getByText("2 個缺口")).toBeInTheDocument();
   });
 
-  it("刪除目前頁：未存的草圖不在卸載時送出，也不出現「草圖儲存失敗」", async () => {
-    search = "page=2";
-    let releaseDelete!: () => void;
-    gate["DELETE /api/pages/2"] = new Promise<void>((r) => (releaseDelete = r));
-    setup();
-    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-draw-sketch" }));
-    await userEvent.click(screen.getByRole("button", { name: "第 2 頁的更多動作" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
-    expect(pageButton(3)).toHaveAttribute("aria-current", "true");
-    await act(async () => releaseDelete());
-    await waitFor(() => expect(calledWith("DELETE", "/api/pages/2")).toHaveLength(1));
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 1100));
-    });
-    expect(calledWith("PUT", "/api/pages/2/sketch")).toHaveLength(0);
-    expect(screen.queryByText(/草圖儲存失敗/)).not.toBeInTheDocument();
-  });
-
-  it("刪除目前頁：刪除前就在路上的草圖 PUT 回 404 → 不提示錯誤", async () => {
-    search = "page=2";
-    let releasePut!: () => void;
-    gate["PUT /api/pages/2/sketch"] = new Promise<void>((r) => (releasePut = r));
-    setup();
-    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-save" }));
-    await userEvent.click(screen.getByRole("button", { name: "第 2 頁的更多動作" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
-    await waitFor(() => expect(calledWith("DELETE", "/api/pages/2")).toHaveLength(1));
-    await act(async () => releasePut()); // 頁面已刪：404
-    await act(async () => {});
-    expect(screen.queryByText(/找不到頁面|草圖儲存失敗/)).not.toBeInTheDocument();
-    const e = new Event("beforeunload", { cancelable: true });
-    window.dispatchEvent(e);
-    expect(e.defaultPrevented).toBe(false);
-  });
-
   // ---------- 刪除後 id 被沿用（後端舊庫沒有 AUTOINCREMENT 時）：舊頁的前端狀態不可串到新頁 ----------
 
-  /** 第 3 頁：存草圖（PUT），再刪除它。（場景描述的部分由 Task 9 的背景面板測） */
+  /** 第 3 頁：移動角色（PUT placement），再刪除它。 */
   async function editThenDeletePage3() {
     search = "page=3";
+    const { o, g } = composedReady(3, 3, 4);
+    pages[2] = mkPage(3, o);
+    gens = g;
+    newPageExtra = o; // 沿用 id 的新頁也有素材，才看得到舞台位置
     setup();
-    await userEvent.click(within(await screen.findByTestId("sketch")).getByRole("button", { name: "stub-save" }));
-    await waitFor(() => expect(calledWith("PUT", "/api/pages/3/sketch")).toHaveLength(1));
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/3/placement")).toHaveLength(1));
     await userEvent.click(screen.getByRole("button", { name: "第 3 頁的更多動作" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
     await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
@@ -1547,18 +1320,17 @@ describe("EditorPage", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "第 3 頁的更多動作" })).not.toBeInTheDocument());
   }
 
-  /** 新頁（沿用 id 3）：草圖照常送出、產生背景前先存好草圖。 */
+  /** 新頁（沿用 id 3）：位置從預設開始、移動照常送出。 */
   async function expectFreshPage3() {
     await waitFor(() => expect(pageButton(3)).toHaveAttribute("aria-current", "true"));
-    expect(screen.getByTestId("sketch")).toHaveAttribute("data-initial", "");
-    await userEvent.click(within(screen.getByTestId("sketch")).getByRole("button", { name: "stub-save" }));
-    await waitFor(() => expect(calledWith("PUT", "/api/pages/3/sketch")).toHaveLength(2));
-    await userEvent.click(screen.getByRole("button", { name: "stub-generate-background" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/3/backgrounds")).toHaveLength(1));
-    expect(screen.queryByText(/草圖儲存失敗|找不到頁面/)).not.toBeInTheDocument();
+    const stage = await screen.findByTestId("compose-stage");
+    expect(JSON.parse(stage.getAttribute("data-placement")!)).toEqual({ cx: 0.5, cy: 0.66, height: 0.6, flip: false });
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-move" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/3/placement")).toHaveLength(2));
+    expect(screen.queryByText(/位置儲存失敗|找不到頁面/)).not.toBeInTheDocument();
   }
 
-  it("刪除最後一頁後新增，後端沿用同一個 id：草圖照常存、畫板從空白開始", async () => {
+  it("刪除最後一頁後新增，後端沿用同一個 id：位置照常存、從預設位置開始", async () => {
     nextPageId = 3;
     await editThenDeletePage3();
     await userEvent.click(screen.getByRole("button", { name: "新增頁面" }));
@@ -1568,12 +1340,11 @@ describe("EditorPage", () => {
 
   it("已刪除的 id 又出現在頁面清單（例如別的分頁新增）：清掉舊狀態", async () => {
     await editThenDeletePage3();
-    pages = [...pages, mkPage(3, { position: pages.length, scene_prompt: "" })];
+    pages = [...pages, mkPage(3, { position: pages.length, scene_prompt: "", ...newPageExtra })];
     await act(async () => {
       await lastQc.invalidateQueries({ queryKey: qk.pages(1) });
     });
     await userEvent.click(await screen.findByRole("button", { name: /^第 3 頁(?!的更多動作)/ }));
     await expectFreshPage3();
   });
-
 });

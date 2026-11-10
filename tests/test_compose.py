@@ -240,3 +240,65 @@ def test_largest_component_keeps_soft_fringe_but_zeroes_detached_grey():
     o = np.asarray(Image.open(io.BytesIO(largest_component(_png(a)))))
     assert (o[8:10, 10:50] == 90).all()
     assert (o[70:73, 70:73] == 0).all() and (o[80:85, 60:90] == 0).all()
+
+
+def _ring():
+    """外圈 255、中間 0 的「甜甜圈」：BiRefNet 把白色臉／頭盔內部當成背景挖掉的樣子。"""
+    a = np.zeros((60, 60), np.uint8)
+    a[10:50, 10:50] = 255
+    a[20:40, 20:40] = 0
+    return a
+
+
+def test_largest_component_fills_enclosed_hole():
+    from app.services.compose import largest_component
+    import io
+
+    a = _ring()
+    a[5:10, 10:50] = 90  # 外緣柔邊：保留原灰階
+    a[20:40, 20] = 100  # 洞內緣的柔邊（≤128）：在洞裡 → 補成 255
+    a[29:31, 29:31] = 255  # 洞中央與主體分離的小碎塊：一起補滿
+    o = np.asarray(Image.open(io.BytesIO(largest_component(_png(a)))))
+    assert (o[10:50, 10:50] == 255).all()
+    assert (o[8:10, 10:50] == 90).all()
+    assert (o[:5] == 0).all() and (o[:, :8] == 0).all() and (o[52:] == 0).all() and (o[:, 52:] == 0).all()
+
+
+def test_largest_component_keeps_outside_background():
+    from app.services.compose import largest_component
+    import io
+
+    # C 字形：開口通到外面 → 裡面仍是背景
+    c = np.zeros((60, 60), np.uint8)
+    c[10:50, 10:50] = 255
+    c[20:40, 20:50] = 0
+    o = np.asarray(Image.open(io.BytesIO(largest_component(_png(c)))))
+    assert (o[20:40, 22:50] == 0).all()
+    assert (o[10:20, 10:50] == 255).all() and (o[40:50, 10:50] == 255).all()
+    # 角色被圖邊切到：主體與圖邊圍住的區域連到圖邊 → 不是洞
+    u = np.zeros((60, 60), np.uint8)
+    u[30:60, 10:50] = 255
+    u[40:60, 20:40] = 0
+    o = np.asarray(Image.open(io.BytesIO(largest_component(_png(u)))))
+    assert (o[42:60, 22:38] == 0).all()
+    # 1 px 外框只靠斜角相連（8 連通仍是一塊）：背景以 4 連通判斷，洞不會從斜角「漏」到外面
+    d = np.zeros((40, 40), np.uint8)
+    d[10, 10:31] = d[30, 10:31] = 255
+    d[10:31, 10] = d[10:31, 30] = 255
+    d[10, 10] = 0
+    o = np.asarray(Image.open(io.BytesIO(largest_component(_png(d)))))
+    assert (o[11:30, 11:30] == 255).all()
+
+
+def test_largest_component_hole_fill_keeps_outer_soft_edge():
+    # 補洞只動洞裡：主體外緣的柔邊灰階照舊保留，外面 2 px 以外仍是 0
+    from app.services.compose import largest_component
+    import io
+
+    a = _ring()
+    a[10:50, 50] = 200
+    a[10:50, 51] = 60
+    o = np.asarray(Image.open(io.BytesIO(largest_component(_png(a)))))
+    assert (o[20:40, 20:40] == 255).all()
+    assert (o[10:50, 50] == 200).all() and (o[10:50, 51] == 60).all()
+    assert (o[:, 53:] == 0).all()

@@ -50,10 +50,6 @@
   outline: 3px solid var(--focus);
   outline-offset: 0;
 }
-.box[aria-disabled="true"] {
-  cursor: default;
-  outline-color: var(--muted-3);
-}
 .cutout {
   display: block;
   width: 100%;
@@ -83,10 +79,6 @@
   inset: -12px;
   border-radius: 50%;
 }
-.handle[data-disabled="true"] {
-  cursor: default;
-  border-color: var(--muted-3);
-}
 .loading {
   position: absolute;
   inset: 0;
@@ -108,4 +100,65 @@
   margin: 40px 0;
   font-size: 14px;
   color: var(--muted-2);
+}
+/* 舞台下方：水平翻轉、重設位置、自動合成狀態 */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+.mini {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.mini:hover {
+  background: var(--accent-softer);
+}
+.mini:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+.mini[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.status {
+  font-size: 13px;
+  color: var(--muted-2);
+}
+.status:empty {
+  display: none;
+}
+.retry {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.retry:hover {
+  background: var(--danger-soft);
+}
+/* 只有角色動作：去背角色放在紙上 */
+.lonePose {
+  position: absolute;
+  left: 20%;
+  bottom: 6%;
+  height: 60%;
+  width: 60%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.waiting {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-2);
+  text-align: center;
 }

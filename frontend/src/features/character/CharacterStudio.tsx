@@ -21,7 +21,6 @@ import { useToast } from "@/components/ui/Toast";
 import styles from "./CharacterStudio.module.css";
 
 const MAX_DESC = 800;
-const ArrowRight = Icons["arrow-right"];
 
 const errMsg = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
@@ -58,16 +57,21 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
   const valid = trimmed.length >= 1 && trimmed.length <= MAX_DESC;
 
   const queued = list.filter((g) => g.status === "queued" || g.status === "running");
+  // 一次產生一張；這本書已有候選（任何狀態，含已捨棄）後按鈕改叫「再產生一張」
+  const generateLabel = list.length > 0 ? "再產生一張" : "產生角色";
+  // 送出中、排隊或生成中都不能再按：連點的兩個請求會同時抽變化語而重複（後端只排除「上一張」）
+  const busy = create.isPending || queued.length > 0;
   const running = queued.find((g) => g.queue_position === 0 || g.status === "running");
+  const waiting = running ? queued.length - 1 : queued.length;
   const statusText =
     queued.length > 0
-      ? `${running ? "正在產生 1 張，" : ""}${running ? queued.length - 1 : queued.length} 張排隊中`
+      ? [running ? "正在產生 1 張" : "", waiting > 0 ? `${waiting} 張排隊中` : ""].filter(Boolean).join("，")
       : "點一張看預覽；不要的可以捨棄";
 
   function generate() {
-    if (!valid || create.isPending) return;
+    if (!valid || busy) return;
     create.mutate(
-      { description: trimmed, count: 4 },
+      { description: trimmed },
       { onError: (e) => toast.show(errMsg(e, "無法產生候選圖"), "error") },
     );
   }
@@ -75,7 +79,7 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
   function confirm() {
     if (!selected || setCharacter.isPending) return;
     setCharacter.mutate(selected.id, {
-      onSuccess: () => router.push(`/books/${bookId}/editor`),
+      onSuccess: () => router.push(`/books/${bookId}/story`),
       onError: (e) => toast.show(errMsg(e, "無法設定角色"), "error"),
     });
   }
@@ -137,11 +141,11 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
               />
               <div className={styles.composerRow}>
                 <span className={styles.hint}>
-                  用英文描述效果較好。衣服避免條紋、格子等細碎圖樣，線稿會比較乾淨。
+                  中文或英文都可以。衣服避免條紋、格子等細碎圖樣，線稿會比較乾淨。
                   {trimmed.length > MAX_DESC && `（超過 ${MAX_DESC} 字）`}
                 </span>
-                <Button variant="primary" disabled={!valid || create.isPending} onClick={generate}>
-                  產生 4 張
+                <Button variant="primary" disabled={!valid || busy} onClick={generate}>
+                  {generateLabel}
                 </Button>
               </div>
             </div>
@@ -164,7 +168,7 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
                   </button>
                 </div>
                 {shown.length === 0 && gens.isSuccess && (
-                  <p className={styles.empty}>還沒有候選圖。輸入描述後按「產生 4 張」。</p>
+                  <p className={styles.empty}>還沒有候選圖。輸入描述後按「{generateLabel}」。</p>
                 )}
                 <div className={styles.grid}>
                   {shown.map((g) => (
@@ -224,9 +228,8 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
           )}
 
           {locked ? (
-            <Link href={`/books/${bookId}/editor`} className={styles.go}>
-              前往頁面編輯器
-              <ArrowRight size={18} />
+            <Link href={`/books/${bookId}/story`} className={styles.go}>
+              用這個角色，開始寫故事 →
             </Link>
           ) : (
             <>
@@ -246,12 +249,11 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
               <Button
                 variant="primary"
                 size="lg"
-                icon={<ArrowRight size={18} />}
                 disabled={!selected || setCharacter.isPending}
                 onClick={confirm}
                 className={styles.confirm}
               >
-                設為本書角色，開始做頁面
+                用這個角色，開始寫故事 →
               </Button>
             </>
           )}

@@ -1,21 +1,19 @@
-"""線稿、修改圖層、QA、預覽與參考圖擷取端點（頁面編輯器用）。
+"""線稿、修改圖層、QA 與預覽端點（頁面編輯器用）。
 
 所有端點都是同步 `def`：線稿渲染與 QA 是 CPU 工作，讓 FastAPI 放進 threadpool。
 """
 
 import io
 
-import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from PIL import Image, ImageDraw
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, update
 
-from app.api.books import _book_or_404
 from app.api.deps import get_session, get_storage
-from app.api.pages import MAX_SKETCH_BYTES, _page_or_404
+from app.api.pages import _page_or_404
 from app.api.schemas import (
     MAX_STROKES,
     MAX_TOTAL_POINTS,
@@ -27,11 +25,8 @@ from app.api.schemas import (
     StrokeOut,
 )
 from app.models import Book, Generation, GenStatus, Page, PageStatus, utcnow
-from app.services import lineart_post
 from app.services.layout import compute_layout
-from app.services.lineart_extract import extract
 from app.services.lineart_render import (
-    DETAIL_SIGMA,
     LINE_WIDTH_DEFAULT,
     LINE_WIDTH_MAX,
     LINE_WIDTH_MIN,
@@ -49,7 +44,7 @@ from app.services.page_lineart import (
     strokes_to_json,
 )
 from app.services.qa import evaluate
-from app.storage import ImageRejected, Storage, normalize_png
+from app.storage import Storage
 
 router = APIRouter(prefix="/api", tags=["lineart"])
 
@@ -60,7 +55,6 @@ OVERLAY_BOX_LINE_PX = 4
 OVERLAY_GAP_COLOR = (255, 0, 0)
 OVERLAY_TRIM_COLOR = (0, 0, 255)
 OVERLAY_SAFE_COLOR = (0, 160, 0)
-REFERENCE_SKETCH_DETAIL = LineDetail.STANDARD  # xdog sigma 1.2
 
 NO_SELECTION = "這一頁還沒有選定圖片"
 STALE_GENERATION = "這張圖已不是這一頁目前選定的圖片，請重新載入頁面"
@@ -272,34 +266,3 @@ def lineart_preview(
     except LineartUnavailable as e:
         raise HTTPException(404, "圖片檔案遺失") from e
     return _png_response(storage.abs(rel).read_bytes())
-
-
-@router.post("/books/{book_id}/reference-sketch")
-def reference_sketch(
-    book_id: int, file: UploadFile, session: Session = Depends(get_session)
-) -> Response:
-    """上傳參考圖 → xdog 擷取（sigma 1.2）→ 以 contain 放進繪本的 generation_size，白底黑線。不存檔。"""
-    book = _book_or_404(session, book_id)
-    data = file.file.read(MAX_SKETCH_BYTES + 1)
-    if len(data) > MAX_SKETCH_BYTES:
-        raise HTTPException(400, f"檔案過大，上限 {MAX_SKETCH_BYTES} bytes")
-    try:
-        png, _ = normalize_png(data, max_bytes=MAX_SKETCH_BYTES)
-    except ImageRejected as e:
-        raise HTTPException(400, str(e)) from e
-    gw, gh = compute_layout(book.paper_size, book.print_mode).generation_size
-    with Image.open(io.BytesIO(png)) as im:
-        rgb = np.asarray(im.convert("RGB"))
-    h, w = rgb.shape[:2]
-    scale = min(gw / w, gh / h)
-    if scale < 1:
-        # 大圖先縮到畫板大小再擷取：線條粗細不隨上傳解析度變化，也避免對 8K 圖做高斯模糊
-        rgb = cv2.resize(rgb, (max(1, round(w * scale)), max(1, round(h * scale))),
-                         interpolation=cv2.INTER_AREA)
-    gray = extract(rgb, {"method": "xdog", "sigma": DETAIL_SIGMA[REFERENCE_SKETCH_DETAIL]})
-    fitted = lineart_post.resize_to_target(
-        gray, lineart_post.LineartParams(target_width=gw, target_height=gh, fit="contain")
-    )
-    buf = io.BytesIO()
-    Image.fromarray(fitted).save(buf, "PNG")
-    return _png_response(buf.getvalue())

@@ -6,8 +6,6 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
-import type { BgStyle } from "@/lib/bgStyle";
-import { batchConfirmText, type BatchPlan } from "./batchBackgrounds";
 import styles from "./Filmstrip.module.css";
 
 export interface FilmstripProps {
@@ -24,23 +22,15 @@ export interface FilmstripProps {
   onMove: (pageId: number, dir: -1 | 1) => void;
   /** 使用者在確認對話框按下「刪除」後才呼叫。 */
   onDelete: (pageId: number) => void;
-  /** 「產生所有背景」的前端預估（planBatchBackgrounds）：按鈕狀態與確認對話框用。 */
-  bgPlan: BatchPlan;
-  /** 產生所有背景實際送出的風格（記住的風格，已套用「簡潔不可用 → 細緻」）。 */
-  bgStyle: BgStyle;
-  /** 會排入的頁裡有可用構圖草圖的頁數（這些頁用細緻）。 */
-  bgSketchCount: number;
-  /** 使用者在確認對話框按下產生後才呼叫。 */
-  onGenerateAll: () => void;
-  /** 產生所有背景進行中（等存檔＋POST）。 */
-  generatingAll?: boolean;
+  /** 手機寬度（§4.5）：清單改成頂端「第 N 頁 / M」下拉選單，旁邊是這一頁的狀態、更多動作與新增。 */
+  compact?: boolean;
 }
 
 type Tone = "ok" | "warn" | "draft" | "busy";
 
 export function pageStatus(p: Page, busy: boolean): { tone: Tone; label: string } {
   if (busy) return { tone: "busy", label: "生成中" };
-  if (p.status === "passed") return { tone: "ok", label: "通過" };
+  if (p.status === "passed") return { tone: "ok", label: "完成" };
   if (p.needs_fix) return { tone: "warn", label: "需要修線" };
   return { tone: "draft", label: "草稿" };
 }
@@ -55,86 +45,114 @@ export function Filmstrip({
   adding,
   onMove,
   onDelete,
-  bgPlan,
-  bgStyle,
-  bgSketchCount,
-  onGenerateAll,
-  generatingAll,
+  compact = false,
 }: FilmstripProps) {
   const [confirm, setConfirm] = useState<{ id: number; n: number } | null>(null);
-  const [confirmAll, setConfirmAll] = useState(false);
-  const allN = bgPlan.queued.length;
   const passed = pages.filter((p) => p.status === "passed").length;
   const total = pages.length;
+  const addButton = (
+    <button type="button" aria-label="新增頁面" title="新增頁面" className={styles.add} disabled={adding} onClick={onAdd}>
+      <Icons.plus size={18} />
+    </button>
+  );
+  const ci = pages.findIndex((p) => p.id === currentId);
+  const cur = ci >= 0 ? pages[ci] : undefined;
+  const curStatus = cur ? pageStatus(cur, busyPageIds.has(cur.id)) : null;
 
   return (
-    <aside aria-label="頁面" className={styles.film}>
-      <div className={styles.head}>
-        <b className={styles.h}>頁面</b>
-        <span className={styles.count}>{total} 頁</span>
-        <button type="button" aria-label="新增頁面" title="新增頁面" className={styles.add} disabled={adding} onClick={onAdd}>
-          <Icons.plus size={18} />
-        </button>
-      </div>
+    <aside aria-label="頁面" className={styles.film} data-compact={compact}>
+      {compact ? (
+        <div className={styles.head}>
+          <span className={styles.selectWrap}>
+            <select
+              aria-label="選擇頁面"
+              className={styles.select}
+              value={currentId ?? ""}
+              onChange={(e) => onSelect(Number(e.target.value))}
+            >
+              {pages.map((p, i) => (
+                <option key={p.id} value={p.id}>{`第 ${i + 1} 頁 / ${total}`}</option>
+              ))}
+            </select>
+            <Icons.chevron size={16} className={styles.selectChev} />
+          </span>
+          {curStatus && (
+            <span className={styles.curStatus}>
+              <Chip tone={curStatus.tone}>{curStatus.label}</Chip>
+            </span>
+          )}
+          <span className={styles.tools}>
+            {cur && (
+              <PageMenu
+                n={ci + 1}
+                canUp={ci > 0}
+                canDown={ci < total - 1}
+                onMove={(dir) => onMove(cur.id, dir)}
+                onDelete={() => setConfirm({ id: cur.id, n: ci + 1 })}
+              />
+            )}
+            {addButton}
+          </span>
+        </div>
+      ) : (
+        <div className={styles.head}>
+          <b className={styles.h}>頁面</b>
+          <span className={styles.count}>{total} 頁</span>
+          {addButton}
+        </div>
+      )}
       <div
         role="progressbar"
         aria-label="整本進度"
         aria-valuemin={0}
         aria-valuemax={total}
         aria-valuenow={passed}
-        aria-valuetext={`${passed} / ${total} 頁通過`}
+        aria-valuetext={`${passed} / ${total} 頁完成`}
         className={styles.bar}
       >
         <div className={styles.fill} style={{ width: total ? `${(passed / total) * 100}%` : 0 }} />
       </div>
-      <Button
-        className={styles.all}
-        icon={<Icons.wand size={18} />}
-        disabled={allN === 0 || generatingAll}
-        title={allN === 0 ? "沒有需要產生背景的頁面" : undefined}
-        onClick={() => setConfirmAll(true)}
-      >
-        產生所有背景
-      </Button>
-      <ol className={styles.list}>
-        {pages.map((p, i) => {
-          const n = i + 1;
-          const on = p.id === currentId;
-          const st = pageStatus(p, busyPageIds.has(p.id));
-          return (
-            <li key={p.id} className={styles.item} data-on={on ? "true" : "false"}>
-              <button
-                type="button"
-                className={styles.pick}
-                aria-current={on ? "true" : undefined}
-                onClick={() => onSelect(p.id)}
-              >
-                <span className={styles.thumb} style={{ aspectRatio: `${paperAspect[0]} / ${paperAspect[1]}` }}>
-                  {p.lineart_url && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={p.lineart_url} alt="" className={styles.img} loading="lazy" />
-                  )}
-                </span>
-                <span className={styles.meta}>
-                  <span className={styles.name}>第 {n} 頁</span>
-                  <span className={styles.scene}>{p.scene_prompt || "（還沒有場景描述）"}</span>
-                  <Chip tone={st.tone}>{st.label}</Chip>
-                </span>
-              </button>
-              <PageMenu
-                n={n}
-                canUp={i > 0}
-                canDown={i < total - 1}
-                onMove={(dir) => onMove(p.id, dir)}
-                onDelete={() => setConfirm({ id: p.id, n })}
-              />
-            </li>
-          );
-        })}
-      </ol>
+      {!compact && (
+        <ol className={styles.list}>
+          {pages.map((p, i) => {
+            const n = i + 1;
+            const on = p.id === currentId;
+            const st = pageStatus(p, busyPageIds.has(p.id));
+            return (
+              <li key={p.id} className={styles.item} data-on={on ? "true" : "false"}>
+                <button
+                  type="button"
+                  className={styles.pick}
+                  aria-current={on ? "true" : undefined}
+                  onClick={() => onSelect(p.id)}
+                >
+                  <span className={styles.thumb} style={{ aspectRatio: `${paperAspect[0]} / ${paperAspect[1]}` }}>
+                    {p.lineart_url && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.lineart_url} alt="" className={styles.img} loading="lazy" />
+                    )}
+                  </span>
+                  <span className={styles.meta}>
+                    <span className={styles.name}>第 {n} 頁</span>
+                    <span className={styles.scene}>{p.scene_prompt || "（還沒有場景描述）"}</span>
+                    <Chip tone={st.tone}>{st.label}</Chip>
+                  </span>
+                </button>
+                <PageMenu
+                  n={n}
+                  canUp={i > 0}
+                  canDown={i < total - 1}
+                  onMove={(dir) => onMove(p.id, dir)}
+                  onDelete={() => setConfirm({ id: p.id, n })}
+                />
+              </li>
+            );
+          })}
+        </ol>
+      )}
 
       <Dialog open={confirm !== null} onClose={() => setConfirm(null)} title={confirm ? `刪除第 ${confirm.n} 頁？` : ""}>
-        <p className={styles.confirmText}>這一頁的構圖草圖、所有候選圖與修線都會一起刪除，無法復原。</p>
+        <p className={styles.confirmText}>這一頁的背景、角色動作、所有候選圖與修線都會一起刪除，無法復原。</p>
         <div className={styles.confirmActions}>
           <Button onClick={() => setConfirm(null)}>取消</Button>
           <Button
@@ -146,27 +164,6 @@ export function Filmstrip({
             }}
           >
             刪除
-          </Button>
-        </div>
-      </Dialog>
-
-      <Dialog open={confirmAll} onClose={() => setConfirmAll(false)} title="產生所有背景？">
-        <p className={styles.confirmText}>{batchConfirmText(bgPlan, bgStyle, bgSketchCount)}</p>
-        <p className={styles.confirmNote}>
-          背景會依頁面順序排隊，一次產生一張；排隊時可以繼續編輯其他頁。
-          {bgPlan.estimate && "頁面的生成紀錄還在載入，頁數是估計值，實際以送出後的結果為準。"}
-        </p>
-        <div className={styles.confirmActions}>
-          <Button onClick={() => setConfirmAll(false)}>取消</Button>
-          <Button
-            variant="primary"
-            disabled={allN === 0 || generatingAll}
-            onClick={() => {
-              setConfirmAll(false);
-              onGenerateAll();
-            }}
-          >
-            產生 {allN} 頁背景
           </Button>
         </div>
       </Dialog>

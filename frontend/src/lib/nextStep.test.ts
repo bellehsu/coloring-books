@@ -19,10 +19,10 @@ describe("nextStep", () => {
   it("需要修線優先", () => {
     expect(nextStep(mk({ stats: { needs_fix: 3, passed: 1 } }))).toEqual({ text: "下一步：3 頁需要修線", tone: "warn" });
   });
-  it("待 QA", () => {
-    expect(nextStep(mk({ stats: { passed: 2 } })).text).toBe("下一步：3 頁待 QA");
+  it("待完成", () => {
+    expect(nextStep(mk({ stats: { passed: 2 } })).text).toBe("下一步：3 頁待完成");
   });
-  it("全部通過", () => {
+  it("全部完成", () => {
     expect(nextStep(mk({}))).toEqual({ text: "可以匯出", tone: "ok" });
   });
 });

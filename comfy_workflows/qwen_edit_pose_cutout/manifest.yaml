@@ -96,7 +96,7 @@ models:
   - id: birefnet
     filename: birefnet.safetensors
     folder: background_removal
-    source: https://huggingface.co/ZhengPeng7/BiRefNet
+    source: https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors
     size_gb: 0.44
     loader: {title: BG_REMOVAL_MODEL, input: bg_removal_name}
 

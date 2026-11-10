@@ -51,9 +51,7 @@ export interface LineFixCanvasProps {
    */
   zoom?: number;
   onZoomChange?: (zoom: number) => void;
-  /** 工具列最後面的插槽（Task 9 放「自動補線」按鈕）。 */
-  toolbarExtra?: ReactNode;
-  /** 寫入佇列忙碌中：狀態列顯示「更新中…」（紅圈可能還是舊的）。 */
+  /** 寫入佇列忙碌中：狀態列顯示「更新中…」（橘色圈可能還是舊的）。 */
   pending?: boolean;
   /** 取代狀態列（缺口數／更新中）的內容，以 role="alert" 顯示：例如「修線尚未儲存」＋重試。 */
   statusOverride?: ReactNode;
@@ -61,7 +59,7 @@ export interface LineFixCanvasProps {
 
 /** 疊層 canvas 最長邊（內容 2551×3579 時約 1460×2048，記憶體約 12 MB）。 */
 const OVERLAY_MAX_SIDE = 2048;
-/** 紙張基準寬（同草圖）。 */
+/** 紙張基準寬。 */
 const BASE_PAPER_W = 440;
 
 interface StrokeDrag {
@@ -130,7 +128,6 @@ export function LineFixCanvas({
   lineWidthPx,
   zoom: zoomProp,
   onZoomChange,
-  toolbarExtra,
   pending = false,
   statusOverride,
 }: LineFixCanvasProps) {
@@ -374,7 +371,7 @@ export function LineFixCanvas({
     ? "更新中…"
     : gapCount === 0
       ? "沒有缺口"
-      : `${gapCount} 個缺口會讓塗色漏出去（紅圈）`;
+      : `${gapCount} 個缺口會讓塗色漏出去（橘色圈）`;
   const statusTone = pending ? styles.statusPending : gapCount === 0 ? styles.statusOk : styles.statusGap;
 
   return (
@@ -412,7 +409,6 @@ export function LineFixCanvas({
             <ZoomControls zoom={zoom} onZoomChange={setZoom} />
           </>
         )}
-        {toolbarExtra}
       </div>
 
       <div
@@ -438,7 +434,7 @@ export function LineFixCanvas({
           {/* eslint-disable-next-line @next/next/no-img-element -- 後端動態 PNG（帶 ?v=），不走 next/image 最佳化 */}
           <img
             src={lineartUrl}
-            alt="線稿，紅圈標出缺口"
+            alt="線稿，橘色圈標出缺口"
             draggable={false}
             className={styles.image}
             onError={() => toast.show("線稿載入失敗，請重新整理", "error")}

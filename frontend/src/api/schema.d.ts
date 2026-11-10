@@ -49,7 +49,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Character Candidates */
+        /**
+         * Create Character Candidates
+         * @description 產生一張角色候選圖（Qwen 純文字生圖）；描述不翻譯、原樣放進樣板。回傳只含這一張的清單。
+         */
         post: operations["create_character_candidates_api_books__book_id__character_candidates_post"];
         delete?: never;
         options?: never;
@@ -127,59 +130,6 @@ export interface paths {
         patch: operations["update_page_api_pages__page_id__patch"];
         trace?: never;
     };
-    "/api/pages/{page_id}/sketch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Sketch */
-        get: operations["get_sketch_api_pages__page_id__sketch_get"];
-        /** Upload Sketch */
-        put: operations["upload_sketch_api_pages__page_id__sketch_put"];
-        post?: never;
-        /** Delete Sketch */
-        delete: operations["delete_sketch_api_pages__page_id__sketch_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/pages/{page_id}/candidates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Page Candidates */
-        post: operations["create_page_candidates_api_pages__page_id__candidates_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/pages/{page_id}/select": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Select Generation */
-        post: operations["select_generation_api_pages__page_id__select_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/pages/{page_id}/backgrounds": {
         parameters: {
             query?: never;
@@ -191,8 +141,7 @@ export interface paths {
         put?: never;
         /**
          * Create Background
-         * @description 產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。
-         *     body 可省略（＝簡潔）；草圖遺失先回 409，之後才決定風格。
+         * @description 產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。
          */
         post: operations["create_background_api_pages__page_id__backgrounds_post"];
         delete?: never;
@@ -201,7 +150,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/books/{book_id}/backgrounds/batch": {
+    "/api/books/{book_id}/materials/batch": {
         parameters: {
             query?: never;
             header?: never;
@@ -211,12 +160,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Create Backgrounds Batch
-         * @description 替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、
-         *     背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。
-         *     body 的風格套用到每一頁（可省略＝簡潔，Phase 7 前端不送 body），實際風格逐頁決定。
+         * Create Materials Batch
+         * @description 「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
+         *     略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
+         *     _BATCH_LOCK 讓同時多個呼叫不會重複排隊。
          */
-        post: operations["create_backgrounds_batch_api_books__book_id__backgrounds_batch_post"];
+        post: operations["create_materials_batch_api_books__book_id__materials_batch_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -234,9 +183,8 @@ export interface paths {
         put?: never;
         /**
          * Create Pose
-         * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述。
-         *     精準（Qwen）：以角色參考圖編輯出新動作，prompt 只有動作；快速（SDXL）：角色描述＋動作文字。
-         *     精準模式依啟動／上次 preflight 的快取判斷可不可用（不即時連 ComfyUI），不可用回 503。
+         * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
+         *     新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。
          */
         post: operations["create_pose_api_pages__page_id__poses_post"];
         delete?: never;
@@ -256,6 +204,26 @@ export interface paths {
         put?: never;
         /** Select Background */
         post: operations["select_background_api_pages__page_id__background_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/backgrounds/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Background
+         * @description 上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine="upload" 的背景並選用。
+         */
+        post: operations["upload_background_api_pages__page_id__backgrounds_upload_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -554,26 +522,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/books/{book_id}/reference-sketch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reference Sketch
-         * @description 上傳參考圖 → xdog 擷取（sigma 1.2）→ 以 contain 放進繪本的 generation_size，白底黑線。不存檔。
-         */
-        post: operations["reference_sketch_api_books__book_id__reference_sketch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/pages/{page_id}/character-check": {
         parameters: {
             query?: never;
@@ -693,46 +641,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/system/pose-modes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Pose Modes
-         * @description 角色動作精準／快速模式能不能用：只讀快取的 preflight，不連 ComfyUI。
-         */
-        get: operations["pose_modes_api_system_pose_modes_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/system/background-styles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Background Styles
-         * @description 背景簡潔／細緻風格能不能用：只讀快取的 preflight，不連 ComfyUI。
-         */
-        get: operations["background_styles_api_system_background_styles_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -776,20 +684,16 @@ export interface components {
         };
         /** BackgroundCreate */
         BackgroundCreate: {
-            /**
-             * Style
-             * @default simple
-             * @enum {string}
-             */
-            style: "simple" | "detailed";
+            /** Style */
+            style?: string | null;
         };
-        /** BackgroundStylesOut */
-        BackgroundStylesOut: {
-            simple: components["schemas"]["PoseModeStatus"];
-            detailed: components["schemas"]["PoseModeStatus"];
+        /** BatchMaterialsIn */
+        BatchMaterialsIn: {
+            /** Upload Page Ids */
+            upload_page_ids?: number[];
         };
-        /** BatchBackgroundsOut */
-        BatchBackgroundsOut: {
+        /** BatchMaterialsOut */
+        BatchMaterialsOut: {
             /** Queued */
             queued: components["schemas"]["GenerationOut"][];
             /** Skipped */
@@ -797,6 +701,11 @@ export interface components {
         };
         /** BatchSkip */
         BatchSkip: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "background" | "pose";
             /** Page Id */
             page_id: number;
             /** Position */
@@ -804,13 +713,8 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /** Body_reference_sketch_api_books__book_id__reference_sketch_post */
-        Body_reference_sketch_api_books__book_id__reference_sketch_post: {
-            /** File */
-            file: string;
-        };
-        /** Body_upload_sketch_api_pages__page_id__sketch_put */
-        Body_upload_sketch_api_pages__page_id__sketch_put: {
+        /** Body_upload_background_api_pages__page_id__backgrounds_upload_post */
+        Body_upload_background_api_pages__page_id__backgrounds_upload_post: {
             /** File */
             file: string;
         };
@@ -967,6 +871,11 @@ export interface components {
             pose_mode: ("precise" | "fast") | null;
             /** Background Style */
             background_style: ("simple" | "detailed") | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "generated" | "upload";
             /** Error */
             error: string | null;
             /** Elapsed S */
@@ -1050,16 +959,6 @@ export interface components {
          * @enum {string}
          */
         LineDetail: "simple" | "standard" | "detailed";
-        /** PageCandidatesCreate */
-        PageCandidatesCreate: {
-            /**
-             * Count
-             * @default 4
-             */
-            count: number;
-            /** Seed */
-            seed?: number | null;
-        };
         /** PageCreate */
         PageCreate: {
             /**
@@ -1067,6 +966,11 @@ export interface components {
              * @default
              */
             scene_prompt: string;
+            /**
+             * Action Prompt
+             * @default
+             */
+            action_prompt: string;
         };
         /** PageOrder */
         PageOrder: {
@@ -1083,6 +987,8 @@ export interface components {
             position: number;
             /** Scene Prompt */
             scene_prompt: string;
+            /** Action Prompt */
+            action_prompt: string;
             /** Controlnet Strength */
             controlnet_strength: number;
             /** Sketch Url */
@@ -1144,6 +1050,8 @@ export interface components {
         PageUpdate: {
             /** Scene Prompt */
             scene_prompt?: string | null;
+            /** Action Prompt */
+            action_prompt?: string | null;
             /** Controlnet Strength */
             controlnet_strength?: number | null;
             line_detail?: components["schemas"]["LineDetail"] | null;
@@ -1160,28 +1068,20 @@ export interface components {
             /** Force Reason */
             force_reason?: string | null;
         };
+        /** PendingJob */
+        PendingJob: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "character" | "background" | "pose";
+        };
         /** PoseCreate */
         PoseCreate: {
             /** Action */
             action: string;
-            /**
-             * Mode
-             * @default precise
-             * @enum {string}
-             */
-            mode: "precise" | "fast";
-        };
-        /** PoseModeStatus */
-        PoseModeStatus: {
-            /** Available */
-            available: boolean;
-            /** Missing */
-            missing: string[];
-        };
-        /** PoseModesOut */
-        PoseModesOut: {
-            precise: components["schemas"]["PoseModeStatus"];
-            fast: components["schemas"]["PoseModeStatus"];
+            /** Mode */
+            mode?: string | null;
         };
         /**
          * PrintMode
@@ -1234,6 +1134,20 @@ export interface components {
             queued: number;
             /** Running Id */
             running_id: number | null;
+            /** Pending */
+            pending: components["schemas"]["PendingJob"][];
+            /** Recent */
+            recent: components["schemas"]["RecentJob"][];
+        };
+        /** RecentJob */
+        RecentJob: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "character" | "background" | "pose";
+            /** Elapsed S */
+            elapsed_s: number;
         };
         /** SelectGeneration */
         SelectGeneration: {
@@ -1651,173 +1565,6 @@ export interface operations {
             };
         };
     };
-    get_sketch_api_pages__page_id__sketch_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    upload_sketch_api_pages__page_id__sketch_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_upload_sketch_api_pages__page_id__sketch_put"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_sketch_api_pages__page_id__sketch_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_page_candidates_api_pages__page_id__candidates_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PageCandidatesCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GenerationOut"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    select_generation_api_pages__page_id__select_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SelectGeneration"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     create_background_api_pages__page_id__backgrounds_post: {
         parameters: {
             query?: never;
@@ -1853,7 +1600,7 @@ export interface operations {
             };
         };
     };
-    create_backgrounds_batch_api_books__book_id__backgrounds_batch_post: {
+    create_materials_batch_api_books__book_id__materials_batch_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1864,7 +1611,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["BackgroundCreate"] | null;
+                "application/json": components["schemas"]["BatchMaterialsIn"] | null;
             };
         };
         responses: {
@@ -1874,7 +1621,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BatchBackgroundsOut"];
+                    "application/json": components["schemas"]["BatchMaterialsOut"];
                 };
             };
             /** @description Validation Error */
@@ -1940,6 +1687,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_background_api_pages__page_id__backgrounds_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_background_api_pages__page_id__backgrounds_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2532,41 +2314,6 @@ export interface operations {
             };
         };
     };
-    reference_sketch_api_books__book_id__reference_sketch_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                book_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_reference_sketch_api_books__book_id__reference_sketch_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     character_check_api_pages__page_id__character_check_post: {
         parameters: {
             query?: never;
@@ -2794,46 +2541,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    pose_modes_api_system_pose_modes_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PoseModesOut"];
-                };
-            };
-        };
-    };
-    background_styles_api_system_background_styles_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BackgroundStylesOut"];
                 };
             };
         };

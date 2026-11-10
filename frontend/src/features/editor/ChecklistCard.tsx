@@ -9,7 +9,7 @@ const SR: Record<CheckState, string> = {
   skip: "略過",
 };
 
-/** 「第 N 頁進度」：checklist(page, qa) 的 6 項（背景、角色動作、合成、線條封閉、角色外型、通過 QA）。 */
+/** 「第 N 頁進度」：checklist(page, qa) 的 3 項（構圖、補線、完成）。 */
 export function ChecklistCard({ title, items }: { title: string; items: CheckItem[] }) {
   return (
     <section aria-label="本頁進度" className={styles.card}>

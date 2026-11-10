@@ -10,7 +10,7 @@ import random
 import threading
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy import and_, case, null
 from sqlmodel import Session, col, select, update
@@ -20,7 +20,8 @@ from app.api.deps import get_session, get_storage, get_worker
 from app.api.pages import _page_or_404, page_out, reset_review_when
 from app.api.schemas import (
     BackgroundCreate,
-    BatchBackgroundsOut,
+    BatchMaterialsIn,
+    BatchMaterialsOut,
     BatchSkip,
     GenerationOut,
     PageOut,
@@ -29,7 +30,6 @@ from app.api.schemas import (
     SelectGeneration,
 )
 from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
-from app.services.background_styles import BackgroundStyle, decide_style, style_availability
 from app.services.compose import (
     COMPOSE_VERSION,
     Placement,
@@ -39,25 +39,22 @@ from app.services.compose import (
 )
 from app.services.layout import compute_layout
 from app.services.prompts import (
-    BACKGROUND_NEGATIVE,
-    POSE_NEGATIVE,
     POSE_SIZE,
-    background_prompt,
     pick_background_variation,
-    pick_variation,
-    pose_prompt,
+    pick_pose_variation,
     qwen_background_prompt,
     qwen_pose_prompt,
 )
-from app.services.pose_modes import precise_unavailable_detail
 from app.services.worker import GenerationWorker, encode_request
-from app.storage import Storage
+from app.services.upload_bg import cover_crop
+from app.storage import UPLOAD_MAX_PIXELS, ImageRejected, Storage, TooManyPixels, load_rgb
 
 router = APIRouter(prefix="/api", tags=["compose"])
 
 NEED_BACKGROUND = "請先選好背景"
 NEED_POSE = "請先選好角色動作"
 FILE_MISSING = "圖片檔案遺失，請重新產生"
+MAX_BG_UPLOAD_BYTES = 10_000_000
 INPUTS_CHANGED = "背景、角色動作或位置剛被更改，請重新確認合成"
 
 # 批次背景：後端是單一行程、handler 是同步的，用一把鎖序列化，兩個分頁同時按也不會重複排隊
@@ -99,19 +96,18 @@ def _is_usable(gen: Generation | None, kind: GenKind, page_id: int) -> bool:
 
 
 def _enqueue(
-    session: Session, storage: Storage, worker: GenerationWorker, gen: Generation, **request
+    session: Session,
+    worker: GenerationWorker,
+    gen: Generation,
+    *,
+    character_image: str | None = None,
+    variation: str | None = None,
+    extra: dict | None = None,
 ) -> GenerationOut:
-    """新增一筆排隊中的 generation；sketch_bytes 有值時另存一份快照給它用。"""
-    sketch_bytes: bytes | None = request.pop("sketch_bytes", None)
-    written: str | None = None
+    """新增一筆排隊中的 generation（request_json 由 gen 的欄位加上參數組成）。"""
     try:
         session.add(gen)
         session.flush()
-        snapshot = None
-        if sketch_bytes is not None:
-            snapshot = storage.sketch_snapshot(gen.book_id, gen.page_id, gen.id)
-            storage.write(snapshot, sketch_bytes)
-            written = snapshot
         gen.request_json = encode_request(
             kind=gen.kind,
             prompt=gen.prompt,
@@ -119,30 +115,16 @@ def _enqueue(
             seed=gen.seed,
             width=gen.width,
             height=gen.height,
-            structure_image=snapshot,
-            **request,
+            character_image=character_image,
+            variation=variation,
+            extra=extra,
         )
         session.commit()
     except Exception:
         session.rollback()
-        if written:
-            storage.delete(written)
         raise
     worker.notify()
     return _out(gen, worker)
-
-
-def _read_sketch(storage: Storage, page: Page) -> bytes | None:
-    """頁面草圖的位元組；沒有草圖回 None，檔案遺失丟 FileNotFoundError／ValueError。"""
-    if not page.sketch_path:
-        return None
-    return storage.abs(page.sketch_path).read_bytes()
-
-
-def _simple_available(request: Request) -> bool:
-    """簡潔（qwen_background）能不能用：只看快取的 preflight，不連 ComfyUI。"""
-    report = getattr(request.app.state, "preflight", None)
-    return style_availability(report)["simple"]["available"]
 
 
 def _last_simple_variation(session: Session, page_id: int) -> str | None:
@@ -164,173 +146,180 @@ def _last_simple_variation(session: Session, page_id: int) -> str | None:
 
 
 def _enqueue_background(
-    session: Session,
-    storage: Storage,
-    worker: GenerationWorker,
-    book: Book,
-    page: Page,
-    sketch_bytes: bytes | None,
-    *,
-    requested: BackgroundStyle,
-    simple_available: bool,
+    session: Session, storage: Storage, worker: GenerationWorker, book: Book, page: Page
 ) -> GenerationOut:
-    """單張與批次共用：用頁面場景描述與草圖快照排一筆背景，排隊當下決定實際風格。
-    簡潔：Qwen 提示詞、負向空字串；有草圖（強度 0）仍存快照當出處紀錄，引擎不使用。
-    細緻：SDXL 提示詞、負向提示詞與草圖。"""
+    """單張與批次共用：用頁面場景描述排一筆簡潔（Qwen）背景，負向空字串，不用草圖。
+    構圖變化語排除這頁上一張簡潔背景用的。"""
     width, height = compute_layout(book.paper_size, book.print_mode).generation_size
-    style = decide_style(
-        requested,
-        has_usable_sketch=sketch_bytes is not None and page.controlnet_strength > 0,
-        simple_available=simple_available,
+    variation = pick_background_variation(
+        random.Random(), exclude=_last_simple_variation(session, page.id)
     )
-    variation: str | None = None
-    if style == "simple":
-        variation = pick_background_variation(
-            random.Random(), exclude=_last_simple_variation(session, page.id)
-        )
-        prompt, negative = qwen_background_prompt(page.scene_prompt, variation), ""
-    else:
-        prompt, negative = background_prompt(page.scene_prompt), BACKGROUND_NEGATIVE
     gen = Generation(
         book_id=book.id,
         page_id=page.id,
         kind=GenKind.BACKGROUND,
         user_text=page.scene_prompt,
-        prompt=prompt,
-        negative_prompt=negative,
+        prompt=qwen_background_prompt(page.scene_prompt, variation),
+        negative_prompt="",
         seed=random.randint(0, MAX_SEED),
         width=width,
         height=height,
         request_json="",
     )
-    return _enqueue(
-        session, storage, worker, gen,
-        sketch_bytes=sketch_bytes, structure_strength=page.controlnet_strength,
-        background_style=style, background_style_requested=requested, variation=variation,
-    )
+    return _enqueue(session, worker, gen, variation=variation, extra={"background_style": "simple"})
 
 
 @router.post("/pages/{page_id}/backgrounds", status_code=202, response_model=GenerationOut)
 def create_background(
     page_id: int,
-    request: Request,
     body: BackgroundCreate | None = None,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
 ) -> GenerationOut:
-    """產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。
-    body 可省略（＝簡潔）；草圖遺失先回 409，之後才決定風格。"""
-    requested = (body or BackgroundCreate()).style
+    """產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。"""
     page = _page_or_404(session, page_id)
     book = _book_or_404(session, page.book_id)
-    try:
-        sketch_bytes = _read_sketch(storage, page)
-    except (FileNotFoundError, ValueError) as e:
-        raise HTTPException(409, "草圖檔案遺失，請重新上傳") from e
-    return _enqueue_background(
-        session, storage, worker, book, page, sketch_bytes,
-        requested=requested, simple_available=_simple_available(request),
-    )
+    return _enqueue_background(session, storage, worker, book, page)
 
 
-@router.post(
-    "/books/{book_id}/backgrounds/batch", status_code=202, response_model=BatchBackgroundsOut
-)
-def create_backgrounds_batch(
-    book_id: int,
-    request: Request,
-    body: BackgroundCreate | None = None,
-    session: Session = Depends(get_session),
-    storage: Storage = Depends(get_storage),
-    worker: GenerationWorker = Depends(get_worker),
-) -> BatchBackgroundsOut:
-    """替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、
-    背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。
-    body 的風格套用到每一頁（可省略＝簡潔，Phase 7 前端不送 body），實際風格逐頁決定。"""
-    requested = (body or BackgroundCreate()).style
-    simple_available = _simple_available(request)
-    with _BATCH_LOCK:
-        return _batch_backgrounds(
-            book_id, session, storage, worker,
-            requested=requested, simple_available=simple_available,
-        )
+class _BookState:
+    """批次判斷用：整本書每頁的背景／角色動作生成紀錄，以及選了舊流程整頁候選圖的頁面。"""
+
+    def __init__(self, session: Session, book_id: int):
+        self.pages = session.exec(
+            select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
+        ).all()
+        self.gens: dict[GenKind, dict[int, list[Generation]]] = {
+            GenKind.BACKGROUND: {}, GenKind.POSE: {}
+        }
+        for g in session.exec(
+            select(Generation).where(
+                Generation.book_id == book_id,
+                col(Generation.kind).in_([GenKind.BACKGROUND, GenKind.POSE]),
+            )
+        ).all():
+            if g.page_id is not None:
+                self.gens[g.kind].setdefault(g.page_id, []).append(g)
+        selected_ids = [
+            p.selected_generation_id for p in self.pages if p.selected_generation_id is not None
+        ]
+        self.legacy_selected = set(
+            session.exec(
+                select(Generation.id).where(
+                    col(Generation.id).in_(selected_ids), Generation.kind == GenKind.PAGE
+                )
+            ).all()
+        ) if selected_ids else set()
+
+    def skip_reason(self, page: Page, kind: GenKind) -> str | None:
+        """該頁的這種素材為什麼不用排；要排回 None。"""
+        bg = kind == GenKind.BACKGROUND
+        if not (page.scene_prompt if bg else page.action_prompt).strip():
+            return "沒有場景描述" if bg else "沒有動作描述"
+        gens = self.gens[kind].get(page.id, [])
+        slot = page.background_generation_id if bg else page.pose_generation_id
+        if (
+            slot is not None
+            or page.selected_generation_id in self.legacy_selected  # 舊流程整頁候選圖
+            or any(g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens)
+        ):
+            return "已有背景" if bg else "已有角色動作"
+        if any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):
+            return "背景產生中" if bg else "角色動作產生中"
+        return None
 
 
-def _batch_backgrounds(
-    book_id: int,
+def _batch_background_page(
     session: Session,
     storage: Storage,
     worker: GenerationWorker,
-    *,
-    requested: BackgroundStyle,
-    simple_available: bool,
-) -> BatchBackgroundsOut:
-    book = _book_or_404(session, book_id)
-    pages = session.exec(
-        select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
-    ).all()
-    backgrounds: dict[int, list[Generation]] = {}
-    for g in session.exec(
-        select(Generation).where(
-            Generation.book_id == book_id, Generation.kind == GenKind.BACKGROUND
-        )
-    ).all():
-        if g.page_id is not None:
-            backgrounds.setdefault(g.page_id, []).append(g)
-    selected_ids = [p.selected_generation_id for p in pages if p.selected_generation_id is not None]
-    legacy_selected = set(
-        session.exec(
-            select(Generation.id).where(
-                col(Generation.id).in_(selected_ids), Generation.kind == GenKind.PAGE
-            )
-        ).all()
-    ) if selected_ids else set()
+    book: Book,
+    page: Page,
+    state: _BookState,
+) -> GenerationOut | BatchSkip:
+    reason = state.skip_reason(page, GenKind.BACKGROUND)
+    if reason is not None:
+        return BatchSkip(kind="background", page_id=page.id, position=page.position, reason=reason)
+    return _enqueue_background(session, storage, worker, book, page)
 
-    queued: list[GenerationOut] = []
-    skipped: list[BatchSkip] = []
-    for page in pages:
-        gens = backgrounds.get(page.id, [])
-        if not page.scene_prompt.strip():
-            reason = "沒有場景描述"
-        elif (
-            page.background_generation_id is not None
-            or page.selected_generation_id in legacy_selected  # 舊流程整頁候選圖
-            or any(g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens)
-        ):
-            reason = "已有背景"
-        elif any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):
-            reason = "背景產生中"
-        else:
-            reason = None
-        sketch_bytes: bytes | None = None
-        if reason is None:
-            try:
-                sketch_bytes = _read_sketch(storage, page)
-            except (FileNotFoundError, ValueError):
-                reason = "草圖檔案遺失"
-        if reason is not None:
-            skipped.append(BatchSkip(page_id=page.id, position=page.position, reason=reason))
-            continue
-        queued.append(_enqueue_background(
-            session, storage, worker, book, page, sketch_bytes,
-            requested=requested, simple_available=simple_available,
-        ))
-    return BatchBackgroundsOut(queued=queued, skipped=skipped)
+
+@router.post("/books/{book_id}/materials/batch", status_code=202, response_model=BatchMaterialsOut)
+def create_materials_batch(
+    book_id: int,
+    body: BatchMaterialsIn | None = None,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+    worker: GenerationWorker = Depends(get_worker),
+) -> BatchMaterialsOut:
+    """「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
+    略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
+    _BATCH_LOCK 讓同時多個呼叫不會重複排隊。"""
+    upload_pages = set(body.upload_page_ids) if body else set()
+    with _BATCH_LOCK:
+        book = _book_or_404(session, book_id)
+        state = _BookState(session, book_id)
+        char = (
+            session.get(Generation, book.character_generation_id)
+            if book.character_generation_id is not None
+            else None
+        )
+        has_character = char is not None and bool(char.image_path)
+        queued: list[GenerationOut] = []
+        skipped: list[BatchSkip] = []
+        for page in state.pages:
+            if page.id in upload_pages:
+                out = BatchSkip(
+                    kind="background", page_id=page.id, position=page.position, reason="改用上傳圖片"
+                )
+            else:
+                out = _batch_background_page(session, storage, worker, book, page, state)
+            (skipped if isinstance(out, BatchSkip) else queued).append(out)
+            reason = state.skip_reason(page, GenKind.POSE)
+            if reason is None and not has_character:
+                reason = "請先設定角色"
+            if reason is not None:
+                skipped.append(
+                    BatchSkip(kind="pose", page_id=page.id, position=page.position, reason=reason)
+                )
+            else:
+                queued.append(_enqueue_pose(session, storage, worker, book, page, page.action_prompt))
+        return BatchMaterialsOut(queued=queued, skipped=skipped)
+
+
+def _enqueue_pose(
+    session: Session, storage: Storage, worker: GenerationWorker, book: Book, page: Page, action: str
+) -> GenerationOut:
+    """角色動作（Qwen）：以角色參考圖編輯出新動作；呼叫端負責確認有角色。"""
+    char = session.get(Generation, book.character_generation_id)
+    variation = pick_pose_variation(random.Random())
+    width, height = POSE_SIZE
+    gen = Generation(
+        book_id=book.id,
+        page_id=page.id,
+        kind=GenKind.POSE,
+        user_text=action,
+        prompt=qwen_pose_prompt(action, variation),
+        negative_prompt="",
+        seed=random.randint(0, MAX_SEED),
+        width=width,
+        height=height,
+        request_json="",
+    )
+    return _enqueue(session, worker, gen, character_image=char.image_path, variation=variation,
+                    extra={"pose_mode": "precise"})
 
 
 @router.post("/pages/{page_id}/poses", status_code=202, response_model=GenerationOut)
 def create_pose(
     page_id: int,
     body: PoseCreate,
-    request: Request,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
 ) -> GenerationOut:
-    """產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述。
-    精準（Qwen）：以角色參考圖編輯出新動作，prompt 只有動作；快速（SDXL）：角色描述＋動作文字。
-    精準模式依啟動／上次 preflight 的快取判斷可不可用（不即時連 ComfyUI），不可用回 503。"""
+    """產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
+    新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。"""
     page = _page_or_404(session, page_id)
     book = _book_or_404(session, page.book_id)
     char = (
@@ -340,30 +329,7 @@ def create_pose(
     )
     if char is None or not char.image_path:
         raise HTTPException(409, "請先設定角色")
-    variation: str | None = None
-    if body.mode == "precise":
-        detail = precise_unavailable_detail(getattr(request.app.state, "preflight", None))
-        if detail is not None:
-            raise HTTPException(503, detail)
-        variation = pick_variation(random.Random())
-        prompt, negative = qwen_pose_prompt(body.action, variation), ""
-    else:
-        prompt, negative = pose_prompt(book.character_description or "", body.action), POSE_NEGATIVE
-    width, height = POSE_SIZE
-    gen = Generation(
-        book_id=book.id,
-        page_id=page.id,
-        kind=GenKind.POSE,
-        user_text=body.action,
-        prompt=prompt,
-        negative_prompt=negative,
-        seed=random.randint(0, MAX_SEED),
-        width=width,
-        height=height,
-        request_json="",
-    )
-    return _enqueue(session, storage, worker, gen, character_image=char.image_path,
-                    pose_mode=body.mode, variation=variation)
+    return _enqueue_pose(session, storage, worker, book, page, body.action)
 
 
 def _pick(session: Session, page_id: int, gen_id: int, kind: GenKind) -> PageOut:
@@ -421,6 +387,79 @@ def select_background(
     page_id: int, body: SelectGeneration, session: Session = Depends(get_session)
 ) -> PageOut:
     return _pick(session, page_id, body.generation_id, GenKind.BACKGROUND)
+
+
+@router.post("/pages/{page_id}/backgrounds/upload", status_code=201, response_model=PageOut)
+def upload_background(
+    page_id: int,
+    file: UploadFile,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+) -> PageOut:
+    """上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine="upload" 的背景並選用。"""
+    page = _page_or_404(session, page_id)
+    book = _book_or_404(session, page.book_id)
+    started = time.monotonic()
+    data = file.file.read(MAX_BG_UPLOAD_BYTES + 1)
+    if len(data) > MAX_BG_UPLOAD_BYTES:
+        raise HTTPException(400, f"檔案過大，上限 {MAX_BG_UPLOAD_BYTES} bytes")
+    width, height = compute_layout(book.paper_size, book.print_mode).generation_size
+    try:
+        # JPEG 縮小解碼到約兩倍目標尺寸（LANCZOS 縮放仍有餘裕），不先整張轉成 PNG 再解回來
+        src, original_size = load_rgb(
+            data, max_bytes=MAX_BG_UPLOAD_BYTES, max_pixels=UPLOAD_MAX_PIXELS,
+            draft_size=(2 * width, 2 * height),
+        )
+    except TooManyPixels as e:
+        raise HTTPException(422, str(e)) from e
+    except ImageRejected as e:
+        raise HTTPException(400, str(e)) from e
+    out, crop_box = cover_crop(src, (width, height))
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    elapsed_s = time.monotonic() - started
+    request_json = encode_request(
+        kind=GenKind.BACKGROUND, prompt="", negative_prompt="", seed=0, width=width, height=height,
+        extra={"source": "upload"},
+    )
+    params = {"filename": file.filename, "original_size": list(original_size),
+              "crop_box": list(crop_box)}
+    now = utcnow()
+    written: str | None = None
+    try:
+        gen = Generation(
+            book_id=book.id,
+            page_id=page.id,
+            kind=GenKind.BACKGROUND,
+            status=GenStatus.SUCCEEDED,
+            user_text="",
+            prompt="",
+            negative_prompt="",
+            seed=0,
+            width=width,
+            height=height,
+            request_json=request_json,
+            engine="upload",
+            workflow_name=None,
+            models_json="[]",
+            params_json=json.dumps(params, ensure_ascii=False, sort_keys=True),
+            started_at=now,
+            finished_at=now,
+            elapsed_s=elapsed_s,
+        )
+        session.add(gen)
+        session.flush()
+        rel = storage.generation_image(book.id, gen.id)
+        storage.write(rel, buf.getvalue())
+        written = rel
+        gen.image_path = rel
+        session.commit()
+        return _pick(session, page_id, gen.id, GenKind.BACKGROUND)
+    except Exception:
+        session.rollback()
+        if written:
+            storage.delete(written)
+        raise
 
 
 @router.post("/pages/{page_id}/pose", response_model=PageOut)

@@ -133,47 +133,13 @@ def test_one_bad_workflow_does_not_block_others(tmp_path):
 
 # ---- 專案內真正的 workflow --------------------------------------------------------
 
-def test_repo_route_a_loads():
-    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    a = reg.get("route_a_sdxl_ipadapter_cn")
-    assert a.ok, a.errors
-    built = a.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png", "structure_image": "s.png"})
-    assert built.params["controlnet_type"] == "canny/lineart/anime_lineart/mlsd"
-
-
 def test_repo_registry_has_no_retired_routes():
+    """Phase 9：SDXL（含 IP-Adapter、ControlNet）與 Route B 的 workflow 都在 archive/，不會被登錄。"""
     reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    assert "route_b_qwen_edit_2511_gguf" not in reg.entries
-    assert "sdxl_text2img" in reg.entries
-    assert "route_a_sdxl_ipadapter_cn" in reg.entries
-
-
-def test_repo_compose_workflows_load():
-    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    bg = reg.get("sdxl_background")
-    assert bg.ok, bg.errors
-    built = bg.build_prompt({"prompt": "x", "seed": 1, "structure_image": "s.png"})
-    assert built.params["controlnet_strength"] == 0.0
-    assert built.params["controlnet_type"] == "hed/pidi/scribble/ted"
-    assert built.params["controlnet_end_percent"] == 0.5
-    assert len(built.output_node_ids) == 1
-    assert not any(n["class_type"].startswith("IPAdapter") for n in built.prompt.values())
-
-    pose = reg.get("sdxl_pose_cutout")
-    assert pose.ok, pose.errors
-    built = pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png"})
-    assert built.params["ipadapter_weight"] == 0.55
-    assert built.params["ipadapter_end_at"] == 0.6
-    assert len(built.output_node_ids) == 2
-    assert "background_removal/birefnet.safetensors" in {
-        f"{m['folder']}/{m['filename']}" for m in pose.models}
-    with pytest.raises(ParameterError):
-        pose.build_prompt({"prompt": "x", "seed": 1, "character_image": "c.png", "ipadapter_weight": 5.0})
-
-
-def _src(prompt, title, inp):
-    by_title = {n["_meta"]["title"]: nid for nid, n in prompt.items()}
-    return prompt[by_title[title]]["inputs"][inp][0], by_title
+    retired = {"route_b_qwen_edit_2511_gguf", "sdxl_text2img", "sdxl_background", "sdxl_pose_cutout",
+               "route_a_sdxl_ipadapter_cn"}
+    assert not retired & set(reg.entries)
+    assert retired <= {p.name for p in (REPO / "archive" / "comfy_workflows").iterdir()}
 
 
 def _assert_no_orphans(prompt):
@@ -182,24 +148,6 @@ def _assert_no_orphans(prompt):
     orphans = [nid for nid, n in prompt.items()
                if nid not in refs and n["class_type"] != "SaveImage"]
     assert not orphans, orphans
-
-
-def test_repo_compose_workflows_wiring():
-    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
-    bg = reg.get("sdxl_background").build_prompt(
-        {"prompt": "x", "seed": 1, "structure_image": "s.png"}).prompt
-    src, t = _src(bg, "SAMPLER", "model")
-    assert src == t["CKPT"]
-    assert _src(bg, "SAMPLER", "positive")[0] == t["APPLY_CONTROLNET"]
-    assert _src(bg, "SAMPLER", "negative")[0] == t["APPLY_CONTROLNET"]
-    _assert_no_orphans(bg)
-
-    pose = reg.get("sdxl_pose_cutout").build_prompt(
-        {"prompt": "x", "seed": 1, "character_image": "c.png"}).prompt
-    src, t = _src(pose, "SAMPLER", "model")
-    assert src == t["IPADAPTER"]
-    assert _src(pose, "IPADAPTER", "image")[0] == t["CHARACTER_REF"]
-    _assert_no_orphans(pose)
 
 
 def test_qwen_pose_manifest_loads_and_maps_titles():
@@ -315,3 +263,54 @@ def test_qwen_background_wiring():
     assert p[t["DECODE"]]["inputs"]["vae"][0] == t["VAE"]
     assert p[t["OUTPUT"]]["inputs"]["images"][0] == t["DECODE"]
     _assert_no_orphans(p)
+
+
+def test_registry_loads_qwen_character():
+    # 角色參考圖：與 qwen_background 同一張 Qwen 純文字生圖，預設尺寸為 QWEN_CHARACTER_SIZE
+    from app.services.prompts import QWEN_CHARACTER_SIZE
+
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    wf = reg.get("qwen_character")
+    assert wf.ok, wf.errors
+    assert wf.manifest["display_name"] == "Qwen 角色參考圖（白底全身）"
+    assert set(wf.params) == {"prompt", "seed", "width", "height"}
+    assert {f"{m['folder']}/{m['filename']}" for m in wf.models} == {
+        "unet/qwen-image-edit-2511-Q4_K_M.gguf",
+        "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "vae/qwen_image_vae.safetensors",
+        "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"}
+    built = wf.build_prompt({"prompt": "一隻小白兔", "seed": 3})
+    p = built.prompt
+    by_title = {n["_meta"]["title"]: n for n in p.values()}
+    assert set(by_title) == {"UNET", "TEXT_ENCODER", "VAE", "MODEL_SAMPLING", "CFG_NORM", "LIGHTNING_LORA",
+                             "POSITIVE", "NEGATIVE", "LATENT", "SAMPLER", "DECODE", "OUTPUT"}
+    assert by_title["POSITIVE"]["inputs"]["prompt"] == "一隻小白兔"
+    assert by_title["NEGATIVE"]["inputs"]["prompt"] == ""
+    for t in ("POSITIVE", "NEGATIVE"):
+        assert "image1" not in by_title[t]["inputs"]
+    assert "LoadImage" not in {n["class_type"] for n in p.values()}
+    assert (by_title["LATENT"]["inputs"]["width"], by_title["LATENT"]["inputs"]["height"]) == QWEN_CHARACTER_SIZE
+    assert by_title["SAMPLER"]["inputs"]["seed"] == 3
+    assert by_title["OUTPUT"]["inputs"]["filename_prefix"] == "coloring_books/character"
+    assert len(built.output_node_ids) == 1
+    # 同一張圖：除了預設尺寸與輸出檔名前綴，節點與固定值都和 qwen_background 一樣
+    bg = reg.get("qwen_background").build_prompt({"prompt": "一隻小白兔", "seed": 3, "width": 832}).prompt
+    for nid in p:
+        if by_title.get("OUTPUT") is p[nid]:
+            continue
+        assert p[nid] == bg[nid], nid
+    for bad in ({"prompt": "p", "seed": 1, "character_image": "c.png"},
+                {"prompt": "p", "seed": 1, "negative_prompt": "x"}):
+        with pytest.raises(ParameterError):
+            wf.build_prompt(bad)
+
+
+BIREFNET_URL = ("https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/"
+                "background_removal/birefnet.safetensors")
+
+
+def test_birefnet_source_matches_comfy_blueprint():
+    # ComfyUI 內建「Remove Background (BiRefNet)」藍圖下載的檔案
+    wf = WorkflowRegistry(REPO / "comfy_workflows").load().get("qwen_edit_pose_cutout")
+    m = next(m for m in wf.models if m["filename"] == "birefnet.safetensors")
+    assert (m["folder"], m["source"]) == ("background_removal", BIREFNET_URL)

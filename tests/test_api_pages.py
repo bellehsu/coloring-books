@@ -1,6 +1,3 @@
-import io
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import select
@@ -38,14 +35,6 @@ def book_with_character(client, app, **kw):
     return b, gens[0]["id"]
 
 
-def sketch_files(app):
-    return list(app.state.storage.root.rglob("sketch*.png"))
-
-
-def upload(client, page_id, data, name="s.png"):
-    return client.put(f"/api/pages/{page_id}/sketch", files={"file": (name, data, "image/png")})
-
-
 def test_pages_append_and_reorder(client):
     b = new_book(client)
     pages = [new_page(client, b["id"]) for _ in range(3)]
@@ -65,14 +54,15 @@ def test_pages_append_and_reorder(client):
     assert new_page(client, b["id"])["position"] == 3
 
 
-def test_controlnet_strength_range(client):
+def test_controlnet_strength_is_ignored(client):
+    """構圖強度已停用：舊前端送的值照收但不存（欄位留在 DB 與 PageOut）。"""
     p = new_page(client, new_book(client)["id"])
     assert p["controlnet_strength"] == 0.4 and p["sketch_url"] is None
-    assert client.patch(f"/api/pages/{p['id']}", json={"controlnet_strength": 0.7}).status_code == 422
-    r = client.patch(f"/api/pages/{p['id']}", json={"controlnet_strength": 0.6})
-    assert r.status_code == 200 and r.json()["controlnet_strength"] == 0.6
-    r = client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "公園"})
-    assert r.json()["scene_prompt"] == "公園" and r.json()["controlnet_strength"] == 0.6
+    for v in (0.6, 0.0, 0.7):
+        r = client.patch(f"/api/pages/{p['id']}", json={"controlnet_strength": v})
+        assert r.status_code == 200 and r.json()["controlnet_strength"] == 0.4
+    r = client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "公園", "controlnet_strength": 0.2})
+    assert r.json()["scene_prompt"] == "公園" and r.json()["controlnet_strength"] == 0.4
     assert client.patch("/api/pages/999", json={}).status_code == 404
 
 
@@ -82,205 +72,35 @@ def test_scene_prompt_length(client, app):
     assert r.status_code == 422
     p = new_page(client, b["id"], scene_prompt="景" * 800)
     assert client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "景" * 801}).status_code == 422
-    with app.state.sessions() as s:  # 角色描述也塞滿 800 字
-        from app.models import Book
-        bk = s.get(Book, b["id"])
-        bk.character_description = "熊" * 800
-        s.add(bk)
-        s.commit()
-    r = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 1})
-    assert r.status_code == 202
-    assert len(r.json()[0]["prompt"]) < 2000
+    r = client.post(f"/api/pages/{p['id']}/backgrounds")  # 800 字的場景描述照樣能產生背景
+    assert r.status_code == 202, r.text
+    assert len(r.json()["prompt"]) < 2000
 
 
-def test_sketch_upload_rejects_bad_files(client, app):
-    p = new_page(client, new_book(client)["id"])
-    r = upload(client, p["id"], b"hello, not an image", "a.txt")
-    assert r.status_code == 400 and "圖片" in r.json()["detail"]
-    r = upload(client, p["id"], b"\0" * (10_000_000 + 1))
-    assert r.status_code == 400
-    r = upload(client, p["id"], make_png((32, 32)))
-    assert r.status_code == 400
-    assert sketch_files(app) == []
-    with app.state.sessions() as s:
-        assert s.get(Page, p["id"]).sketch_path is None
-    r = upload(client, p["id"], make_png((128, 128)))
-    assert r.status_code == 200 and r.json()["sketch_url"]
-    assert client.get(r.json()["sketch_url"]).headers["content-type"] == "image/png"
-    assert len(sketch_files(app)) == 1
-    # 之後被拒絕的上傳不動既有草圖
-    assert upload(client, p["id"], b"junk").status_code == 400
-    assert len(sketch_files(app)) == 1
-
-
-def test_sketch_delete_and_get(client, app):
-    p = new_page(client, new_book(client)["id"])
-    assert client.get(f"/api/pages/{p['id']}/sketch").status_code == 404
-    upload(client, p["id"], make_png((128, 128)))
-    r = client.delete(f"/api/pages/{p['id']}/sketch")
-    assert r.status_code == 200 and r.json()["sketch_url"] is None
-    assert sketch_files(app) == []
-    assert client.get(f"/api/pages/{p['id']}/sketch").status_code == 404
-    assert client.delete("/api/pages/999/sketch").status_code == 404
-    assert upload(client, 999, make_png((128, 128))).status_code == 404
-
-
-def test_page_candidates_require_character(client):
-    p = new_page(client, new_book(client)["id"])
-    r = client.post(f"/api/pages/{p['id']}/candidates", json={})
-    assert r.status_code == 409 and "角色" in r.json()["detail"]
-    assert client.post("/api/pages/999/candidates", json={}).status_code == 404
-
-
-def test_page_candidates_snapshot_sketch(client, app):
-    b, char_gen = book_with_character(client, app)
-    p = new_page(client, b["id"], scene_prompt="在公園玩")
-    upload(client, p["id"], make_png((128, 128)))
-    r = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 2, "seed": 5})
-    assert r.status_code == 202
-    gens = r.json()
-    assert [g["seed"] for g in gens] == [5, 6]
-    assert all(g["kind"] == "page" and g["page_id"] == p["id"] for g in gens)
-    layout = b["layout"]["generation_size"]
-    with app.state.sessions() as s:
-        char_path = s.get(Generation, char_gen).image_path
-        rows = [s.get(Generation, g["id"]) for g in gens]
-    snaps = []
-    for g in rows:
-        req = json.loads(g.request_json)
-        assert req["structure_image"] == f"books/{b['id']}/pages/{p['id']}/sketch_{g.id}.png"
-        assert app.state.storage.abs(req["structure_image"]).is_file()
-        assert req["structure_strength"] == 0.4
-        assert req["character_image"] == char_path
-        assert [req["width"], req["height"]] == layout == [g.width, g.height]
-        assert g.user_text == "在公園玩" and "在公園玩" in g.prompt
-        snaps.append(req["structure_image"])
-    assert snaps[0] != snaps[1]
-    client.delete(f"/api/pages/{p['id']}/sketch")
-    assert all(app.state.storage.abs(x).is_file() for x in snaps)
-    # 沒有草圖：structure_image 為 None
-    r = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 1})
-    with app.state.sessions() as s:
-        req = json.loads(s.get(Generation, r.json()[0]["id"]).request_json)
-    assert req["structure_image"] is None
-
-
-def test_page_candidates_seed_range_and_notify(client, app, monkeypatch):
-    b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"])
-    top = 2**32 - 1
-    r = client.post(f"/api/pages/{p['id']}/candidates", json={"seed": top - 2, "count": 4})
-    assert r.status_code == 422 and "seed" in r.json()["detail"]
-    calls = []
-    monkeypatch.setattr(app.state.worker, "notify", lambda: calls.append(1))
-    assert client.post(f"/api/pages/{p['id']}/candidates", json={"seed": top - 3, "count": 4}).status_code == 202
-    assert calls == [1]
-
-
-def test_page_candidates_rollback_removes_snapshots(client, app, monkeypatch):
-    b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"])
-    upload(client, p["id"], make_png((128, 128)))
-    from app.api import pages as pages_mod
-
-    calls = {"n": 0}
-    real = pages_mod.encode_request
-
-    def flaky(**kw):
-        calls["n"] += 1
-        if calls["n"] == 2:
-            raise RuntimeError("boom")
-        return real(**kw)
-
-    monkeypatch.setattr(pages_mod, "encode_request", flaky)
-    with TestClient(app, raise_server_exceptions=False) as c2:
-        r = c2.post(f"/api/pages/{p['id']}/candidates", json={"count": 3})
-    assert r.status_code == 500
-    assert [f.name for f in sketch_files(app)] == ["sketch.png"]
-    with app.state.sessions() as s:
-        assert s.exec(select(Generation).where(Generation.kind == GenKind.PAGE)).all() == []
-
-
-def test_select_rejects_invalid_generation(client, app):
-    b, char_gen = book_with_character(client, app)
-    p, q = new_page(client, b["id"]), new_page(client, b["id"])
-    mine = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 4, "seed": 1}).json()
-    theirs = client.post(f"/api/pages/{q['id']}/candidates", json={"count": 1}).json()
-    run_jobs(client, app, 5)
-    with app.state.sessions() as s:
-        s.get(Generation, mine[0]["id"]).status = GenStatus.FAILED
-        s.get(Generation, mine[1]["id"]).discarded = True
-        s.commit()
-    url = f"/api/pages/{p['id']}/select"
-    for gid in (mine[0]["id"], mine[1]["id"], theirs[0]["id"], char_gen):
-        r = client.post(url, json={"generation_id": gid})
-        assert r.status_code == 409, gid
-        assert r.json()["detail"]
-    assert client.post(url, json={"generation_id": 9999}).status_code == 404
-    assert client.post("/api/pages/999/select", json={"generation_id": 1}).status_code == 404
-    r = client.post(url, json={"generation_id": mine[2]["id"]})
-    assert r.status_code == 200 and r.json()["selected_generation_id"] == mine[2]["id"]
-    client.post(f"/api/pages/{p['id']}/candidates", json={"count": 1})
-    got = client.get(f"/api/books/{b['id']}/pages").json()
-    assert got[0]["selected_generation_id"] == mine[2]["id"]
-
-
-def test_select_blocked_by_racing_discard(client, app):
-    from sqlalchemy import event
-
-    b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"])
-    g = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 1}).json()[0]
-    run_jobs(client, app)
-    fired = []
-
-    def discard_before_update(conn, cursor, statement, params, context, executemany):
-        if statement.startswith("UPDATE page") and not fired:
-            fired.append(1)  # 驗證通過後、寫入前，另一請求捨棄了這筆
-            with app.state.sessions() as other:
-                row = other.get(Generation, g["id"])
-                row.discarded = True
-                other.add(row)
-                other.commit()
-
-    event.listen(app.state.db, "before_cursor_execute", discard_before_update)
-    try:
-        r = client.post(f"/api/pages/{p['id']}/select", json={"generation_id": g["id"]})
-    finally:
-        event.remove(app.state.db, "before_cursor_execute", discard_before_update)
-    assert fired and r.status_code == 409
-    assert client.get(f"/api/books/{b['id']}/pages").json()[0]["selected_generation_id"] is None
-
-
-def test_page_candidates_fail_when_sketch_file_missing(client, app):
-    b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"])
-    upload(client, p["id"], make_png((128, 128)))
-    for f in sketch_files(app):
-        f.unlink()
-    r = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 2})
-    assert r.status_code == 409 and r.json()["detail"] == "草圖檔案遺失，請重新上傳"
-    with app.state.sessions() as s:
-        assert s.exec(select(Generation).where(Generation.kind == GenKind.PAGE)).all() == []
-    assert sketch_files(app) == []
+def queue_backgrounds(client, page_id, n):
+    """替頁面排 n 張背景（不執行）。頁面要有場景描述。"""
+    out = []
+    for _ in range(n):
+        r = client.post(f"/api/pages/{page_id}/backgrounds")
+        assert r.status_code == 202, r.text
+        out.append(r.json())
+    return out
 
 
 def test_delete_page_cascades_and_reorders(client, app):
     from app.models import LineartEdit
-    from tests.test_api_lineart import color_png
+    from tests.test_api_lineart import color_png, seed_generation, set_page
 
     app.state.engine.image = color_png()
     b, _ = book_with_character(client, app)
-    pages = [new_page(client, b["id"]) for _ in range(3)]
+    pages = [new_page(client, b["id"], scene_prompt="公園") for _ in range(3)]
     mid = pages[1]
-    done = client.post(f"/api/pages/{mid['id']}/candidates", json={"count": 1}).json()
-    run_jobs(client, app, 1)
-    queued = client.post(f"/api/pages/{mid['id']}/candidates", json={"count": 2}).json()
-    assert client.post(f"/api/pages/{mid['id']}/select", json={"generation_id": done[0]["id"]}).status_code == 200
+    done = seed_generation(app, b["id"], mid["id"], color_png())
+    queued = queue_backgrounds(client, mid["id"], 2)
+    set_page(app, mid["id"], selected_generation_id=done)
     assert client.get(f"/api/pages/{mid['id']}/lineart").status_code == 200  # 產生線稿檔
-    assert upload(client, mid["id"], color_png(), "s.png").status_code == 200
     storage = app.state.storage
-    img = storage.abs(f"books/{b['id']}/generations/{done[0]['id']}.png")
+    img = storage.abs(f"books/{b['id']}/generations/{done}.png")
     pdir = storage.abs(f"books/{b['id']}/pages/{mid['id']}")
     assert img.is_file() and pdir.is_dir()
 
@@ -300,8 +120,8 @@ def test_delete_page_cascades_and_reorders(client, app):
 
 def test_delete_page_cancels_queued_generations(client, app):
     b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"])
-    q = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 2}).json()
+    p = new_page(client, b["id"], scene_prompt="公園")
+    q = queue_backgrounds(client, p["id"], 2)
     assert client.delete(f"/api/pages/{p['id']}").status_code == 204
     assert client.portal.call(app.state.worker.run_once) is False
     assert q
@@ -309,8 +129,8 @@ def test_delete_page_cancels_queued_generations(client, app):
 
 def test_delete_page_with_running_generation_409(client, app):
     b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"])
-    gens = client.post(f"/api/pages/{p['id']}/candidates", json={"count": 2}).json()
+    p = new_page(client, b["id"], scene_prompt="公園")
+    gens = queue_backgrounds(client, p["id"], 2)
     with app.state.sessions() as s:
         g = s.get(Generation, gens[0]["id"])
         g.status = GenStatus.RUNNING
@@ -328,12 +148,87 @@ def test_deleted_page_and_generation_ids_are_never_reused(client, app):
     """刪掉 id 最大的頁面後再新增，新頁面（與其生成紀錄）不可沿用舊 id，前端以 id 為 key 的狀態才不會串頁。"""
     b, _ = book_with_character(client, app)
     a = new_page(client, b["id"])
-    victim = new_page(client, b["id"])
-    old_gens = client.post(f"/api/pages/{victim['id']}/candidates", json={"count": 2}).json()
+    victim = new_page(client, b["id"], scene_prompt="公園")
+    old_gens = queue_backgrounds(client, victim["id"], 2)
     assert client.delete(f"/api/pages/{victim['id']}").status_code == 204
-    c = new_page(client, b["id"])
+    c = new_page(client, b["id"], scene_prompt="公園")
     assert c["id"] != victim["id"]
     assert c["id"] > victim["id"] > a["id"]
-    new_gens = client.post(f"/api/pages/{c['id']}/candidates", json={"count": 2}).json()
+    new_gens = queue_backgrounds(client, c["id"], 2)
     assert not {g["id"] for g in new_gens} & {g["id"] for g in old_gens}
     assert min(g["id"] for g in new_gens) > max(g["id"] for g in old_gens)
+
+
+def test_patch_action_prompt(client):
+    p = new_page(client, new_book(client)["id"])
+    assert p["action_prompt"] == ""
+    r = client.patch(f"/api/pages/{p['id']}", json={"action_prompt": "抱著一本書往上爬"})
+    assert r.status_code == 200 and r.json()["action_prompt"] == "抱著一本書往上爬"
+    got = client.get(f"/api/books/{p['book_id']}/pages").json()
+    assert got[0]["action_prompt"] == "抱著一本書往上爬"
+    assert client.patch(f"/api/pages/{p['id']}", json={"action_prompt": "動" * 301}).status_code == 422
+
+
+def test_create_page_with_texts(client):
+    b = new_book(client)
+    r = client.post(f"/api/books/{b['id']}/pages", json={"scene_prompt": "森林", "action_prompt": "揮手"})
+    assert r.status_code == 201
+    assert r.json()["scene_prompt"] == "森林" and r.json()["action_prompt"] == "揮手"
+
+
+# ---- Phase 9：構圖草圖與舊整頁流程的端點已移除 ------------------------------------------
+
+
+def test_sketch_endpoints_removed(client):
+    p = new_page(client, new_book(client)["id"])
+    url = f"/api/pages/{p['id']}/sketch"
+    assert client.put(url, files={"file": ("s.png", make_png((128, 128)), "image/png")}).status_code in (404, 405)
+    assert client.delete(url).status_code in (404, 405)
+    assert client.get(url).status_code in (404, 405)
+    r = client.post(f"/api/books/{p['book_id']}/reference-sketch",
+                    files={"file": ("s.png", make_png((128, 128)), "image/png")})
+    assert r.status_code in (404, 405)
+
+
+def test_legacy_creation_removed(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    assert client.post(f"/api/pages/{p['id']}/candidates", json={"count": 1}).status_code in (404, 405)
+    assert client.post(f"/api/pages/{p['id']}/select", json={"generation_id": 1}).status_code in (404, 405)
+    with app.state.sessions() as s:
+        assert s.exec(select(Generation).where(Generation.kind == GenKind.PAGE)).all() == []
+
+
+def test_legacy_page_still_exports(client, app):
+    """舊流程頁面（選定圖是 PAGE）照樣有線稿、可通過、可匯出單頁與整本 PDF。"""
+    from tests.test_api_lineart import legacy_page, make_passed
+
+    b, p, ids = legacy_page(client, app)
+    with app.state.sessions() as s:
+        assert s.get(Generation, ids[0]).kind == GenKind.PAGE
+    assert p["selected_generation_id"] == ids[0] and p["lineart_url"]
+    assert client.get(f"/api/pages/{p['id']}/lineart").status_code == 200
+    make_passed(app, p["id"])
+    r = client.get(f"/api/pages/{p['id']}/print.png")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    r = client.get(f"/api/books/{b['id']}/export.pdf")
+    assert r.status_code == 200 and r.content.startswith(b"%PDF")
+
+
+def test_legacy_page_redo_replaces_page_image(client, app):
+    """舊流程頁面用新流程重做：選背景與角色動作時舊整頁圖仍是選定圖，合成後換成新的合成圖。"""
+    from tests.test_api_compose import confirm, gen_background, gen_pose, picked
+    from tests.test_api_lineart import legacy_page
+
+    b, p, ids = legacy_page(client, app, scene_prompt="公園")
+    pid = p["id"]
+    picked(client, pid, "background", gen_background(client, app, pid))
+    page = picked(client, pid, "pose", gen_pose(client, app, pid))
+    assert page["selected_generation_id"] == ids[0]
+    page = confirm(client, pid)
+    gid = page["selected_generation_id"]
+    assert gid != ids[0]
+    with app.state.sessions() as s:
+        assert s.get(Generation, gid).kind == GenKind.COMPOSITE
+        assert s.get(Generation, ids[0]) is not None  # 舊整頁圖留在歷史紀錄
+    assert client.get(f"/api/pages/{pid}/lineart").status_code == 200

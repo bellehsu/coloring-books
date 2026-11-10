@@ -1,8 +1,4 @@
-"""單一背景生成 worker：依 plan_order 逐筆執行 QUEUED 的 Generation（單 GPU，絕不並行）。
-
-同模型家族（SDXL / Qwen）的任務優先，等待過久的任務最先；見 app.services.scheduling。
-「等待過久」以 plan_clock（上一次取任務的時間）判斷，所以任務執行中顯示的順位不會變，
-下一次取任務也用同一個時間，與顯示一致；佇列清空（閒置）後改用現在時間。
+"""單一背景生成 worker：依建立時間（最舊的先）逐筆執行 QUEUED 的 Generation（單 GPU，絕不並行）。
 """
 
 from __future__ import annotations
@@ -11,20 +7,20 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
-from datetime import datetime
 from enum import Enum
 
 from sqlmodel import Session, col, select, update
 
 from app.models import Generation, GenKind, GenStatus, utcnow
 from app.services.engine import (
+    RETIRED,
     EngineError,
     EngineUnavailable,
     GenerationEngine,
     GenerationRequest,
 )
+from app.services.autoselect import autoselect
 from app.services.compose import largest_component
-from app.services.scheduling import QueuedJob, family_of, plan_order
 from app.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -37,6 +33,11 @@ class WorkerState(str, Enum):
     STOPPED = "stopped"
 
 
+# request_json 的核心欄位（extra 不能蓋掉）
+_CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
+                        "variation"})
+
+
 def encode_request(
     *,
     kind: GenKind,
@@ -46,16 +47,11 @@ def encode_request(
     width: int,
     height: int,
     character_image: str | None = None,
-    structure_image: str | None = None,
-    structure_strength: float = 0.0,
-    pose_mode: str | None = None,
     variation: str | None = None,
-    background_style: str | None = None,
-    background_style_requested: str | None = None,
+    extra: dict | None = None,
 ) -> str:
-    """產生 Generation.request_json；圖片欄位為 storage 相對路徑。
-    pose_mode 有值時（角色動作）一併寫入 pose_mode 與 variation。
-    background_style 有值時（背景）一併寫入 background_style、background_style_requested 與 variation。"""
+    """產生 Generation.request_json；character_image 為 storage 相對路徑，variation 一律寫入（可為 null）。
+    extra 併入 JSON，只當來源紀錄（例如 pose_mode、background_style）；引擎不讀，不能蓋掉核心欄位。"""
     d = {
         "kind": GenKind(kind).value,
         "prompt": prompt,
@@ -64,26 +60,30 @@ def encode_request(
         "width": width,
         "height": height,
         "character_image": character_image,
-        "structure_image": structure_image,
-        "structure_strength": structure_strength,
+        "variation": variation,
     }
-    if pose_mode is not None:
-        d["pose_mode"] = pose_mode
-        d["variation"] = variation
-    if background_style is not None:
-        d["background_style"] = background_style
-        d["background_style_requested"] = background_style_requested
-        d["variation"] = variation
+    if extra:
+        clash = _CORE_KEYS & set(extra)
+        if clash:
+            raise ValueError(f"extra 不能覆寫核心欄位：{', '.join(sorted(clash))}")
+        d.update(extra)
     return json.dumps(d, ensure_ascii=False, sort_keys=True)
 
 
+def _is_retired(d: dict) -> bool:
+    """需要已停用路線的請求：舊整頁流程，或明確要求 SDXL 的快速動作／細緻背景。
+    沒有 pose_mode／background_style 的列照 Qwen 執行（新列只把它們當來源紀錄）。"""
+    return d.get("kind") == GenKind.PAGE.value or d.get("pose_mode") == "fast" \
+        or d.get("background_style") == "detailed"
+
+
 def decode_request(text: str, storage: Storage) -> GenerationRequest:
-    """還原 GenerationRequest；相對路徑轉絕對路徑，超出 storage 根目錄會丟 ValueError。"""
+    """還原 GenerationRequest；相對路徑轉絕對路徑，超出 storage 根目錄會丟 ValueError。
+    需要已停用路線的請求丟 ValueError(RETIRED)。舊列多出的 structure_* 等欄位忽略。"""
     d = json.loads(text)
-
-    def _abs(rel):
-        return None if rel is None else storage.abs(rel)
-
+    if _is_retired(d):
+        raise ValueError(RETIRED)
+    rel = d.get("character_image")
     return GenerationRequest(
         kind=GenKind(d["kind"]),
         prompt=d["prompt"],
@@ -91,12 +91,8 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
         seed=d["seed"],
         width=d["width"],
         height=d["height"],
-        character_image=_abs(d.get("character_image")),
-        structure_image=_abs(d.get("structure_image")),
-        structure_strength=d.get("structure_strength", 0.0),
-        pose_mode=d.get("pose_mode") or "fast",  # 舊列沒有 → 快速
+        character_image=None if rel is None else storage.abs(rel),
         variation=d.get("variation"),
-        background_style=d.get("background_style") or "detailed",  # 舊列沒有 → 細緻（SDXL）
     )
 
 
@@ -107,17 +103,11 @@ class GenerationWorker:
         sessions: Callable[[], Session],
         storage: Storage,
         retry_backoff_s: float,
-        max_wait_s: float = 180.0,
     ) -> None:
         self.engine = engine
         self.sessions = sessions
         self.storage = storage
         self.retry_backoff_s = retry_backoff_s
-        self.max_wait_s = max_wait_s
-        # 上一個取走的任務的模型家族（只存在記憶體；重啟後為 None → 最舊優先）
-        self.last_family: str | None = None
-        # 上一次取任務的判斷時間；None 表示閒置（佇列清空後）→ 以現在時間判斷
-        self.plan_clock: datetime | None = None
         self.state = WorkerState.STOPPED
         self.last_error: str | None = None
         self.progress: dict[int, tuple[int, int]] = {}
@@ -130,6 +120,7 @@ class GenerationWorker:
         if self._task is not None and not self._task.done():
             return
         self.requeue_interrupted()
+        self.cancel_retired()
         self.state = WorkerState.IDLE
         self._event_loop = asyncio.get_running_loop()
         self._wakeup.set()
@@ -169,6 +160,27 @@ class GenerationWorker:
             s.commit()
             return res.rowcount
 
+    def cancel_retired(self) -> int:
+        """把 QUEUED 且需要已停用路線（舊整頁、SDXL 快速動作／細緻背景）的列標為 CANCELLED。"""
+        n = 0
+        with self.sessions() as s:
+            rows = s.exec(
+                select(Generation).where(col(Generation.status) == GenStatus.QUEUED)
+            ).all()
+            for gen in rows:
+                try:
+                    retired = _is_retired(json.loads(gen.request_json))
+                except (ValueError, TypeError, AttributeError):
+                    continue  # 無法解析的列留給 run_once 回報
+                if retired:
+                    gen.status = GenStatus.CANCELLED
+                    gen.error = RETIRED
+                    gen.finished_at = utcnow()
+                    s.add(gen)
+                    n += 1
+            s.commit()
+        return n
+
     def queue_position(self, gen_id: int) -> int | None:
         with self.sessions() as s:
             gen = s.get(Generation, gen_id)
@@ -185,29 +197,22 @@ class GenerationWorker:
             return order.index(gen_id) + (1 if running is not None else 0)
 
     def _plan(self, s: Session) -> list[int]:
-        """目前 QUEUED 任務的執行順序（與 _claim 取任務的順序相同）。
-        逾時以 plan_clock 判斷（閒置時為現在時間），讓顯示的順位在任務執行中保持穩定。"""
-        rows = s.exec(
-            select(Generation.id, Generation.kind, Generation.request_json, Generation.created_at)
-            .where(col(Generation.status) == GenStatus.QUEUED)
-            .order_by(col(Generation.created_at), col(Generation.id))
-        ).all()
-        queued = [
-            QueuedJob(id=gid, family=family_of(kind, rj), created_at=created_at)
-            for gid, kind, rj, created_at in rows
-        ]
-        now = self.plan_clock if self.plan_clock is not None else utcnow()
-        return plan_order(queued, self.last_family, now, self.max_wait_s)
+        """目前 QUEUED 任務的執行順序（與 _claim 取任務的順序相同）：建立時間，再 id。"""
+        return list(
+            s.exec(
+                select(Generation.id)
+                .where(col(Generation.status) == GenStatus.QUEUED)
+                .order_by(col(Generation.created_at), col(Generation.id))
+            ).all()
+        )
 
     def _claim(self) -> Generation | None:
-        """依 plan_order 的第一筆，以單一 UPDATE ... WHERE status=QUEUED 取得任務；
-        rowcount 為 0 表示被搶走（或被取消），重試。成功後記錄其模型家族與 plan_clock；
-        佇列空時清掉 plan_clock（閒置）。"""
+        """取最舊的 QUEUED 任務，以單一 UPDATE ... WHERE status=QUEUED 設為 RUNNING；
+        rowcount 為 0 表示被搶走（或被取消），重試。"""
         while True:
             with self.sessions() as s:
                 order = self._plan(s)
                 if not order:
-                    self.plan_clock = None
                     return None
                 gen_id = order[0]
                 res = s.exec(
@@ -217,10 +222,7 @@ class GenerationWorker:
                 )
                 s.commit()
                 if res.rowcount == 1:
-                    gen = s.get(Generation, gen_id)
-                    self.last_family = family_of(gen.kind, gen.request_json)
-                    self.plan_clock = utcnow()
-                    return gen
+                    return s.get(Generation, gen_id)
 
     def _finish(self, gen_id: int, **values) -> None:
         """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋）。"""
@@ -242,6 +244,12 @@ class GenerationWorker:
         try:
             try:
                 req = decode_request(gen.request_json, self.storage)
+            except ValueError as e:
+                if str(e) == RETIRED:  # 已停用的路線：只回報原因
+                    self._fail(gen_id, RETIRED)
+                    return True
+                self._fail(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
+                return True
             except Exception as e:  # noqa: BLE001
                 self._fail(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
                 return True
@@ -272,6 +280,10 @@ class GenerationWorker:
                 error=None,
                 finished_at=utcnow(),
             )
+            with self.sessions() as s:
+                done = s.get(Generation, gen_id)
+                if done is not None:
+                    autoselect(s, done)
             self.last_error = None
             self.state = WorkerState.IDLE
         except EngineUnavailable as e:

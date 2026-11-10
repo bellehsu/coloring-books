@@ -1,0 +1,196 @@
+/* 「② 補線」右欄（FinishPanel）：檢查、線條多寡、角色看起來對嗎、完成這一頁。卡片外觀同「① 構圖」的卡片。 */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.headline {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.headline[data-tone="gap"] {
+  color: var(--warn-ink);
+}
+.headline[data-tone="ok"] {
+  color: var(--ok-ink);
+}
+.hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.autofix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--warn);
+  color: var(--on-accent);
+  font-weight: 500;
+  cursor: pointer;
+}
+.autofix:hover:not(:disabled) {
+  background: var(--warn-ink);
+}
+.autofix:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.warnList {
+  margin: 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--warn-ink);
+}
+
+/* 線條多寡＋進階：線寬 */
+.advanced {
+  font-size: 14px;
+}
+.summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--muted-2);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.rangeLabel {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.value {
+  color: var(--muted);
+}
+.range {
+  width: 100%;
+  min-height: 44px;
+  accent-color: var(--accent);
+}
+
+/* 角色看起來對嗎？ */
+.answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.answer {
+  flex: 1 1 120px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.answer:hover:not(:disabled) {
+  background: var(--bg);
+}
+.answer[aria-pressed="true"][data-kind="ok"] {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  font-weight: 700;
+}
+.answer[aria-pressed="true"][data-kind="bad"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 700;
+}
+.answer:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* 完成這一頁 */
+.finish {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.note {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+.done {
+  margin: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--radius-md);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  font-size: 16px;
+  font-weight: 700;
+}
+.link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+/* 有缺口時的「完成這一頁？」確認框 */
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--muted-2);
+}
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}

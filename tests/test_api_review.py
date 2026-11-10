@@ -82,16 +82,32 @@ def test_pass_clean_page(client, app):
     assert page.passed_at is not None and page.forced_pass_reason is None
 
 
-def test_pass_with_errors_needs_reason(client, app):
+def test_pass_with_gaps_auto_reason(client, app, monkeypatch):
     _, p, _ = selected_page(client, app, gap=12)
     check(client, p)
-    for body in ({}, {"force_reason": "   "}, {"force_reason": None}):
-        r = client.post(f"/api/pages/{p['id']}/pass", json=body)
-        assert r.status_code == 409
-        d = r.json()["detail"]
-        assert d["message"] == "自動檢查有錯誤，修線後再通過，或填寫原因強制通過"
-        assert d["errors"] and set(d["errors"][0]) == {"code", "message"}
-    assert get_page(app, p["id"]).status == PageStatus.DRAFT
+    real = review.ensure_page_lineart
+
+    def three_gaps(*a, **k):
+        lin = real(*a, **k)
+        lin.qa.gap_count = 3
+        return lin
+
+    monkeypatch.setattr(review, "ensure_page_lineart", three_gaps)
+    r = client.post(f"/api/pages/{p['id']}/pass", json={})
+    assert r.status_code == 200, r.text
+    page = get_page(app, p["id"])
+    assert page.status == PageStatus.PASSED
+    assert page.forced_pass_reason == "使用者確認完成（3 個缺口）"
+
+
+def test_pass_with_errors_blank_reason_gets_auto_reason(client, app):
+    _, p, _ = selected_page(client, app, gap=12)
+    check(client, p)
+    r = client.post(f"/api/pages/{p['id']}/pass", json={"force_reason": "   "})
+    assert r.status_code == 200, r.text
+    page = get_page(app, p["id"])
+    assert page.status == PageStatus.PASSED
+    assert page.forced_pass_reason == "使用者確認完成（1 個缺口）"
 
 
 def test_force_pass_records_reason(client, app):

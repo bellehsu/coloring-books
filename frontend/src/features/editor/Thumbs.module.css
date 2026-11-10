@@ -1,0 +1,133 @@
+/* 構圖卡片裡的縮圖列（背景／角色動作）：換行排列，手機寬也不會橫向捲動。 */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-2);
+  line-height: 1.5;
+}
+.tile {
+  position: relative;
+  width: 64px;
+  flex: 0 0 auto;
+}
+.pick {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--chip-bg);
+  overflow: hidden;
+  cursor: pointer;
+}
+.pick[aria-checked="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  cursor: default;
+}
+.pick[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+.pick:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.thumb {
+  aspect-ratio: 864 / 1216; /* 預設；實際比例由元件依 generation 尺寸以 style 覆寫 */
+  display: grid;
+  place-items: center;
+  width: 100%;
+  background: var(--surface);
+}
+.img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+/* 不能選的（排隊、生成中、失敗、已取消）：虛線框 */
+.wait {
+  box-sizing: border-box;
+  border: 1px dashed var(--step-line);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.fail {
+  color: var(--danger);
+}
+.bar {
+  width: 80%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--chip-bg);
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  background: var(--accent);
+}
+/* 「上傳」標記：縮圖左下角 */
+.badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+/* 取消／捨棄 ×：右上角的小圓鈕（點擊範圍用 ::before 放大到 32px） */
+.x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.x::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+}
+.x:hover {
+  background: var(--chip-bg);
+  color: var(--ink);
+}
+/* 只給螢幕閱讀器：失敗原因（畫面上在 title） */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}

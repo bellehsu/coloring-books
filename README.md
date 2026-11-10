@@ -9,14 +9,14 @@ backend/app/
   config.py                    設定載入（config/settings.yaml + APP_ 環境變數）
   main.py                      FastAPI 進入點、lifespan（DB、worker、啟動 preflight）
   api/books.py                 書籍與角色 endpoints
-  api/pages.py                 頁面、構圖草圖、頁面候選（舊流程）endpoints
-  api/compose.py               頁面合成流程：背景、角色動作、位置、確認合成 endpoints
+  api/pages.py                 頁面（建立、排序、更新、刪除）endpoints
+  api/compose.py               頁面合成流程：背景（產生／上傳）、角色動作、位置、合成、產生全部素材 endpoints
   api/generations.py           生成紀錄、取消、佇列狀態 endpoints
   api/schemas.py               API 請求／回應 Pydantic 模型
   api/deps.py                  FastAPI 依賴（session、worker）
   models.py                    SQLModel 資料表（書、頁、generation）
   db.py                        SQLite engine 與 session
-  storage.py                   生成圖與構圖草圖檔案存放
+  storage.py                   生成圖、遮罩、線稿檔案存放；上傳圖片檢查與轉檔
   schemas/manifest.schema.json manifest JSON schema
   services/comfy_client.py     ComfyUI 非同步客戶端
   services/comfy_engine.py     以 ComfyUI 執行生成（實作 engine 介面）
@@ -25,12 +25,12 @@ backend/app/
   services/layout.py           版面尺寸計算（五種紙張、兩種列印模式）
   services/prompts.py          提示詞組裝（角色、背景、角色動作）
   services/compose.py          背景＋去背角色合成（Placement、cutout）
-  services/pose_modes.py       角色動作精準／快速模式可用性（看快取的 preflight）
   services/lineart_extract.py  生成圖轉線稿（呼叫 lineart_post）
   services/workflow_registry.py workflow 登錄、白名單參數、hash
   services/preflight.py        節點／模型／輸入欄位檢查
   services/lineart_post.py     線稿後處理與指標
-comfy_workflows/<name>/        workflow_api.json + manifest.yaml（sdxl_text2img、route_a_sdxl_ipadapter_cn、sdxl_background、sdxl_pose_cutout、qwen_edit_pose_cutout）
+comfy_workflows/<name>/        workflow_api.json + manifest.yaml（qwen_character、qwen_background、qwen_edit_pose_cutout）
+archive/comfy_workflows/       已停用的 workflow（SDXL、Route B；preflight 不掃描）
 docs/superpowers/
   specs/                       設計規格
   plans/                       實作計畫（各 Phase）
@@ -57,6 +57,23 @@ $VENV_ROOT/coloring-books/bin/pip install -e ".[dev]"
 cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
 ```
 
+## 模型（只需要 Qwen）
+
+所有生成（角色、背景、角色動作）都在 ComfyUI 上跑 Qwen-Image-Edit-2511。放在 `comfy.models_root` 底下的子資料夾
+（改完 `models_root` 要跑 `scripts/sync_comfy_model_paths.py` 並重啟 ComfyUI）：
+
+| 子資料夾 | 檔名 | 下載頁面 | 用途 |
+|---|---|---|---|
+| `unet/` | `qwen-image-edit-2511-Q4_K_M.gguf`（13.2 GB） | https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF | 主模型（GGUF，需 ComfyUI-GGUF） |
+| `text_encoders/` | `qwen_2.5_vl_7b_fp8_scaled.safetensors` | https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI（`split_files/text_encoders/`） | 文字編碼器 |
+| `vae/` | `qwen_image_vae.safetensors` | https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI（`split_files/vae/`） | VAE |
+| `loras/` | `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` | https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning | 4 步加速 LoRA |
+| `background_removal/` | `birefnet.safetensors`（0.44 GB） | https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors（與 ComfyUI 內建「Remove Background (BiRefNet)」藍圖相同） | 角色動作去背 |
+
+- 自訂節點：[ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF)（`UnetLoaderGGUF`；ComfyUI 的 Python 環境要裝 `gguf>=0.13.0`）。
+- 以 manifest 為準（`comfy_workflows/*/manifest.yaml` 的 `models`、`custom_nodes`）；`scripts/preflight.py` 會列出缺什麼。
+- SDXL、IP-Adapter、ControlNet 的模型已不再需要（舊 workflow 移到 `archive/comfy_workflows/`）。
+
 ## 一鍵啟動（開發用）
 
 `scripts/dev.sh` 一次啟動後端與前端（可選 ComfyUI），輸出加上 `[backend]`／`[frontend]`／`[comfy]` 前綴；Ctrl+C 全部關閉，任一服務掛掉也會一起關閉。
@@ -82,13 +99,7 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
 
 - 後端必須以單一 process 執行（不要用 `uvicorn --workers N`）：生成 worker 在 process 內，且啟動時會把 `running` 的任務重新排隊。
 - 生成任務由 FastAPI 內的單一背景 worker 依序執行，狀態存在 SQLite。
-- 佇列依模型家族分組：Qwen（精準角色動作、簡潔背景）與 SDXL（細緻背景、快速角色動作、角色與舊流程頁面候選）。worker 優先挑和上一個任務同家族的任務
-  （同家族內最舊的先），減少 ComfyUI 換模型的時間；等待超過 `queue.max_wait_s`（預設 180 秒，可用 `APP_QUEUE__MAX_WAIT_S` 覆寫）
-  的任務不論家族都最先執行，不會一直被插隊。重啟後還不知道上一個家族，先依建立時間（最舊的先）。生成紀錄的 `queue_position` 就是實際執行順序。
-  「等待過久」以上一次取任務的時間判斷：任務執行中顯示的順位（例如「第 1 位」）不會中途改變，下一個被取走的就是它；
-  防插隊因此最多晚一個任務生效。佇列清空（閒置）後改用現在時間。
-  一頁一頁做時，「快速」角色動作（SDXL）配「簡潔」背景（Qwen）會讓每頁流程在 SDXL／Qwen 之間交替、換模型較多；
-  「精準」角色動作配「簡潔」背景則同屬 Qwen，不必換模型。
+- 佇列為先進先出（依建立時間，最舊的先）；生成紀錄的 `queue_position` 就是實際執行順序。舊版留下、仍在排隊的整頁（`page`）與 SDXL 任務（快速角色動作、細緻背景）會在後端啟動時標為 `cancelled`（錯誤「這種生成已停用」）。
 - ComfyUI 離線時任務保持 `queued`，不會失敗；`GET /api/system/queue` 的 `state` 會顯示 `engine_unavailable`，ComfyUI 恢復後自動續跑。
 - `config/settings.yaml` 預設 `comfy.url` 為 `http://127.0.0.1:8188`；以 `APP_COMFY__URL` 覆寫（8188 若已被其他服務佔用，可改用 8190 等埠）。
 
@@ -116,9 +127,8 @@ npm run build && npm test && npm run lint
 `scripts/dev_fake_backend.py` 是真正的 FastAPI 後端，但生成引擎換成 `DemoEngine`：每張圖延遲 0.3 秒、回報 3 次進度，用 Pillow 畫彩色圖：
 - 背景：太陽、雲、樹、草叢幾個大物件，上方一個不填色的大框，上緣刻意留了約 7 px 的缺口（A4 300 DPI 線稿上約 20 px）。
   物件都避開角色的預設位置，合成後 QA 一定會報 1 個「線條有缺口」，按「自動補線」後缺口歸零。
-- 背景的簡潔／細緻兩種風格畫法相同（生成紀錄照常記下實際風格）。
-- 角色動作：白底上的角色（832×1216）＋同尺寸遮罩（角色處白、其他黑），可以去背、合成。精準／快速兩種模式畫法相同。
-- 角色候選（與舊流程的頁面圖）：白底、黑色粗外框的角色與幾個背景方塊（同樣留一個缺口）。
+- 角色動作：白底上的角色（832×1216）＋同尺寸遮罩（角色處白、其他黑），可以去背、合成。
+- 角色候選：白底、黑色粗外框的角色與幾個背景方塊（同樣留一個缺口）。
 
 ```bash
 $VENV_ROOT/coloring-books/bin/python scripts/dev_fake_backend.py --port 8000 [--storage /tmp/fake-books]
@@ -126,9 +136,7 @@ BACKEND_URL=http://127.0.0.1:8000 npm run dev   # 另一個終端機，在 front
 ```
 
 設定沿用 `config/settings.yaml`（或 `APP_SETTINGS_FILE`），但資料庫與檔案一律放在 `--storage`（預設：新的暫存資料夾），不會碰到正式資料。
-啟動時不跑 ComfyUI preflight（`create_app(startup_preflight=False)`）：本機 ComfyUI 開著與否、workflow 能不能跑都不影響它，
-`GET /api/system/pose-modes` 一律回報精準／快速都可用、`GET /api/system/background-styles` 一律回報簡潔／細緻都可用
-（e2e 要測「不可用」時在瀏覽器端攔截這兩個 API）。
+啟動時不跑 ComfyUI preflight（`create_app(startup_preflight=False)`）：本機 ComfyUI 開著與否、workflow 能不能跑都不影響它。
 
 ### 端對端測試（Playwright）
 
@@ -142,60 +150,55 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `playwright.config.ts` 會自動啟動兩個服務：假後端（`127.0.0.1:8010`，每次執行用新的暫存 storage）與 `next dev -p 3010`（`BACKEND_URL=http://127.0.0.1:8010`）。
   非 CI 時若這兩個埠已有服務就直接重用（資料會累積；測試不依賴既有資料）。
 - 只用 chromium，並以 `--disable-gpu --disable-software-rasterizer` 啟動：WSL2 上 headless chromium 的 GPU 行程常卡住，`requestAnimationFrame` 不觸發、點擊一直等不到。
-- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 產生並設定角色 → 新增頁、在畫板畫方框 → 產生背景並選用 →
-  點「揮手」，產生方式預設「精準」產生一張（送出 `mode:"precise"`、縮圖標「精準」），切到「快速」再產生一張（標「快速」），選用精準那張 →
-  合成：拖曳＋方向鍵移動角色後立刻「確認合成」（位置 PUT 故意變慢，檢查合成在最後一次位置寫完後才送出）→ 自動切到線稿、看到紅圈 →
-  自動補線後缺口 0 → QA 一致 → 標為通過 → 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）；
-  以及沒設角色時角色分頁停用、後端 409「請先設定角色」原樣顯示；
-  `/api/system/pose-modes` 回報精準不可用時「精準」停用並顯示「精準模式缺少：…」、改選「快速」，產生時送出 `mode:"fast"`。
-- `e2e/batch.spec.ts`：3 頁的書（2 頁有場景描述、1 頁沒有）按「產生所有背景」→ 確認對話框列出會產生 2 頁（簡潔）、略過第 3 頁 → 取消不送出、
-  確認後只送出一次（body `{style:"simple"}`）→ 第 1、2 頁各一張背景、第 3 頁沒有，按鈕變成停用（「沒有需要產生背景的頁面」）。
-- `e2e/bgstyle.spec.ts`：背景風格預設「簡潔」→ 產生一張（送出 `style:"simple"`、縮圖標「簡潔」）→ 切到「細緻」再產生一張（標「細緻」）→
-  重新整理後仍是細緻（localStorage）；以 API 上傳構圖草圖的頁「簡潔」停用、顯示「有構圖草圖時用細緻，才會照草圖構圖」、產生時送出細緻，
-  構圖強度拉到 0 後簡潔恢復可選。
-- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器（背景、畫構圖、角色、線稿模式）與合成分頁（角色移到邊緣外也一樣），
-  整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
+- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 「產生角色」（一次一張，按鈕改叫「再產生一張」）→ 選它、「用這個角色，開始寫故事 →」→
+  故事頁「＋ 新增一頁」、寫場景與中文動作（「抱著一顆紅色的球開心地跳」，檢查動作欄位連到「只寫動作，地點寫在背景…」提示）→
+  「產生全部素材（還有 2 張）」→ 縮圖出現、角色動作的 `user_text` 是原本的中文 → 頁面 ① 構圖：素材已自動選用、開頁自動合成 →
+  拖曳角色，放開後存位置並自動合成（「✓ 線稿已自動更新」）→ 「下一步：補線 →」→ ② 補線看到 1 個橘色圈 → 「自動補線」→
+  「✓ 線條都接好了」→ 「角色看起來對嗎？」按「對」→ 「完成這一頁 ✓」→ 頁面清單標「完成」→ 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）。
+  另外：構圖「上傳背景圖」傳 4000×800 的 PNG → 縮圖標「上傳」、舞台的背景已裁成頁面比例；
+  故事頁「產生全部素材」後素材還沒好就打開頁面 → worker 自動選用後不用重新整理，舞台填上並「✓ 線稿已自動更新」；
+  角色動作自動選用 → 上傳背景圖 → 打開頁面自動合成 → 「下一步：補線 →」看到 ② 補線的完成面板；
+  沒設角色時角色動作「換一張」停用，前端資料過期時後端 409「請先設定角色」原樣顯示。
+- `e2e/story.spec.ts`：「貼上整本故事」貼 3 頁（第 1 頁 CRLF 換行、全形數字）→ 預覽表 3 列拆對 → 匯入 → 3 列填好 →
+  「產生全部素材（還有 6 張）」→ 每頁的背景與角色動作縮圖都出現。
+- `e2e/batch.spec.ts`：`POST /books/{id}/materials/batch`（`upload_page_ids` 的頁略過背景、沒場景的頁略過）→ 排入的項目與略過原因 →
+  worker 完成後自動選用（只填空的欄位）→ 再呼叫一次不再排。
+- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色、故事（含貼上對話框）、頁面編輯器 ① 構圖與 ② 補線，整頁不可水平捲動。
+  390 時：故事每列上下堆疊；頁面清單變成「第 N 頁 / M」下拉選單（用它換頁）；背景與角色動作是舞台下方並排的精簡卡片，點了才展開、可收合；
+  舞台照樣可以拖曳角色。1440 時：頁面清單在左、卡片完整顯示。
 - `next dev` 同一個 `frontend/` 只能跑一份：`scripts/dev.sh`（或其他 `next dev`）還開著時 e2e 會出現「Another next dev server is already running」，先關掉它再跑。
-- 全部約 50 秒（第一次 `next dev` 編譯會再久一點）。
+- 全部約 35 秒（第一次 `next dev` 編譯會再久一點）。
 
 ## 內網部署
 
 正式建置、systemd 常駐與 Windows 埠轉發見 [docs/deploy-intranet.md](docs/deploy-intranet.md)（範本在 `deploy/`）。
 
-## 頁面流程（Phase 5：背景＋角色動作＋合成）
+## 頁面流程（故事 → ① 構圖 → ② 補線）
 
-設定好角色之後，每一頁依序做：
+設定好角色之後：
 
-1. **背景**：輸入場景描述，選「背景風格」後按「產生背景」，每次一張（不用角色參考圖，提示詞要求無人物）。
-   - **簡潔**（預設，約 20 秒，線條少、適合小小孩）：`qwen_background`，Qwen-Image-Edit-2511 GGUF＋Lightning 4 步，不給參考圖，
-     需要 ComfyUI-GGUF；每張隨機挑一種構圖變化，且不會和本頁上一張簡潔背景相同（再產生時構圖一定換一種）。
-   - **細緻**（約 10 秒，細節多，可以照構圖草圖）：`sdxl_background`，SDXL＋（選用）ControlNet scribble，少量大物件。
-   - 畫構圖（ControlNet scribble）為選用，只有細緻會照草圖構圖：本頁有構圖草圖且構圖強度 > 0 時「簡潔」停用、一律用細緻
-     （顯示「有構圖草圖時用細緻，才會照草圖構圖」；強度拉到 0 或清空草圖就能再選簡潔）。
-   - 選擇記在瀏覽器（localStorage `coloring.bgStyle`）。後端快取的 preflight 判定簡潔不可用時，「簡潔」停用並顯示缺少的項目，改用細緻
-     （退路，不改寫記住的選擇）。最後由後端在排隊當下決定實際風格（有可用草圖或簡潔不可用 → 細緻），
-     歷史縮圖左上角標「簡潔」／「細緻」（背景風格上線前的舊資料算細緻）。
-2. **角色動作**：輸入動作文字或點常用動作按鈕（揮手、跑步…），選「產生方式」後按「產生角色動作」，每次一張，832×1216 白底＋去背遮罩。
-   - **精準**（預設，約 30 秒，角色最像、動作最準）：`qwen_edit_pose_cutout`，Qwen-Image-Edit-2511 GGUF（Q4_K_M）＋Lightning 4 步 LoRA
-     以角色參考圖直接編輯出新動作，需要 ComfyUI-GGUF；BiRefNet 去背。
-   - **快速**（約 10 秒，可能和角色有落差）：`sdxl_pose_cutout`，角色參考圖 IP-Adapter 0.55，ComfyUI 內建 `RemoveBackground` 產生遮罩。
-   - 精準是預設；選擇記在瀏覽器（localStorage `coloring.poseMode`）。後端快取的 preflight 判定精準不可用（例如沒裝 ComfyUI-GGUF、缺 GGUF 檔）時，
-     「精準」停用並顯示缺少的項目，自動改用快速（退路，不改寫記住的選擇）。歷史縮圖左上角標「精準」／「快速」（Phase 5 的舊資料算快速）。
-     兩種模式產生的角色動作都只保留遮罩最大的一塊（去掉分離的影子或碎塊）。
-3. **合成**：拖曳、拉角落、方向鍵調整角色位置與大小，可水平翻轉；位置自動儲存。按「確認合成」後，後端用 Pillow
-   把去背角色貼到背景上，存成一筆 `composite` 生成紀錄並設為本頁 `selected_generation_id`。
-4. **線稿、QA、匯出**：與之前相同（xdog 擷取 → 後處理 → 補線 → 角色一致確認 → 通過 → PDF）。
+1. **故事**：每一頁寫場景描述（中文或英文）與角色動作（只寫動作，地點寫在場景；也可以點常用動作），背景可改選「上傳圖片」。
+   按「產生全部素材（還有 K 張）」一次排好整本書缺的背景與角色動作（見下方「一次做很多頁時」）；完成的素材會自動選用到空的欄位。
+2. **① 構圖**（頁面編輯器）：背景與角色動作各一張卡片，縮圖單選；不滿意就按卡片上的「換一張」，每次產生一張。
+   - **背景**（約 20 秒，不用角色參考圖，提示詞要求無人物）：`qwen_background`，Qwen-Image-Edit-2511 GGUF＋Lightning 4 步，不給參考圖；
+     每張隨機挑一種構圖變化，且不會和本頁上一張背景相同（再產生時構圖一定換一種）。
+     也可以「上傳背景圖」（PNG／JPEG／WebP，10 MB 以內）：置中裁切成書的生成尺寸，存成一筆 `source: "upload"` 的背景並選用。
+     只有一種背景風格；Phase 9 以前的舊紀錄（細緻／SDXL）照樣顯示、可以選用。
+   - **角色動作**（約 30 秒，832×1216 白底＋去背遮罩）：`qwen_edit_pose_cutout`，Qwen-Image-Edit-2511 GGUF（Q4_K_M）＋Lightning 4 步 LoRA
+     以角色參考圖直接編輯出新動作，BiRefNet 去背，只保留遮罩最大的一塊（去掉分離的影子或碎塊）並補滿其中的洞。
+     只有一種產生方式；Phase 9 以前的舊紀錄（快速／SDXL）照樣顯示、可以選用。
+   - Qwen workflow 缺模型或節點時不會先擋：任務照樣排隊，執行時失敗並在生成紀錄寫出錯誤（`GET /api/system/preflight` 會列出缺少的項目）。
+   - **合成**：在舞台上拖曳、拉角落、方向鍵調整角色位置與大小，可水平翻轉；位置自動儲存。放開後（或翻轉、重設、改選背景／角色動作後）
+     約 0.6 秒自動合成，不用另外確認：後端用 Pillow 把去背角色貼到背景上，存成一筆 `composite` 生成紀錄並設為本頁
+     `selected_generation_id`。這頁補過線時，擺位置後第一次自動合成前會先問「清掉補過的線？」；改選縮圖或上傳背景則直接換、不另外詢問。
+3. **② 補線**：xdog 擷取線稿 → 後處理 → 「自動補線」或手動補線 → 「角色看起來對嗎？」按「對」→ 「完成這一頁 ✓」→ 匯出 PDF。
 
-**一次做很多頁時**：先在每一頁寫好場景描述（需要的話畫構圖），按頁面清單上方的「產生所有背景」，確認後整本書一次排好背景；
-再一頁一頁做角色動作。同一種模型的任務會一批連續跑完（簡潔背景與精準角色動作是 Qwen，細緻背景是 SDXL），不必來回換模型，整體等待較短。
-確認對話框會顯示風格，例如「會為 3 頁產生背景（簡潔，有草圖的 1 頁用細緻）」；整批送出目前記住的風格（簡潔不可用時為細緻），有可用草圖的頁一律細緻。
-「產生所有背景」會略過沒有場景描述、已有背景（已選用，或歷史裡有成功且未捨棄的；舊流程選了整頁候選圖的頁也算）、背景產生中、
-草圖檔案遺失的頁，確認對話框列出會產生幾頁與略過的頁（草圖檔案遺失只有送出後才知道，完成提示會列出頁碼）；
-按下時先等本頁送出中的場景描述與構圖強度存好（之前存失敗的會重送，再失敗就不送出）。
-連按兩次、或兩個分頁同時按，也不會重複排隊（後端以鎖序列化）。
+**一次做很多頁時**：到「故事」頁寫好每一頁的場景與角色動作（或選「上傳圖片」當背景），按一次「產生全部素材」，整本書缺的背景與角色動作依頁面順序排好；已有素材、沒有描述、產生中的會略過並在提示中列出。連按兩次、或兩個分頁同時按，也不會重複排隊（後端以鎖序列化）。
 
 背景與角色動作的歷史紀錄每頁各自保存。改選另一張背景或角色動作時，若本頁目前用的是合成圖，會清除選定並退回草稿；
-同一組背景、角色、位置再按確認會重用原本的合成圖。舊流程的整頁候選（`/pages/{id}/candidates`）仍保留，已選的舊頁面不受影響。
+同一組背景、角色、位置再合成時會重用原本的合成圖（補過的線一起回來）。
+舊流程的整頁候選（`/pages/{id}/candidates`、`/pages/{id}/select`）與構圖草圖（`/pages/{id}/sketch`、`/books/{id}/reference-sketch`）
+在 Phase 9 移除；已選整頁圖的舊頁面照常補線、QA、匯出，也可以用新流程重做：選好背景與角色動作後，舊整頁圖仍是選定圖，合成後換成新的合成圖。
 
 ## API 一覽
 
@@ -209,57 +212,51 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | GET | `/books` | 列出繪本 |
 | GET | `/books/{book_id}` | 取得單一繪本 |
 | PATCH | `/books/{book_id}` | 更新繪本標題、紙張尺寸、列印方式（改尺寸規則見「線稿與 QA」） |
-| POST | `/books/{book_id}/character/candidates` | 產生角色候選（非同步，202） |
+| POST | `/books/{book_id}/character/candidates` | 產生一張角色候選（非同步，202）：每次按一張，body 的 `count` 照收但忽略，回傳只有一筆的清單 |
 | POST | `/books/{book_id}/character` | 設定繪本角色 |
 | POST | `/books/{book_id}/pages` | 建立頁面 |
 | GET | `/books/{book_id}/pages` | 列出頁面 |
 | POST | `/books/{book_id}/pages/order` | 調整頁面順序 |
 | GET | `/books/{book_id}/generations` | 列出繪本的生成紀錄 |
-| PATCH | `/pages/{page_id}` | 更新頁面的 `scene_prompt`、`controlnet_strength`、`line_detail`、`line_width_px` |
-| PUT | `/pages/{page_id}/sketch` | 上傳頁面構圖草圖（構圖草圖來源） |
-| DELETE | `/pages/{page_id}/sketch` | 移除頁面構圖草圖 |
-| GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
-| POST | `/pages/{page_id}/candidates` | 產生頁面候選（非同步，202） |
-| POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202）；選填 body `{style: "simple" \| "detailed"}`，省略＝簡潔；有可用構圖草圖（強度 > 0）或簡潔不可用時後端改用細緻。`style` 是使用者的選擇（前端只在簡潔不可用時送細緻，草圖頁仍送使用者選的），記在 request_json 的 `background_style_requested`；生成紀錄的 `background_style` 為套用草圖／可用性規則後的實際風格 |
-| POST | `/books/{book_id}/backgrounds/batch` | 依頁面順序替每一頁排一張背景（202；選填 body `{style}` 同上，requested＝使用者的選擇，逐頁決定實際風格）：`{queued: Generation[], skipped: [{page_id, position, reason}]}`；`reason` 為「沒有場景描述」「已有背景」（含舊流程選了整頁候選圖）「背景產生中」「草圖檔案遺失」；同時多個呼叫會依序處理，不會重複排隊 |
-| POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩；`mode`：`"precise"`（預設，Qwen）或 `"fast"`（SDXL），其他值 422（非同步，202；未設角色 409；精準不可用 503「精準模式缺少：…」） |
+| PATCH | `/pages/{page_id}` | 更新頁面的 `scene_prompt`、`action_prompt`、`line_detail`、`line_width_px`（舊前端送的 `controlnet_strength` 忽略） |
+| DELETE | `/pages/{page_id}` | 刪除頁面（取消排隊中的任務；有執行中的任務時 409） |
+| POST | `/pages/{page_id}/backgrounds` | 依頁面場景描述產生一張背景（Qwen，非同步，202）；body 可省略，舊前端送的 `style` 忽略。構圖變化語不重複這頁上一張；生成紀錄的 `background_style` 一律 `"simple"`（Phase 9 以前的舊列可能是 `"detailed"`） |
+| POST | `/pages/{page_id}/backgrounds/upload` | 上傳一張圖當本頁背景（multipart 欄位 `file`；PNG／JPEG／WebP、10 MB 以內，最多 6400 萬像素）：置中裁切成生成尺寸，存成成功的背景生成紀錄（`source: "upload"`）並選用（201，回傳 PageOut）；超過像素上限 422「圖片像素太多（最多 6400 萬像素）」，其他不合格 400 |
+| POST | `/books/{book_id}/materials/batch` | 產生全部素材（202）：依頁面順序替每頁補排缺的背景與角色動作；選填 body `{"upload_page_ids": [...]}`，這些頁改用上傳圖片，背景略過（reason「改用上傳圖片」）。回傳 `{queued: Generation[], skipped: [{kind: "background" \| "pose", page_id, position, reason}]}` |
+| POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩（Qwen，非同步，202；未設角色 409）；舊前端送的 `mode` 忽略。生成紀錄的 `pose_mode` 一律 `"precise"`（Phase 9 以前的舊列可能是 `"fast"`） |
 | POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
 | POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |
 | PUT | `/pages/{page_id}/placement` | 儲存角色位置 `{cx, cy, height, flip}`（中心點與高度為背景的比例） |
-| POST | `/pages/{page_id}/compose` | 確認合成：產生／重用 `composite` 生成紀錄並設為選定 |
+| POST | `/pages/{page_id}/compose` | 合成（前端在擺位置、換素材後自動呼叫）：產生／重用 `composite` 生成紀錄並設為選定 |
 | GET | `/generations/{gen_id}/mask` | 下載角色動作的去背遮罩 |
 | GET | `/generations/{gen_id}/cutout` | 依遮罩去背並裁切的 RGBA PNG（合成預覽用） |
-| POST | `/pages/{page_id}/select` | 選定頁面採用的生成結果 |
 | GET | `/generations/{gen_id}` | 取得生成紀錄（參數、seed、提示詞、耗時、錯誤） |
 | GET | `/generations/{gen_id}/image` | 下載生成圖 |
 | PATCH | `/generations/{gen_id}` | 捨棄或還原生成結果（使用中的不可捨棄；捨棄排隊中的任務同時會取消它） |
 | POST | `/generations/{gen_id}/cancel` | 取消排隊中的任務 |
 | GET | `/pages/{page_id}/lineart` | 取得頁面線稿（內容大小 1-bit PNG，有快取） |
 | GET | `/pages/{page_id}/qa` | 取得線稿 QA 結果 |
-| GET | `/pages/{page_id}/qa/overlay.png` | QA 問題標示疊圖 |
+| GET | `/pages/{page_id}/qa/overlay.png` | QA 問題標示疊圖（前端已不使用：補線畫面用 `/qa` 的缺口座標自己畫橘色圈） |
 | GET | `/pages/{page_id}/lineart/edits` | 取得修改圖層 |
 | PUT | `/pages/{page_id}/lineart/edits` | 儲存修改圖層並重算 QA（已通過的頁面會退回草稿） |
 | POST | `/pages/{page_id}/lineart/autofix` | 自動補線縫（最多 3 輪） |
 | GET | `/generations/{gen_id}/lineart-preview` | 以指定細緻度／線寬預覽某張生成圖的線稿 |
-| POST | `/books/{book_id}/reference-sketch` | 由圖片擷取參考草圖 |
 | POST | `/pages/{page_id}/character-check` | 標記角色是否一致（需帶 `generation_id`，選定圖片已更換則 409） |
-| POST | `/pages/{page_id}/pass` | 通過頁面（可帶 `force_reason` 強制通過） |
-| POST | `/pages/{page_id}/unpass` | 取消通過 |
+| POST | `/pages/{page_id}/pass` | 完成頁面（body 可以是 `{}`；QA 有缺口時後端自動記錄原因「使用者確認完成（N 個缺口）」，也可自帶 `force_reason`） |
+| POST | `/pages/{page_id}/unpass` | 取消完成 |
 | GET | `/books/{book_id}/export/summary` | 匯出摘要（可匯出頁、略過原因） |
 | GET | `/books/{book_id}/export.pdf` | 匯出書本 PDF（`include=passed|all`） |
 | GET | `/pages/{page_id}/print.png` | 單頁完整版面 1-bit PNG（300 DPI） |
-| GET | `/system/queue` | 佇列狀態（worker 狀態、排隊數、執行中任務） |
+| GET | `/system/queue` | 佇列狀態（worker 狀態、排隊數、執行中任務）；`pending` 列出排隊中／執行中的角色、背景、角色動作（舊→新），`recent` 是各類型最近 10 筆成功的 Qwen 生成耗時（新→舊，不含上傳），供估算剩餘時間 |
 | GET | `/system/preflight` | ComfyUI 連線、模型與節點檢查（並更新快取） |
-| GET | `/system/pose-modes` | 角色動作精準／快速是否可用 `{precise, fast: {available, missing}}`（只讀快取的 preflight，不連 ComfyUI；ComfyUI 連不上或尚未檢查時都算可用） |
-| GET | `/system/background-styles` | 背景簡潔／細緻是否可用 `{simple, detailed: {available, missing}}`（規則同上） |
 
 ## 線稿與 QA
 
 - **細緻度與線寬**：每頁有 `line_detail`（`simple`／`standard`／`detailed`，對應 xdog sigma 1.5／1.2／0.8）與 `line_width_px`（300 DPI 像素，8–16，預設 11）。
 - **修改圖層**：存在選定生成圖上，格式為筆畫陣列 `{op, width_px, points}`。`op` 為 `draw`（畫黑線）或 `erase`（擦除）；`points` 用相對座標（0–1，相對於線稿內容大小）；`width_px` 以 300 DPI 像素計。換選別張圖就是另一份修改圖層。
 - **自動補線**：`POST /pages/{id}/lineart/autofix` 對每個缺口補一筆 `draw`，重算 QA，最多 3 輪；某輪缺口數沒有減少就停止並捨棄該輪。
-- **通過規則**：必須已選圖、角色確認為「一致」，且 QA 沒有錯誤；有錯誤時需填 `force_reason` 才能強制通過。已通過的頁面在下列情況會無條件退回草稿（值真的有變才算）：修改 `line_detail` 或 `line_width_px`、儲存修改圖層、自動補線、改選另一張圖（同時清除角色確認）；角色標記為不一致也會退回。改紙張尺寸或列印方式則不同：背景重算線稿後，只有新的 QA 有錯誤的頁面才會退回草稿，沒有錯誤的頁面維持已通過。
-- **PDF 版面**：頁面依 `position` 排序，預設只匯出已通過的頁（`include=all` 為所有已選圖的頁）。家用（`home`）每頁就是紙張大小，四周留 10 mm 白邊；印刷廠（`print_shop`）每頁為紙張加每邊 3 mm 出血。PDF 本身沒有 CropBox，也沒有裁切標記；裁切框與 5 mm 安全區只出現在 QA 疊圖（`GET /pages/{id}/qa/overlay.png`）與 BookOut 的版面欄位中。輸出為 1-bit、300 DPI。
+- **通過（完成）規則**：必須已選圖、角色確認為「一致」（畫面上的「對」）。QA 有錯誤（缺口）也能完成，不必填原因：前端先問一次「還有 N 個缺口…確定完成嗎？」，後端把 `forced_pass_reason` 記成「使用者確認完成（N 個缺口）」（帶了 `force_reason` 就用它）。已通過的頁面在下列情況會無條件退回草稿（值真的有變才算）：修改 `line_detail` 或 `line_width_px`、儲存修改圖層、自動補線、改選另一張圖（同時清除角色確認）；角色標記為不一致也會退回。改紙張尺寸或列印方式則不同：背景重算線稿後，只有新的 QA 有錯誤的頁面才會退回草稿，沒有錯誤的頁面維持已通過。
+- **PDF 版面**：頁面依 `position` 排序，預設只匯出已通過的頁（`include=all` 為所有已選圖的頁）。家用（`home`）每頁就是紙張大小，四周留 10 mm 白邊；印刷廠（`print_shop`）每頁為紙張加每邊 3 mm 出血。PDF 本身沒有 CropBox，也沒有裁切標記；裁切框與 5 mm 安全區只出現在 QA 疊圖（`GET /pages/{id}/qa/overlay.png`，前端已不使用）與 BookOut 的版面欄位中。輸出為 1-bit、300 DPI。
 - **改尺寸規則**：`PATCH /books/{id}` 只能改成同比例群組的紙張（A4／A5／B5 同組；Letter 與 SQUARE_21 各自獨立），否則 422。改紙張或列印方式後，背景會重算所有已選圖頁面的線稿，修改圖層（相對座標）沿用；已通過的頁面只有在新 QA 有錯誤時才退回草稿。缺口偵測以像素計算，換尺寸後可能出現新的缺口（實測 A4→A5 多出 19 個），因此改尺寸後請重新檢查 QA 並再跑自動補線。
 
 ## 常用指令
@@ -273,8 +270,9 @@ $PY scripts/check_env.py                                    # 環境（ComfyUI �
 $PY scripts/sync_comfy_model_paths.py --dry-run             # 預覽 extra_model_paths.yaml
 $PY scripts/sync_comfy_model_paths.py --install-dir --create-dirs
 $PY scripts/preflight.py                                    # 每個 workflow 缺什麼
-$PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml --dry-run
-$PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml
+# Phase 1 的 route_a workflow 已封存到 archive/：跑舊實驗要把 workflows_dir 指過去
+APP_PATHS__WORKFLOWS_DIR=archive/comfy_workflows $PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml --dry-run
+APP_PATHS__WORKFLOWS_DIR=archive/comfy_workflows $PY experiments/run_matrix.py run experiments/configs/phase1_example.yaml
 $PY experiments/run_matrix.py summarize experiments/results/<run_dir>
 APP_COMFY__URL=http://127.0.0.1:8190 $VENV_ROOT/coloring-books/bin/uvicorn app.main:app --app-dir backend --port 8000
 ```

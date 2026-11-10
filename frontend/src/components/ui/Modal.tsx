@@ -25,17 +25,21 @@ export interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /** 進行中不能關（例如匯入中）：× 停用，Esc 與點背景不關閉。 */
+  closeDisabled?: boolean;
 }
 
 /**
  * Dialog 與 Drawer 共用：role=dialog、Esc／點背景關閉、焦點進入第一個可聚焦元素、
  * Tab 循環、關閉後焦點回到開啟前的元素。
  */
-export function Modal({ open, onClose, title, children, variant }: ModalProps & { variant: "dialog" | "drawer" }) {
+export function Modal({ open, onClose, title, children, variant, closeDisabled = false }: ModalProps & { variant: "dialog" | "drawer" }) {
   const panel = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
+  const closeDisabledRef = useRef(closeDisabled);
   useEffect(() => {
     onCloseRef.current = onClose;
+    closeDisabledRef.current = closeDisabled;
   });
   const titleId = useId();
   const downOnBackdrop = useRef(false);
@@ -55,7 +59,7 @@ export function Modal({ open, onClose, title, children, variant }: ModalProps & 
       if (!el) return;
       if (e.key === "Escape") {
         e.preventDefault();
-        onCloseRef.current();
+        if (!closeDisabledRef.current) onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -94,7 +98,7 @@ export function Modal({ open, onClose, title, children, variant }: ModalProps & 
       onClick={(e) => {
         const ok = downOnBackdrop.current && e.target === e.currentTarget;
         downOnBackdrop.current = false;
-        if (ok) onClose();
+        if (ok && !closeDisabled) onClose();
       }}
     >
       <section
@@ -108,7 +112,7 @@ export function Modal({ open, onClose, title, children, variant }: ModalProps & 
           <h2 id={titleId} className={styles.title}>
             {title}
           </h2>
-          <button type="button" aria-label="關閉" className={styles.close} onClick={onClose}>
+          <button type="button" aria-label="關閉" className={styles.close} disabled={closeDisabled} onClick={onClose}>
             <Icons.close size={18} />
           </button>
         </div>

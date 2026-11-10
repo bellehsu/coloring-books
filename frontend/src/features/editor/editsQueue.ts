@@ -29,7 +29,15 @@ export interface EditsEntry {
   shouldSeedFromLocal(): boolean;
   /** 設定寫入失敗的回報（目前掛載的元件換成自己的 toast）。 */
   setErrorHandler(fn: (error: unknown) => void): void;
+  /**
+   * 目前掛著的修線畫布登記的自動補線：補上的線會併進畫面上的筆畫，回傳補了幾條（失敗已提示過 → null）。
+   * 沒有畫布為 null。面板的「自動補線」有畫布時要走這裡，否則畫布下一次寫入會蓋掉補上的線。
+   */
+  readonly autofix: AutofixRunner | null;
+  setAutofix(fn: AutofixRunner | null): void;
 }
+
+export type AutofixRunner = () => Promise<number | null>;
 
 const registry = new WeakMap<QueryClient, Map<string, EditsEntry>>();
 const keyOf = (pageId: number, genId: number) => `${pageId}:${genId}`;
@@ -87,6 +95,7 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
   let latest: Stroke[] | null = null;
   let failed = false;
   let reportError: (error: unknown) => void = () => {};
+  let autofix: AutofixRunner | null = null;
 
   const queue: WriteQueue<QA> = createWriteQueue<QA>(
     (strokes) => api.put<QA>(`/pages/${pageId}/lineart/edits`, { generation_id: genId, strokes }),
@@ -138,6 +147,12 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
     shouldSeedFromLocal: () => latest !== null && (queue.busy() || failed),
     setErrorHandler(fn) {
       reportError = fn;
+    },
+    get autofix() {
+      return autofix;
+    },
+    setAutofix(fn) {
+      autofix = fn;
     },
   };
   map.set(key, entry);

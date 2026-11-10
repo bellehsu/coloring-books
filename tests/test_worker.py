@@ -34,7 +34,8 @@ def env(tmp_path):
 
 def add_gen(sessions, request_json=None, status=GenStatus.QUEUED, kind=GenKind.CHARACTER, pose_mode=None, **kw):
     rj = request_json or encode_request(
-        kind=kind, prompt="p", negative_prompt="n", seed=7, width=64, height=64, pose_mode=pose_mode
+        kind=kind, prompt="p", negative_prompt="n", seed=7, width=64, height=64,
+        extra={"pose_mode": pose_mode} if pose_mode is not None else None,
     )
     with sessions() as s:
         g = Generation(book_id=1, kind=kind, user_text="u", prompt="p", negative_prompt="n",
@@ -51,71 +52,78 @@ def get(sessions, gid):
 
 def test_encode_decode_roundtrip(tmp_path):
     storage = Storage(tmp_path)
-    text = encode_request(kind=GenKind.PAGE, prompt="中文", negative_prompt="n", seed=3, width=10, height=20,
-                          character_image="books/1/generations/1.png", structure_image="books/1/s.png",
-                          structure_strength=0.4)
-    assert json.loads(text)["kind"] == "page"
+    text = encode_request(kind=GenKind.POSE, prompt="中文", negative_prompt="", seed=3, width=10, height=20,
+                          character_image="books/1/generations/1.png", variation="facing left")
+    d = json.loads(text)
+    assert d == {"kind": "pose", "prompt": "中文", "negative_prompt": "", "seed": 3, "width": 10, "height": 20,
+                 "character_image": "books/1/generations/1.png", "variation": "facing left"}
+    assert "中文" in text  # ensure_ascii=False
     req = decode_request(text, storage)
-    assert req.kind == GenKind.PAGE and req.prompt == "中文" and req.seed == 3
-    assert (req.width, req.height, req.structure_strength) == (10, 20, 0.4)
+    assert req.kind == GenKind.POSE and req.prompt == "中文" and req.negative_prompt == "" and req.seed == 3
+    assert (req.width, req.height, req.variation) == (10, 20, "facing left")
     assert req.character_image == (tmp_path / "books/1/generations/1.png").resolve()
-    assert req.structure_image == (tmp_path / "books/1/s.png").resolve()
 
 
-def test_pose_mode_roundtrip_and_old_rows_are_fast(tmp_path):
+def test_encode_request_records_variation_and_extra(tmp_path):
+    # 變化語永遠寫（可為 null）；extra 併入 JSON 當作來源紀錄（pose_mode、background_style…）
     storage = Storage(tmp_path)
-    text = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=8, height=8,
-                          pose_mode="precise", variation="facing left")
-    d = json.loads(text)
-    assert d["pose_mode"] == "precise" and d["variation"] == "facing left"
-    req = decode_request(text, storage)
-    assert req.pose_mode == "precise" and req.variation == "facing left"
-    precise_plain = json.loads(encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1,
-                                              width=8, height=8, pose_mode="precise"))
-    assert "variation" in precise_plain and precise_plain["variation"] is None
-    # Phase 5 的舊列沒有 pose_mode → 快速
-    old = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="n", seed=1, width=8, height=8)
-    assert "pose_mode" not in json.loads(old)
-    req = decode_request(old, storage)
-    assert req.pose_mode == "fast" and req.variation is None
-
-
-def test_encode_decode_background_style_roundtrip(tmp_path):
-    storage = Storage(tmp_path)
+    d = json.loads(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1, width=8,
+                                  height=8))
+    assert "variation" in d and d["variation"] is None and d["character_image"] is None
+    for gone in ("structure_image", "structure_strength", "pose_mode", "background_style"):
+        assert gone not in d
     text = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="", seed=1, width=8, height=8,
-                          background_style="simple", background_style_requested="simple",
-                          variation="wide view")
+                          variation="wide view", extra={"background_style": "simple"})
     d = json.loads(text)
-    assert d["background_style"] == "simple" and d["background_style_requested"] == "simple"
-    assert d["variation"] == "wide view"
-    assert "pose_mode" not in d
+    assert d["background_style"] == "simple" and d["variation"] == "wide view"
     req = decode_request(text, storage)
-    assert req.background_style == "simple" and req.variation == "wide view"
-    # 退回 detailed：兩個風格都要記錄；沒有變化語也寫 variation=None
-    d = json.loads(encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="n", seed=1, width=8,
-                                  height=8, background_style="detailed", background_style_requested="simple"))
-    assert (d["background_style"], d["background_style_requested"]) == ("detailed", "simple")
-    assert "variation" in d and d["variation"] is None
+    assert req.kind == GenKind.BACKGROUND and req.variation == "wide view"
+    d = json.loads(encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                                  extra={"pose_mode": "precise"}))
+    assert d["pose_mode"] == "precise"
+    req = decode_request(json.dumps(d), storage)
+    assert req.kind == GenKind.POSE and req.variation is None
+    # extra 不能蓋掉核心欄位
+    with pytest.raises(ValueError):
+        encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                       extra={"kind": "page"})
 
 
-def test_decode_old_background_row_is_detailed(tmp_path):
+def test_decode_ignores_old_sdxl_keys_on_qwen_rows(tmp_path):
+    # 舊列（Phase 8）的簡潔背景／精準動作還帶 structure_* 與 background_style_requested：照常還原
     storage = Storage(tmp_path)
-    old = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="n", seed=1, width=8, height=8,
-                         structure_image="books/1/s.png", structure_strength=0.4)
-    d = json.loads(old)
-    assert "background_style" not in d and "background_style_requested" not in d and "variation" not in d
-    req = decode_request(old, storage)
-    assert req.background_style == "detailed" and req.variation is None
+    old = {"kind": "background", "prompt": "p", "negative_prompt": "", "seed": 1, "width": 8, "height": 8,
+           "character_image": None, "structure_image": None, "structure_strength": 0.0,
+           "background_style": "simple", "background_style_requested": "simple", "variation": "v"}
+    req = decode_request(json.dumps(old), storage)
+    assert req.kind == GenKind.BACKGROUND and req.variation == "v"
+    old_pose = {"kind": "pose", "prompt": "p", "negative_prompt": "", "seed": 1, "width": 8, "height": 8,
+                "character_image": "books/1/c.png", "structure_image": None, "structure_strength": 0.0,
+                "pose_mode": "precise", "variation": None}
+    req = decode_request(json.dumps(old_pose), storage)
+    assert req.kind == GenKind.POSE and req.character_image == (tmp_path / "books/1/c.png").resolve()
+
+
+@pytest.mark.parametrize("retired", [{"pose_mode": "fast"}, {"background_style": "detailed"}, {"kind": "page"}])
+def test_decode_request_rejects_retired(tmp_path, retired):
+    storage = Storage(tmp_path)
+    kind = {"pose_mode": GenKind.POSE, "background_style": GenKind.BACKGROUND}.get(next(iter(retired)),
+                                                                                   GenKind.CHARACTER)
+    d = json.loads(encode_request(kind=kind, prompt="p", negative_prompt="n", seed=1, width=8, height=8,
+                                  character_image="books/1/c.png"))
+    d.update(retired)
+    with pytest.raises(ValueError, match="這種生成已停用"):
+        decode_request(json.dumps(d), storage)
 
 
 def test_decode_null_images_and_bad_input(tmp_path):
     storage = Storage(tmp_path)
     req = decode_request(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1,
                                         width=1, height=1), storage)
-    assert req.character_image is None and req.structure_image is None
+    assert req.character_image is None
     with pytest.raises(ValueError):
-        decode_request(encode_request(kind=GenKind.PAGE, prompt="p", negative_prompt="", seed=1, width=1,
-                                      height=1, structure_image="../evil.png"), storage)
+        decode_request(encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=1,
+                                      height=1, character_image="../evil.png"), storage)
     with pytest.raises(ValueError):
         decode_request("not json", storage)
 
@@ -180,8 +188,8 @@ async def test_bad_request_json_marks_failed(env):
     worker, engine, sessions, _ = env
     bad = add_gen(sessions, request_json="{oops")
     outside = add_gen(sessions, request_json=encode_request(
-        kind=GenKind.PAGE, prompt="p", negative_prompt="", seed=1, width=1, height=1,
-        structure_image="../../etc/passwd"))
+        kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=1, height=1,
+        character_image="../../etc/passwd"))
     await worker.run_once()
     await worker.run_once()
     for gid in (bad, outside):
@@ -253,152 +261,73 @@ def test_queue_position_counts_running_job(env):
     assert worker.queue_position(queued) == 1
 
 
-def _qwen(sessions, **kw):
-    return add_gen(sessions, kind=GenKind.POSE, pose_mode="precise", **kw)
-
-
-def _sdxl(sessions, **kw):
-    return add_gen(sessions, kind=GenKind.BACKGROUND, **kw)
-
-
-def test_claim_order_matches_queue_position(env):
-    worker, _, sessions, _ = env
+def test_worker_runs_oldest_first(env):
+    worker, engine, sessions, _ = env
     t0 = datetime.now(timezone.utc)
-    ids = [
-        _sdxl(sessions, created_at=t0),
-        _qwen(sessions, created_at=t0 + timedelta(seconds=1)),
-        _sdxl(sessions, created_at=t0 + timedelta(seconds=2)),
-        _qwen(sessions, created_at=t0 + timedelta(seconds=3)),
-        add_gen(sessions, created_at=t0 + timedelta(seconds=4)),  # CHARACTER → sdxl
-    ]
-    worker.last_family = "qwen"
-    positions = {i: worker.queue_position(i) for i in ids}
-    assert sorted(positions.values()) == [0, 1, 2, 3, 4]
-    predicted = sorted(ids, key=positions.__getitem__)
-    assert predicted == [ids[1], ids[3], ids[0], ids[2], ids[4]]
-
-    claimed = []
-    remaining = list(ids)
-    while remaining:
-        # 沒有任務執行中 → 位置 0 的那筆必須是下一個被取走的
-        head = [i for i in remaining if worker.queue_position(i) == 0]
-        gen = worker._claim()
-        assert gen is not None and [gen.id] == head
-        claimed.append(gen.id)
-        remaining.remove(gen.id)
-        assert worker.queue_position(gen.id) == 0
-        # 執行中 → 其餘依序為 1..n，且位置 1 就是下一個被取走的
-        assert sorted(worker.queue_position(i) for i in remaining) == list(range(1, len(remaining) + 1))
-        worker._finish(gen.id, status=GenStatus.SUCCEEDED, finished_at=datetime.now(timezone.utc))
-    assert claimed == predicted
+    # 故意不依 id 順序建立：created_at 較早的先跑
+    late = add_gen(sessions, created_at=t0 + timedelta(seconds=2))
+    first = add_gen(sessions, created_at=t0)
+    mid = add_gen(sessions, created_at=t0 + timedelta(seconds=1))
+    assert [worker.queue_position(i) for i in (first, mid, late)] == [0, 1, 2]
+    order = []
+    for _ in range(3):
+        gid = worker._claim().id
+        order.append(gid)
+        worker._finish(gid, status=GenStatus.SUCCEEDED)
+    assert order == [first, mid, late]
     assert worker._claim() is None
 
 
-def test_running_job_positions_follow_running_family(env):
+def test_equal_created_at_breaks_tie_by_id(env):
     worker, _, sessions, _ = env
     t0 = datetime.now(timezone.utc)
-    q1 = _qwen(sessions, created_at=t0)
-    b2 = _sdxl(sessions, created_at=t0 + timedelta(seconds=1))
-    q3 = _qwen(sessions, created_at=t0 + timedelta(seconds=2))
-    assert worker._claim().id == q1
-    assert worker.last_family == "qwen"
-    assert worker.queue_position(q3) == 1 and worker.queue_position(b2) == 2
-    worker._finish(q1, status=GenStatus.SUCCEEDED)
-    assert worker._claim().id == q3
+    a = add_gen(sessions, created_at=t0)
+    b = add_gen(sessions, created_at=t0)
+    assert worker.queue_position(a) == 0 and worker.queue_position(b) == 1
+    assert worker._claim().id == a
 
 
-def test_overdue_job_claimed_first(env):
+def test_running_job_counts_in_positions(env):
     worker, _, sessions, _ = env
-    now = datetime.now(timezone.utc)
-    old_bg = _sdxl(sessions, created_at=now - timedelta(seconds=200))
-    q = _qwen(sessions, created_at=now - timedelta(seconds=5))
-    worker.last_family = "qwen"
-    assert worker.queue_position(old_bg) == 0 and worker.queue_position(q) == 1
-    assert worker._claim().id == old_bg
+    running = add_gen(sessions, status=GenStatus.RUNNING)
+    queued = add_gen(sessions)
+    assert worker.queue_position(queued) == 1
+    assert worker.queue_position(running) == 0
 
 
-def test_position_stable_while_running_and_claim_uses_plan_clock(env, monkeypatch):
-    """執行中「逾時」以上次取任務的時間判斷：顯示的第 1 位就是下一個被取走的。"""
+def test_cancel_retired_on_start(env):
     worker, _, sessions, _ = env
-    t0 = datetime.now(timezone.utc)
-    clock = [t0]
-    monkeypatch.setattr("app.services.worker.utcnow", lambda: clock[0])
-    p1 = _qwen(sessions, created_at=t0 - timedelta(seconds=110))
-    b = _sdxl(sessions, created_at=t0 - timedelta(seconds=100))
-    p2 = _qwen(sessions, created_at=t0 - timedelta(seconds=10))
-    assert worker._claim().id == p1
-    assert worker.plan_clock == t0
-    assert worker.queue_position(p2) == 1 and worker.queue_position(b) == 2
-    # P1 仍在執行，時間超過 max_wait_s：B 以現在時間看已逾時，但顯示不變
-    clock[0] = t0 + timedelta(seconds=100)
-    assert worker.queue_position(p2) == 1 and worker.queue_position(b) == 2
-    p3 = _qwen(sessions, created_at=t0 + timedelta(seconds=50))
-    assert [worker.queue_position(i) for i in (p2, p3, b)] == [1, 2, 3]
-    worker._finish(p1, status=GenStatus.SUCCEEDED)
-    assert worker.queue_position(p2) == 0  # 兩個任務之間也與下一次取任務一致
-    assert worker._claim().id == p2
-    assert worker.plan_clock == t0 + timedelta(seconds=100)
-    # 以新的 plan_clock 判斷：B 逾時，排在同家族的 P3 前面
-    assert worker.queue_position(b) == 1 and worker.queue_position(p3) == 2
-    worker._finish(p2, status=GenStatus.SUCCEEDED)
-    assert worker._claim().id == b
+    fast = add_gen(sessions, kind=GenKind.POSE, request_json=json.dumps({"kind": "pose", "pose_mode": "fast"}))
+    page = add_gen(sessions, kind=GenKind.PAGE, request_json=json.dumps({"kind": "page"}))
+    qwen = add_gen(sessions, kind=GenKind.POSE, pose_mode="precise")
+    done = add_gen(sessions, kind=GenKind.PAGE, request_json=json.dumps({"kind": "page"}),
+                   status=GenStatus.SUCCEEDED)
+    assert worker.cancel_retired() == 2
+    for gid in (fast, page):
+        g = get(sessions, gid)
+        assert g.status == GenStatus.CANCELLED and g.error == "這種生成已停用"
+    assert get(sessions, qwen).status == GenStatus.QUEUED
+    assert get(sessions, done).status == GenStatus.SUCCEEDED and get(sessions, done).error is None
+    assert worker.cancel_retired() == 0
 
 
-def test_idle_uses_current_time_and_resets_plan_clock(env, monkeypatch):
+async def test_start_cancels_retired_queued_rows(env):
     worker, _, sessions, _ = env
-    t0 = datetime.now(timezone.utc)
-    clock = [t0]
-    monkeypatch.setattr("app.services.worker.utcnow", lambda: clock[0])
-    assert worker.plan_clock is None
-    q = _qwen(sessions, created_at=t0)
-    assert worker._claim().id == q and worker.plan_clock == t0
-    worker._finish(q, status=GenStatus.SUCCEEDED)
-    assert worker._claim() is None
-    assert worker.plan_clock is None  # 佇列空 → 閒置，之後以現在時間判斷
-    clock[0] = t0 + timedelta(seconds=500)
-    b = _sdxl(sessions, created_at=t0 + timedelta(seconds=10))  # 已等 490 秒
-    q2 = _qwen(sessions, created_at=t0 + timedelta(seconds=400))
-    assert worker.queue_position(b) == 0 and worker.queue_position(q2) == 1
-    assert worker._claim().id == b
-    assert worker.plan_clock == t0 + timedelta(seconds=500)
+    page = add_gen(sessions, kind=GenKind.PAGE, request_json=json.dumps({"kind": "page"}))
+    await worker.start()
+    try:
+        assert get(sessions, page).status == GenStatus.CANCELLED
+    finally:
+        await worker.stop()
 
 
-def test_last_family_updates_on_claim(env):
-    worker, _, sessions, _ = env
-    assert worker.last_family is None
-    q = _qwen(sessions)
-    assert worker._claim().id == q
-    assert worker.last_family == "qwen"
-    worker._finish(q, status=GenStatus.SUCCEEDED)
-    b = _sdxl(sessions)
-    assert worker._claim().id == b
-    assert worker.last_family == "sdxl"
-    worker._finish(b, status=GenStatus.SUCCEEDED)
-    assert worker._claim() is None
-    assert worker.last_family == "sdxl"  # 佇列空時不改變
-
-
-def test_restart_requeued_running_job_sorts_oldest_first(env):
-    worker, _, sessions, _ = env
-    t0 = datetime.now(timezone.utc)
-    newer_ids = [_sdxl(sessions, created_at=t0 + timedelta(seconds=1)),
-                 _qwen(sessions, created_at=t0 + timedelta(seconds=2))]
-    interrupted = _qwen(sessions, status=GenStatus.RUNNING, started_at=t0, created_at=t0)
-    assert worker.last_family is None  # 重啟後不知道上一個家族
-    assert worker.requeue_interrupted() == 1
-    assert [worker.queue_position(i) for i in [interrupted, *newer_ids]] == [0, 1, 2]
-    assert worker._claim().id == interrupted
-
-
-def test_max_wait_s_passed_to_worker(env):
-    worker, engine, sessions, storage = env
-    assert worker.max_wait_s == 180.0
-    w = GenerationWorker(engine, sessions, storage, retry_backoff_s=0.05, max_wait_s=0)
-    t0 = datetime.now(timezone.utc)
-    b = _sdxl(sessions, created_at=t0 - timedelta(seconds=2))
-    _qwen(sessions, created_at=t0 - timedelta(seconds=1))
-    w.last_family = "qwen"
-    assert w._claim().id == b  # max_wait_s=0 → 任何等待都逾時 → 最舊優先
+async def test_retired_row_in_run_once_has_bare_error(env):
+    worker, engine, sessions, _ = env
+    gid = add_gen(sessions, kind=GenKind.POSE, request_json=json.dumps({"kind": "pose", "pose_mode": "fast"}))
+    assert await worker.run_once() is True
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED and g.error == "這種生成已停用"
+    assert not engine.requests
 
 
 async def _wait_status(sessions, gid, status, timeout=2.0):
@@ -559,3 +488,57 @@ async def test_worker_stores_largest_component_mask_for_pose(env):
     g = get(sessions, gid)
     out = np.asarray(Image.open(storage.abs(g.mask_path)))
     assert int((out > 0).sum()) == 30 * 30
+
+
+def _page(sessions, **kw):
+    from app.models import Page
+
+    with sessions() as s:
+        p = Page(book_id=1, position=1, **kw)
+        s.add(p)
+        s.commit()
+        return p.id
+
+
+def _page_row(sessions, pid):
+    from app.models import Page
+
+    with sessions() as s:
+        return s.get(Page, pid)
+
+
+async def test_autoselect_fills_empty_slot(env):
+    worker, engine, sessions, storage = env
+    pid = _page(sessions)
+    gid = add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid)
+    assert await worker.run_once() is True
+    assert _page_row(sessions, pid).background_generation_id == gid
+    pose = add_gen(sessions, kind=GenKind.POSE, page_id=pid)
+    assert await worker.run_once() is True
+    assert _page_row(sessions, pid).pose_generation_id == pose
+
+
+async def test_autoselect_skips_pose_without_mask(env):
+    worker, engine, sessions, storage = env
+    engine.pose_mask = False
+    pid = _page(sessions)
+    add_gen(sessions, kind=GenKind.POSE, page_id=pid)
+    await worker.run_once()
+    assert _page_row(sessions, pid).pose_generation_id is None
+
+
+async def test_autoselect_never_replaces(env):
+    worker, engine, sessions, storage = env
+    pid = _page(sessions)
+    first = add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid, status=GenStatus.SUCCEEDED,
+                    image_path="books/1/generations/1.png")
+    with sessions() as s:
+        from app.models import Page
+
+        pg = s.get(Page, pid)
+        pg.background_generation_id = first
+        s.add(pg)
+        s.commit()
+    add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid)
+    assert await worker.run_once() is True
+    assert _page_row(sessions, pid).background_generation_id == first

@@ -4,10 +4,9 @@ import json
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.models import Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
-from app.services.background_styles import BackgroundStyle
 from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
@@ -18,6 +17,7 @@ from app.services.qa import QA_MESSAGES, QAReport
 TitleStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 DescriptionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=800)]
 ScenePromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=800)]
+ActionPromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]
 ActionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 
 
@@ -107,7 +107,10 @@ class CharacterSelect(BaseModel):
     generation_id: int
 
 
+# 角色動作模式與背景風格：新列一律 precise／simple（Qwen）；fast／detailed 只出現在 Phase 9 以前的 SDXL 舊列，
+# GenerationOut 照舊回報，前端才能替舊縮圖標「快速」／「細緻」。
 PoseMode = Literal["precise", "fast"]
+BackgroundStyle = Literal["simple", "detailed"]
 
 
 def pose_mode_of(gen: Generation) -> PoseMode | None:
@@ -124,8 +127,8 @@ def pose_mode_of(gen: Generation) -> PoseMode | None:
 
 def background_style_of(gen: Generation) -> BackgroundStyle | None:
     """背景的實際風格（看 request_json，排隊中也算得出來）；其他 kind 為 None。
-    背景風格上線前的舊列沒有 background_style（或內容讀不懂）→ "detailed"。"""
-    if gen.kind != GenKind.BACKGROUND:
+    背景風格上線前的舊列沒有 background_style（或內容讀不懂）→ "detailed"。上傳的圖片沒有風格 → None。"""
+    if gen.kind != GenKind.BACKGROUND or gen.engine == "upload":
         return None
     try:
         style = json.loads(gen.request_json or "{}").get("background_style")
@@ -151,6 +154,7 @@ class GenerationOut(BaseModel):
     cutout_url: str | None  # pose：裁好的去背 RGBA 圖
     pose_mode: PoseMode | None  # pose：精準／快速；其他 kind 為 None
     background_style: BackgroundStyle | None  # background：實際風格（簡潔／細緻）；其他 kind 為 None
+    source: Literal["generated", "upload"]  # engine == "upload"：使用者上傳的圖
     error: str | None
     elapsed_s: float | None
     queue_position: int | None
@@ -182,6 +186,7 @@ class GenerationOut(BaseModel):
             cutout_url=f"/api/generations/{gen.id}/cutout" if gen.mask_path else None,
             pose_mode=pose_mode_of(gen),
             background_style=background_style_of(gen),
+            source="upload" if gen.engine == "upload" else "generated",
             error=gen.error,
             elapsed_s=gen.elapsed_s,
             queue_position=queue_position,
@@ -192,18 +197,15 @@ class GenerationOut(BaseModel):
 
 class PageCreate(BaseModel):
     scene_prompt: ScenePromptStr = ""
+    action_prompt: ActionPromptStr = ""
 
 
 class PageUpdate(BaseModel):
     scene_prompt: ScenePromptStr | None = None
-    controlnet_strength: float | None = Field(default=None, ge=0.0, le=0.6)
+    action_prompt: ActionPromptStr | None = None
+    controlnet_strength: float | None = None  # 構圖草圖已停用：舊前端會送，照收但忽略
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
-
-
-class PageCandidatesCreate(BaseModel):
-    count: int = Field(default=4, ge=1, le=8)
-    seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
 
 class PageOrder(BaseModel):
@@ -216,26 +218,13 @@ class SelectGeneration(BaseModel):
 
 class PoseCreate(BaseModel):
     action: ActionStr  # 動作文字（不帶場景描述）
-    mode: PoseMode = "precise"  # 精準（Qwen）或快速（SDXL）；前端一律明確送出
+    mode: str | None = None  # 舊前端會送精準／快速；忽略（只有 Qwen 一種）
 
 
 class BackgroundCreate(BaseModel):
-    style: BackgroundStyle = "simple"  # 要求的風格；有可用草圖或簡潔不可用時，排隊時改用細緻
+    model_config = ConfigDict(extra="ignore")
 
-
-class PoseModeStatus(BaseModel):
-    available: bool
-    missing: list[str]  # 不可用時缺的模型檔、節點類別或錯誤
-
-
-class PoseModesOut(BaseModel):
-    precise: PoseModeStatus
-    fast: PoseModeStatus
-
-
-class BackgroundStylesOut(BaseModel):
-    simple: PoseModeStatus
-    detailed: PoseModeStatus
+    style: str | None = None  # 舊前端會送簡潔／細緻；忽略（只有 Qwen 一種）
 
 
 class PagePlacement(BaseModel):
@@ -258,18 +247,14 @@ def lineart_url(page_id: int, key: str | None) -> str:
     return f"/api/pages/{page_id}/lineart" + (f"?v={key}" if key else "")
 
 
-def _version(dt: datetime) -> int:
-    """防快取用的版本號：微秒時間戳。"""
-    return round(dt.timestamp() * 1_000_000)
-
-
 class PageOut(BaseModel):
     id: int
     book_id: int
     position: int
     scene_prompt: str
-    controlnet_strength: float
-    sketch_url: str | None
+    action_prompt: str
+    controlnet_strength: float  # 構圖草圖已停用；舊資料的值照回
+    sketch_url: str | None  # 構圖草圖已停用：一律 None（欄位保留到前端移除）
     selected_generation_id: int | None
     background_generation_id: int | None
     pose_generation_id: int | None
@@ -309,12 +294,9 @@ class PageOut(BaseModel):
             book_id=page.book_id,
             position=page.position,
             scene_prompt=page.scene_prompt,
+            action_prompt=page.action_prompt,
             controlnet_strength=page.controlnet_strength,
-            sketch_url=(
-                f"/api/pages/{page.id}/sketch?v={_version(page.updated_at)}"
-                if page.sketch_path
-                else None
-            ),
+            sketch_url=None,
             selected_generation_id=page.selected_generation_id,
             background_generation_id=page.background_generation_id,
             pose_generation_id=page.pose_generation_id,
@@ -423,11 +405,16 @@ class AutofixOut(QAOut):
 
 
 class BatchSkip(BaseModel):
+    kind: Literal["background", "pose"]
     page_id: int
     position: int
     reason: str
 
 
-class BatchBackgroundsOut(BaseModel):
+class BatchMaterialsIn(BaseModel):
+    upload_page_ids: list[int] = Field(default_factory=list, max_length=500)  # 這些頁改用上傳圖片：不排背景
+
+
+class BatchMaterialsOut(BaseModel):
     queued: list[GenerationOut]
     skipped: list[BatchSkip]

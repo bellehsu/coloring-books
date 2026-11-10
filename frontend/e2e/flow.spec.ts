@@ -1,30 +1,24 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
-import { createBook, createPage, setCharacter, uniqueTitle } from "./seed";
+import { expect, test } from "@playwright/test";
+import {
+  createBook,
+  createPage,
+  getGenerations,
+  getPages,
+  grayPng,
+  ok,
+  setCharacter,
+  uniqueTitle,
+  uploadBackground,
+  type Generation,
+} from "./seed";
 
-const POSES = /\/api\/pages\/\d+\/poses$/;
+const COMPOSE = /\/api\/pages\/\d+\/compose$/;
+const PLACEMENT = /\/api\/pages\/\d+\/placement$/;
+/** 故事頁打的動作：中文自由文字，只寫動作、不寫地點（地點寫在場景）。 */
+const ACTION = "抱著一顆紅色的球開心地跳";
 
-/** 角色動作歷史裡 seed 的那張卡（成功後才有「選 seed N 為本頁角色動作」按鈕）。 */
-const poseCard = (page: Page, seed: number) =>
-  page
-    .getByRole("region", { name: "角色動作歷史" })
-    .getByRole("listitem")
-    .filter({ has: page.getByRole("button", { name: `選 seed ${seed} 為本頁角色動作`, exact: true }) });
-
-/** 按「產生角色動作」：送出的 mode 要是 expected；回傳新 generation 的 seed。 */
-async function generatePose(page: Page, expected: "precise" | "fast"): Promise<number> {
-  const sent = page.waitForRequest((r) => POSES.test(r.url()) && r.method() === "POST");
-  const answered = page.waitForResponse((r) => POSES.test(r.url()) && r.request().method() === "POST");
-  await page.getByRole("button", { name: "產生角色動作" }).click();
-  expect((await sent).postDataJSON()).toEqual({ action: "waving one hand", mode: expected });
-  const res = await answered;
-  expect(res.status()).toBe(202);
-  const gen = (await res.json()) as { seed: number; pose_mode: string };
-  expect(gen.pose_mode).toBe(expected);
-  return gen.seed;
-}
-
-test("完整流程：建書 → 角色 → 背景 → 角色動作 → 合成 → 修線 → QA 通過 → 匯出 PDF", async ({ page }) => {
+test("完整流程：建書 → 角色 → 故事 → 產生全部素材 → 構圖（拖曳自動合成）→ 補線 → 完成 → 匯出 PDF", async ({ page }) => {
   const title = uniqueTitle("e2e 小貓");
 
   // ---- 我的繪本：建立 A4 印刷廠的書 ----
@@ -36,172 +30,189 @@ test("完整流程：建書 → 角色 → 背景 → 角色動作 → 合成 �
   await dialog.getByRole("radio", { name: /印刷廠/ }).click();
   await dialog.getByRole("button", { name: /建立，接著設定角色/ }).click();
 
-  // ---- 角色工作室：產生 4 張 → 選一張 → 設為本書角色 ----
+  // ---- 角色：一次產生一張 → 按鈕改叫「再產生一張」→ 選它 → 用這個角色，開始寫故事 ----
   await expect(page).toHaveURL(/\/books\/\d+\/character$/);
-  await page.getByLabel("描述角色的外型").fill("a round cat with big ears");
-  await page.getByRole("button", { name: "產生 4 張" }).click();
+  const bookId = Number(/\/books\/(\d+)\//.exec(page.url())![1]);
+  await page.getByLabel("描述角色的外型").fill("一隻圓滾滾的橘色小貓，大耳朵");
+  await page.getByRole("button", { name: "產生角色" }).click();
   const charCards = page.getByRole("button", { name: /^選 seed \d+$/ });
-  await expect(charCards).toHaveCount(4);
-  await charCards.nth(1).click();
-  await expect(charCards.nth(1)).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "設為本書角色，開始做頁面" }).click();
+  await expect(charCards).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "再產生一張" })).toBeEnabled();
+  await charCards.first().click();
+  await expect(charCards.first()).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "用這個角色，開始寫故事 →" }).click();
 
-  // ---- 頁面編輯器：新增頁 → 背景（畫方框 → 產生背景 → 選用）----
+  // ---- 故事：新增一頁，寫場景與中文動作 → 產生全部素材 → 縮圖出現 ----
+  await expect(page).toHaveURL(new RegExp(`/books/${bookId}/story$`));
+  await page.getByRole("button", { name: "＋ 新增一頁" }).click();
+  const row = page.getByRole("article", { name: "第 1 頁" });
+  await row.getByRole("textbox", { name: "第 1 頁場景" }).fill("陽光公園，有一棵大樹和小草叢");
+  const action = row.getByRole("textbox", { name: "第 1 頁角色動作" });
+  await action.fill(ACTION);
+  await expect(action).toHaveAccessibleDescription(/^只寫動作，地點寫在背景的場景描述/);
+  await action.blur();
+  const generateAll = page.getByRole("button", { name: "產生全部素材（還有 2 張）" });
+  await expect(generateAll).toBeEnabled();
+  const batched = page.waitForResponse((r) => r.url().endsWith(`/api/books/${bookId}/materials/batch`));
+  await generateAll.click();
+  expect((await batched).status()).toBe(202);
+  await expect(row.getByRole("img", { name: "第 1 頁背景" })).toBeVisible();
+  await expect(row.getByRole("img", { name: "第 1 頁角色動作" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "產生全部素材（還有 0 張）" })).toBeDisabled();
+  // 動作原樣（中文、不翻譯）送進角色動作
+  const [pose] = await getGenerations(page.request, bookId, "pose");
+  expect(pose.user_text).toBe(ACTION);
+
+  // ---- 頁面 ① 構圖：素材已自動選用 → 開頁自動合成；拖曳角色 → 放開後再自動合成 ----
+  await page.getByRole("link", { name: /頁面 0 \/ 1/ }).click();
   await expect(page).toHaveURL(/\/books\/\d+\/editor/);
-  await page.getByRole("button", { name: "新增頁面" }).click();
-  // 分頁名稱開頭比對：QA 分頁有缺口時名稱後面會接「1 個缺口」
-  const tab = (name: string) => page.getByRole("tab", { name: new RegExp(`^${name}`) });
-  await expect(tab("背景")).toHaveAttribute("aria-selected", "true");
-  for (const name of ["合成", "線稿與修線", "QA 檢查"]) await expect(tab(name)).toHaveAttribute("aria-disabled", "true");
-  const canvas = page.getByRole("img", { name: /構圖畫板/ });
-  await expect(canvas).toBeVisible();
-  await page.getByLabel("場景描述").fill("in a sunny park");
-  await page.getByRole("button", { name: "方框" }).click();
-  const box = (await canvas.boundingBox())!;
-  // 記錄順序：草圖 PUT 完成、背景 POST 送出。畫完立刻按產生（不等 1 秒 debounce），
-  // 產生必須先把草圖存好，後端在 POST 當下讀 sketch_path。
-  const order: string[] = [];
-  page.on("requestfinished", (r) => {
-    if (/\/api\/pages\/\d+\/sketch$/.test(r.url()) && r.method() === "PUT") order.push("sketch saved");
-  });
-  page.on("request", (r) => {
-    if (/\/api\/pages\/\d+\/backgrounds$/.test(r.url()) && r.method() === "POST") order.push("background sent");
-  });
-  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.6);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.75, { steps: 5 });
-  await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.9, { steps: 5 });
-  await page.mouse.up();
-  await page.getByRole("button", { name: "產生背景" }).click();
-  const bgCards = page.getByRole("button", { name: /^選 seed \d+ 為本頁背景$/ });
-  await expect(bgCards).toHaveCount(1);
-  expect(order).toEqual(["sketch saved", "background sent"]);
-  await bgCards.first().click();
-  await expect(bgCards.first()).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("region", { name: "背景歷史" }).getByText("使用中")).toBeVisible();
-  await expect(page.getByRole("img", { name: "背景圖" })).toBeVisible();
-
-  // ---- 角色：點「揮手」→ 預設「精準」產生一張 → 切到「快速」再產生一張 → 選用精準那張（去背預覽）----
-  await tab("角色").click();
-  await page.getByRole("button", { name: "揮手" }).click();
-  await expect(page.getByLabel("動作描述")).toHaveValue("waving one hand");
-  await expect(page.getByRole("button", { name: "揮手（已加入）" })).toBeDisabled();
-  const poseModes = page.getByRole("radiogroup", { name: "產生方式" });
-  const precise = poseModes.getByRole("radio", { name: "精準" });
-  const fast = poseModes.getByRole("radio", { name: "快速" });
-  await expect(precise).toHaveAttribute("aria-checked", "true");
-  await expect(precise).toBeEnabled();
-  await expect(fast).toHaveAttribute("aria-checked", "false");
-  await expect(poseModes).toHaveAccessibleDescription("約 30 秒，角色最像、動作最準");
-  const preciseSeed = await generatePose(page, "precise");
-  await fast.click();
-  await expect(fast).toHaveAttribute("aria-checked", "true");
-  await expect(poseModes).toHaveAccessibleDescription("約 10 秒，可能和角色有落差");
-  expect(await page.evaluate(() => localStorage.getItem("coloring.poseMode"))).toBe("fast");
-  const fastSeed = await generatePose(page, "fast");
-  const poseCards = page.getByRole("button", { name: /^選 seed \d+ 為本頁角色動作$/ });
-  await expect(poseCards).toHaveCount(2);
-  await expect(poseCard(page, preciseSeed).getByText("精準", { exact: true })).toBeVisible();
-  await expect(poseCard(page, fastSeed).getByText("快速", { exact: true })).toBeVisible();
-  const pickPrecise = poseCard(page, preciseSeed).getByRole("button", { name: /^選 seed \d+ 為本頁角色動作$/ });
-  await pickPrecise.click();
-  await expect(pickPrecise).toHaveAttribute("aria-pressed", "true");
-  await expect(poseCard(page, preciseSeed).getByText("使用中")).toBeVisible();
-  await expect(page.getByRole("img", { name: "角色動作（去背預覽）" })).toBeVisible();
-
-  // ---- 合成：拖曳＋方向鍵移動角色 → 立刻確認合成（位置先寫完才合成）----
-  await expect(tab("線稿與修線")).toHaveAttribute("aria-disabled", "true");
-  await tab("合成").click();
+  await expect(page.getByRole("tab", { name: "① 構圖" })).toHaveAttribute("aria-selected", "true");
+  const status = page.getByRole("status").filter({ hasText: /線稿已自動更新|更新中/ });
+  await expect(status).toHaveText("✓ 線稿已自動更新");
   const character = page.getByRole("group", { name: "角色位置" });
   await expect(character).toHaveAttribute("data-ready", "true");
-  const readout = page.getByText(/^水平 \d+%・垂直 \d+%・高度 \d+%$/);
-  await expect(readout).toHaveText("水平 50%・垂直 66%・高度 60%");
-  // 滑鼠拖曳：往下 2%（舞台高）
+
   const overlay = (await page.getByTestId("compose-overlay").boundingBox())!;
   const start = (await character.boundingBox())!;
   const [sx, sy] = [start.x + start.width / 2, start.y + start.height / 2];
+  const placed = page.waitForRequest((r) => PLACEMENT.test(r.url()) && r.method() === "PUT");
+  const composed = page.waitForResponse((r) => COMPOSE.test(r.url()) && r.request().method() === "POST");
   await page.mouse.move(sx, sy);
   await page.mouse.down();
-  await page.mouse.move(sx, sy + overlay.height * 0.01, { steps: 3 });
-  await page.mouse.move(sx, sy + overlay.height * 0.02, { steps: 3 });
+  await page.mouse.move(sx - overlay.width * 0.02, sy + overlay.height * 0.01, { steps: 4 });
+  await page.mouse.move(sx - overlay.width * 0.03, sy + overlay.height * 0.02, { steps: 4 });
   await page.mouse.up();
-  await expect(readout).toHaveText("水平 50%・垂直 68%・高度 60%");
-  // 位置 PUT 故意變慢：確認合成必須等最後一次位置寫完才送出（合成結果＝畫面上的位置）
-  const events: string[] = [];
-  await page.route(/\/api\/pages\/\d+\/placement$/, async (route) => {
-    await new Promise((r) => setTimeout(r, 400));
-    await route.continue();
-  });
-  page.on("requestfinished", (r) => {
-    if (/\/api\/pages\/\d+\/placement$/.test(r.url()) && r.method() === "PUT")
-      events.push(`placement ${(r.postDataJSON() as { cx: number }).cx.toFixed(2)}`);
-  });
-  page.on("request", (r) => {
-    if (/\/api\/pages\/\d+\/compose$/.test(r.url()) && r.method() === "POST") events.push("compose sent");
-  });
-  await character.focus();
-  for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowLeft");
-  await expect(readout).toHaveText("水平 47%・垂直 68%・高度 60%");
-  const composing = page.waitForResponse((r) => /\/api\/pages\/\d+\/compose$/.test(r.url()));
-  await page.getByRole("button", { name: "確認合成" }).click();
-  const composed = await composing;
-  expect(composed.status()).toBe(200);
-  expect(events.at(-1)).toBe("compose sent");
-  expect(events.at(-2)).toBe("placement 0.47");
-  // 合成當下頁面的位置（後端用它合成）＝畫面上的位置，且已有選定的合成圖
-  const composedPage = (await composed.json()) as {
-    placement: { cx: number; cy: number; height: number; flip: boolean };
-    selected_generation_id: number | null;
-  };
-  expect(composedPage.placement).toMatchObject({ cx: 0.47, height: 0.6, flip: false });
-  expect(composedPage.placement.cy).toBeCloseTo(0.68, 2);
-  expect(composedPage.selected_generation_id).not.toBeNull();
-  await page.unroute(/\/api\/pages\/\d+\/placement$/);
+  const sent = (await placed).postDataJSON() as { cx: number; cy: number };
+  expect(sent.cx).toBeCloseTo(0.47, 2);
+  expect(sent.cy).toBeCloseTo(0.68, 2);
+  const after = (await (await composed).json()) as { placement: { cx: number }; selected_generation_id: number | null };
+  expect(after.placement.cx).toBeCloseTo(0.47, 2);
+  expect(after.selected_generation_id).not.toBeNull();
+  await expect(status).toHaveText("✓ 線稿已自動更新");
 
-  // ---- 確認後自動切到線稿與修線：看到紅圈 → 自動補線 → 缺口 0 ----
-  await expect(tab("線稿與修線")).toHaveAttribute("aria-selected", "true");
-  const lineStatus = page.getByRole("status").filter({ hasText: /缺口/ });
-  await expect(lineStatus).toHaveText(/1 個缺口會讓塗色漏出去（紅圈）/);
+  // ---- ② 補線：橘色圈 → 自動補線 → 線條都接好了 → 角色對 → 完成這一頁 ----
+  await page.getByRole("button", { name: "下一步：補線 →" }).click();
+  await expect(page.getByRole("tab", { name: /^② 補線/ })).toHaveAttribute("aria-selected", "true");
+  const finish = page.getByTestId("finish-panel");
+  await expect(finish.getByRole("status").filter({ hasText: "還有 1 個缺口" })).toBeVisible();
   await expect(page.locator('[data-part="gap"]')).toHaveCount(1);
-  await expect(tab("QA 檢查")).toContainText("1");
-  await page.getByRole("toolbar", { name: "修線工具" }).getByRole("button", { name: "自動補線" }).click();
-  await expect(page.getByText("已補 1 條")).toBeVisible();
-  await expect(page.getByText("沒有缺口")).toBeVisible();
+  await finish.getByRole("button", { name: "自動補線" }).click();
+  await expect(finish.getByRole("status").filter({ hasText: "✓ 線條都接好了" })).toBeVisible();
   await expect(page.locator('[data-part="gap"]')).toHaveCount(0);
-
-  // ---- QA：角色一致 → 標為通過 ----
-  await tab("QA 檢查").click();
-  const qa = page.getByTestId("qa-panel");
-  await expect(qa.getByText("線條都有封閉")).toBeVisible();
-  await qa.getByRole("radio", { name: "一致", exact: true }).click();
-  await expect(qa.getByRole("radio", { name: "一致", exact: true })).toHaveAttribute("aria-checked", "true");
-  await qa.getByRole("button", { name: "標為通過" }).click();
-  await expect(qa.getByRole("button", { name: /已通過/ })).toBeVisible();
+  const done = finish.getByRole("button", { name: "完成這一頁 ✓" });
+  await expect(done).toBeDisabled();
+  await finish.getByRole("button", { name: "對", exact: true }).click();
+  await expect(finish.getByRole("button", { name: "對", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await done.click();
+  await expect(finish.getByText("已完成")).toBeVisible();
+  await expect(finish.getByRole("button", { name: "取消完成" })).toBeVisible();
+  // 頁面清單的標籤變成「完成」
+  const film = page.getByRole("complementary", { name: "頁面" });
+  await expect(film.getByRole("listitem").first().getByText("完成", { exact: true })).toBeVisible();
 
   // ---- 匯出抽屜：下載 PDF ----
   await page.getByRole("button", { name: "匯出 PDF", exact: true }).click();
   const drawer = page.getByRole("dialog", { name: "匯出 PDF" });
-  await expect(drawer.getByTestId("passed-count")).toHaveText("1");
   const downloading = page.waitForEvent("download");
   await drawer.getByRole("button", { name: "下載 PDF（1 頁）" }).click();
   const download = await downloading;
   expect(download.suggestedFilename()).toMatch(/\.pdf$/);
   const bytes = await readFile((await download.path())!);
   expect(bytes.subarray(0, 4).toString("latin1")).toBe("%PDF");
-  await expect(drawer.getByRole("status")).toContainText("已產生");
 });
 
-test("沒設角色：不能產生角色動作，後端的 409 訊息會顯示在畫面上", async ({ page, request }) => {
+test("構圖上傳背景圖：4000×800 的寬圖裁成頁面比例，縮圖有「上傳」標記", async ({ page, request }) => {
+  const book = await createBook(request, uniqueTitle("e2e 上傳背景"));
+  const p = await createPage(request, book.id, "森林");
+  await page.goto(`/books/${book.id}/editor?page=${p.id}`);
+  await expect(page.getByRole("tab", { name: "① 構圖" })).toHaveAttribute("aria-selected", "true");
+
+  const uploaded = page.waitForResponse((r) => r.url().endsWith(`/api/pages/${p.id}/backgrounds/upload`));
+  await page.getByLabel("上傳背景圖").setInputFiles({ name: "wide.png", mimeType: "image/png", buffer: grayPng(4000, 800) });
+  expect((await uploaded).status()).toBe(201);
+
+  const thumbs = page.getByRole("radiogroup", { name: "選擇背景" });
+  await expect(thumbs.getByRole("radio", { name: "背景第 1 張（上傳的圖片）" })).toHaveAttribute("aria-checked", "true");
+  await expect(thumbs.getByText("上傳", { exact: true })).toBeVisible();
+  await expect(page.getByText("上傳的圖片", { exact: true })).toBeVisible();
+
+  // 舞台顯示裁好的背景（頁面比例，不是原圖的 5:1），還沒有角色動作
+  const bg = page.getByRole("img", { name: "背景圖" });
+  await expect(bg).toBeVisible();
+  await expect.poll(() => bg.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
+  const [w, h] = await bg.evaluate((el: HTMLImageElement) => [el.naturalWidth, el.naturalHeight]);
+  expect(w / h).toBeCloseTo(864 / 1216, 2);
+  await expect(page.getByRole("status").filter({ hasText: "先選好角色動作" })).toBeVisible();
+  const [pg] = await getPages(request, book.id);
+  expect(pg.background_generation_id).not.toBeNull();
+  const [gen] = await getGenerations(request, book.id, "background");
+  expect(gen.source).toBe("upload");
+});
+
+test("產生全部素材後馬上打開頁面：素材完成時舞台自動填上並合成，不用重新整理", async ({ page, request }) => {
+  const book = await createBook(request, uniqueTitle("e2e 先開頁面"));
+  await setCharacter(request, book.id);
+  const p = await createPage(request, book.id, "陽光公園", "揮手");
+  // 先在另一本書排幾張角色圖（假後端每張 0.3 秒，worker 依序做）：保證頁面打開時素材還沒好
+  const blocker = await createBook(request, uniqueTitle("e2e 排隊用"));
+  for (let i = 0; i < 8; i++) {
+    await ok(await request.post(`/api/books/${blocker.id}/character/candidates`, { data: { description: "一隻圓圓的小貓" } }));
+  }
+  await page.goto(`/books/${book.id}/story`);
+  const batched = page.waitForResponse((r) => r.url().endsWith(`/api/books/${book.id}/materials/batch`));
+  await page.getByRole("button", { name: "產生全部素材（還有 2 張）" }).click();
+  expect((await batched).status()).toBe(202);
+
+  await page.goto(`/books/${book.id}/editor?page=${p.id}`);
+  await expect(page.getByText("背景與角色動作產生中…")).toBeVisible();
+  // worker 完成後自動選用：編輯器自己重抓頁面 → 舞台出現 → 自動合成
+  const status = page.getByRole("status").filter({ hasText: /線稿已自動更新|更新中/ });
+  await expect(status).toHaveText("✓ 線稿已自動更新", { timeout: 20_000 });
+  await expect(page.getByRole("group", { name: "角色位置" })).toHaveAttribute("data-ready", "true");
+  const [pg] = await getPages(request, book.id);
+  expect(pg.selected_generation_id).not.toBeNull();
+});
+
+test("上傳背景圖一路做到補線：角色動作自動選用 → 上傳 → 自動合成 → ② 補線完成面板", async ({ page, request }) => {
+  const book = await createBook(request, uniqueTitle("e2e 上傳到補線"));
+  await setCharacter(request, book.id);
+  const p = await createPage(request, book.id, "", "揮手");
+  const pose = await ok<Generation>(await request.post(`/api/pages/${p.id}/poses`, { data: { action: "揮手" } }));
+  await expect
+    .poll(async () => (await getPages(request, book.id)).find((x) => x.id === p.id)?.pose_generation_id, { timeout: 20_000 })
+    .toBe(pose.id);
+  const uploaded = await uploadBackground(request, p.id);
+  expect(uploaded.background_generation_id).not.toBeNull();
+  expect(uploaded.pose_generation_id).toBe(pose.id);
+
+  await page.goto(`/books/${book.id}/editor?page=${p.id}`);
+  const thumbs = page.getByRole("radiogroup", { name: "選擇背景" });
+  await expect(thumbs.getByRole("radio", { name: "背景第 1 張（上傳的圖片）" })).toHaveAttribute("aria-checked", "true");
+  const status = page.getByRole("status").filter({ hasText: /線稿已自動更新|更新中/ });
+  await expect(status).toHaveText("✓ 線稿已自動更新");
+  const [pg] = await getPages(request, book.id);
+  expect(pg.selected_generation_id).not.toBeNull();
+
+  await page.getByRole("button", { name: "下一步：補線 →" }).click();
+  await expect(page.getByRole("tab", { name: /^② 補線/ })).toHaveAttribute("aria-selected", "true");
+  const finish = page.getByTestId("finish-panel");
+  await expect(finish).toBeVisible();
+  await expect(finish.getByText("角色看起來對嗎？")).toBeVisible();
+  await expect(finish.getByRole("button", { name: "完成這一頁 ✓" })).toBeVisible();
+  await expect(page.getByRole("toolbar", { name: "修線工具" })).toBeVisible();
+});
+
+test("沒設角色：角色動作「換一張」停用；前端資料過期時，後端的 409 訊息照樣顯示", async ({ page, request }) => {
   const book = await createBook(request, uniqueTitle("e2e 沒有角色"));
-  const p = await createPage(request, book.id, "in a garden");
+  const p = await createPage(request, book.id, "花園", "揮手");
 
-  // 介面先擋：角色分頁停用（網址指定也退回背景）並提示
-  await page.goto(`/books/${book.id}/editor?page=${p.id}&mode=pose`);
+  await page.goto(`/books/${book.id}/editor?page=${p.id}`);
   await expect(page.getByText("這本繪本還沒設定角色，不能產生角色動作。")).toBeVisible();
-  await expect(page.getByRole("tab", { name: "角色", exact: true })).toHaveAttribute("aria-disabled", "true");
-  await expect(page.getByRole("tab", { name: "背景", exact: true })).toHaveAttribute("aria-selected", "true");
+  const regenerate = page.getByRole("button", { name: "換一張角色動作" });
+  await expect(regenerate).toBeDisabled();
+  await expect(page.getByRole("link", { name: "先設定角色" })).toBeVisible();
 
-  // 前端資料過期（例如另一個分頁的狀態）時仍可能送出：讓畫面以為已有角色，後端的 409 中文訊息要原樣顯示
+  // 讓畫面以為已有角色（例如另一個分頁剛設定）：按下去後端回 409，中文訊息要原樣顯示
   await page.route(`**/api/books/${book.id}`, async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     const res = await route.fetch();
@@ -209,43 +220,9 @@ test("沒設角色：不能產生角色動作，後端的 409 訊息會顯示在
     await route.fulfill({ response: res, json: { ...json, character_generation_id: 999_999 } });
   });
   await page.reload();
-  await expect(page.getByRole("tab", { name: "角色", exact: true })).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("button", { name: "揮手" }).click();
-  const generate = page.getByRole("button", { name: "產生角色動作" });
-  await expect(generate).toBeEnabled();
+  await expect(regenerate).toBeEnabled();
   const rejected = page.waitForResponse((r) => r.url().endsWith(`/api/pages/${p.id}/poses`));
-  await generate.click();
+  await regenerate.click();
   expect((await rejected).status()).toBe(409);
   await expect(page.getByRole("alert").filter({ hasText: "請先設定角色" })).toBeVisible();
-});
-
-test("精準模式不可用：「精準」停用並顯示缺少什麼，改用「快速」產生", async ({ page, request }) => {
-  const book = await createBook(request, uniqueTitle("e2e 精準不可用"));
-  await setCharacter(request, book.id);
-  const p = await createPage(request, book.id, "in a park");
-  // 後端快取的 preflight（假後端不跑 preflight → 兩種都可用）：在瀏覽器這端改成精準不可用
-  const missing = ["qwen-image-edit-2511-Q4_K_M.gguf", "UnetLoaderGGUF"];
-  await page.route("**/api/system/pose-modes", (route) =>
-    route.fulfill({
-      json: { precise: { available: false, missing }, fast: { available: true, missing: [] } },
-    }),
-  );
-  await page.goto(`/books/${book.id}/editor?page=${p.id}&mode=pose`);
-  await expect(page.getByRole("tab", { name: "角色", exact: true })).toHaveAttribute("aria-selected", "true");
-
-  const poseModes = page.getByRole("radiogroup", { name: "產生方式" });
-  const precise = poseModes.getByRole("radio", { name: "精準" });
-  const fast = poseModes.getByRole("radio", { name: "快速" });
-  const reason = `精準模式缺少：${missing.join("、")}`;
-  await expect(precise).toBeDisabled();
-  await expect(precise).toHaveAttribute("aria-checked", "false");
-  await expect(fast).toHaveAttribute("aria-checked", "true");
-  await expect(page.getByText(reason)).toBeVisible();
-  await expect(poseModes).toHaveAccessibleDescription(`約 10 秒，可能和角色有落差 ${reason}`);
-  // 改用快速只是畫面上的退路：不改寫記住的選擇（精準恢復後會回到精準）
-  expect(await page.evaluate(() => localStorage.getItem("coloring.poseMode"))).toBeNull();
-
-  await page.getByRole("button", { name: "揮手" }).click();
-  const seed = await generatePose(page, "fast");
-  await expect(poseCard(page, seed).getByText("快速", { exact: true })).toBeVisible();
 });

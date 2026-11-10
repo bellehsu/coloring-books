@@ -1,4 +1,4 @@
-/* 頁面清單（草圖左欄）。≤ 760 px 改橫向捲動。 */
+/* 頁面清單（草圖左欄）。≤ 760 px 改橫向捲動；≤ 640 px（compact）改成頂端的「第 N 頁 / M ▾」下拉選單。 */
 .film {
   grid-area: pages;
   background: var(--surface);
@@ -49,9 +49,6 @@
 .fill {
   height: 6px;
   background: var(--ok);
-}
-.all {
-  width: 100%;
 }
 .list {
   margin: 0;
@@ -180,12 +177,6 @@
   line-height: 1.6;
   color: var(--muted-2);
 }
-.confirmNote {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--muted);
-}
 .confirmActions {
   display: flex;
   justify-content: flex-end;
@@ -206,4 +197,58 @@
     flex: 0 0 200px;
     min-width: 0;
   }
+}
+
+/* 手機寬度（compact）：一列「第 N 頁 / M ▾」下拉選單＋這一頁的狀態＋更多動作＋新增 */
+.film[data-compact="true"] {
+  padding: 6px 16px 10px;
+  gap: 6px;
+}
+.selectWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  min-height: 44px;
+  margin-left: -8px;
+  padding: 0 30px 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.select:hover {
+  background: var(--bg);
+}
+.select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.selectChev {
+  position: absolute;
+  right: 8px;
+  transform: rotate(90deg);
+  color: var(--muted-2);
+  pointer-events: none;
+}
+.curStatus {
+  display: flex;
+}
+.tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tools .menuWrap {
+  padding: 0;
 }

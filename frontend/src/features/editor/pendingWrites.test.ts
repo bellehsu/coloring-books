@@ -4,7 +4,7 @@ import { qk } from "@/api/hooks";
 import type { Stroke } from "@/lib/strokes";
 import { editsQueueFor } from "./editsQueue";
 import { hasPendingWrites, onBeforeUnload, whenBookWritesIdle } from "./pendingWrites";
-import { sketchSaverFor } from "./sketchSaver";
+import { placementSaverFor } from "./placementSaver";
 
 const s = (x: number): Stroke => ({ op: "draw", width_px: 11, points: [[x, x]] });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -16,8 +16,6 @@ let gates: { url: string; method: string; release: (status?: number) => void }[]
 
 beforeEach(() => {
   gates = [];
-  URL.createObjectURL = vi.fn(() => "blob:x");
-  URL.revokeObjectURL = vi.fn();
   vi.stubGlobal(
     "fetch",
     vi.fn(
@@ -33,6 +31,8 @@ beforeEach(() => {
   );
 });
 afterEach(() => vi.unstubAllGlobals());
+
+const at = { cx: 0.5, cy: 0.6, height: 0.5, flip: false };
 
 const releaseAll = async (status = 200) => {
   for (const g of gates.splice(0)) g.release(status);
@@ -54,9 +54,9 @@ describe("hasPendingWrites／onBeforeUnload", () => {
     expect(e.defaultPrevented).toBe(false);
   });
 
-  it("草圖存檔送出中 → true，攔下離開；完成後 false", async () => {
+  it("位置存檔送出中 → true，攔下離開；完成後 false", async () => {
     const qc = new QueryClient();
-    sketchSaverFor(qc).save(1, 1, new Blob(["x"]));
+    placementSaverFor(qc).savePlacement(1, at);
     expect(hasPendingWrites(qc)).toBe(true);
     const e = event();
     onBeforeUnload(qc, e);
@@ -65,18 +65,9 @@ describe("hasPendingWrites／onBeforeUnload", () => {
     expect(hasPendingWrites(qc)).toBe(false);
   });
 
-  it("草圖畫布有未存變更（debounce 還沒到）→ true", () => {
-    const qc = new QueryClient();
-    let dirty = true;
-    sketchSaverFor(qc).register(1, 1, { flush: () => {}, dirty: () => dirty });
-    expect(hasPendingWrites(qc)).toBe(true);
-    dirty = false;
-    expect(hasPendingWrites(qc)).toBe(false);
-  });
-
   it("修線佇列忙碌 → true；最後一次寫入失敗 → 仍是 true", async () => {
     const qc = new QueryClient();
-    sketchSaverFor(qc); // 先建 saver 也不影響
+    placementSaverFor(qc); // 先建 saver 也不影響
     const e = editsQueueFor(qc, 1, 10, 7);
     e.push([s(0.1)]);
     expect(hasPendingWrites(qc)).toBe(true);
@@ -89,19 +80,19 @@ describe("hasPendingWrites／onBeforeUnload", () => {
     expect(hasPendingWrites(qc)).toBe(false);
   });
 
-  it("草圖存檔失敗 → true", async () => {
+  it("位置存檔失敗 → true", async () => {
     const qc = new QueryClient();
-    sketchSaverFor(qc).save(1, 1, new Blob(["x"]));
+    placementSaverFor(qc).savePlacement(1, at);
     await releaseAll(500);
     expect(hasPendingWrites(qc)).toBe(true);
   });
 });
 
 describe("whenBookWritesIdle", () => {
-  it("等這本書的修線佇列與草圖都寫完", async () => {
+  it("等這本書的修線佇列都寫完", async () => {
     const qc = new QueryClient();
     editsQueueFor(qc, 1, 10, 7).push([s(0.1)]);
-    sketchSaverFor(qc).save(1, 11, new Blob(["x"]));
+    editsQueueFor(qc, 1, 11, 9).push([s(0.3)]);
     editsQueueFor(qc, 2, 20, 8).push([s(0.2)]); // 別本書：不等
     let done = false;
     const w = whenBookWritesIdle(qc, 1).then(() => (done = true));

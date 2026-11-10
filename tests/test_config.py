@@ -77,23 +77,22 @@ def test_queue_defaults_and_env_override(settings_file: Path, monkeypatch):
     assert load_settings(settings_file).queue.retry_backoff_s == 0.0
 
 
-def test_queue_max_wait_default_env_override_and_validation(settings_file: Path, monkeypatch):
-    assert load_settings(settings_file).queue.max_wait_s == 180.0
-    monkeypatch.setenv("APP_QUEUE__MAX_WAIT_S", "30")
-    assert load_settings(settings_file).queue.max_wait_s == 30.0
-    monkeypatch.setenv("APP_QUEUE__MAX_WAIT_S", "-1")
-    with pytest.raises(SettingsError):
-        load_settings(settings_file)
+def test_settings_ignore_max_wait(settings_file: Path):
+    data = yaml.safe_load(settings_file.read_text())
+    data["queue"] = {"max_wait_s": 180, "retry_backoff_s": 3}
+    settings_file.write_text(yaml.safe_dump(data))
+    s = load_settings(settings_file)
+    assert s.queue.retry_backoff_s == 3.0
+    assert not hasattr(s.queue, "max_wait_s")
 
 
-def test_create_app_passes_max_wait_s_to_worker(settings_file: Path, monkeypatch):
+def test_create_app_worker_has_no_family_scheduling(settings_file: Path):
     from fastapi.testclient import TestClient
 
     from app.main import create_app
     from tests.fake_engine import FakeEngine
 
-    monkeypatch.setenv("APP_QUEUE__MAX_WAIT_S", "42")
     app = create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False)
     with TestClient(app):
-        assert app.state.worker.max_wait_s == 42.0
-        assert app.state.worker.last_family is None
+        assert not hasattr(app.state.worker, "max_wait_s")
+        assert not hasattr(app.state.worker, "last_family")

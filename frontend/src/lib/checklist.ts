@@ -2,10 +2,10 @@ import type { Generation, Page, QA } from "@/api/client";
 
 /**
  * done 完成（綠勾）、todo 待辦（空圈）、warn 需處理（橘色驚嘆號）、
- * skip 刻意不做（灰色，例如不畫構圖草圖；不是錯誤）。
+ * skip 刻意不做（灰色；不是錯誤）。
  */
 export type CheckState = "done" | "todo" | "warn" | "skip";
-export type CheckKey = "background" | "pose" | "composite" | "closed" | "character" | "passed";
+export type CheckKey = "compose" | "line" | "passed";
 
 export interface CheckItem {
   key: CheckKey;
@@ -15,10 +15,10 @@ export interface CheckItem {
 }
 
 /**
- * 頁面進度清單（純函式，6 項）。qa 未載入時給 undefined。
- * opts.selectedKind：選定圖的 generation kind（composite＝新流程合成圖；page＝舊流程圖片）；不知道時省略。
- * 沒選圖時 QA 一律忽略（可能是舊圖的快取）。QA 的 status／character_check 比頁面列表新，優先採用。
- * page.compose_pending（後端算）：選定圖不是目前背景＋角色動作＋位置的合成圖 → 合成 warn「待重新合成」。
+ * 頁面進度清單（純函式，3 項：構圖、補線、完成）。qa 未載入時給 undefined。
+ * opts.selectedKind：選定圖的 generation kind（composite＝合成圖；page＝舊流程圖片）；不知道時省略。
+ * 沒選圖時 QA 一律忽略（可能是舊圖的快取）。QA 的 status 比頁面列表新，優先採用。
+ * page.compose_pending（後端算）：選定圖不是目前背景＋角色動作＋位置的合成圖 → 構圖 warn「待更新」。
  */
 export function checklist(
   page: Page,
@@ -27,48 +27,32 @@ export function checklist(
 ): CheckItem[] {
   const selected = page.selected_generation_id != null;
   const q = selected ? qa : undefined;
-  const hasBg = page.background_generation_id != null;
-  const hasPose = page.pose_generation_id != null;
 
-  const background: CheckItem = hasBg
-    ? { key: "background", label: "背景", state: "done", note: "已選" }
-    : { key: "background", label: "背景", state: "todo", note: "還沒選背景" };
-
-  const pose: CheckItem = hasPose
-    ? { key: "pose", label: "角色動作", state: "done", note: "已選" }
-    : { key: "pose", label: "角色動作", state: "todo", note: "還沒選角色動作" };
-
-  let composite: CheckItem = { key: "composite", label: "合成", state: "todo", note: "" };
+  let compose: CheckItem = { key: "compose", label: "構圖", state: "todo", note: "" };
   if (selected && page.compose_pending) {
-    // 選定圖不是用目前背景＋角色動作＋位置合成的（改了位置，或舊流程頁面選了新素材）；不影響通過狀態
-    composite = { ...composite, state: "warn", note: "待重新合成" };
+    // 選定圖不是用目前背景＋角色動作＋位置合成的（改了位置，或舊流程頁面選了新素材）；不影響完成狀態
+    compose = { ...compose, state: "warn", note: "待更新" };
   } else if (selected) {
-    const note = opts.selectedKind === "composite" ? "已合成" : opts.selectedKind === "page" ? "舊流程圖片" : "";
-    composite = { ...composite, state: "done", note };
-  } else if (hasBg && hasPose) {
-    composite = { ...composite, note: "請確認合成" };
+    compose = { ...compose, state: "done", note: opts.selectedKind === "page" ? "舊流程圖片" : "已合成" };
+  } else if (page.background_generation_id == null) {
+    compose = { ...compose, note: "還沒選背景" };
+  } else if (page.pose_generation_id == null) {
+    compose = { ...compose, note: "還沒選角色動作" };
   }
 
-  let closed: CheckItem = { key: "closed", label: "線條封閉", state: "todo", note: "" };
+  let line: CheckItem = { key: "line", label: "補線", state: "todo", note: "" };
   if (selected) {
-    if (!q) closed = { ...closed, note: "檢查中…" };
-    else if (q.gap_count > 0) closed = { ...closed, state: "warn", note: `${q.gap_count} 個缺口` };
-    else closed = { ...closed, state: "done", note: "0 個缺口" };
-  }
-
-  let character: CheckItem = { key: "character", label: "角色外型", state: "todo", note: "" };
-  if (selected) {
-    const check = q ? q.character_check : page.character_check;
-    if (check === "consistent") character = { ...character, state: "done", note: "一致" };
-    else if (check === "inconsistent") character = { ...character, state: "warn", note: "不一致" };
-    else character = { ...character, note: "待確認" };
+    if (!q) line = { ...line, note: "檢查中…" };
+    else if (q.gap_count > 0) line = { ...line, state: "warn", note: `${q.gap_count} 個缺口` };
+    else line = { ...line, state: "done", note: "線條都接好了" };
   }
 
   const status = q?.status ?? page.status;
-  const passed: CheckItem =
-    selected && status === "passed"
-      ? { key: "passed", label: "通過 QA", state: "done", note: q?.forced_pass_reason ? "強制通過" : "完成" }
-      : { key: "passed", label: "通過 QA", state: "todo", note: "" };
+  let passed: CheckItem = { key: "passed", label: "完成", state: "todo", note: "" };
+  if (selected && status === "passed") {
+    const gaps = q?.forced_pass_reason && q.gap_count > 0 ? q.gap_count : 0;
+    passed = { ...passed, state: "done", note: gaps > 0 ? `完成（${gaps} 個缺口）` : "完成" };
+  }
 
-  return [background, pose, composite, closed, character, passed];
+  return [compose, line, passed];
 }

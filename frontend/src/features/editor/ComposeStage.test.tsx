@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { Placement } from "@/api/client";
-import { ComposeStage, type ComposeStageProps } from "./ComposeStage";
+import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
+import { ComposePreview, ComposeStage, ComposeStatus, type ComposeStageProps } from "./ComposeStage";
 
 const P: Placement = { cx: 0.5, cy: 0.5, height: 0.5, flip: false };
 
@@ -131,34 +131,30 @@ describe("ComposeStage", () => {
     expect(onChange).toHaveBeenCalledTimes(6);
   });
 
-  it("disabled（確認合成中）：拖曳與按鍵都不改位置", () => {
-    const { load, onChange } = view({ disabled: true });
-    load();
-    fireEvent.keyDown(box(), { key: "ArrowRight" });
-    fireEvent.pointerDown(box(), { pointerId: 1, button: 0, clientX: 250, clientY: 200 });
-    fireEvent.pointerMove(box(), { pointerId: 1, clientX: 300, clientY: 200 });
-    fireEvent.pointerUp(box(), { pointerId: 1, clientX: 300, clientY: 200 });
-    const handle = screen.getByTestId("resize-handle");
-    fireEvent.pointerDown(handle, { pointerId: 2, button: 0, clientX: 300, clientY: 300 });
-    fireEvent.pointerMove(handle, { pointerId: 2, clientX: 300, clientY: 340 });
-    fireEvent.pointerUp(handle, { pointerId: 2, clientX: 300, clientY: 340 });
-    expect(onChange).not.toHaveBeenCalled();
-    expect(box().style.left).toBe("40%");
-    expect(box()).toHaveAttribute("aria-disabled", "true");
+  it("水平翻轉：切換 flip（aria-pressed 反映目前狀態）", () => {
+    const { onChange, rerender } = view();
+    const flip = screen.getByRole("button", { name: "水平翻轉" });
+    expect(flip).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(flip);
+    expect(onChange).toHaveBeenCalledWith({ ...P, flip: true });
+    rerender({ placement: { ...P, flip: true } });
+    expect(screen.getByRole("button", { name: "水平翻轉" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("拖到一半開始確認合成 → 拖曳取消、畫面回到已存的位置（合成用的就是它），放開也不送", () => {
-    const { load, onChange, rerender } = view();
-    load();
-    fireEvent.pointerDown(box(), { pointerId: 1, button: 0, clientX: 250, clientY: 200 });
-    fireEvent.pointerMove(box(), { pointerId: 1, clientX: 300, clientY: 200 });
-    expect(box().style.left).toBe("50%");
-    rerender({ disabled: true });
-    expect(box().style.left).toBe("40%");
-    fireEvent.pointerMove(box(), { pointerId: 1, clientX: 350, clientY: 200 });
-    fireEvent.pointerUp(box(), { pointerId: 1, clientX: 350, clientY: 200 });
-    expect(onChange).not.toHaveBeenCalled();
-    expect(box().style.left).toBe("40%");
+  it("重設位置：回到預設位置與大小，保留翻轉；已經是預設就不送", () => {
+    const { onChange, rerender } = view({ placement: { cx: 0.3, cy: 0.4, height: 0.2, flip: true } });
+    fireEvent.click(screen.getByRole("button", { name: "重設位置" }));
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_PLACEMENT, flip: true });
+    rerender({ placement: { ...DEFAULT_PLACEMENT, flip: true } });
+    fireEvent.click(screen.getByRole("button", { name: "重設位置" }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("舞台下方顯示狀態；說明寫明放開後自動合成", () => {
+    view({ status: <span>狀態在這</span> });
+    expect(screen.getByText("狀態在這")).toBeInTheDocument();
+    expect(screen.getByText(/放開後自動合成，不用另外按確認。/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /確認合成/ })).not.toBeInTheDocument();
   });
 
   it("位置從外部改變（翻轉、重設）時畫面跟著變", () => {
@@ -195,5 +191,62 @@ describe("ComposeStage", () => {
     load();
     const frame = screen.getByTestId("compose-overlay").parentElement!;
     expect(frame.style.getPropertyValue("--bg-aspect")).toBe("1.25");
+  });
+});
+
+describe("ComposeStatus", () => {
+  const status = (o: Partial<Parameters<typeof ComposeStatus>[0]> = {}) => {
+    const props = {
+      status: "idle" as const,
+      upToDate: true,
+      onRetry: vi.fn(),
+      placementFailed: false,
+      onRetryPlacement: vi.fn(),
+      ...o,
+    };
+    render(<ComposeStatus {...props} />);
+    return props;
+  };
+
+  it("閒置且選定圖是最新的合成圖 →「✓ 線稿已自動更新」", () => {
+    status();
+    expect(screen.getByRole("status")).toHaveTextContent("✓ 線稿已自動更新");
+  });
+
+  it("閒置但還沒有最新的合成圖（例如取消了）→ 不顯示打勾", () => {
+    status({ upToDate: false });
+    expect(screen.queryByText("✓ 線稿已自動更新")).not.toBeInTheDocument();
+  });
+
+  it("等待中或合成中 →「更新中…」", () => {
+    status({ status: "pending" });
+    expect(screen.getByRole("status")).toHaveTextContent("更新中…");
+  });
+
+  it("失敗 →「更新失敗，重試」按鈕呼叫 onRetry", () => {
+    const p = status({ status: "error" });
+    fireEvent.click(screen.getByRole("button", { name: "更新失敗，重試" }));
+    expect(p.onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("位置寫入失敗：持續顯示「位置尚未儲存」與重試", () => {
+    const p = status({ placementFailed: true, status: "error" });
+    expect(screen.getByTestId("placement-save-failed")).toHaveTextContent("位置尚未儲存");
+    fireEvent.click(screen.getByRole("button", { name: "重試" }));
+    expect(p.onRetryPlacement).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ComposePreview", () => {
+  it("只有背景：顯示背景圖與說明", () => {
+    render(<ComposePreview backgroundUrl="/bg.png" aspect={0.75} message="角色動作產生中…" />);
+    expect(screen.getByRole("img", { name: "背景圖" })).toHaveAttribute("src", "/bg.png");
+    expect(screen.getByRole("status")).toHaveTextContent("角色動作產生中…");
+  });
+
+  it("只有角色動作：顯示去背角色", () => {
+    render(<ComposePreview cutoutUrl="/c.png" aspect={0.75} message="先選好背景" />);
+    expect(screen.getByRole("img", { name: "角色動作" })).toHaveAttribute("src", "/c.png");
+    expect(screen.queryByRole("img", { name: "背景圖" })).not.toBeInTheDocument();
   });
 });

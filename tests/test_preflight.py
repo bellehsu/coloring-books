@@ -100,12 +100,17 @@ async def test_unreachable_comfy_does_not_raise(workflows_dir):
     assert "未檢查節點與模型" in format_report(rep)
 
 
+# Route A 已移到 archive/（preflight 不掃描）。下面兩個測試仍以它對照真實 /object_info 驗證 preflight 本身的檢查邏輯
+# （下拉值、缺自訂節點時的 provided_by、退回資料夾類型檢查）。
+ARCHIVE = REPO / "archive" / "comfy_workflows"
+
+
 async def test_repo_route_a_against_real_object_info(object_info_subset):
     """Route A 每個節點類別、輸入欄位、下拉值都對照真實 /object_info（ComfyUI 0.36.0 + IPAdapter_plus）。"""
     oi = copy.deepcopy(object_info_subset)
     for (ct, inp), opts in ROUTE_A_MODELS.items():
         set_options(oi, ct, inp, opts)
-    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    reg = WorkflowRegistry(ARCHIVE).load()
     reg.entries = {"route_a_sdxl_ipadapter_cn": reg.get("route_a_sdxl_ipadapter_cn")}
     fake = FakeComfy(object_info=oi)
     async with fake.client() as c:
@@ -118,7 +123,7 @@ async def test_repo_route_a_against_real_object_info(object_info_subset):
 async def test_repo_route_a_without_ipadapter_node(object_info_subset):
     oi = copy.deepcopy(object_info_subset)
     del oi["IPAdapterAdvanced"], oi["IPAdapterModelLoader"]
-    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    reg = WorkflowRegistry(ARCHIVE).load()
     reg.entries = {"route_a_sdxl_ipadapter_cn": reg.get("route_a_sdxl_ipadapter_cn")}
     fake = FakeComfy(object_info=oi)
     async with fake.client() as c:
@@ -128,3 +133,24 @@ async def test_repo_route_a_without_ipadapter_node(object_info_subset):
     assert all(n.provided_by == "https://github.com/cubiq/ComfyUI_IPAdapter_plus" for n in w.missing_nodes)
     # 缺 ipadapter 載入節點時退回檢查資料夾類型；未註冊 → 回報
     assert any(m.id == "ipadapter_plus_sdxl" for m in w.missing_models)
+
+
+QWEN_WORKFLOWS = {"qwen_character", "qwen_background", "qwen_edit_pose_cutout"}
+
+
+async def test_preflight_lists_only_qwen():
+    """Phase 9：comfy_workflows/ 只剩三個 Qwen workflow；preflight 只檢查它們的模型（不再有 SDXL、IP-Adapter、ControlNet）。"""
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    assert set(reg.entries) == QWEN_WORKFLOWS
+    fake = FakeComfy(object_info={})
+    async with fake.client() as c:
+        rep = await run_preflight(c, reg)
+    assert {w.name for w in rep.workflows} == QWEN_WORKFLOWS
+    missing = {m.filename for w in rep.workflows for m in w.missing_models}
+    assert missing == {
+        "qwen-image-edit-2511-Q4_K_M.gguf",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors",
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "birefnet.safetensors",
+    }

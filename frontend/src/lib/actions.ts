@@ -1,3 +1,9 @@
+/**
+ * 動作欄位的提示（故事頁每一頁與構圖的角色動作卡片都用 aria-describedby 連到它）：
+ * 動作裡的地點會讓角色動作畫出地面或場景，地點應寫在背景的場景描述。
+ */
+export const ACTION_HINT = "只寫動作，地點寫在背景的場景描述（例如：寫「坐著看書」，不要寫「坐在草地上看書」）";
+
 export const ACTIONS: { label: string; phrase: string }[] = [
   { label: "站著", phrase: "standing" },
   { label: "坐著", phrase: "sitting on the ground" },

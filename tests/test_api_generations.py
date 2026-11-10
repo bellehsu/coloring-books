@@ -6,6 +6,7 @@ from app.main import create_app
 from app.services.engine import EngineUnavailable
 from tests.fake_engine import FakeEngine
 from tests.test_api_books import candidates, new_book, run_jobs
+from tests.test_api_lineart import color_png, seed_generation, set_page
 from tests.test_api_pages import book_with_character, new_page
 
 
@@ -23,12 +24,6 @@ def app(settings_file, engine):
 def client(app):
     with TestClient(app) as c:
         yield c
-
-
-def page_candidates(client, page_id, **kw):
-    r = client.post(f"/api/pages/{page_id}/candidates", json=kw)
-    assert r.status_code == 202, r.text
-    return r.json()
 
 
 def test_generation_detail_progress_and_image(client, app):
@@ -50,10 +45,8 @@ def test_generation_detail_progress_and_image(client, app):
 def test_discard_and_list_filter(client, app):
     b, char_id = book_with_character(client, app)
     page = new_page(client, b["id"])
-    gens = page_candidates(client, page["id"], count=2, seed=5)
-    run_jobs(client, app, 2)
-    a, c = gens[0]["id"], gens[1]["id"]
-    assert client.post(f"/api/pages/{page['id']}/select", json={"generation_id": a}).status_code == 200
+    a, c = (seed_generation(app, b["id"], page["id"], color_png()) for _ in range(2))
+    set_page(app, page["id"], selected_generation_id=a)
     base = f"/api/books/{b['id']}/generations"
     ids = [g["id"] for g in client.get(base).json()]
     assert ids == sorted(ids, reverse=True) and {a, c, char_id} <= set(ids)
@@ -76,7 +69,8 @@ def test_discard_and_list_filter(client, app):
 
 def test_cancel_only_queued(client, app):
     b = new_book(client)
-    g1, g2 = candidates(client, b["id"], seed=1, count=2).json()
+    (g1,) = candidates(client, b["id"], seed=1).json()  # 一次一張
+    (g2,) = candidates(client, b["id"], seed=2).json()
     r = client.post(f"/api/generations/{g1['id']}/cancel")
     assert r.status_code == 200 and r.json()["status"] == "cancelled"
     assert client.post(f"/api/generations/{g1['id']}/cancel").status_code == 409
@@ -89,9 +83,13 @@ def test_cancel_only_queued(client, app):
 
 def test_queue_status_reports_engine_unavailable(client, app, engine):
     q = client.get("/api/system/queue").json()
-    assert q == {"state": "stopped", "last_error": None, "queued": 0, "running_id": None}
+    assert q == {
+        "state": "stopped", "last_error": None, "queued": 0, "running_id": None,
+        "pending": [], "recent": [],
+    }
     b = new_book(client)
-    candidates(client, b["id"], seed=1, count=2)
+    candidates(client, b["id"], seed=1)
+    candidates(client, b["id"], seed=2)
     assert client.get("/api/system/queue").json()["queued"] == 2
     engine.error = EngineUnavailable("ComfyUI 連不上")
     client.portal.call(app.state.worker.run_once)
@@ -108,3 +106,65 @@ def test_discard_queued_also_cancels(client, app, engine):
     assert r.json()["status"] == "cancelled" and r.json()["discarded"] is True
     assert not client.portal.call(app.state.worker.run_once)
     assert engine.requests == []
+
+
+def _add_gens(app, rows):
+    """rows：(kind, status, elapsed) 或 (kind, status, elapsed, engine, workflow_name)。
+    沒給 engine／workflow 時當成目前的 ComfyUI Qwen 生成。"""
+    from datetime import timedelta
+
+    from app.models import Generation, GenKind, GenStatus, utcnow
+    from app.services.comfy_engine import WORKFLOWS
+
+    t0 = utcnow()
+    with app.state.sessions() as s:
+        for i, row in enumerate(rows):
+            kind, status, elapsed = row[:3]
+            engine, workflow = row[3:] if len(row) > 3 else (
+                "comfyui", WORKFLOWS.get(GenKind(kind)))
+            s.add(Generation(
+                book_id=1, kind=GenKind(kind), status=GenStatus(status), user_text="u", prompt="p",
+                negative_prompt="n", seed=1, width=8, height=8, request_json="{}", elapsed_s=elapsed,
+                engine=engine, workflow_name=workflow, created_at=t0 + timedelta(seconds=i),
+            ))
+        s.commit()
+
+
+def test_queue_status_pending_lists_kinds_oldest_first(client, app):
+    new_book(client)
+    _add_gens(app, [
+        ("pose", "running", None), ("character", "queued", None), ("composite", "queued", None),
+        ("page", "queued", None), ("background", "queued", None), ("pose", "failed", None),
+        ("background", "cancelled", None),
+    ])
+    q = client.get("/api/system/queue").json()
+    assert q["pending"] == [{"kind": "pose"}, {"kind": "character"}, {"kind": "background"}]
+
+
+def test_queue_status_recent_filters_orders_and_caps_per_kind(client, app):
+    new_book(client)
+    rows = [("pose", "succeeded", 100.0 + i) for i in range(12)]  # 最舊 100 … 最新 111
+    rows += [("background", "succeeded", 5.0), ("background", "succeeded", None),
+             ("background", "failed", 9.0), ("composite", "succeeded", 1.0),
+             ("page", "succeeded", 1.0), ("character", "queued", 3.0)]
+    _add_gens(app, rows)
+    recent = client.get("/api/system/queue").json()["recent"]
+    pose = [r["elapsed_s"] for r in recent if r["kind"] == "pose"]
+    assert pose == [111.0 - i for i in range(10)]
+    assert [r for r in recent if r["kind"] == "background"] == [{"kind": "background", "elapsed_s": 5.0}]
+    assert {r["kind"] for r in recent} == {"pose", "background"}
+
+
+def test_queue_status_recent_only_current_comfy_workflows(client, app):
+    """估時只看目前的 Qwen workflow：上傳的背景（耗時約 0）與舊 SDXL 列不算。"""
+    new_book(client)
+    _add_gens(app, [
+        ("background", "succeeded", 60.0),
+        ("background", "succeeded", 0.0, "upload", None),
+        ("background", "succeeded", 15.0, "comfyui", "sdxl_background"),
+        ("pose", "succeeded", 12.0, "comfyui", "sdxl_pose_cutout"),
+        ("pose", "succeeded", 90.0),
+        ("character", "succeeded", 3.0, "fake", None),
+    ])
+    recent = client.get("/api/system/queue").json()["recent"]
+    assert recent == [{"kind": "background", "elapsed_s": 60.0}, {"kind": "pose", "elapsed_s": 90.0}]

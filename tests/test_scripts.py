@@ -31,6 +31,19 @@ def test_build_section_has_required_folders(tmp_path):
     assert REQUIRED <= set(sec)
 
 
+def test_build_section_maps_background_removal(tmp_path):
+    # Qwen 角色動作的 BiRefNet 去背模型放在 models_root/background_removal/
+    sec = sync.build_section(tmp_path)
+    assert sec["background_removal"] == "background_removal"
+
+
+def test_cli_create_dirs_creates_background_removal(settings_file, tmp_path):
+    out = tmp_path / "extra.yaml"
+    assert sync.main(["--settings", str(settings_file), "--output", str(out), "--create-dirs"]) == 0
+    assert (tmp_path / "models" / "background_removal").is_dir()
+    assert yaml.safe_load(out.read_text())["coloring_books"]["background_removal"] == "background_removal"
+
+
 def test_merge_keeps_other_sections_and_warns_on_same_base():
     existing = "ai_models:\n  base_path: /m\n  checkpoints: checkpoints\nother:\n  base_path: /x\n"
     text, warnings = sync.merge_into(existing, "coloring_books", sync.build_section(Path("/m")))
@@ -274,9 +287,8 @@ def test_demo_engine_kinds(kind, size, has_mask):
     assert res.params["kind"] == kind
 
 
-@pytest.mark.parametrize("mode", ["precise", "fast"])
-def test_demo_engine_pose_both_modes(mode):
-    """DemoEngine 兩種模式都回傳固定 832×1216 的角色圖與同尺寸遮罩。"""
+def test_demo_engine_pose_records_variation():
+    """DemoEngine 的角色動作回傳固定 832×1216 的角色圖與同尺寸遮罩；有變化語就記在 params（同 ComfyEngine）。"""
     import asyncio
     import io
 
@@ -286,15 +298,18 @@ def test_demo_engine_pose_both_modes(mode):
     from app.services.engine import GenerationRequest
 
     req = GenerationRequest(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=832, height=1216,
-                            pose_mode=mode)
+                            variation="facing left")
     res = asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req))
     img = Image.open(io.BytesIO(res.image))
     assert img.size == Image.open(io.BytesIO(res.extra_images["mask"])).size == (832, 1216)
-    assert res.params["pose_mode"] == mode
+    assert res.params["variation"] == "facing left"
+    assert not {"pose_mode", "structure_strength", "has_structure_image"} & set(res.params)
+    req.variation = None
+    assert "variation" not in asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req)).params
 
 
 def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
-    """假後端可啟動：角色 → 背景 → 角色動作（有遮罩、去背圖）→ 確認合成 → QA 有缺口 → 自動補線後 0；
+    """假後端可啟動：角色 → 背景 → 角色動作（有遮罩、去背圖）→ 合成 → QA 有缺口 → 自動補線後 0；
     資料寫在 --storage，不碰設定的 storage。"""
     import httpx
     from fastapi.testclient import TestClient
@@ -314,8 +329,8 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
     with TestClient(app) as c:
         book = c.post("/api/books", json={"title": "示範", "paper_size": "a4", "print_mode": "print_shop"}).json()
         assert c.post(f"/api/books/{book['id']}/character/candidates",
-                      json={"description": "a cat", "count": 4}).status_code == 202
-        chars = _wait_succeeded(c, book["id"], "character", 4)
+                      json={"description": "a cat"}).status_code == 202
+        chars = _wait_succeeded(c, book["id"], "character", 1)
         assert c.post(f"/api/books/{book['id']}/character", json={"generation_id": chars[0]["id"]}).status_code == 200
 
         page = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "park"}).json()
@@ -327,8 +342,7 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"}).status_code == 202
         pose = _wait_succeeded(c, book["id"], "pose", 1)[0]
         assert (pose["width"], pose["height"]) == (832, 1216)
-        assert pose["pose_mode"] == "precise"  # API 預設精準；假後端不跑 preflight，兩種模式都算可用
-        assert c.get("/api/system/pose-modes").json()["precise"]["available"] is True
+        assert pose["pose_mode"] == "precise"
         assert pose["cutout_url"]
         assert c.get(pose["cutout_url"]).status_code == 200
         assert c.post(f"/api/pages/{page['id']}/pose", json={"generation_id": pose["id"]}).status_code == 200
@@ -346,9 +360,72 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
     assert not (tmp_path / "storage" / "app.db").exists()
 
 
+def test_fake_backend_story_flow(settings_file, tmp_path, monkeypatch):
+    """e2e 用到的新流程經假後端都能跑：中文 action_prompt → 產生全部素材（上傳頁略過背景）→
+    worker 自動選用 → 合成 → 補線前就按完成（有缺口、不填原因，後端自動補原因）；上傳背景圖裁成頁面比例。"""
+    import io
+    import time
+
+    import httpx
+    from fastapi.testclient import TestClient
+    from PIL import Image
+
+    from app import main as app_main
+    from app.config import load_settings
+    from app.services.comfy_client import ComfyClient
+
+    def refused(request):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(app_main, "ComfyClient",
+                        lambda url, **kw: ComfyClient(url, transport=httpx.MockTransport(refused), **kw))
+    app = fake_backend.create_demo_app(tmp_path / "s", load_settings(settings_file),
+                                       engine=fake_backend.DemoEngine(delay_s=0.02))
+    with TestClient(app) as c:
+        book = c.post("/api/books", json={"title": "故事", "paper_size": "a4", "print_mode": "print_shop"}).json()
+        c.post(f"/api/books/{book['id']}/character/candidates", json={"description": "一隻圓圓的小貓"})
+        char = _wait_succeeded(c, book["id"], "character", 1)[0]
+        c.post(f"/api/books/{book['id']}/character", json={"generation_id": char["id"]})
+        p1 = c.post(f"/api/books/{book['id']}/pages",
+                    json={"scene_prompt": "陽光公園", "action_prompt": "抱著球開心地跳"}).json()
+        p2 = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "海邊", "action_prompt": "看書"}).json()
+
+        res = c.post(f"/api/books/{book['id']}/materials/batch", json={"upload_page_ids": [p2["id"]]})
+        assert res.status_code == 202, res.text
+        assert [(q["page_id"], q["kind"]) for q in res.json()["queued"]] == [
+            (p1["id"], "background"), (p1["id"], "pose"), (p2["id"], "pose")]
+        poses = _wait_succeeded(c, book["id"], "pose", 2)
+        assert {g["user_text"] for g in poses} == {"抱著球開心地跳", "看書"}
+        _wait_succeeded(c, book["id"], "background", 1)
+
+        deadline = time.monotonic() + 10
+        while True:
+            pages = {p["id"]: p for p in c.get(f"/api/books/{book['id']}/pages").json()}
+            if pages[p1["id"]]["background_generation_id"] and pages[p1["id"]]["pose_generation_id"]:
+                break
+            assert time.monotonic() < deadline, pages
+            time.sleep(0.05)
+        assert pages[p1["id"]]["compose_pending"] is True
+
+        sel = c.post(f"/api/pages/{p1['id']}/compose").json()["selected_generation_id"]
+        assert c.get(f"/api/pages/{p1['id']}/qa").json()["gap_count"] == 1
+        c.post(f"/api/pages/{p1['id']}/character-check", json={"generation_id": sel, "result": "consistent"})
+        passed = c.post(f"/api/pages/{p1['id']}/pass", json={})
+        assert passed.status_code == 200, passed.text
+        assert passed.json()["status"] == "passed"
+        assert c.get(f"/api/pages/{p1['id']}/qa").json()["forced_pass_reason"] == "使用者確認完成（1 個缺口）"
+
+        buf = io.BytesIO()
+        Image.new("L", (4000, 800), 200).save(buf, "PNG")
+        up = c.post(f"/api/pages/{p2['id']}/backgrounds/upload", files={"file": ("wide.png", buf.getvalue(), "image/png")})
+        assert up.status_code == 201, up.text
+        bg = c.get(f"/api/generations/{up.json()['background_generation_id']}").json()
+        assert bg["source"] == "upload" and (bg["width"], bg["height"]) == (864, 1216)
+
+
 def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch):
     """本機 ComfyUI 連得上、但 workflow 都跑不了（/object_info 空的）：假後端啟動時不跑 preflight、不連 ComfyUI，
-    兩種角色動作模式都可用，精準模式照常生成（e2e 不受本機 ComfyUI 狀態影響）。"""
+    角色動作照常生成（e2e 不受本機 ComfyUI 狀態影響）。"""
     import httpx
     from fastapi.testclient import TestClient
 
@@ -370,24 +447,21 @@ def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch
                                        engine=fake_backend.DemoEngine(delay_s=0.02))
     with TestClient(app) as c:
         assert app.state.preflight is None
-        modes = c.get("/api/system/pose-modes").json()
-        assert modes == {"precise": {"available": True, "missing": []}, "fast": {"available": True, "missing": []}}
         book = c.post("/api/books", json={"title": "示範", "paper_size": "a4", "print_mode": "print_shop"}).json()
         c.post(f"/api/books/{book['id']}/character/candidates", json={"description": "a cat", "count": 1})
         char = _wait_succeeded(c, book["id"], "character", 1)[0]
         c.post(f"/api/books/{book['id']}/character", json={"generation_id": char["id"]})
         page = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "park"}).json()
-        res = c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand", "mode": "precise"})
+        res = c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"})
         assert res.status_code == 202, res.text
         assert _wait_succeeded(c, book["id"], "pose", 1)[0]["pose_mode"] == "precise"
     assert seen == []
-    # 對照：同一個 ComfyUI 下真的跑 preflight，精準模式會被判定不可用（上面的結果不是巧合）
-    from app.services.pose_modes import precise_unavailable_detail
-
+    # 對照：同一個 ComfyUI 下真的跑 preflight，workflow 會被判定不能用（上面的結果不是巧合）
     app2 = app_main.create_app(fake_backend.demo_settings(tmp_path / "s2", load_settings(settings_file)),
                                engine=fake_backend.DemoEngine(delay_s=0), start_worker=False)
     with TestClient(app2):
-        assert (precise_unavailable_detail(app2.state.preflight) or "").startswith("精準模式缺少：")
+        report = app2.state.preflight
+        assert report is not None and report.comfy_reachable and not report.ok
     assert "/object_info" in seen
 
 

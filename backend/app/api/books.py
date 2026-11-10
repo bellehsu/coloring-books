@@ -20,13 +20,13 @@ from app.api.schemas import (
 from app.models import Book, Generation, GenKind, GenStatus, Page, PageStatus, utcnow
 from app.services.layout import PaperSize, ratio_group
 from app.services.page_lineart import ensure_page_lineart
-from app.services.prompts import CHARACTER_NEGATIVE, character_prompt
+from app.services.prompts import QWEN_CHARACTER_SIZE, pick_character_variation, qwen_character_prompt
 from app.services.worker import GenerationWorker, encode_request
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/books", tags=["books"])
 
-CHARACTER_SIZE = (832, 1216)
+CHARACTER_SIZE = QWEN_CHARACTER_SIZE
 MAX_SEED = 2**32 - 1
 
 
@@ -149,6 +149,23 @@ def update_book(
     return book_out(session, book)
 
 
+def _last_character_variation(session: Session, book_id: int) -> str | None:
+    """這本書最近一筆有變化語的角色候選（依 id，不論狀態、是否丟棄）用的變化語；沒有回 None。
+    沒有變化語的舊列（SDXL 時代）略過。"""
+    for rj in session.exec(
+        select(Generation.request_json)
+        .where(Generation.book_id == book_id, Generation.kind == GenKind.CHARACTER)
+        .order_by(col(Generation.id).desc())
+    ):
+        try:
+            d = json.loads(rj)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(d, dict) and isinstance(d.get("variation"), str):
+            return d["variation"]
+    return None
+
+
 @router.post("/{book_id}/character/candidates", status_code=202, response_model=list[GenerationOut])
 def create_character_candidates(
     book_id: int,
@@ -156,37 +173,36 @@ def create_character_candidates(
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
 ) -> list[GenerationOut]:
+    """產生一張角色候選圖（Qwen 純文字生圖）；描述不翻譯、原樣放進樣板。回傳只含這一張的清單。"""
     book = _book_or_404(session, book_id)
     if book.character_generation_id is not None:
         raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
-    if body.seed is not None and body.seed + body.count - 1 > MAX_SEED:
-        raise HTTPException(
-            422, f"seed 加上候選數量不可超過 {MAX_SEED}（seed 最大為 {MAX_SEED - body.count + 1}）"
-        )
-    base = body.seed if body.seed is not None else random.randint(0, MAX_SEED + 1 - body.count)
-    prompt = character_prompt(body.description)
+    # 一次一張：body.count 是舊前端送的，忽略。再按一次＝再產生一張，變化語不重複這本書上一張
+    seed = body.seed if body.seed is not None else random.randint(0, MAX_SEED)
+    variation = pick_character_variation(
+        random.Random(), exclude=_last_character_variation(session, book_id)
+    )
+    prompt = qwen_character_prompt(body.description, variation)
     width, height = CHARACTER_SIZE
-    gens = [
-        Generation(
-            book_id=book_id,
+    gen = Generation(
+        book_id=book_id,
+        kind=GenKind.CHARACTER,
+        user_text=body.description,
+        prompt=prompt,
+        negative_prompt="",  # Qwen cfg 1：負向無效，排除條件寫在樣板正向
+        seed=seed,
+        width=width,
+        height=height,
+        request_json=encode_request(
             kind=GenKind.CHARACTER,
-            user_text=body.description,
             prompt=prompt,
-            negative_prompt=CHARACTER_NEGATIVE,
-            seed=base + i,
+            negative_prompt="",
+            seed=seed,
             width=width,
             height=height,
-            request_json=encode_request(
-                kind=GenKind.CHARACTER,
-                prompt=prompt,
-                negative_prompt=CHARACTER_NEGATIVE,
-                seed=base + i,
-                width=width,
-                height=height,
-            ),
-        )
-        for i in range(body.count)
-    ]
+            variation=variation,
+        ),
+    )
     # 先以條件式 UPDATE 取得寫入鎖並確認角色仍未設定，與 set_character 互斥
     res = session.exec(
         update(Book)
@@ -196,14 +212,14 @@ def create_character_candidates(
     if res.rowcount == 0:
         session.rollback()
         raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
-    session.add_all(gens)
+    session.add(gen)
     session.commit()
     worker.notify()
+    # 回傳仍是清單（現行前端以清單處理候選）
     return [
         GenerationOut.from_generation(
-            g, queue_position=worker.queue_position(g.id), progress=worker.progress.get(g.id)
+            gen, queue_position=worker.queue_position(gen.id), progress=worker.progress.get(gen.id)
         )
-        for g in gens
     ]
 
 

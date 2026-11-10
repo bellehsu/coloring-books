@@ -6,7 +6,7 @@ import { createLatestByKey } from "@/lib/latestByKey";
 /**
  * 角色位置存檔（PUT /pages/{id}/placement）：每頁依序、只保留最新。
  * 模組層級（每個 QueryClient 一個），拖曳中離開編輯器再回來也不會並行或倒序。
- * 確認合成前先 whenIdle(pageId)，合成才會用到畫面上的位置。
+ * 合成前先 whenIdle(pageId)（useCompose 內），合成才會用到畫面上的位置。
  */
 export interface PlacementSaver {
   savePlacement(pageId: number, p: Placement): void;
@@ -25,6 +25,8 @@ export interface PlacementSaver {
   subscribe(fn: () => void): () => void;
   /** 頁面已刪除：之後的 save 丟掉，飛行中回來的 404 不報錯，並清掉記憶與失敗狀態。 */
   markGone(pageId: number): void;
+  /** 這頁已刪除（markGone 之後、reset 之前）。編輯器用來略過已刪除頁的自動合成，並認出被新頁沿用的 id。 */
+  isGone(pageId: number): boolean;
   /** 這個 id 現在是新頁（後端沿用 id）：清掉已刪除標記與記憶。 */
   reset(pageId: number): void;
   setErrorHandler(fn: (error: unknown) => void): void;
@@ -75,6 +77,7 @@ export function placementSaverFor(qc: QueryClient): PlacementSaver {
       last.delete(pageId);
       q.clearError(pageId);
     },
+    isGone: (pageId) => gone.has(pageId),
     reset(pageId) {
       gone.delete(pageId);
       last.delete(pageId);

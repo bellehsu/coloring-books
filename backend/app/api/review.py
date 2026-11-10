@@ -9,7 +9,7 @@ from sqlmodel import Session, col, update
 
 from app.api.deps import get_session, get_storage
 from app.api.pages import _page_or_404, page_out
-from app.api.schemas import PageOut, _messages
+from app.api.schemas import PageOut
 from app.models import CharacterCheck, Page, PageStatus, utcnow
 from app.services.page_lineart import LineartUnavailable, ensure_page_lineart
 from app.storage import Storage
@@ -21,7 +21,6 @@ ReasonStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=5
 
 NO_SELECTION = "這一頁還沒有選定圖片"
 CHARACTER_NOT_CONFIRMED = "請先確認角色外型與設定一致"
-HAS_ERRORS = "自動檢查有錯誤，修線後再通過，或填寫原因強制通過"
 CHANGED = "頁面剛被修改，請重新檢查"
 STALE_CHECK = "選定的圖片已更換，請重新檢查"
 
@@ -78,10 +77,7 @@ def pass_page(
     reason = (body.force_reason or "").strip()
     errors = lin.qa.errors
     if errors and not reason:
-        raise HTTPException(
-            409,
-            {"message": HAS_ERRORS, "errors": [m.model_dump() for m in _messages(errors)]},
-        )
+        reason = f"使用者確認完成（{lin.qa.gap_count} 個缺口）"
     now = utcnow()
     res = session.exec(
         update(Page)

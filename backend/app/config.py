@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 # backend/app/config.py → 專案根目錄
@@ -52,10 +52,10 @@ class ComfySettings(BaseModel):
 
 
 class QueueSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")  # 舊設定檔的 max_wait_s 等欄位直接忽略
+
     # worker 遇到 ComfyUI 無法連線時，重試前等待的秒數（0 代表立即重試）
     retry_backoff_s: float = Field(10.0, ge=0)
-    # 防飢餓：等待超過此秒數的任務不論模型家族都最先執行
-    max_wait_s: float = Field(180.0, ge=0)
 
 
 class PathSettings(BaseModel):
