@@ -14,6 +14,8 @@
 
 設定沿用 load_settings()（config/settings.yaml 或 APP_SETTINGS_FILE，可被 APP_ 環境變數覆寫），
 但 paths.storage_dir／paths.database 一律改到 --storage（預設：新的暫存資料夾），不會碰到正式資料。
+啟動時不跑 ComfyUI preflight（快取維持 None＝兩種角色動作模式都可用），
+結果不受本機 ComfyUI 有沒有開、workflow 能不能跑影響（e2e 才穩定）。
 """
 
 from __future__ import annotations
@@ -211,7 +213,9 @@ def demo_settings(storage: Path, base: Settings | None = None) -> Settings:
 def create_demo_app(storage: Path, base: Settings | None = None, engine: DemoEngine | None = None):
     from app.main import create_app
 
-    return create_app(demo_settings(storage, base), engine=engine or DemoEngine(), start_worker=True)
+    # 不跑啟動 preflight：DemoEngine 不連 ComfyUI，模式可用性也不該看本機 ComfyUI 的狀態
+    return create_app(demo_settings(storage, base), engine=engine or DemoEngine(), start_worker=True,
+                      startup_preflight=False)
 
 
 def main(argv: list[str] | None = None) -> int:

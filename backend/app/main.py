@@ -1,7 +1,7 @@
 """FastAPI 進入點：組裝 DB、worker、書／頁／生成 API 與系統檢查端點。
 
 啟動：uvicorn app.main:app --app-dir backend
-啟動時會跑一次 preflight 並寫入 log；失敗只記錄，不讓服務當機。
+啟動時會跑一次 preflight 並寫入 log；失敗只記錄，不讓服務當機（startup_preflight=False 時略過，例如假後端）。
 preflight 結果快取在 app.state.preflight（啟動時與每次 GET /api/system/preflight 更新），
 角色動作的模式可用性（/api/system/pose-modes、POST /poses 的 503）只看這份快取。
 """
@@ -34,6 +34,7 @@ def create_app(
     *,
     engine: GenerationEngine | None = None,
     start_worker: bool = True,
+    startup_preflight: bool = True,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -60,12 +61,13 @@ def create_app(
         try:
             if start_worker:
                 await app.state.worker.start()
-            try:
-                report = await _preflight(app)
-            except Exception:  # noqa: BLE001  preflight 失敗不可讓服務當機
-                log.exception("preflight failed")
-            else:
-                (log.info if report.ok else log.warning)("preflight\n%s", format_report(report))
+            if startup_preflight:
+                try:
+                    report = await _preflight(app)
+                except Exception:  # noqa: BLE001  preflight 失敗不可讓服務當機
+                    log.exception("preflight failed")
+                else:
+                    (log.info if report.ok else log.warning)("preflight\n%s", format_report(report))
             yield
         finally:
             await app.state.worker.stop()

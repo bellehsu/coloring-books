@@ -327,7 +327,7 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"}).status_code == 202
         pose = _wait_succeeded(c, book["id"], "pose", 1)[0]
         assert (pose["width"], pose["height"]) == (832, 1216)
-        assert pose["pose_mode"] == "precise"  # API 預設精準；ComfyUI 連不上時兩種模式都算可用
+        assert pose["pose_mode"] == "precise"  # API 預設精準；假後端不跑 preflight，兩種模式都算可用
         assert c.get("/api/system/pose-modes").json()["precise"]["available"] is True
         assert pose["cutout_url"]
         assert c.get(pose["cutout_url"]).status_code == 200
@@ -344,6 +344,51 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert fixed["autofix_added"] >= 1 and fixed["gap_count"] == 0
     assert (storage / "app.db").is_file()
     assert not (tmp_path / "storage" / "app.db").exists()
+
+
+def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch):
+    """本機 ComfyUI 連得上、但 workflow 都跑不了（/object_info 空的）：假後端啟動時不跑 preflight、不連 ComfyUI，
+    兩種角色動作模式都可用，精準模式照常生成（e2e 不受本機 ComfyUI 狀態影響）。"""
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from app import main as app_main
+    from app.config import load_settings
+    from app.services.comfy_client import ComfyClient
+
+    seen: list[str] = []
+
+    def comfy(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/system_stats":
+            return httpx.Response(200, json={"system": {"comfyui_version": "0.36"}, "devices": []})
+        return httpx.Response(200, json={} if request.url.path == "/object_info" else [])
+
+    monkeypatch.setattr(app_main, "ComfyClient",
+                        lambda url, **kw: ComfyClient(url, transport=httpx.MockTransport(comfy), **kw))
+    app = fake_backend.create_demo_app(tmp_path / "s", load_settings(settings_file),
+                                       engine=fake_backend.DemoEngine(delay_s=0.02))
+    with TestClient(app) as c:
+        assert app.state.preflight is None
+        modes = c.get("/api/system/pose-modes").json()
+        assert modes == {"precise": {"available": True, "missing": []}, "fast": {"available": True, "missing": []}}
+        book = c.post("/api/books", json={"title": "示範", "paper_size": "a4", "print_mode": "print_shop"}).json()
+        c.post(f"/api/books/{book['id']}/character/candidates", json={"description": "a cat", "count": 1})
+        char = _wait_succeeded(c, book["id"], "character", 1)[0]
+        c.post(f"/api/books/{book['id']}/character", json={"generation_id": char["id"]})
+        page = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "park"}).json()
+        res = c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand", "mode": "precise"})
+        assert res.status_code == 202, res.text
+        assert _wait_succeeded(c, book["id"], "pose", 1)[0]["pose_mode"] == "precise"
+    assert seen == []
+    # 對照：同一個 ComfyUI 下真的跑 preflight，精準模式會被判定不可用（上面的結果不是巧合）
+    from app.services.pose_modes import precise_unavailable_detail
+
+    app2 = app_main.create_app(fake_backend.demo_settings(tmp_path / "s2", load_settings(settings_file)),
+                               engine=fake_backend.DemoEngine(delay_s=0), start_worker=False)
+    with TestClient(app2):
+        assert (precise_unavailable_detail(app2.state.preflight) or "").startswith("精準模式缺少：")
+    assert "/object_info" in seen
 
 
 def test_fake_backend_cli_runs_uvicorn_on_port(settings_file, tmp_path, monkeypatch):

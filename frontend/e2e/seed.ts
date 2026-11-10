@@ -58,7 +58,10 @@ export async function setCharacter(request: APIRequestContext, bookId: number): 
   await ok(await request.post(`/api/books/${bookId}/character`, { data: { generation_id: gen.id } }));
 }
 
-/** 合成流程：產生並選用 1 張背景、1 個角色動作（需已設定角色），存一個位置草稿；confirm 時再確認合成。 */
+/**
+ * 合成流程：產生並選用 1 張背景、1 個角色動作（需已設定角色；產生方式 poseMode，預設精準），
+ * 存一個位置草稿；confirm 時再確認合成。
+ */
 export async function composePage(
   request: APIRequestContext,
   bookId: number,
@@ -66,10 +69,17 @@ export async function composePage(
   {
     confirm = false,
     placement = { cx: 0.45, cy: 0.66, height: 0.6, flip: false },
-  }: { confirm?: boolean; placement?: { cx: number; cy: number; height: number; flip: boolean } } = {},
+    poseMode = "precise",
+  }: {
+    confirm?: boolean;
+    placement?: { cx: number; cy: number; height: number; flip: boolean };
+    poseMode?: "precise" | "fast";
+  } = {},
 ): Promise<void> {
   const bg = await ok<Generation>(await request.post(`/api/pages/${pageId}/backgrounds`));
-  const pose = await ok<Generation>(await request.post(`/api/pages/${pageId}/poses`, { data: { action: "waving one hand" } }));
+  const pose = await ok<Generation>(
+    await request.post(`/api/pages/${pageId}/poses`, { data: { action: "waving one hand", mode: poseMode } }),
+  );
   await waitSucceeded(request, bookId, "background", [bg.id]);
   await waitSucceeded(request, bookId, "pose", [pose.id]);
   await ok(await request.post(`/api/pages/${pageId}/background`, { data: { generation_id: bg.id } }));
