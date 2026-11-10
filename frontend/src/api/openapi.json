@@ -804,14 +804,14 @@
         }
       }
     },
-    "/api/books/{book_id}/backgrounds/batch": {
+    "/api/books/{book_id}/materials/batch": {
       "post": {
         "tags": [
           "compose"
         ],
-        "summary": "Create Backgrounds Batch",
-        "description": "替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、\n背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。\nbody 的風格套用到每一頁（可省略＝簡潔，Phase 7 前端不送 body），實際風格逐頁決定。",
-        "operationId": "create_backgrounds_batch_api_books__book_id__backgrounds_batch_post",
+        "summary": "Create Materials Batch",
+        "description": "「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。\n略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。\n_BATCH_LOCK 讓同時多個呼叫不會重複排隊。",
+        "operationId": "create_materials_batch_api_books__book_id__materials_batch_post",
         "parameters": [
           {
             "name": "book_id",
@@ -829,7 +829,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/BackgroundCreate"
+                    "$ref": "#/components/schemas/BatchMaterialsIn"
                   },
                   {
                     "type": "null"
@@ -840,49 +840,6 @@
             }
           }
         },
-        "responses": {
-          "202": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchBackgroundsOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/books/{book_id}/materials/batch": {
-      "post": {
-        "tags": [
-          "compose"
-        ],
-        "summary": "Create Materials Batch",
-        "description": "「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。\n略過的頁面回報 kind 與原因；與背景批次共用鎖，同時多個呼叫不會重複排隊。",
-        "operationId": "create_materials_batch_api_books__book_id__materials_batch_post",
-        "parameters": [
-          {
-            "name": "book_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Book Id"
-            }
-          }
-        ],
         "responses": {
           "202": {
             "description": "Successful Response",
@@ -2473,29 +2430,19 @@
         ],
         "title": "BackgroundStylesOut"
       },
-      "BatchBackgroundsOut": {
+      "BatchMaterialsIn": {
         "properties": {
-          "queued": {
+          "upload_page_ids": {
             "items": {
-              "$ref": "#/components/schemas/GenerationOut"
+              "type": "integer"
             },
             "type": "array",
-            "title": "Queued"
-          },
-          "skipped": {
-            "items": {
-              "$ref": "#/components/schemas/BatchSkip"
-            },
-            "type": "array",
-            "title": "Skipped"
+            "maxItems": 500,
+            "title": "Upload Page Ids"
           }
         },
         "type": "object",
-        "required": [
-          "queued",
-          "skipped"
-        ],
-        "title": "BatchBackgroundsOut"
+        "title": "BatchMaterialsIn"
       },
       "BatchMaterialsOut": {
         "properties": {

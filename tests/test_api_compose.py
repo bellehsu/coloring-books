@@ -347,7 +347,6 @@ def test_background_invalid_style_422(client, app):
         r = _bg_post(client, p["id"], {"style": bad})
         assert r.status_code == 422, bad
     b = new_book(client)
-    assert client.post(f"/api/books/{b['id']}/backgrounds/batch", json={"style": "x"}).status_code == 422
     with app.state.sessions() as s:  # 422 不會留下排隊中的 generation
         assert not s.exec(select(Generation).where(Generation.kind == GenKind.BACKGROUND)).all()
 
@@ -362,35 +361,20 @@ def test_background_missing_sketch_file_409_before_style(client, app):
         assert r.status_code == 409 and r.json()["detail"] == "草圖檔案遺失，請重新上傳"
 
 
-def test_batch_style_applies_per_page(client, app):
+def test_batch_sketch_page_uses_detailed(client, app):
     app.state.preflight = None
     b = new_book(client)
     pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(3)]
     upload(client, pages[1]["id"], make_png((128, 128)))
     client.patch(f"/api/pages/{pages[1]['id']}", json={"controlnet_strength": 0.4})
-    r = client.post(f"/api/books/{b['id']}/backgrounds/batch", json={"style": "simple"})
-    assert r.status_code == 202, r.text
-    styles = {g["page_id"]: g["background_style"] for g in r.json()["queued"]}
+    queued = batch(client, b["id"])["queued"]
+    styles = {g["page_id"]: g["background_style"] for g in queued}
     assert styles == {pages[0]["id"]: "simple", pages[1]["id"]: "detailed", pages[2]["id"]: "simple"}
-    for g in r.json()["queued"]:
+    for g in queued:
         rj = _rj(app, g["id"])
         assert rj["background_style"] == styles[g["page_id"]]
         assert rj["background_style_requested"] == "simple"
-    assert _rj(app, r.json()["queued"][1]["id"])["structure_image"]
-
-
-@pytest.mark.parametrize(("body", "expected"), [(None, "simple"), ({}, "simple"), ({"style": "detailed"}, "detailed")])
-def test_batch_style_body_optional(client, app, body, expected):
-    app.state.preflight = None
-    b = new_book(client)
-    new_page(client, b["id"], scene_prompt="公園")
-    url = f"/api/books/{b['id']}/backgrounds/batch"
-    r = client.post(url) if body is None else client.post(url, json=body)
-    assert r.status_code == 202, r.text
-    (g,) = r.json()["queued"]
-    assert g["background_style"] == expected
-    rj = _rj(app, g["id"])
-    assert rj["background_style"] == expected and rj["background_style_requested"] == expected
+    assert _rj(app, queued[1]["id"])["structure_image"]
 
 
 def test_batch_qwen_unavailable_falls_back(client, app):
@@ -1069,13 +1053,17 @@ def test_cutout_is_cacheable(client, app):
     assert r.headers["cache-control"] == "private, max-age=86400"
 
 
-# ---- 批次背景 ------------------------------------------------------------------
+# ---- 批次背景（透過 materials/batch，只看背景部分）-----------------------------------
 
 
 def batch(client, book_id):
-    r = client.post(f"/api/books/{book_id}/backgrounds/batch")
+    r = client.post(f"/api/books/{book_id}/materials/batch")
     assert r.status_code == 202, r.text
-    return r.json()
+    out = r.json()
+    return {
+        "queued": [g for g in out["queued"] if g["kind"] == "background"],
+        "skipped": [s for s in out["skipped"] if s["kind"] == "background"],
+    }
 
 
 def test_batch_backgrounds_skip_reasons_and_order(client, app):
@@ -1143,7 +1131,7 @@ def test_batch_backgrounds_missing_sketch_file_is_skipped(client, app):
 
 
 def test_batch_backgrounds_unknown_book(client):
-    assert client.post("/api/books/999/backgrounds/batch").status_code == 404
+    assert client.post("/api/books/999/materials/batch").status_code == 404
 
 
 def test_batch_backgrounds_skips_legacy_page_selection(client, app):
@@ -1356,3 +1344,18 @@ def test_materials_batch_legacy_page_skips_both(client, app):
     assert {s["kind"]: s["reason"] for s in out["skipped"]} == {
         "background": "已有背景", "pose": "已有角色動作",
     }
+
+
+def test_materials_batch_upload_page_ids_skip_background(client, app):
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p1 = new_page(client, b["id"], scene_prompt="公園", action_prompt="揮手")
+    p2 = new_page(client, b["id"], scene_prompt="海邊", action_prompt="跳")
+    r = client.post(f"/api/books/{b['id']}/materials/batch", json={"upload_page_ids": [p1["id"]]})
+    assert r.status_code == 202, r.text
+    out = r.json()
+    assert [(g["kind"], g["page_id"]) for g in out["queued"]] == [
+        ("pose", p1["id"]), ("background", p2["id"]), ("pose", p2["id"]),
+    ]
+    assert out["skipped"] == [
+        {"kind": "background", "page_id": p1["id"], "position": p1["position"], "reason": "改用上傳圖片"}
+    ]

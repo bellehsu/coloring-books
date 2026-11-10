@@ -126,8 +126,8 @@ describe("CharacterStudio", () => {
     gens = [gen(1), gen(2), gen(3)];
     setup();
     await userEvent.click(await screen.findByRole("button", { name: "選 seed 102" }));
-    await userEvent.click(screen.getByRole("button", { name: /設為本書角色，開始做頁面/ }));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1/editor"));
+    await userEvent.click(screen.getByRole("button", { name: /設為本書角色，開始寫故事/ }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1/story"));
     expect(calls.find((c) => c.url === "/api/books/1/character")?.body).toEqual({ generation_id: 2 });
   });
 
@@ -158,12 +158,18 @@ describe("CharacterStudio", () => {
     expect(img).toHaveAttribute("src", "/api/generations/1/lineart-preview");
   });
 
+  it("CharacterStudio links to story after selection", async () => {
+    gens = [gen(2)];
+    bk = book({ character_generation_id: 2, character_description: "a small bunny" });
+    setup();
+    expect(await screen.findByRole("link", { name: "用這個角色，開始寫故事 →" })).toHaveAttribute("href", "/books/1/story");
+  });
+
   it("已設定角色：唯讀，不顯示產生按鈕", async () => {
     gens = [gen(2)];
     bk = book({ character_generation_id: 2, character_description: "a small bunny" });
     setup();
-    const link = await screen.findByRole("link", { name: /前往頁面編輯器/ });
-    expect(link).toHaveAttribute("href", "/books/1/editor");
+    await screen.findByRole("link", { name: /開始寫故事/ });
     expect(screen.queryByRole("button", { name: "產生 4 張" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /設為本書角色/ })).not.toBeInTheDocument();
     expect(screen.getByText("a small bunny")).toBeInTheDocument();

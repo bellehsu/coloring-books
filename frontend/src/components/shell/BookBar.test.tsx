@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Book } from "@/api/client";
@@ -36,6 +36,24 @@ describe("BookBar", () => {
     expect(pages).toHaveAttribute("aria-disabled", "true");
     expect(pages).toHaveAccessibleDescription("請先設定角色");
     expect(screen.getByText("請先設定角色")).toBeInTheDocument();
+  });
+
+  it("BookBar shows four steps with 故事 disabled before a character", () => {
+    render(<BookBar book={book({ character_generation_id: null })} current="character" />);
+    const steps = within(screen.getByRole("list", { name: "製作步驟" })).getAllByRole("listitem").filter((li) => li.textContent);
+    expect(steps.map((li) => li.textContent)).toEqual(["1角色", "2故事", "3頁面請先設定角色", "4匯出"]);
+    const story = screen.getByRole("button", { name: /故事/ });
+    expect(story).toHaveAttribute("aria-disabled", "true");
+    expect(story).toHaveAccessibleDescription("請先設定角色");
+    expect(screen.queryByRole("link", { name: /故事/ })).not.toBeInTheDocument();
+  });
+
+  it("角色已設定：故事連到故事頁，目前在故事頁時是 current step", () => {
+    const { rerender } = render(<BookBar book={book()} current="pages" />);
+    expect(screen.getByRole("link", { name: /故事/ })).toHaveAttribute("href", "/books/7/story");
+    rerender(<BookBar book={book()} current="story" />);
+    expect(screen.getByText("故事").closest("[aria-current]")).toHaveAttribute("aria-current", "step");
+    expect(screen.getByRole("link", { name: /頁面 14 \/ 20/ })).toHaveAttribute("href", "/books/7/editor");
   });
 
   it("角色已設定時頁面連到編輯器；匯出呼叫 onExport / onSettings", async () => {

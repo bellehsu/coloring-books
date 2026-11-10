@@ -9,7 +9,7 @@ export type Edits = S["EditsOut"];
 export type QueueStatus = S["QueueStatus"];
 export type PoseModes = S["PoseModesOut"];
 export type BackgroundStyles = S["BackgroundStylesOut"];
-export type BatchBackgrounds = S["BatchBackgroundsOut"];
+export type BatchMaterials = S["BatchMaterialsOut"];
 /** 角色在背景上的位置（相對背景）：cx、cy 為角色中心 0–1，height 為角色高／背景高 0.1–1.0。 */
 export interface Placement {
   cx: number;
@@ -112,7 +112,7 @@ export const api = {
   /** multipart 上傳，欄位名 `file`。 */
   async upload<T>(path: string, file: Blob, method: "PUT" | "POST" = "PUT"): Promise<T> {
     const form = new FormData();
-    form.append("file", file, "file.png");
+    form.append("file", file, file instanceof File && file.name ? file.name : "file.png");
     const res = await request(path, { method, body: form });
     return (await res.json()) as T;
   },

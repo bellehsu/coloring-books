@@ -436,9 +436,8 @@ class BatchSkip(BaseModel):
     reason: str
 
 
-class BatchBackgroundsOut(BaseModel):
-    queued: list[GenerationOut]
-    skipped: list[BatchSkip]
+class BatchMaterialsIn(BaseModel):
+    upload_page_ids: list[int] = Field(default_factory=list, max_length=500)  # 這些頁改用上傳圖片：不排背景
 
 
 class BatchMaterialsOut(BaseModel):

@@ -75,7 +75,7 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
   function confirm() {
     if (!selected || setCharacter.isPending) return;
     setCharacter.mutate(selected.id, {
-      onSuccess: () => router.push(`/books/${bookId}/editor`),
+      onSuccess: () => router.push(`/books/${bookId}/story`),
       onError: (e) => toast.show(errMsg(e, "無法設定角色"), "error"),
     });
   }
@@ -224,9 +224,8 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
           )}
 
           {locked ? (
-            <Link href={`/books/${bookId}/editor`} className={styles.go}>
-              前往頁面編輯器
-              <ArrowRight size={18} />
+            <Link href={`/books/${bookId}/story`} className={styles.go}>
+              用這個角色，開始寫故事 →
             </Link>
           ) : (
             <>
@@ -251,7 +250,7 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
                 onClick={confirm}
                 className={styles.confirm}
               >
-                設為本書角色，開始做頁面
+                設為本書角色，開始寫故事
               </Button>
             </>
           )}

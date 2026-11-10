@@ -7,7 +7,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_PLACEMENT, type Generation, type Page, type Placement } from "@/api/client";
 import {
   useBackgroundStyles,
-  useBatchBackgrounds,
   useBook,
   useCompose,
   useCreatePage,
@@ -29,11 +28,10 @@ import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
-import { effectiveBgStyle, readBgStyle, writeBgStyle, type BgStyle } from "@/lib/bgStyle";
+import { readBgStyle, writeBgStyle, type BgStyle } from "@/lib/bgStyle";
 import { effectiveMode, readPoseMode, writePoseMode, type PoseMode } from "@/lib/poseMode";
 import { BackgroundPanel } from "./BackgroundPanel";
 import { BackgroundStage } from "./BackgroundStage";
-import { batchResultText, planBatchBackgrounds, sketchPageCount } from "./batchBackgrounds";
 import { ComposePanel } from "./ComposePanel";
 import { ComposeStage } from "./ComposeStage";
 import { peekEditsQueue, pruneEditsQueues } from "./editsQueue";
@@ -52,7 +50,6 @@ import { placementSaverFor } from "./placementSaver";
 import { PosePanel } from "./PosePanel";
 import { PoseStage } from "./PoseStage";
 import { QAPanel } from "./QAPanel";
-import { sentFor } from "./sentFields";
 import { sketchSaverFor } from "./sketchSaver";
 import {
   allowedMode,
@@ -158,7 +155,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const reorder = useReorderPages(bookId);
   const generateBg = useGenerateBackground(bookId);
   const generatePose = useGeneratePose(bookId);
-  const batchBg = useBatchBackgrounds(bookId);
 
   // ---------- 角色動作的產生方式：記住使用者選的；精準不可用時畫面與送出改用快速（不改寫記憶） ----------
   // 面板只在資料載入後（client）出現，localStorage 在初始值讀取不會造成 hydration 差異
@@ -189,11 +185,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
         ? `簡潔風格缺少：${bgStyles.simple.missing.join("、")}`
         : "簡潔風格目前無法使用"
       : null;
-  /** 產生所有背景送出的風格：草圖逐頁由後端決定（確認對話框另外列出有草圖的頁數）。 */
-  const batchBgStyle = effectiveBgStyle(storedBgStyle, {
-    hasSketch: false,
-    simpleAvailable: bgStyles?.simple.available,
-  });
   const changeBgStyle = (s: BgStyle) => {
     setStoredBgStyle(s);
     writeBgStyle(s);
@@ -255,9 +246,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
   useEffect(() => {
     currentIdRef.current = current?.id ?? null;
   });
-  /** 產生所有背景：等存檔 → POST 整段期間停用按鈕；ref 擋住同一輪 render 前的第二次確認。 */
-  const [generatingAll, setGeneratingAll] = useState(false);
-  const generatingAllRef = useRef(false);
   // 背景面板（掛載時）登記的「存好本頁場景描述／構圖強度」；產生所有背景前呼叫
   const bgSaveRef = useRef<(() => Promise<unknown>) | null>(null);
   const registerBgSave = useCallback((save: () => Promise<unknown>) => {
@@ -353,36 +341,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const generateBackground = (pageId: number, style: BgStyle) =>
     generateBg.mutateAsync({ pageId, style }).catch((e: unknown) => toast.show(errMsg(e, "無法產生背景"), "error"));
-
-  /**
-   * 產生所有背景：後端在 POST 當下讀每頁的場景描述、構圖強度與草圖，所以先等這本書的草圖（含畫板 debounce 中的）
-   * 與送出中的場景描述／構圖強度都寫完；本頁之前存失敗的欄位先重送（同單張產生）。任何一個失敗就不送出。
-   * 結果（排入／略過頁數）以後端回應為準。
-   */
-  const generateAllBackgrounds = async () => {
-    if (generatingAllRef.current) return;
-    generatingAllRef.current = true;
-    setGeneratingAll(true);
-    try {
-      const current = bgSaveRef.current?.();
-      const fields = pages.flatMap((p) => [sentFor(qc, p.id).scene?.p, sentFor(qc, p.id).strength?.p]);
-      try {
-        await Promise.all([sketchSaver.whenBookIdle(bookId), current, ...fields]);
-      } catch {
-        toast.show("草圖或場景描述尚未儲存，沒有產生背景；請重試", "error");
-        return;
-      }
-      try {
-        const res = await batchBg.mutateAsync(batchBgStyle);
-        toast.show(batchResultText(res, pages), res.queued.length ? "success" : "info");
-      } catch (e) {
-        toast.show(errMsg(e, "無法產生背景"), "error");
-      }
-    } finally {
-      generatingAllRef.current = false;
-      setGeneratingAll(false);
-    }
-  };
 
   const generatePoseFor = (pageId: number, action: string, m: PoseMode) =>
     generatePose
@@ -604,8 +562,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
     />
   );
 
-  const bgPlan = planBatchBackgrounds(pages, bookGens.data);
-
   return shell(
     <div className={styles.ws}>
       <Filmstrip
@@ -618,11 +574,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
         adding={createPage.isPending}
         onMove={movePage}
         onDelete={removePage}
-        bgPlan={bgPlan}
-        bgStyle={batchBgStyle}
-        bgSketchCount={sketchPageCount(bgPlan, pages)}
-        onGenerateAll={() => void generateAllBackgrounds()}
-        generatingAll={generatingAll}
       />
       <section aria-label="工作區" className={styles.work}>
         <StageHeader

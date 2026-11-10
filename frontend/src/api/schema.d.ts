@@ -201,28 +201,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/books/{book_id}/backgrounds/batch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Backgrounds Batch
-         * @description 替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、
-         *     背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。
-         *     body 的風格套用到每一頁（可省略＝簡潔，Phase 7 前端不送 body），實際風格逐頁決定。
-         */
-        post: operations["create_backgrounds_batch_api_books__book_id__backgrounds_batch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/books/{book_id}/materials/batch": {
         parameters: {
             query?: never;
@@ -235,7 +213,8 @@ export interface paths {
         /**
          * Create Materials Batch
          * @description 「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
-         *     略過的頁面回報 kind 與原因；與背景批次共用鎖，同時多個呼叫不會重複排隊。
+         *     略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
+         *     _BATCH_LOCK 讓同時多個呼叫不會重複排隊。
          */
         post: operations["create_materials_batch_api_books__book_id__materials_batch_post"];
         delete?: never;
@@ -829,12 +808,10 @@ export interface components {
             simple: components["schemas"]["PoseModeStatus"];
             detailed: components["schemas"]["PoseModeStatus"];
         };
-        /** BatchBackgroundsOut */
-        BatchBackgroundsOut: {
-            /** Queued */
-            queued: components["schemas"]["GenerationOut"][];
-            /** Skipped */
-            skipped: components["schemas"]["BatchSkip"][];
+        /** BatchMaterialsIn */
+        BatchMaterialsIn: {
+            /** Upload Page Ids */
+            upload_page_ids?: number[];
         };
         /** BatchMaterialsOut */
         BatchMaterialsOut: {
@@ -1947,7 +1924,7 @@ export interface operations {
             };
         };
     };
-    create_backgrounds_batch_api_books__book_id__backgrounds_batch_post: {
+    create_materials_batch_api_books__book_id__materials_batch_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1958,40 +1935,9 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["BackgroundCreate"] | null;
+                "application/json": components["schemas"]["BatchMaterialsIn"] | null;
             };
         };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchBackgroundsOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_materials_batch_api_books__book_id__materials_batch_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                book_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             202: {

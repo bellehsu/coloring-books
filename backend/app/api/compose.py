@@ -20,7 +20,7 @@ from app.api.deps import get_session, get_storage, get_worker
 from app.api.pages import _page_or_404, page_out, reset_review_when
 from app.api.schemas import (
     BackgroundCreate,
-    BatchBackgroundsOut,
+    BatchMaterialsIn,
     BatchMaterialsOut,
     BatchSkip,
     GenerationOut,
@@ -237,29 +237,6 @@ def create_background(
     )
 
 
-@router.post(
-    "/books/{book_id}/backgrounds/batch", status_code=202, response_model=BatchBackgroundsOut
-)
-def create_backgrounds_batch(
-    book_id: int,
-    request: Request,
-    body: BackgroundCreate | None = None,
-    session: Session = Depends(get_session),
-    storage: Storage = Depends(get_storage),
-    worker: GenerationWorker = Depends(get_worker),
-) -> BatchBackgroundsOut:
-    """替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、
-    背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。
-    body 的風格套用到每一頁（可省略＝簡潔，Phase 7 前端不送 body），實際風格逐頁決定。"""
-    requested = (body or BackgroundCreate()).style
-    simple_available = _simple_available(request)
-    with _BATCH_LOCK:
-        return _batch_backgrounds(
-            book_id, session, storage, worker,
-            requested=requested, simple_available=simple_available,
-        )
-
-
 class _BookState:
     """批次判斷用：整本書每頁的背景／角色動作生成紀錄，以及選了舊流程整頁候選圖的頁面。"""
 
@@ -307,31 +284,6 @@ class _BookState:
         return None
 
 
-def _batch_backgrounds(
-    book_id: int,
-    session: Session,
-    storage: Storage,
-    worker: GenerationWorker,
-    *,
-    requested: BackgroundStyle,
-    simple_available: bool,
-) -> BatchBackgroundsOut:
-    book = _book_or_404(session, book_id)
-    state = _BookState(session, book_id)
-    queued: list[GenerationOut] = []
-    skipped: list[BatchSkip] = []
-    for page in state.pages:
-        out = _batch_background_page(
-            session, storage, worker, book, page, state,
-            requested=requested, simple_available=simple_available,
-        )
-        if isinstance(out, BatchSkip):
-            skipped.append(out)
-        else:
-            queued.append(out)
-    return BatchBackgroundsOut(queued=queued, skipped=skipped)
-
-
 def _batch_background_page(
     session: Session,
     storage: Storage,
@@ -362,12 +314,15 @@ def _batch_background_page(
 def create_materials_batch(
     book_id: int,
     request: Request,
+    body: BatchMaterialsIn | None = None,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
 ) -> BatchMaterialsOut:
     """「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
-    略過的頁面回報 kind 與原因；與背景批次共用鎖，同時多個呼叫不會重複排隊。"""
+    略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
+    _BATCH_LOCK 讓同時多個呼叫不會重複排隊。"""
+    upload_pages = set(body.upload_page_ids) if body else set()
     simple_available = _simple_available(request)
     with _BATCH_LOCK:
         book = _book_or_404(session, book_id)
@@ -381,10 +336,15 @@ def create_materials_batch(
         queued: list[GenerationOut] = []
         skipped: list[BatchSkip] = []
         for page in state.pages:
-            out = _batch_background_page(
-                session, storage, worker, book, page, state,
-                requested="simple", simple_available=simple_available,
-            )
+            if page.id in upload_pages:
+                out = BatchSkip(
+                    kind="background", page_id=page.id, position=page.position, reason="改用上傳圖片"
+                )
+            else:
+                out = _batch_background_page(
+                    session, storage, worker, book, page, state,
+                    requested="simple", simple_available=simple_available,
+                )
             (skipped if isinstance(out, BatchSkip) else queued).append(out)
             reason = state.skip_reason(page, GenKind.POSE)
             if reason is None and not has_character:

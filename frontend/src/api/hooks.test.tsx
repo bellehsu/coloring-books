@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import {
   useBackgroundStyles,
-  useBatchBackgrounds,
+  useBatchMaterials,
   useCompose,
   useGenerateBackground,
   useGeneratePose,
@@ -149,14 +149,15 @@ describe("compose-flow hooks", () => {
     expect(keys()).toContain(JSON.stringify(qk.queue()));
   });
 
-  it("useBatchBackgrounds POST /books/1/backgrounds/batch 帶 style", async () => {
+  it("useBatchMaterials POST /books/1/materials/batch 帶 upload_page_ids", async () => {
     const { f, wrapper, keys } = run();
-    const { result } = renderHook(() => useBatchBackgrounds(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync("detailed"); });
-    expect(f.mock.calls[0][0]).toBe("/api/books/1/backgrounds/batch");
+    const { result } = renderHook(() => useBatchMaterials(1), { wrapper });
+    await act(async () => { await result.current.mutateAsync({ upload_page_ids: [4] }); });
+    expect(f.mock.calls[0][0]).toBe("/api/books/1/materials/batch");
     expect(f.mock.calls[0][1].method).toBe("POST");
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ style: "detailed" });
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ upload_page_ids: [4] });
     expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
+    expect(keys()).toContain(JSON.stringify(qk.pages(1)));
   });
 
   it("useGeneratePose POST /pages/5/poses 帶 action 與 mode", async () => {

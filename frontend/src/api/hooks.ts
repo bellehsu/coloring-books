@@ -9,7 +9,7 @@ import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
 import type {
   BackgroundStyles,
-  BatchBackgrounds,
+  BatchMaterials,
   Book,
   Edits,
   ExportSummary,
@@ -341,16 +341,28 @@ export function useGenerateBackground(bookId: number) {
   });
 }
 
-/**
- * 整本書每一頁排一張背景（後端略過沒場景描述、已有背景、背景產生中、草圖遺失的頁），一律帶風格
- * （有可用草圖的頁後端用細緻）→ generations（qk.generationsOf 前綴涵蓋每一頁的歷史與排隊數）, queue
- */
-export function useBatchBackgrounds(bookId: number) {
+/** 上傳圖片當這頁的背景（後端置中裁成頁面比例並選用）→ pages, generations, queue */
+export function useUploadBackground(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (style: BgStyle) =>
-      api.post<BatchBackgrounds>(`/books/${bookId}/backgrounds/batch`, { style } satisfies S["BackgroundCreate"]),
-    onSuccess: () => invalidateJobs(qc, bookId),
+    mutationFn: ({ pageId, file }: { pageId: number; file: File }) =>
+      api.upload<Page>(`/pages/${pageId}/backgrounds/upload`, file, "POST"),
+    onSuccess: () =>
+      Promise.all([qc.invalidateQueries({ queryKey: qk.pages(bookId) }), invalidateJobs(qc, bookId)]),
+  });
+}
+
+/**
+ * 產生全部素材：替整本書每一頁補排缺的背景與角色動作（後端略過已有／沒描述的）。
+ * upload_page_ids：改用上傳圖片的頁，不排背景 → generations, pages, queue
+ */
+export function useBatchMaterials(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body?: S["BatchMaterialsIn"]) =>
+      api.post<BatchMaterials>(`/books/${bookId}/materials/batch`, body),
+    onSuccess: () =>
+      Promise.all([qc.invalidateQueries({ queryKey: qk.pages(bookId) }), invalidateJobs(qc, bookId)]),
   });
 }
 
