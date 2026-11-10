@@ -127,8 +127,8 @@ def pose_mode_of(gen: Generation) -> PoseMode | None:
 
 def background_style_of(gen: Generation) -> BackgroundStyle | None:
     """背景的實際風格（看 request_json，排隊中也算得出來）；其他 kind 為 None。
-    背景風格上線前的舊列沒有 background_style（或內容讀不懂）→ "detailed"。"""
-    if gen.kind != GenKind.BACKGROUND:
+    背景風格上線前的舊列沒有 background_style（或內容讀不懂）→ "detailed"。上傳的圖片沒有風格 → None。"""
+    if gen.kind != GenKind.BACKGROUND or gen.engine == "upload":
         return None
     try:
         style = json.loads(gen.request_json or "{}").get("background_style")

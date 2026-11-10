@@ -1148,6 +1148,52 @@ def test_upload_background_creates_selected_generation(client, app):
     assert client.get(f"/api/generations/{other}").json()["source"] == "generated"
 
 
+def test_upload_background_has_no_style_and_measures_time(client, app, monkeypatch):
+    """上傳的背景沒有生成風格（不是「細緻」）；耗時記實際處理時間，不是 0。"""
+    from types import SimpleNamespace
+
+    import app.api.compose as compose_api
+
+    ticks = iter([100.0, 100.75])
+    monkeypatch.setattr(compose_api, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    b = new_book(client, **A5_HOME)
+    p = new_page(client, b["id"])
+    gid = upload_bg(client, p["id"], png_bytes()).json()["background_generation_id"]
+    out = client.get(f"/api/generations/{gid}").json()
+    assert out["background_style"] is None
+    assert out["elapsed_s"] == pytest.approx(0.75)
+
+
+def test_upload_large_jpeg_decodes_reduced_and_encodes_once(client, app, monkeypatch):
+    """大張 JPEG：用 draft 縮小解碼，且只編碼一次 PNG（最後存檔），不再整張轉 PNG 再解回來。"""
+    b = new_book(client, **A5_HOME)
+    p = new_page(client, b["id"])
+    tw, th = compute_layout(PaperSize(b["paper_size"]), PrintMode(b["print_mode"])).generation_size
+    big = (tw * 5, th * 5)
+    buf = io.BytesIO()
+    Image.new("RGB", big, "orange").save(buf, "JPEG", quality=80)
+    saves: list[tuple[str, tuple[int, int]]] = []
+    real_save = Image.Image.save
+
+    def spy(self, fp, format=None, **kw):
+        saves.append((str(format).upper(), self.size))
+        return real_save(self, fp, format, **kw)
+
+    monkeypatch.setattr(Image.Image, "save", spy)
+    r = client.post(f"/api/pages/{p['id']}/backgrounds/upload",
+                    files={"file": ("big.jpg", buf.getvalue(), "image/jpeg")})
+    assert r.status_code == 201, r.text
+    assert saves == [("PNG", (tw, th))]
+    g = gen_row(app, r.json()["background_generation_id"])
+    params = json.loads(g.params_json)
+    assert params["original_size"] == list(big)
+    l, t, rr, bb = params["crop_box"]
+    assert (rr - l, bb - t) == (tw, th)
+    with Image.open(app.state.storage.abs(g.image_path)) as im:
+        assert im.size == (tw, th)
+        assert im.getpixel((tw // 2, th // 2))[0] > 200
+
+
 def test_upload_rejects_bad_file(client, app):
     b = new_book(client)
     p = new_page(client, b["id"])

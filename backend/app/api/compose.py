@@ -47,7 +47,7 @@ from app.services.prompts import (
 )
 from app.services.worker import GenerationWorker, encode_request
 from app.services.upload_bg import cover_crop
-from app.storage import UPLOAD_MAX_PIXELS, ImageRejected, Storage, TooManyPixels, normalize_png
+from app.storage import UPLOAD_MAX_PIXELS, ImageRejected, Storage, TooManyPixels, load_rgb
 
 router = APIRouter(prefix="/api", tags=["compose"])
 
@@ -399,22 +399,25 @@ def upload_background(
     """上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine="upload" 的背景並選用。"""
     page = _page_or_404(session, page_id)
     book = _book_or_404(session, page.book_id)
+    started = time.monotonic()
     data = file.file.read(MAX_BG_UPLOAD_BYTES + 1)
     if len(data) > MAX_BG_UPLOAD_BYTES:
         raise HTTPException(400, f"檔案過大，上限 {MAX_BG_UPLOAD_BYTES} bytes")
+    width, height = compute_layout(book.paper_size, book.print_mode).generation_size
     try:
-        png, original_size = normalize_png(
-            data, max_bytes=MAX_BG_UPLOAD_BYTES, max_pixels=UPLOAD_MAX_PIXELS
+        # JPEG 縮小解碼到約兩倍目標尺寸（LANCZOS 縮放仍有餘裕），不先整張轉成 PNG 再解回來
+        src, original_size = load_rgb(
+            data, max_bytes=MAX_BG_UPLOAD_BYTES, max_pixels=UPLOAD_MAX_PIXELS,
+            draft_size=(2 * width, 2 * height),
         )
     except TooManyPixels as e:
         raise HTTPException(422, str(e)) from e
     except ImageRejected as e:
         raise HTTPException(400, str(e)) from e
-    width, height = compute_layout(book.paper_size, book.print_mode).generation_size
-    with Image.open(io.BytesIO(png)) as src:
-        out, crop_box = cover_crop(src, (width, height))
+    out, crop_box = cover_crop(src, (width, height))
     buf = io.BytesIO()
     out.save(buf, "PNG")
+    elapsed_s = time.monotonic() - started
     request_json = encode_request(
         kind=GenKind.BACKGROUND, prompt="", negative_prompt="", seed=0, width=width, height=height,
         extra={"source": "upload"},
@@ -442,7 +445,7 @@ def upload_background(
             params_json=json.dumps(params, ensure_ascii=False, sort_keys=True),
             started_at=now,
             finished_at=now,
-            elapsed_s=0.0,
+            elapsed_s=elapsed_s,
         )
         session.add(gen)
         session.flush()

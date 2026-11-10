@@ -109,17 +109,23 @@ def test_discard_queued_also_cancels(client, app, engine):
 
 
 def _add_gens(app, rows):
+    """rows：(kind, status, elapsed) 或 (kind, status, elapsed, engine, workflow_name)。
+    沒給 engine／workflow 時當成目前的 ComfyUI Qwen 生成。"""
     from datetime import timedelta
 
     from app.models import Generation, GenKind, GenStatus, utcnow
+    from app.services.comfy_engine import WORKFLOWS
 
     t0 = utcnow()
     with app.state.sessions() as s:
-        for i, (kind, status, elapsed) in enumerate(rows):
+        for i, row in enumerate(rows):
+            kind, status, elapsed = row[:3]
+            engine, workflow = row[3:] if len(row) > 3 else (
+                "comfyui", WORKFLOWS.get(GenKind(kind)))
             s.add(Generation(
                 book_id=1, kind=GenKind(kind), status=GenStatus(status), user_text="u", prompt="p",
                 negative_prompt="n", seed=1, width=8, height=8, request_json="{}", elapsed_s=elapsed,
-                created_at=t0 + timedelta(seconds=i),
+                engine=engine, workflow_name=workflow, created_at=t0 + timedelta(seconds=i),
             ))
         s.commit()
 
@@ -147,3 +153,18 @@ def test_queue_status_recent_filters_orders_and_caps_per_kind(client, app):
     assert pose == [111.0 - i for i in range(10)]
     assert [r for r in recent if r["kind"] == "background"] == [{"kind": "background", "elapsed_s": 5.0}]
     assert {r["kind"] for r in recent} == {"pose", "background"}
+
+
+def test_queue_status_recent_only_current_comfy_workflows(client, app):
+    """估時只看目前的 Qwen workflow：上傳的背景（耗時約 0）與舊 SDXL 列不算。"""
+    new_book(client)
+    _add_gens(app, [
+        ("background", "succeeded", 60.0),
+        ("background", "succeeded", 0.0, "upload", None),
+        ("background", "succeeded", 15.0, "comfyui", "sdxl_background"),
+        ("pose", "succeeded", 12.0, "comfyui", "sdxl_pose_cutout"),
+        ("pose", "succeeded", 90.0),
+        ("character", "succeeded", 3.0, "fake", None),
+    ])
+    recent = client.get("/api/system/queue").json()["recent"]
+    assert recent == [{"kind": "background", "elapsed_s": 60.0}, {"kind": "pose", "elapsed_s": 90.0}]

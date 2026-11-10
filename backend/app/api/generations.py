@@ -14,6 +14,7 @@ from app.api.books import _book_or_404
 from app.api.deps import get_session, get_storage, get_worker
 from app.api.schemas import GenerationOut
 from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
+from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
 from app.services.worker import GenerationWorker, WorkerState
 from app.storage import Storage
@@ -229,6 +230,9 @@ def queue_status(
                 col(Generation.status) == GenStatus.SUCCEEDED,
                 col(Generation.kind) == kind,
                 col(Generation.elapsed_s).is_not(None),
+                # 只算目前的 Qwen workflow：上傳（耗時約 0）與舊 SDXL 列會把估時拉低
+                col(Generation.engine) == "comfyui",
+                col(Generation.workflow_name).in_(list(WORKFLOWS.values())),
             )
             .order_by(col(Generation.created_at).desc(), col(Generation.id).desc())
             .limit(_RECENT_PER_KIND)

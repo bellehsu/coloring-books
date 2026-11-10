@@ -267,3 +267,29 @@ def test_compose_kinds_and_fields_roundtrip(tmp_path):
 
 def test_generation_mask_path():
     assert Storage("/x").generation_mask(3, 7) == "books/3/generations/7_mask.png"
+
+
+def test_load_rgb_returns_image_and_drafts_jpeg():
+    """load_rgb 回傳 RGB Image（不經 PNG 編碼）；給 draft_size 時 JPEG 縮小解碼，但每邊不小於要求。"""
+    from app.storage import load_rgb
+
+    im, size = load_rgb(_img_bytes((2000, 1600), "JPEG"), draft_size=(400, 300))
+    assert size == (2000, 1600)
+    assert im.mode == "RGB"
+    assert im.width < 2000 and im.width >= 400 and im.height >= 300
+    im, size = load_rgb(_img_bytes((300, 200), "PNG"), draft_size=(100, 100))
+    assert size == (300, 200) and im.size == (300, 200)
+
+
+def test_load_rgb_draft_respects_exif_rotation():
+    """EXIF 轉 90° 的 JPEG：回報轉正後的原尺寸，縮小解碼後仍蓋得住要求的（轉正後）尺寸。"""
+    from app.storage import load_rgb
+
+    buf = io.BytesIO()
+    exif = Image.Exif()
+    exif[0x0112] = 6  # 順時針轉 90°
+    Image.new("RGB", (2400, 1200), "white").save(buf, "JPEG", exif=exif.tobytes())
+    im, size = load_rgb(buf.getvalue(), draft_size=(200, 500))
+    assert size == (1200, 2400)
+    assert im.width < 1200 and im.width >= 200 and im.height >= 500
+    assert im.height > im.width

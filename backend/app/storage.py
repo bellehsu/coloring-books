@@ -62,6 +62,9 @@ class Storage:
         self.abs(rel).unlink(missing_ok=True)
 
 
+_EXIF_ORIENTATION = 0x0112
+
+
 def _high_depth_to_l(im: Image.Image) -> Image.Image:
     """I;16／I／F 灰階縮成 8-bit L。Pillow 直接 convert 會把超過 255 的值截掉，整張變白。"""
     if im.mode.startswith("I;16"):
@@ -93,11 +96,17 @@ def _flatten_on_white(im: Image.Image) -> Image.Image:
     return im.convert("RGB")
 
 
-def normalize_png(
-    data: bytes, *, max_bytes: int = 10_000_000, max_side: int = 8192, max_pixels: int | None = None
-) -> tuple[bytes, tuple[int, int]]:
-    """驗證上傳圖片（PNG/JPEG/WebP）並轉成 RGB PNG。回傳 (png bytes, (寬, 高))。
-    max_pixels：像素數上限，只看檔頭宣告的尺寸、不解碼；超過丟 TooManyPixels。"""
+def load_rgb(
+    data: bytes,
+    *,
+    max_bytes: int = 10_000_000,
+    max_side: int = 8192,
+    max_pixels: int | None = None,
+    draft_size: tuple[int, int] | None = None,
+) -> tuple[Image.Image, tuple[int, int]]:
+    """驗證上傳圖片（PNG/JPEG/WebP）並解碼成 RGB Image。回傳 (圖, 轉正後的原尺寸 (寬, 高))。
+    max_pixels：像素數上限，只看檔頭宣告的尺寸、不解碼；超過丟 TooManyPixels。
+    draft_size：（轉正後的）需要尺寸；JPEG 會以 1/2、1/4、1/8 縮小解碼，每邊仍不小於它，省時省記憶體。"""
     if len(data) > max_bytes:
         raise ImageRejected(f"檔案過大：{len(data)} bytes，上限 {max_bytes}")
     try:
@@ -111,8 +120,13 @@ def normalize_png(
                 raise ImageRejected(f"圖片太小：{w}x{h}，最短邊至少 {MIN_SIDE}px")
             if max(w, h) > max_side:
                 raise ImageRejected(f"圖片太大：{w}x{h}，最長邊上限 {max_side}px")
+            rotated = im.getexif().get(_EXIF_ORIENTATION) in (5, 6, 7, 8)
+            if rotated:
+                w, h = h, w
+            if draft_size is not None and im.format == "JPEG":
+                dw, dh = draft_size
+                im.draft("RGB", (dh, dw) if rotated else (dw, dh))  # draft 用檔案內的方向
             im = ImageOps.exif_transpose(im)
-            w, h = im.size
             rgb = _flatten_on_white(im)
     except Image.DecompressionBombError as e:
         # Pillow 在開檔時就擋下宣告尺寸超過其上限（約 1.8 億像素）的圖
@@ -121,6 +135,14 @@ def normalize_png(
         raise ImageRejected(f"無法解析為圖片：{e}") from e
     except (UnidentifiedImageError, OSError) as e:
         raise ImageRejected(f"無法解析為圖片：{e}") from e
+    return rgb, (w, h)
+
+
+def normalize_png(
+    data: bytes, *, max_bytes: int = 10_000_000, max_side: int = 8192, max_pixels: int | None = None
+) -> tuple[bytes, tuple[int, int]]:
+    """驗證上傳圖片（PNG/JPEG/WebP）並轉成 RGB PNG。回傳 (png bytes, (寬, 高))。"""
+    rgb, size = load_rgb(data, max_bytes=max_bytes, max_side=max_side, max_pixels=max_pixels)
     buf = io.BytesIO()
     rgb.save(buf, "PNG")
-    return buf.getvalue(), (w, h)
+    return buf.getvalue(), size
