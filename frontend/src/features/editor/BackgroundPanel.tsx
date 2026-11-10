@@ -4,12 +4,20 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Page } from "@/api/client";
 import { Button } from "@/components/ui/Button";
+import { Segmented } from "@/components/ui/Segmented";
+import { effectiveBgStyle, type BgStyle } from "@/lib/bgStyle";
 import styles from "./Inspector.module.css";
 import { sendTracked, sentFor } from "./sentFields";
 
 export const MAX_SCENE = 800;
 const STRENGTH_MAX = 0.6;
 const STRENGTH_STEP = 0.05;
+
+const STYLE_HINT: Record<BgStyle, string> = {
+  simple: "約 20 秒，線條少、適合小小孩",
+  detailed: "約 10 秒，細節多，可以照構圖草圖",
+};
+const SKETCH_NOTE = "有構圖草圖時用細緻，才會照草圖構圖";
 
 export interface BackgroundPanelProps {
   /** 呼叫端用 key={page.id}：欄位只在掛載時初始化（sentFields 送出過的值優先，否則用 page）。 */
@@ -18,8 +26,8 @@ export interface BackgroundPanelProps {
   onPatch: (body: { scene_prompt?: string; controlnet_strength?: number }) => Promise<unknown>;
   /** 產生前的其他寫入（構圖草圖：立即 flush 並等它存好）。reject＝不要產生（呼叫端已顯示訊息）。 */
   beforeGenerate: () => Promise<unknown>;
-  /** POST /pages/{id}/backgrounds（一次一張）；失敗時呼叫端顯示 toast，promise 照常 resolve。 */
-  onGenerate: () => Promise<unknown>;
+  /** POST /pages/{id}/backgrounds {style}（一次一張）；失敗時呼叫端顯示 toast，promise 照常 resolve。 */
+  onGenerate: (style: BgStyle) => Promise<unknown>;
   /** POST 進行中。 */
   generating: boolean;
   /** 本頁背景排隊中＋生成中的張數。 */
@@ -29,13 +37,24 @@ export interface BackgroundPanelProps {
    * 「產生所有背景」在 POST 前呼叫；reject＝有欄位沒存好（呼叫端已顯示訊息）。
    */
   registerSave?: (save: () => Promise<unknown>) => () => void;
+  /** 使用者記住的背景風格（未套用草圖／可用性）。 */
+  style: BgStyle;
+  /** 使用者切換風格；呼叫端負責記住（localStorage）。 */
+  onStyleChange: (s: BgStyle) => void;
+  /** 簡潔不可用的原因；有值時停用「簡潔」並顯示、改用細緻。 */
+  simpleUnavailableReason: string | null;
+  /**
+   * 本頁有沒有構圖草圖。預設看 page.sketch_url；呼叫端可傳更即時的值（這個 session 剛送出的草圖，
+   * 不等 PUT 與 pages 重抓）。
+   */
+  hasSketch?: boolean;
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 const quiet = (p: Promise<unknown>) => p.catch(() => {});
 
 /**
- * 背景模式的面板：場景描述（離開欄位時存）、構圖強度（放開時存）、產生背景（一次一張）。
+ * 背景模式的面板：場景描述（離開欄位時存）、構圖強度（放開時存）、背景風格（簡潔｜細緻）、產生背景（一次一張）。
  * 產生前先 flush 草圖與欄位，全部成功才 POST；整段流程期間停用按鈕。
  */
 export function BackgroundPanel({
@@ -46,8 +65,13 @@ export function BackgroundPanel({
   generating,
   activeCount,
   registerSave,
+  style,
+  onStyleChange,
+  simpleUnavailableReason,
+  hasSketch = page.sketch_url != null,
 }: BackgroundPanelProps) {
   const sceneId = useId();
+  const styleId = useId();
   const strengthId = useId();
   const qc = useQueryClient();
   // 最後送出的值與它的請求（產生前要等它完成；同一個值不重送）；跨重新掛載保留，見 sentFields。
@@ -69,10 +93,28 @@ export function BackgroundPanel({
     return sendTracked(qc, page.id, "strength", v, () => onPatch({ controlnet_strength: v }));
   }
 
+  // 有可用的構圖草圖（有草圖且滑桿 > 0，拖曳中即時反應）→ 細緻；簡潔不可用 → 細緻。不改寫記住的風格。
+  const sketchForced = hasSketch && strength > 0;
+  const effective = effectiveBgStyle(style, {
+    hasSketch: sketchForced,
+    simpleAvailable: simpleUnavailableReason === null,
+  });
+  const simpleDisabled = sketchForced || simpleUnavailableReason !== null;
+  const describedBy = [
+    `${styleId}-hint`,
+    sketchForced && `${styleId}-sketch`,
+    simpleUnavailableReason && `${styleId}-why`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   // 登記的函式透過 ref 取用最新一次 render 的 saveScene／saveStrength（欄位值）。
   const saveFields = useRef<() => Promise<unknown>>(() => Promise.resolve());
+  // 產生時在存檔（含草圖 flush）之後才讀：剛存好的草圖會讓風格變成細緻
+  const effectiveRef = useRef(effective);
   useEffect(() => {
     saveFields.current = () => Promise.all([saveScene(), saveStrength()]);
+    effectiveRef.current = effective;
   });
   useEffect(() => registerSave?.(() => saveFields.current()), [registerSave]);
 
@@ -90,7 +132,7 @@ export function BackgroundPanel({
       } catch {
         return; // 存檔失敗已顯示訊息；不要用舊描述或舊草圖生成
       }
-      await onGenerate();
+      await onGenerate(effectiveRef.current);
     } finally {
       startingRef.current = false;
       setStarting(false);
@@ -138,14 +180,40 @@ export function BackgroundPanel({
           onBlur={() => quiet(saveStrength())}
         />
         <span id={`${strengthId}-hint`} className={styles.hint}>
-          {page.sketch_url ? "越高越貼近構圖草圖；0 表示不參考" : "沒有構圖草圖時不使用"}
+          {hasSketch ? "越高越貼近構圖草圖；0 表示不參考" : "沒有構圖草圖時不使用"}
         </span>
+      </div>
+      <div className={styles.field}>
+        <Segmented
+          kind="radio"
+          label="背景風格"
+          value={effective}
+          onChange={onStyleChange}
+          describedBy={describedBy}
+          options={[
+            { value: "simple", label: "簡潔", disabled: simpleDisabled },
+            { value: "detailed", label: "細緻" },
+          ]}
+        />
+        <span id={`${styleId}-hint`} className={styles.hint}>
+          {STYLE_HINT[effective]}
+        </span>
+        {sketchForced && (
+          <span id={`${styleId}-sketch`} className={styles.hint}>
+            {SKETCH_NOTE}
+          </span>
+        )}
+        {simpleUnavailableReason && (
+          <span id={`${styleId}-why`} className={styles.warnHint}>
+            {simpleUnavailableReason}
+          </span>
+        )}
       </div>
       <Button variant="primary" size="lg" disabled={generating || starting} onClick={() => void generate()}>
         產生背景
       </Button>
       <span className={styles.hintCenter} role="status">
-        {activeCount > 0 ? `本頁 ${activeCount} 張排隊或生成中` : "約 10 秒"}
+        {activeCount > 0 ? `本頁 ${activeCount} 張排隊或生成中` : null}
       </span>
       <p className={styles.note2}>先寫好每一頁的場景描述，再按頁面清單上方的『產生所有背景』，可以減少等待</p>
     </section>

@@ -120,13 +120,23 @@ vi.mock("./BackgroundPanel", async (orig) => {
       realBgPanel ? (
         <real.BackgroundPanel {...p} />
       ) : (
-        <section data-testid="background-panel" data-page={p.page.id} data-active={p.activeCount}>
+        <section
+          data-testid="background-panel"
+          data-page={p.page.id}
+          data-active={p.activeCount}
+          data-style={p.style}
+          data-reason={p.simpleUnavailableReason ?? ""}
+          data-has-sketch={String(!!p.hasSketch)}
+        >
           <button
             type="button"
             disabled={p.generating}
-            onClick={() => void p.beforeGenerate().then(p.onGenerate, () => {})}
+            onClick={() => void p.beforeGenerate().then(() => p.onGenerate(p.style), () => {})}
           >
             stub-generate-background
+          </button>
+          <button type="button" onClick={() => p.onStyleChange("detailed")}>
+            stub-style-detailed
           </button>
         </section>
       ),
@@ -285,6 +295,8 @@ let failWith: Record<string, number>;
 let nextPageId: number;
 /** GET /system/pose-modes 的回應。 */
 let poseModes: O;
+/** GET /system/background-styles 的回應。 */
+let bgStyles: O;
 
 const j = (data: unknown, status = 200) =>
   new Response(data === undefined ? null : JSON.stringify(data), {
@@ -305,6 +317,7 @@ beforeEach(() => {
   failWith = {};
   nextPageId = 10;
   poseModes = { precise: { available: true, missing: [] }, fast: { available: true, missing: [] } };
+  bgStyles = { simple: { available: true, missing: [] }, detailed: { available: true, missing: [] } };
   localStorage.clear();
   sketchSaves.length = 0;
   let blobN = 0;
@@ -335,6 +348,7 @@ beforeEach(() => {
       }
       if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0, running_id: null });
       if (url === "/api/system/pose-modes") return j(poseModes);
+      if (url === "/api/system/background-styles") return j(bgStyles);
       if (url.startsWith("/api/books/1/generations")) {
         const q = new URL(url, "http://x").searchParams;
         let list = gens;
@@ -921,7 +935,7 @@ describe("EditorPage", () => {
     setup();
     await userEvent.click(await screen.findByRole("button", { name: "產生所有背景" }));
     const dlg = screen.getByRole("dialog", { name: "產生所有背景？" });
-    expect(dlg).toHaveTextContent("會為 2 頁產生背景（1 頁略過：第 3 頁沒有場景描述）");
+    expect(dlg).toHaveTextContent("會為 2 頁產生背景（簡潔；1 頁略過：第 3 頁沒有場景描述）");
     expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(0);
     await userEvent.click(within(dlg).getByRole("button", { name: "產生 2 頁背景" }));
     await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
@@ -933,6 +947,100 @@ describe("EditorPage", () => {
     expect(within(pageButton(3)).queryByText("生成中")).not.toBeInTheDocument();
     // 都排入或略過了 → 再按也沒有可產生的頁
     await waitFor(() => expect(screen.getByRole("button", { name: "產生所有背景" })).toBeDisabled());
+  });
+
+  it("背景風格：預設簡潔；產生背景與產生所有背景都送 {style: simple}", async () => {
+    setup();
+    const panel = await screen.findByTestId("background-panel");
+    expect(panel).toHaveAttribute("data-style", "simple");
+    expect(panel).toHaveAttribute("data-reason", "");
+    await userEvent.click(screen.getByRole("button", { name: "stub-generate-background" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/backgrounds")[0].body).toEqual({ style: "simple" });
+    await userEvent.click(await screen.findByRole("button", { name: "產生所有背景" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^產生 \d 頁背景$/ }));
+    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
+    expect(calledWith("POST", "/api/books/1/backgrounds/batch")[0].body).toEqual({ style: "simple" });
+  });
+
+  it("背景風格：記住的細緻 → 批次 POST 帶 detailed，確認對話框顯示（細緻）", async () => {
+    localStorage.setItem("coloring.bgStyle", "detailed");
+    setup();
+    expect(await screen.findByTestId("background-panel")).toHaveAttribute("data-style", "detailed");
+    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
+    const dlg = screen.getByRole("dialog", { name: "產生所有背景？" });
+    expect(dlg).toHaveTextContent("會為 3 頁產生背景（細緻）");
+    await userEvent.click(within(dlg).getByRole("button", { name: "產生 3 頁背景" }));
+    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
+    expect(calledWith("POST", "/api/books/1/backgrounds/batch")[0].body).toEqual({ style: "detailed" });
+  });
+
+  it("背景風格：面板切到細緻 → 記住（localStorage），確認對話框與批次 POST 跟著改", async () => {
+    setup();
+    await userEvent.click(await screen.findByRole("button", { name: "stub-style-detailed" }));
+    expect(localStorage.getItem("coloring.bgStyle")).toBe("detailed");
+    expect(screen.getByTestId("background-panel")).toHaveAttribute("data-style", "detailed");
+    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("會為 3 頁產生背景（細緻）");
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
+    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
+    expect(calledWith("POST", "/api/books/1/backgrounds/batch")[0].body).toEqual({ style: "detailed" });
+  });
+
+  it("背景風格：簡潔不可用 → 面板拿到缺漏清單；批次用細緻（不改寫記憶）", async () => {
+    bgStyles = {
+      simple: { available: false, missing: ["ComfyUI-GGUF", "unet/qwen-image-edit-2511-Q4_K_M.gguf"] },
+      detailed: { available: true, missing: [] },
+    };
+    setup();
+    const panel = await screen.findByTestId("background-panel");
+    await waitFor(() =>
+      expect(panel).toHaveAttribute("data-reason", "簡潔風格缺少：ComfyUI-GGUF、unet/qwen-image-edit-2511-Q4_K_M.gguf"),
+    );
+    // 面板拿到的是記住的風格；被迫細緻由面板（effectiveBgStyle）決定
+    expect(panel).toHaveAttribute("data-style", "simple");
+    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("會為 3 頁產生背景（細緻）");
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "產生 3 頁背景" }));
+    await waitFor(() => expect(calledWith("POST", "/api/books/1/backgrounds/batch")).toHaveLength(1));
+    expect(calledWith("POST", "/api/books/1/backgrounds/batch")[0].body).toEqual({ style: "detailed" });
+    expect(localStorage.getItem("coloring.bgStyle")).toBeNull();
+  });
+
+  it("背景風格：簡潔不可用但沒有缺漏清單 → 「簡潔風格目前無法使用」", async () => {
+    bgStyles = { simple: { available: false, missing: [] }, detailed: { available: true, missing: [] } };
+    setup();
+    const panel = await screen.findByTestId("background-panel");
+    await waitFor(() => expect(panel).toHaveAttribute("data-reason", "簡潔風格目前無法使用"));
+  });
+
+  it("背景風格：確認對話框算出有草圖（強度 > 0）的排入頁數", async () => {
+    pages = [
+      mkPage(1, { sketch_url: "/api/pages/1/sketch?v=1" }),
+      mkPage(2, { sketch_url: "/api/pages/2/sketch?v=1", controlnet_strength: 0 }),
+      mkPage(3, { sketch_url: "/api/pages/3/sketch?v=1", background_generation_id: 9 }),
+    ];
+    setup();
+    await userEvent.click(await screen.findByRole("button", { name: "產生所有背景" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("會為 2 頁產生背景（簡潔，有草圖的 1 頁用細緻；1 頁略過：第 3 頁已有背景）");
+  });
+
+  it("背景風格：本頁有沒有草圖（伺服器的 sketch_url，或這個 session 剛存的草圖）傳給面板", async () => {
+    pages = [mkPage(1), mkPage(2, { sketch_url: "/api/pages/2/sketch?v=1" })];
+    setup();
+    const panel = await screen.findByTestId("background-panel");
+    expect(panel).toHaveAttribute("data-has-sketch", "false");
+    // 存檔一送出就算有草圖（不等 PUT 完成與 pages 重抓）
+    let release!: () => void;
+    gate["PUT /api/pages/1/sketch"] = new Promise<void>((r) => (release = r));
+    await userEvent.click(screen.getByRole("button", { name: "stub-save" }));
+    await waitFor(() => expect(screen.getByTestId("background-panel")).toHaveAttribute("data-has-sketch", "true"));
+    // 清空也一樣立即反應
+    await userEvent.click(screen.getByRole("button", { name: "stub-clear" }));
+    await waitFor(() => expect(screen.getByTestId("background-panel")).toHaveAttribute("data-has-sketch", "false"));
+    release();
+    await userEvent.click(pageButton(2));
+    await waitFor(() => expect(screen.getByTestId("background-panel")).toHaveAttribute("data-has-sketch", "true"));
   });
 
   it("產生所有背景：取消不送出", async () => {

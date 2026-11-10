@@ -1,3 +1,4 @@
+import { crc32, deflateSync } from "node:zlib";
 import { expect, type APIRequestContext } from "@playwright/test";
 
 /** 經 Next 的 /api 代理直接呼叫（假）後端，準備測試資料。 */
@@ -86,6 +87,45 @@ export async function composePage(
   await ok(await request.post(`/api/pages/${pageId}/pose`, { data: { generation_id: pose.id } }));
   await ok(await request.put(`/api/pages/${pageId}/placement`, { data: placement }));
   if (confirm) await ok(await request.post(`/api/pages/${pageId}/compose`));
+}
+
+/** 白底、中間一條黑色橫線的灰階 PNG（size×size）：當成構圖草圖上傳。 */
+function sketchPng(size = 256): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // 8-bit
+  ihdr[9] = 0; // 灰階
+  const rows: Buffer[] = [];
+  for (let y = 0; y < size; y++) {
+    const row = Buffer.alloc(size + 1, 255);
+    row[0] = 0; // filter: none
+    if (Math.abs(y - size / 2) < 3) row.fill(0, 1 + size / 4, 1 + (size * 3) / 4);
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+/** 上傳一張構圖草圖（PUT /pages/{id}/sketch）。 */
+export async function uploadSketch(request: APIRequestContext, pageId: number): Promise<void> {
+  await ok(
+    await request.put(`/api/pages/${pageId}/sketch`, {
+      multipart: { file: { name: "sketch.png", mimeType: "image/png", buffer: sketchPng() } },
+    }),
+  );
 }
 
 /** 每次執行都不同的書名（本機重用伺服器時資料會累積）。 */

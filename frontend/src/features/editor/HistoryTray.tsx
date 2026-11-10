@@ -13,6 +13,8 @@ export type HistoryKind = "background" | "pose";
 
 /** 角色動作縮圖的產生方式標記（後端依 request_json 推得；Phase 5 舊資料算快速）。 */
 const MODE_BADGE: Record<NonNullable<Generation["pose_mode"]>, string> = { precise: "精準", fast: "快速" };
+/** 背景縮圖的風格標記（後端記錄的實際風格；背景風格上線前的舊資料算細緻）。 */
+const STYLE_BADGE: Record<NonNullable<Generation["background_style"]>, string> = { simple: "簡潔", detailed: "細緻" };
 
 const TEXT: Record<HistoryKind, { title: string; noun: string; empty: string }> = {
   background: { title: "背景歷史", noun: "背景", empty: "還沒有背景。寫好場景描述後按「產生背景」。" },
@@ -130,6 +132,11 @@ function Card({
       {g.kind === "pose" && g.pose_mode && (
         <span className={styles.mode} data-mode={g.pose_mode}>
           {MODE_BADGE[g.pose_mode]}
+        </span>
+      )}
+      {g.kind === "background" && g.background_style && (
+        <span className={styles.mode} data-mode={g.background_style}>
+          {STYLE_BADGE[g.background_style]}
         </span>
       )}
       {ok && !g.discarded ? (

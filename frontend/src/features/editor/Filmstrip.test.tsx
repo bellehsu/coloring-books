@@ -42,6 +42,8 @@ function setup(o: Partial<FilmstripProps> = {}) {
     onMove: vi.fn(),
     onDelete: vi.fn(),
     bgPlan: { queued: [3, 4], skipped: [{ pageId: 1, n: 1, reason: "已有背景" }], estimate: false },
+    bgStyle: "simple",
+    bgSketchCount: 0,
     onGenerateAll: vi.fn(),
     ...o,
   };
@@ -151,7 +153,7 @@ describe("Filmstrip", () => {
     expect(b).not.toHaveAttribute("title");
     await userEvent.click(b);
     const dlg = screen.getByRole("dialog", { name: "產生所有背景？" });
-    expect(dlg).toHaveTextContent("會為 2 頁產生背景（2 頁略過：第 1 頁已有背景、第 2 頁沒有場景描述）");
+    expect(dlg).toHaveTextContent("會為 2 頁產生背景（簡潔；2 頁略過：第 1 頁已有背景、第 2 頁沒有場景描述）");
     expect(dlg).not.toHaveTextContent("估計");
     await userEvent.click(within(dlg).getByRole("button", { name: "取消" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -170,7 +172,23 @@ describe("Filmstrip", () => {
     setup({ bgPlan: { queued: [3], skipped: [], estimate: true } });
     await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
     const dlg = screen.getByRole("dialog");
-    expect(dlg).toHaveTextContent("會為 1 頁產生背景");
+    expect(dlg).toHaveTextContent("會為 1 頁產生背景（簡潔）");
     expect(dlg).toHaveTextContent("頁數是估計值，實際以送出後的結果為準");
+  });
+
+  it("產生所有背景：確認對話框顯示風格與有草圖的頁數", async () => {
+    setup({ bgStyle: "simple", bgSketchCount: 1 });
+    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "會為 2 頁產生背景（簡潔，有草圖的 1 頁用細緻；1 頁略過：第 1 頁已有背景）",
+    );
+  });
+
+  it("產生所有背景：細緻時不提草圖", async () => {
+    setup({ bgStyle: "detailed", bgSketchCount: 1, bgPlan: { queued: [3, 4], skipped: [], estimate: false } });
+    await userEvent.click(screen.getByRole("button", { name: "產生所有背景" }));
+    const dlg = screen.getByRole("dialog");
+    expect(dlg).toHaveTextContent("會為 2 頁產生背景（細緻）");
+    expect(dlg).not.toHaveTextContent("有草圖");
   });
 });

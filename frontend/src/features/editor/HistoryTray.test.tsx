@@ -23,6 +23,7 @@ const gen = (id: number, o: O = {}): O => ({
   image_url: `/img/${id}.png`,
   mask_url: null,
   pose_mode: null,
+  background_style: null,
   error: null,
   elapsed_s: 3,
   queue_position: null,
@@ -231,5 +232,28 @@ describe("HistoryTray", () => {
     expect(screen.queryByText("精準")).not.toBeInTheDocument();
     expect(screen.queryByText("快速")).not.toBeInTheDocument();
     expect(document.querySelector("[data-mode]")).toBeNull();
+  });
+
+  it("背景：縮圖左上角顯示風格「簡潔」／「細緻」（排隊中的也有；舊資料後端回 detailed）", async () => {
+    gens = [
+      gen(1, { background_style: "detailed" }),
+      gen(2, { background_style: "simple" }),
+      gen(3, { background_style: "simple", status: "queued", image_url: null, queue_position: 1 }),
+    ];
+    setup({ selectedId: 2 });
+    await screen.findByRole("button", { name: "選 seed 101 為本頁背景" });
+    const cards = screen.getAllByRole("listitem");
+    expect(cards.map((li) => li.querySelector("[data-mode]")?.textContent)).toEqual(["簡潔", "簡潔", "細緻"]);
+    expect(within(cards[1]).getByText("使用中")).toBeInTheDocument();
+    expect(within(cards[1]).getByText("簡潔")).toHaveAttribute("data-mode", "simple");
+    expect(within(cards[2]).getByText("細緻")).toHaveAttribute("data-mode", "detailed");
+  });
+
+  it("角色動作卡片沒有背景風格標記", async () => {
+    gens = [gen(1, { kind: "pose", pose_mode: "fast", background_style: null })];
+    setup({ kind: "pose", selectedId: null });
+    await screen.findByRole("button", { name: "選 seed 101 為本頁角色動作" });
+    expect(screen.queryByText("簡潔")).not.toBeInTheDocument();
+    expect(screen.queryByText("細緻")).not.toBeInTheDocument();
   });
 });
