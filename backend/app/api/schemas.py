@@ -4,10 +4,9 @@ import json
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.models import Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
-from app.services.background_styles import BackgroundStyle
 from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
@@ -108,7 +107,10 @@ class CharacterSelect(BaseModel):
     generation_id: int
 
 
+# 角色動作模式與背景風格：新列一律 precise／simple（Qwen）；fast／detailed 只出現在 Phase 9 以前的 SDXL 舊列，
+# GenerationOut 照舊回報，前端才能替舊縮圖標「快速」／「細緻」。
 PoseMode = Literal["precise", "fast"]
+BackgroundStyle = Literal["simple", "detailed"]
 
 
 def pose_mode_of(gen: Generation) -> PoseMode | None:
@@ -221,26 +223,13 @@ class SelectGeneration(BaseModel):
 
 class PoseCreate(BaseModel):
     action: ActionStr  # 動作文字（不帶場景描述）
-    mode: PoseMode = "precise"  # 精準（Qwen）或快速（SDXL）；前端一律明確送出
+    mode: str | None = None  # 舊前端會送精準／快速；忽略（只有 Qwen 一種）
 
 
 class BackgroundCreate(BaseModel):
-    style: BackgroundStyle = "simple"  # 要求的風格；有可用草圖或簡潔不可用時，排隊時改用細緻
+    model_config = ConfigDict(extra="ignore")
 
-
-class PoseModeStatus(BaseModel):
-    available: bool
-    missing: list[str]  # 不可用時缺的模型檔、節點類別或錯誤
-
-
-class PoseModesOut(BaseModel):
-    precise: PoseModeStatus
-    fast: PoseModeStatus
-
-
-class BackgroundStylesOut(BaseModel):
-    simple: PoseModeStatus
-    detailed: PoseModeStatus
+    style: str | None = None  # 舊前端會送簡潔／細緻；忽略（只有 Qwen 一種）
 
 
 class PagePlacement(BaseModel):

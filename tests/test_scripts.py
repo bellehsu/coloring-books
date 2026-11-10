@@ -329,8 +329,8 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
     with TestClient(app) as c:
         book = c.post("/api/books", json={"title": "示範", "paper_size": "a4", "print_mode": "print_shop"}).json()
         assert c.post(f"/api/books/{book['id']}/character/candidates",
-                      json={"description": "a cat", "count": 4}).status_code == 202
-        chars = _wait_succeeded(c, book["id"], "character", 4)
+                      json={"description": "a cat"}).status_code == 202
+        chars = _wait_succeeded(c, book["id"], "character", 1)
         assert c.post(f"/api/books/{book['id']}/character", json={"generation_id": chars[0]["id"]}).status_code == 200
 
         page = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "park"}).json()
@@ -342,8 +342,7 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"}).status_code == 202
         pose = _wait_succeeded(c, book["id"], "pose", 1)[0]
         assert (pose["width"], pose["height"]) == (832, 1216)
-        assert pose["pose_mode"] == "precise"  # API 預設精準；假後端不跑 preflight，兩種模式都算可用
-        assert c.get("/api/system/pose-modes").json()["precise"]["available"] is True
+        assert pose["pose_mode"] == "precise"
         assert pose["cutout_url"]
         assert c.get(pose["cutout_url"]).status_code == 200
         assert c.post(f"/api/pages/{page['id']}/pose", json={"generation_id": pose["id"]}).status_code == 200
@@ -363,7 +362,7 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
 
 def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch):
     """本機 ComfyUI 連得上、但 workflow 都跑不了（/object_info 空的）：假後端啟動時不跑 preflight、不連 ComfyUI，
-    兩種角色動作模式都可用，精準模式照常生成（e2e 不受本機 ComfyUI 狀態影響）。"""
+    角色動作照常生成（e2e 不受本機 ComfyUI 狀態影響）。"""
     import httpx
     from fastapi.testclient import TestClient
 
@@ -385,24 +384,21 @@ def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch
                                        engine=fake_backend.DemoEngine(delay_s=0.02))
     with TestClient(app) as c:
         assert app.state.preflight is None
-        modes = c.get("/api/system/pose-modes").json()
-        assert modes == {"precise": {"available": True, "missing": []}, "fast": {"available": True, "missing": []}}
         book = c.post("/api/books", json={"title": "示範", "paper_size": "a4", "print_mode": "print_shop"}).json()
         c.post(f"/api/books/{book['id']}/character/candidates", json={"description": "a cat", "count": 1})
         char = _wait_succeeded(c, book["id"], "character", 1)[0]
         c.post(f"/api/books/{book['id']}/character", json={"generation_id": char["id"]})
         page = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "park"}).json()
-        res = c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand", "mode": "precise"})
+        res = c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"})
         assert res.status_code == 202, res.text
         assert _wait_succeeded(c, book["id"], "pose", 1)[0]["pose_mode"] == "precise"
     assert seen == []
-    # 對照：同一個 ComfyUI 下真的跑 preflight，精準模式會被判定不可用（上面的結果不是巧合）
-    from app.services.pose_modes import precise_unavailable_detail
-
+    # 對照：同一個 ComfyUI 下真的跑 preflight，workflow 會被判定不能用（上面的結果不是巧合）
     app2 = app_main.create_app(fake_backend.demo_settings(tmp_path / "s2", load_settings(settings_file)),
                                engine=fake_backend.DemoEngine(delay_s=0), start_worker=False)
     with TestClient(app2):
-        assert (precise_unavailable_detail(app2.state.preflight) or "").startswith("精準模式缺少：")
+        report = app2.state.preflight
+        assert report is not None and report.comfy_reachable and not report.ok
     assert "/object_info" in seen
 
 

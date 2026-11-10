@@ -76,7 +76,8 @@ def test_discard_and_list_filter(client, app):
 
 def test_cancel_only_queued(client, app):
     b = new_book(client)
-    g1, g2 = candidates(client, b["id"], seed=1, count=2).json()
+    (g1,) = candidates(client, b["id"], seed=1).json()  # 一次一張
+    (g2,) = candidates(client, b["id"], seed=2).json()
     r = client.post(f"/api/generations/{g1['id']}/cancel")
     assert r.status_code == 200 and r.json()["status"] == "cancelled"
     assert client.post(f"/api/generations/{g1['id']}/cancel").status_code == 409
@@ -94,7 +95,8 @@ def test_queue_status_reports_engine_unavailable(client, app, engine):
         "pending": [], "recent": [],
     }
     b = new_book(client)
-    candidates(client, b["id"], seed=1, count=2)
+    candidates(client, b["id"], seed=1)
+    candidates(client, b["id"], seed=2)
     assert client.get("/api/system/queue").json()["queued"] == 2
     engine.error = EngineUnavailable("ComfyUI 連不上")
     client.portal.call(app.state.worker.run_once)

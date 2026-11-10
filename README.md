@@ -25,7 +25,6 @@ backend/app/
   services/layout.py           版面尺寸計算（五種紙張、兩種列印模式）
   services/prompts.py          提示詞組裝（角色、背景、角色動作）
   services/compose.py          背景＋去背角色合成（Placement、cutout）
-  services/pose_modes.py       角色動作精準／快速模式可用性（看快取的 preflight）
   services/lineart_extract.py  生成圖轉線稿（呼叫 lineart_post）
   services/workflow_registry.py workflow 登錄、白名單參數、hash
   services/preflight.py        節點／模型／輸入欄位檢查
@@ -126,9 +125,7 @@ BACKEND_URL=http://127.0.0.1:8000 npm run dev   # 另一個終端機，在 front
 ```
 
 設定沿用 `config/settings.yaml`（或 `APP_SETTINGS_FILE`），但資料庫與檔案一律放在 `--storage`（預設：新的暫存資料夾），不會碰到正式資料。
-啟動時不跑 ComfyUI preflight（`create_app(startup_preflight=False)`）：本機 ComfyUI 開著與否、workflow 能不能跑都不影響它，
-`GET /api/system/pose-modes` 一律回報精準／快速都可用、`GET /api/system/background-styles` 一律回報簡潔／細緻都可用
-（e2e 要測「不可用」時在瀏覽器端攔截這兩個 API）。
+啟動時不跑 ComfyUI preflight（`create_app(startup_preflight=False)`）：本機 ComfyUI 開著與否、workflow 能不能跑都不影響它。
 
 ### 端對端測試（Playwright）
 
@@ -215,9 +212,9 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | DELETE | `/pages/{page_id}/sketch` | 移除頁面構圖草圖 |
 | GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
 | POST | `/pages/{page_id}/candidates` | 產生頁面候選（非同步，202） |
-| POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202）；選填 body `{style: "simple" \| "detailed"}`，省略＝簡潔；有可用構圖草圖（強度 > 0）或簡潔不可用時後端改用細緻。`style` 是使用者的選擇（前端只在簡潔不可用時送細緻，草圖頁仍送使用者選的），記在 request_json 的 `background_style_requested`；生成紀錄的 `background_style` 為套用草圖／可用性規則後的實際風格 |
+| POST | `/pages/{page_id}/backgrounds` | 依頁面場景描述產生一張背景（Qwen，非同步，202）；body 可省略，舊前端送的 `style` 忽略。構圖變化語不重複這頁上一張；生成紀錄的 `background_style` 一律 `"simple"`（Phase 9 以前的舊列可能是 `"detailed"`） |
 | POST | `/books/{book_id}/materials/batch` | 產生全部素材（202）：依頁面順序替每頁補排缺的背景與角色動作；選填 body `{"upload_page_ids": [...]}`，這些頁改用上傳圖片，背景略過（reason「改用上傳圖片」）。回傳 `{queued: Generation[], skipped: [{kind: "background" \| "pose", page_id, position, reason}]}` |
-| POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩；`mode`：`"precise"`（預設，Qwen）或 `"fast"`（SDXL），其他值 422（非同步，202；未設角色 409；精準不可用 503「精準模式缺少：…」） |
+| POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩（Qwen，非同步，202；未設角色 409）；舊前端送的 `mode` 忽略。生成紀錄的 `pose_mode` 一律 `"precise"`（Phase 9 以前的舊列可能是 `"fast"`） |
 | POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
 | POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |
 | PUT | `/pages/{page_id}/placement` | 儲存角色位置 `{cx, cy, height, flip}`（中心點與高度為背景的比例） |
@@ -245,8 +242,6 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | GET | `/pages/{page_id}/print.png` | 單頁完整版面 1-bit PNG（300 DPI） |
 | GET | `/system/queue` | 佇列狀態（worker 狀態、排隊數、執行中任務） |
 | GET | `/system/preflight` | ComfyUI 連線、模型與節點檢查（並更新快取） |
-| GET | `/system/pose-modes` | 角色動作精準／快速是否可用 `{precise, fast: {available, missing}}`（只讀快取的 preflight，不連 ComfyUI；ComfyUI 連不上或尚未檢查時都算可用） |
-| GET | `/system/background-styles` | 背景簡潔／細緻是否可用 `{simple, detailed: {available, missing}}`（規則同上） |
 
 ## 線稿與 QA
 

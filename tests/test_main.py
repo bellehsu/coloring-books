@@ -51,3 +51,14 @@ def test_preflight_reload_updates_engine_registry(settings_file, object_info_sub
         assert client.get("/api/system/preflight?reload=true").status_code == 200
         assert app.state.registry is not old
         assert engine.registry is app.state.registry
+
+
+def test_system_mode_endpoints_removed(settings_file):
+    """Phase 9：只剩 Qwen 一種背景風格與一種角色動作模式，可用性端點已移除。"""
+    from tests.fake_engine import FakeEngine
+
+    app = app_main.create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False,
+                              startup_preflight=False)
+    with TestClient(app) as client:
+        assert client.get("/api/system/pose-modes").status_code == 404
+        assert client.get("/api/system/background-styles").status_code == 404

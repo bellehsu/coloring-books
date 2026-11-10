@@ -5,7 +5,6 @@
 - character／page（舊流程）：白底、黑色粗外框的角色與幾個背景方塊（draw_demo）。
 - background：幾個大物件（太陽、雲、樹、草叢）＋上方一個不填色的大框（draw_background）。
 - pose：白底上的同一個角色，固定 832×1216，另附遮罩（角色處白、其他黑；draw_pose）。
-  精準／快速兩種模式畫法相同（params 記錄 pose_mode）。
 不填色的大框刻意留了一個缺口，讓 QA 偵測到「線條有缺口」、自動補線後缺口歸零。
 背景的缺口框在畫面上方，預設位置（DEFAULT_PLACEMENT）的角色不會蓋到它。
 
@@ -14,7 +13,7 @@
 
 設定沿用 load_settings()（config/settings.yaml 或 APP_SETTINGS_FILE，可被 APP_ 環境變數覆寫），
 但 paths.storage_dir／paths.database 一律改到 --storage（預設：新的暫存資料夾），不會碰到正式資料。
-啟動時不跑 ComfyUI preflight（快取維持 None＝兩種角色動作模式都可用），
+啟動時不跑 ComfyUI preflight（快取維持 None），
 結果不受本機 ComfyUI 有沒有開、workflow 能不能跑影響（e2e 才穩定）。
 """
 
@@ -211,7 +210,7 @@ def demo_settings(storage: Path, base: Settings | None = None) -> Settings:
 def create_demo_app(storage: Path, base: Settings | None = None, engine: DemoEngine | None = None):
     from app.main import create_app
 
-    # 不跑啟動 preflight：DemoEngine 不連 ComfyUI，模式可用性也不該看本機 ComfyUI 的狀態
+    # 不跑啟動 preflight：DemoEngine 不連 ComfyUI，也不該看本機 ComfyUI 的狀態
     return create_app(demo_settings(storage, base), engine=engine or DemoEngine(), start_worker=True,
                       startup_preflight=False)
 

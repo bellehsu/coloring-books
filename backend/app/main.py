@@ -2,9 +2,8 @@
 
 啟動：uvicorn app.main:app --app-dir backend
 啟動時會跑一次 preflight 並寫入 log；失敗只記錄，不讓服務當機（startup_preflight=False 時略過，例如假後端）。
-preflight 結果快取在 app.state.preflight（啟動時與每次 GET /api/system/preflight 更新），
-角色動作的模式可用性（/api/system/pose-modes、POST /poses 的 503）與背景風格可用性
-（/api/system/background-styles、POST 背景時簡潔退回細緻）只看這份快取。
+preflight 結果快取在 app.state.preflight（啟動時與每次 GET /api/system/preflight 更新）。
+生成請求不看這份快取（不先擋）：缺模型或節點時由生成失敗回報。
 """
 
 from __future__ import annotations
@@ -15,14 +14,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .api import books, compose, export, generations, lineart, pages, review
-from .api.schemas import BackgroundStylesOut, PoseModesOut
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
-from .services.background_styles import style_availability
 from .services.comfy_client import ComfyClient
 from .services.comfy_engine import ComfyEngine
 from .services.engine import GenerationEngine
-from .services.pose_modes import availability
 from .services.preflight import format_report, run_preflight
 from .services.worker import GenerationWorker
 from .services.workflow_registry import WorkflowRegistry
@@ -63,7 +59,7 @@ def create_app(
             s.queue.retry_backoff_s,
             max_wait_s=s.queue.max_wait_s,
         )
-        app.state.preflight = None  # None＝狀態未知（角色動作模式、背景風格都算可用）
+        app.state.preflight = None  # None＝還沒檢查過
         try:
             if start_worker:
                 await app.state.worker.start()
@@ -104,16 +100,6 @@ def create_app(
             if isinstance(app.state.engine, ComfyEngine):
                 app.state.engine.registry = app.state.registry
         return (await _preflight(app)).to_dict()
-
-    @app.get("/api/system/pose-modes", response_model=PoseModesOut)
-    def pose_modes() -> dict:
-        """角色動作精準／快速模式能不能用：只讀快取的 preflight，不連 ComfyUI。"""
-        return availability(app.state.preflight)
-
-    @app.get("/api/system/background-styles", response_model=BackgroundStylesOut)
-    def background_styles() -> dict:
-        """背景簡潔／細緻風格能不能用：只讀快取的 preflight，不連 ComfyUI。"""
-        return style_availability(app.state.preflight)
 
     return app
 

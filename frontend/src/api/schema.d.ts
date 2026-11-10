@@ -49,7 +49,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Character Candidates */
+        /**
+         * Create Character Candidates
+         * @description 產生一張角色候選圖（Qwen 純文字生圖）；描述不翻譯、原樣放進樣板。回傳只含這一張的清單。
+         */
         post: operations["create_character_candidates_api_books__book_id__character_candidates_post"];
         delete?: never;
         options?: never;
@@ -191,8 +194,7 @@ export interface paths {
         put?: never;
         /**
          * Create Background
-         * @description 產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。
-         *     body 可省略（＝簡潔）；草圖遺失先回 409，之後才決定風格。
+         * @description 產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。
          */
         post: operations["create_background_api_pages__page_id__backgrounds_post"];
         delete?: never;
@@ -234,9 +236,8 @@ export interface paths {
         put?: never;
         /**
          * Create Pose
-         * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述。
-         *     精準（Qwen）：以角色參考圖編輯出新動作，prompt 只有動作；快速（SDXL）：角色描述＋動作文字。
-         *     精準模式依啟動／上次 preflight 的快取判斷可不可用（不即時連 ComfyUI），不可用回 503。
+         * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
+         *     新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。
          */
         post: operations["create_pose_api_pages__page_id__poses_post"];
         delete?: never;
@@ -713,46 +714,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/system/pose-modes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Pose Modes
-         * @description 角色動作精準／快速模式能不能用：只讀快取的 preflight，不連 ComfyUI。
-         */
-        get: operations["pose_modes_api_system_pose_modes_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/system/background-styles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Background Styles
-         * @description 背景簡潔／細緻風格能不能用：只讀快取的 preflight，不連 ComfyUI。
-         */
-        get: operations["background_styles_api_system_background_styles_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -796,17 +757,8 @@ export interface components {
         };
         /** BackgroundCreate */
         BackgroundCreate: {
-            /**
-             * Style
-             * @default simple
-             * @enum {string}
-             */
-            style: "simple" | "detailed";
-        };
-        /** BackgroundStylesOut */
-        BackgroundStylesOut: {
-            simple: components["schemas"]["PoseModeStatus"];
-            detailed: components["schemas"]["PoseModeStatus"];
+            /** Style */
+            style?: string | null;
         };
         /** BatchMaterialsIn */
         BatchMaterialsIn: {
@@ -1221,24 +1173,8 @@ export interface components {
         PoseCreate: {
             /** Action */
             action: string;
-            /**
-             * Mode
-             * @default precise
-             * @enum {string}
-             */
-            mode: "precise" | "fast";
-        };
-        /** PoseModeStatus */
-        PoseModeStatus: {
-            /** Available */
-            available: boolean;
-            /** Missing */
-            missing: string[];
-        };
-        /** PoseModesOut */
-        PoseModesOut: {
-            precise: components["schemas"]["PoseModeStatus"];
-            fast: components["schemas"]["PoseModeStatus"];
+            /** Mode */
+            mode?: string | null;
         };
         /**
          * PrintMode
@@ -2900,46 +2836,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    pose_modes_api_system_pose_modes_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PoseModesOut"];
-                };
-            };
-        };
-    };
-    background_styles_api_system_background_styles_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BackgroundStylesOut"];
                 };
             };
         };

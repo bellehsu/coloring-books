@@ -2,61 +2,18 @@
 qwen_edit_pose_cutout）。Qwen 的 cfg 為 1 → 負向提示詞無效，排除條件寫在正向；生成紀錄的 negative_prompt 存空字串。
 使用者輸入（角色描述、場景、動作，中文或英文）不翻譯，原樣放進英文樣板。
 
-SDXL 時期的樣板（page_prompt、character_prompt、background_prompt、pose_prompt 與各 *_NEGATIVE）還有 API 在用，
-由 Phase 9 的 Task 3／4／6 連同呼叫端一起移除。
+SDXL 時期剩下的整頁樣板（page_prompt、PAGE_NEGATIVE）還有舊流程 API 在用，由 Phase 9 的 Task 6 連同呼叫端一起移除。
 """
 import random
 from collections.abc import Sequence
 
 PAGE_STYLE = "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, full detailed background scene"
 PAGE_NEGATIVE = "plain background, empty background, white background, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature"
-# 角色負向：前段壓制彩色背景、場景與多視角設定圖（Phase 3 實驗 phase3_character_prompt_20261106_154833，v4）
-CHARACTER_NEGATIVE = "colored background, blue background, gray background, gradient background, scenery, landscape, ground, grass, multiple views, character sheet, reference sheet, turnaround, close-up, portrait, upper body, photo, realistic, 3d render, gradient, soft shading, airbrush, texture, noise, blurry, sketch, monochrome, grayscale, text, watermark, signature, multiple characters, cropped"
 
 
 def page_prompt(character_description: str, scene: str) -> str:
     parts = [character_description.strip(), scene.strip(), PAGE_STYLE]
     return ", ".join(p for p in parts if p)
-
-
-def character_prompt(description: str) -> str:
-    # 不寫「character reference」：會讓模型畫成多視角設定圖。白底以 ComfyUI 權重語法加強。
-    return (
-        f"single full body front view of {description.strip()}, standing, "
-        "children's picture book illustration, flat colors, thick clean black outlines, simple shapes, "
-        "(isolated on pure white background:1.3), centered, whole body visible from head to feet"
-    )
-
-
-# --- 頁面合成流程（背景＋角色動作）；初始文字取自 phase5_compose_spike_20261109，Task 6 校正後可改 ---
-BACKGROUND_STYLE = "children's picture book illustration, flat colors, thick clean black outlines, simple shapes"
-# 背景提示詞經 Task 6 校正（experiments/results/phase5_background_prompt_20261109）：
-# 加權強調「簡單、少量大物件」＋負向壓制繁複細節，缺口平均 67 → 42、過小區域約減半。
-BACKGROUND_NEGATIVE = (
-    "cluttered, busy, intricate details, many small objects, tiny details, hatching, crosshatching, pattern, "
-    "people, person, character, girl, boy, child, animal, rabbit, photo, realistic, 3d render, gradient, "
-    "soft shading, texture, noise, blurry, text, watermark"
-)
-POSE_NEGATIVE = "colored background, scenery, landscape, ground, multiple views, character sheet, cropped, photo, realistic, 3d render, gradient, soft shading, texture, noise, blurry, text, watermark, multiple characters"
-POSE_SIZE = (832, 1216)
-
-
-def background_prompt(scene: str) -> str:
-    parts = [
-        scene.strip(),
-        "(simple coloring book background:1.2), (a few large simple objects:1.3), lots of empty space",
-        BACKGROUND_STYLE,
-        "no people",
-    ]
-    return ", ".join(p for p in parts if p)
-
-
-def pose_prompt(character_description: str, action: str) -> str:
-    # 不帶場景描述：背景另外生成，這裡只要白底角色
-    return (
-        f"{character_description.strip()}, {action.strip()}, full body, {BACKGROUND_STYLE}, "
-        "(isolated on pure white background:1.3), centered"
-    )
 
 
 def pick_variation(options: Sequence[str], rng: random.Random, exclude: str | None = None) -> str | None:
@@ -107,6 +64,7 @@ QWEN_POSE_TEMPLATE = (
     "picture book illustration, flat colors, thick clean black outlines."
 )
 QWEN_POSE_VARIATIONS: tuple[str, ...] = ()
+POSE_SIZE = (832, 1216)  # 角色動作固定尺寸（直式、16 的倍數）
 
 
 def qwen_pose_prompt(action: str, variation: str | None = None) -> str:
