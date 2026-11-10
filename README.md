@@ -87,6 +87,8 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
   的任務不論家族都最先執行，不會一直被插隊。重啟後還不知道上一個家族，先依建立時間（最舊的先）。生成紀錄的 `queue_position` 就是實際執行順序。
   「等待過久」以上一次取任務的時間判斷：任務執行中顯示的順位（例如「第 1 位」）不會中途改變，下一個被取走的就是它；
   防插隊因此最多晚一個任務生效。佇列清空（閒置）後改用現在時間。
+  一頁一頁做時，「快速」角色動作（SDXL）配「簡潔」背景（Qwen）會讓每頁流程在 SDXL／Qwen 之間交替、換模型較多；
+  「精準」角色動作配「簡潔」背景則同屬 Qwen，不必換模型。
 - ComfyUI 離線時任務保持 `queued`，不會失敗；`GET /api/system/queue` 的 `state` 會顯示 `engine_unavailable`，ComfyUI 恢復後自動續跑。
 - `config/settings.yaml` 預設 `comfy.url` 為 `http://127.0.0.1:8188`；以 `APP_COMFY__URL` 覆寫（8188 若已被其他服務佔用，可改用 8190 等埠）。
 
@@ -166,7 +168,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 
 1. **背景**：輸入場景描述，選「背景風格」後按「產生背景」，每次一張（不用角色參考圖，提示詞要求無人物）。
    - **簡潔**（預設，約 20 秒，線條少、適合小小孩）：`qwen_background`，Qwen-Image-Edit-2511 GGUF＋Lightning 4 步，不給參考圖，
-     需要 ComfyUI-GGUF；每張隨機挑一種構圖變化。
+     需要 ComfyUI-GGUF；每張隨機挑一種構圖變化，且不會和本頁上一張簡潔背景相同（再產生時構圖一定換一種）。
    - **細緻**（約 10 秒，細節多，可以照構圖草圖）：`sdxl_background`，SDXL＋（選用）ControlNet scribble，少量大物件。
    - 畫構圖（ControlNet scribble）為選用，只有細緻會照草圖構圖：本頁有構圖草圖且構圖強度 > 0 時「簡潔」停用、一律用細緻
      （顯示「有構圖草圖時用細緻，才會照草圖構圖」；強度拉到 0 或清空草圖就能再選簡潔）。
@@ -218,8 +220,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | DELETE | `/pages/{page_id}/sketch` | 移除頁面構圖草圖 |
 | GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
 | POST | `/pages/{page_id}/candidates` | 產生頁面候選（非同步，202） |
-| POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202）；選填 body `{style: "simple" \| "detailed"}`，省略＝簡潔；有可用構圖草圖（強度 > 0）或簡潔不可用時後端改用細緻，生成紀錄的 `background_style` 為實際風格 |
-| POST | `/books/{book_id}/backgrounds/batch` | 依頁面順序替每一頁排一張背景（202；選填 body `{style}` 同上，逐頁決定實際風格）：`{queued: Generation[], skipped: [{page_id, position, reason}]}`；`reason` 為「沒有場景描述」「已有背景」（含舊流程選了整頁候選圖）「背景產生中」「草圖檔案遺失」；同時多個呼叫會依序處理，不會重複排隊 |
+| POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202）；選填 body `{style: "simple" \| "detailed"}`，省略＝簡潔；有可用構圖草圖（強度 > 0）或簡潔不可用時後端改用細緻。`style` 是使用者的選擇（前端只在簡潔不可用時送細緻，草圖頁仍送使用者選的），記在 request_json 的 `background_style_requested`；生成紀錄的 `background_style` 為套用草圖／可用性規則後的實際風格 |
+| POST | `/books/{book_id}/backgrounds/batch` | 依頁面順序替每一頁排一張背景（202；選填 body `{style}` 同上，requested＝使用者的選擇，逐頁決定實際風格）：`{queued: Generation[], skipped: [{page_id, position, reason}]}`；`reason` 為「沒有場景描述」「已有背景」（含舊流程選了整頁候選圖）「背景產生中」「草圖檔案遺失」；同時多個呼叫會依序處理，不會重複排隊 |
 | POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩；`mode`：`"precise"`（預設，Qwen）或 `"fast"`（SDXL），其他值 422（非同步，202；未設角色 409；精準不可用 503「精準模式缺少：…」） |
 | POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
 | POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |

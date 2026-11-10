@@ -26,7 +26,10 @@ export interface BackgroundPanelProps {
   onPatch: (body: { scene_prompt?: string; controlnet_strength?: number }) => Promise<unknown>;
   /** 產生前的其他寫入（構圖草圖：立即 flush 並等它存好）。reject＝不要產生（呼叫端已顯示訊息）。 */
   beforeGenerate: () => Promise<unknown>;
-  /** POST /pages/{id}/backgrounds {style}（一次一張）；失敗時呼叫端顯示 toast，promise 照常 resolve。 */
+  /**
+   * POST /pages/{id}/backgrounds {style}（一次一張）；失敗時呼叫端顯示 toast，promise 照常 resolve。
+   * style＝使用者選的（只套用可用性，同「產生所有背景」）；有草圖改用細緻由後端決定。
+   */
   onGenerate: (style: BgStyle) => Promise<unknown>;
   /** POST 進行中。 */
   generating: boolean;
@@ -108,13 +111,20 @@ export function BackgroundPanel({
     .filter(Boolean)
     .join(" ");
 
+  // 送出的風格＝使用者選的，只套用可用性（不套用草圖：後端依草圖決定實際風格），
+  // 所以 background_style_requested 在單張與「產生所有背景」都是使用者的選擇。
+  const requested = effectiveBgStyle(style, {
+    hasSketch: false,
+    simpleAvailable: simpleUnavailableReason === null,
+  });
+
   // 登記的函式透過 ref 取用最新一次 render 的 saveScene／saveStrength（欄位值）。
   const saveFields = useRef<() => Promise<unknown>>(() => Promise.resolve());
-  // 產生時在存檔（含草圖 flush）之後才讀：剛存好的草圖會讓風格變成細緻
-  const effectiveRef = useRef(effective);
+  // 產生時在存檔（含草圖 flush）之後才讀：等待期間簡潔變成不可用就送細緻
+  const requestedRef = useRef(requested);
   useEffect(() => {
     saveFields.current = () => Promise.all([saveScene(), saveStrength()]);
-    effectiveRef.current = effective;
+    requestedRef.current = requested;
   });
   useEffect(() => registerSave?.(() => saveFields.current()), [registerSave]);
 
@@ -132,7 +142,7 @@ export function BackgroundPanel({
       } catch {
         return; // 存檔失敗已顯示訊息；不要用舊描述或舊草圖生成
       }
-      await onGenerate(effectiveRef.current);
+      await onGenerate(requestedRef.current);
     } finally {
       startingRef.current = false;
       setStarting(false);

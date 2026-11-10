@@ -309,23 +309,35 @@ describe("BackgroundPanel", () => {
       await waitFor(() => expect(props.onGenerate).toHaveBeenCalledWith("detailed"));
     });
 
-    it("產生背景 sends detailed when forced by a sketch or by availability", async () => {
+    it("產生背景 sends the user's choice on a sketch page (the backend forces 細緻), detailed when unavailable", async () => {
+      // 送出＝使用者選的（只套用可用性，同「產生所有背景」）；草圖改用細緻由後端決定，畫面仍顯示細緻
       const a = setup({ page: withSketch() });
+      expect(radio("細緻")).toHaveAttribute("aria-checked", "true");
       await userEvent.click(btn());
-      await waitFor(() => expect(a.props.onGenerate).toHaveBeenCalledWith("detailed"));
+      await waitFor(() => expect(a.props.onGenerate).toHaveBeenCalledWith("simple"));
       a.unmount();
       const b = setup({ simpleUnavailableReason: "簡潔風格目前無法使用" });
       await userEvent.click(btn());
       await waitFor(() => expect(b.props.onGenerate).toHaveBeenCalledWith("detailed"));
     });
 
-    it("a sketch that lands while saving (before the POST) makes the POST detailed", async () => {
+    it("a sketch that lands while saving (before the POST) still sends the user's choice", async () => {
       const d = deferred();
       const qc = new QueryClient();
       const first = setup({ beforeGenerate: vi.fn(() => d.promise) }, qc);
       await userEvent.click(btn());
       // flush 存好草圖：pages 重抓後 page 帶 sketch_url，面板重新 render
       first.rerender({ ...first.props, page: withSketch() });
+      d.resolve(undefined);
+      await waitFor(() => expect(first.props.onGenerate).toHaveBeenCalledWith("simple"));
+    });
+
+    it("simple becoming unavailable while saving (before the POST) makes the POST detailed", async () => {
+      const d = deferred();
+      const qc = new QueryClient();
+      const first = setup({ beforeGenerate: vi.fn(() => d.promise) }, qc);
+      await userEvent.click(btn());
+      first.rerender({ ...first.props, simpleUnavailableReason: "簡潔風格目前無法使用" });
       d.resolve(undefined);
       await waitFor(() => expect(first.props.onGenerate).toHaveBeenCalledWith("detailed"));
     });

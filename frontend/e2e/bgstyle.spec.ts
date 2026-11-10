@@ -13,16 +13,21 @@ const bgCard = (page: Page, seed: number) =>
     .getByRole("listitem")
     .filter({ has: page.getByRole("button", { name: `選 seed ${seed} 為本頁背景`, exact: true }) });
 
-/** 按「產生背景」：送出的 style 與後端記錄的實際風格都要是 expected；回傳新 generation 的 seed。 */
-async function generateBackground(page: Page, expected: "simple" | "detailed"): Promise<number> {
-  const sent = page.waitForRequest((r) => BACKGROUNDS.test(r.url()) && r.method() === "POST");
+type Style = "simple" | "detailed";
+
+/**
+ * 按「產生背景」：送出的 style＝使用者選的（sent），後端記錄的實際風格＝effective（草圖頁由後端改細緻）；
+ * 回傳新 generation 的 seed。
+ */
+async function generateBackground(page: Page, sent: Style, effective: Style = sent): Promise<number> {
+  const posted = page.waitForRequest((r) => BACKGROUNDS.test(r.url()) && r.method() === "POST");
   const answered = page.waitForResponse((r) => BACKGROUNDS.test(r.url()) && r.request().method() === "POST");
   await page.getByRole("button", { name: "產生背景" }).click();
-  expect((await sent).postDataJSON()).toEqual({ style: expected });
+  expect((await posted).postDataJSON()).toEqual({ style: sent });
   const res = await answered;
   expect(res.status()).toBe(202);
   const gen = (await res.json()) as { seed: number; background_style: string };
-  expect(gen.background_style).toBe(expected);
+  expect(gen.background_style).toBe(effective);
   return gen.seed;
 }
 
@@ -73,7 +78,8 @@ test("背景風格：有構圖草圖的頁「簡潔」停用、用細緻產生�
   // 被迫細緻不改寫記住的選擇
   expect(await page.evaluate(() => localStorage.getItem("coloring.bgStyle"))).toBeNull();
 
-  const seed = await generateBackground(page, "detailed");
+  // 送出使用者選的簡潔（background_style_requested），後端因草圖改用細緻
+  const seed = await generateBackground(page, "simple", "detailed");
   await expect(bgCard(page, seed).getByText("細緻", { exact: true })).toBeVisible();
 
   // 構圖強度 0＝不參考草圖 → 回到記住的簡潔
