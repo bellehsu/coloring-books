@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Segmented } from "./Segmented";
 
 const opts = [
@@ -48,5 +48,51 @@ describe("Segmented", () => {
     expect(screen.getByRole("radio", { name: "丙" })).toHaveAttribute("aria-checked", "true");
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("radio", { name: "甲" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("disabled option: not clickable and skipped by arrow keys", async () => {
+    const user = userEvent.setup();
+    function H() {
+      const [v, setV] = useState<"a" | "b" | "c">("a");
+      return (
+        <Segmented
+          kind="radio"
+          label="模式"
+          options={[opts[0], { value: "b", label: "乙", disabled: true }, opts[2]]}
+          value={v}
+          onChange={setV}
+        />
+      );
+    }
+    render(<H />);
+    const b = screen.getByRole("radio", { name: "乙" });
+    expect(b).toBeDisabled();
+    await user.click(b);
+    expect(b).toHaveAttribute("aria-checked", "false");
+    screen.getByRole("radio", { name: "甲" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("radio", { name: "丙" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "丙" })).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("radio", { name: "甲" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("does not call onChange when the selected option is clicked or keyboard lands on it", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <Segmented
+        kind="radio"
+        label="模式"
+        options={[{ value: "a", label: "甲", disabled: true }, { value: "b", label: "乙" }]}
+        value="b"
+        onChange={onChange}
+      />,
+    );
+    const b = screen.getByRole("radio", { name: "乙" });
+    await user.click(b);
+    b.focus();
+    await user.keyboard("{ArrowRight}{ArrowLeft}{Home}{End}");
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

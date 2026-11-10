@@ -13,7 +13,7 @@ from app.main import create_app
 from app.models import CharacterCheck, Generation, GenKind, GenStatus, PageStatus
 from app.services.compose import COMPOSE_VERSION, DEFAULT_PLACEMENT
 from app.services.engine import EngineError
-from app.services.prompts import POSE_SIZE
+from app.services.prompts import POSE_NEGATIVE, POSE_SIZE, pose_prompt, qwen_pose_prompt
 from tests.fake_engine import FakeEngine, make_png
 from tests.test_api_books import new_book, run_jobs
 from tests.test_api_lineart import (
@@ -171,6 +171,135 @@ def test_pose_requires_character(client):
     r = client.post(f"/api/pages/{p['id']}/poses", json={"action": "running"})
     assert r.status_code == 409 and r.json()["detail"] == "請先設定角色"
     assert client.post("/api/pages/999/poses", json={"action": "x"}).status_code == 404
+
+
+def request_of(app, gen_id) -> dict:
+    return json.loads(gen_row(app, gen_id).request_json)
+
+
+def test_pose_mode_defaults_to_precise(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    monkeypatch.setattr(compose_api, "pick_variation", lambda rng: None)
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    r = client.post(f"/api/pages/{p['id']}/poses", json={"action": " waving hand "})
+    assert r.status_code == 202, r.text
+    g = r.json()
+    assert g["pose_mode"] == "precise"  # 排隊中（還沒有 workflow_name）也有正確的模式
+    assert g["user_text"] == "waving hand"
+    assert g["prompt"] == qwen_pose_prompt("waving hand")
+    row = gen_row(app, g["id"])
+    assert row.negative_prompt == ""
+    rj = request_of(app, g["id"])
+    assert rj["pose_mode"] == "precise" and "variation" in rj and rj["variation"] is None
+    run_jobs(client, app)
+    req = app.state.engine.requests[-1]
+    assert req.pose_mode == "precise" and req.negative_prompt == ""
+    assert (req.width, req.height) == POSE_SIZE
+
+
+def test_pose_mode_fast_keeps_sdxl_prompt(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    r = client.post(f"/api/pages/{p['id']}/poses", json={"action": "waving hand", "mode": "fast"})
+    assert r.status_code == 202, r.text
+    g = r.json()
+    assert g["pose_mode"] == "fast"
+    row = gen_row(app, g["id"])
+    assert row.prompt == pose_prompt(client.get(f"/api/books/{b['id']}").json()["character_description"], "waving hand")
+    assert row.negative_prompt == POSE_NEGATIVE
+    assert request_of(app, g["id"])["pose_mode"] == "fast"
+    run_jobs(client, app)
+    assert app.state.engine.requests[-1].pose_mode == "fast"
+
+
+def test_pose_mode_invalid_is_422(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    for bad in ("qwen", "", None, 1):
+        r = client.post(f"/api/pages/{p['id']}/poses", json={"action": "x", "mode": bad})
+        assert r.status_code == 422, bad
+
+
+def _qwen_missing_gguf_report():
+    from app.services.preflight import MissingModel, PreflightReport, WorkflowReport
+
+    return PreflightReport(ok=False, comfy_url="http://x", comfy_reachable=True, workflows=[
+        WorkflowReport(name="qwen_edit_pose_cutout", ok=False, version="1", missing_models=[
+            MissingModel("qwen_edit_2511_q4km", "qwen-image-edit-2511-Q4_K_M.gguf", "unet", "沒有此檔案")]),
+        WorkflowReport(name="sdxl_pose_cutout", ok=True, version="1"),
+    ])
+
+
+def test_precise_unavailable_is_503_and_fast_still_works(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    app.state.preflight = _qwen_missing_gguf_report()
+    for body in ({"action": "x", "mode": "precise"}, {"action": "x"}):  # 沒送 mode 也一樣（不偷偷改成快速）
+        r = client.post(f"/api/pages/{p['id']}/poses", json=body)
+        assert r.status_code == 503, r.text
+        detail = r.json()["detail"]
+        assert detail.startswith("精準模式缺少：")
+        assert "qwen-image-edit-2511-Q4_K_M.gguf" in detail
+    with app.state.sessions() as s:  # 503 不會留下排隊中的 generation
+        assert not s.exec(select(Generation).where(Generation.kind == GenKind.POSE)).all()
+    r = client.post(f"/api/pages/{p['id']}/poses", json={"action": "x", "mode": "fast"})
+    assert r.status_code == 202, r.text
+    assert r.json()["pose_mode"] == "fast"
+
+
+def test_precise_pose_records_variation(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    monkeypatch.setattr(compose_api, "pick_variation", lambda rng: "facing left")
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    g = client.post(f"/api/pages/{p['id']}/poses", json={"action": "waving hand"}).json()
+    assert g["prompt"] == qwen_pose_prompt("waving hand", "facing left")
+    assert "facing left" in g["prompt"] and g["user_text"] == "waving hand"
+    assert request_of(app, g["id"])["variation"] == "facing left"
+    run_jobs(client, app)
+    assert app.state.engine.requests[-1].variation == "facing left"
+
+
+def test_fast_pose_does_not_pick_variation(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    monkeypatch.setattr(compose_api, "pick_variation", lambda rng: "facing left")
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    g = client.post(f"/api/pages/{p['id']}/poses", json={"action": "waving hand", "mode": "fast"}).json()
+    assert "facing left" not in g["prompt"]
+    assert request_of(app, g["id"])["variation"] is None
+
+
+def test_pose_mode_out_for_old_rows_and_other_kinds(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    old = gen_pose(client, app, p["id"])
+    with app.state.sessions() as s:  # 模擬 Phase 5 的舊列：request_json 沒有 pose_mode
+        row = s.get(Generation, old)
+        d = json.loads(row.request_json)
+        d.pop("pose_mode")
+        d.pop("variation")
+        row.request_json = json.dumps(d)
+        s.add(row)
+        s.commit()
+    assert client.get(f"/api/generations/{old}").json()["pose_mode"] == "fast"
+    bg = gen_background(client, app, p["id"])
+    assert client.get(f"/api/generations/{bg}").json()["pose_mode"] is None
+    queued = gen_pose(client, app, p["id"], run=False)
+    assert client.get(f"/api/generations/{queued}").json()["pose_mode"] == "precise"
+
+
+def test_pose_mode_from_generation_tolerates_bad_request_json():
+    from app.api.schemas import GenerationOut
+
+    for rj in ("", "{oops", "[]", '{"pose_mode": "qwen"}'):
+        g = Generation(id=1, book_id=1, page_id=1, kind=GenKind.POSE, user_text="", prompt="",
+                       negative_prompt="", seed=0, width=8, height=8, request_json=rj)
+        assert GenerationOut.from_generation(g).pose_mode == "fast", rj
 
 
 def test_mask_endpoint_404s(client, app):

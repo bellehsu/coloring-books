@@ -1,6 +1,28 @@
 import { readFile } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
-import { createBook, createPage, uniqueTitle } from "./seed";
+import { expect, test, type Page } from "@playwright/test";
+import { createBook, createPage, setCharacter, uniqueTitle } from "./seed";
+
+const POSES = /\/api\/pages\/\d+\/poses$/;
+
+/** 角色動作歷史裡 seed 的那張卡（成功後才有「選 seed N 為本頁角色動作」按鈕）。 */
+const poseCard = (page: Page, seed: number) =>
+  page
+    .getByRole("region", { name: "角色動作歷史" })
+    .getByRole("listitem")
+    .filter({ has: page.getByRole("button", { name: `選 seed ${seed} 為本頁角色動作`, exact: true }) });
+
+/** 按「產生角色動作」：送出的 mode 要是 expected；回傳新 generation 的 seed。 */
+async function generatePose(page: Page, expected: "precise" | "fast"): Promise<number> {
+  const sent = page.waitForRequest((r) => POSES.test(r.url()) && r.method() === "POST");
+  const answered = page.waitForResponse((r) => POSES.test(r.url()) && r.request().method() === "POST");
+  await page.getByRole("button", { name: "產生角色動作" }).click();
+  expect((await sent).postDataJSON()).toEqual({ action: "waving one hand", mode: expected });
+  const res = await answered;
+  expect(res.status()).toBe(202);
+  const gen = (await res.json()) as { seed: number; pose_mode: string };
+  expect(gen.pose_mode).toBe(expected);
+  return gen.seed;
+}
 
 test("完整流程：建書 → 角色 → 背景 → 角色動作 → 合成 → 修線 → QA 通過 → 匯出 PDF", async ({ page }) => {
   const title = uniqueTitle("e2e 小貓");
@@ -59,16 +81,32 @@ test("完整流程：建書 → 角色 → 背景 → 角色動作 → 合成 �
   await expect(page.getByRole("region", { name: "背景歷史" }).getByText("使用中")).toBeVisible();
   await expect(page.getByRole("img", { name: "背景圖" })).toBeVisible();
 
-  // ---- 角色：點「揮手」→ 產生角色動作 → 選用（去背預覽）----
+  // ---- 角色：點「揮手」→ 預設「精準」產生一張 → 切到「快速」再產生一張 → 選用精準那張（去背預覽）----
   await tab("角色").click();
   await page.getByRole("button", { name: "揮手" }).click();
   await expect(page.getByLabel("動作描述")).toHaveValue("waving one hand");
   await expect(page.getByRole("button", { name: "揮手（已加入）" })).toBeDisabled();
-  await page.getByRole("button", { name: "產生角色動作" }).click();
+  const poseModes = page.getByRole("radiogroup", { name: "產生方式" });
+  const precise = poseModes.getByRole("radio", { name: "精準" });
+  const fast = poseModes.getByRole("radio", { name: "快速" });
+  await expect(precise).toHaveAttribute("aria-checked", "true");
+  await expect(precise).toBeEnabled();
+  await expect(fast).toHaveAttribute("aria-checked", "false");
+  await expect(poseModes).toHaveAccessibleDescription("約 30 秒，角色最像、動作最準");
+  const preciseSeed = await generatePose(page, "precise");
+  await fast.click();
+  await expect(fast).toHaveAttribute("aria-checked", "true");
+  await expect(poseModes).toHaveAccessibleDescription("約 10 秒，可能和角色有落差");
+  expect(await page.evaluate(() => localStorage.getItem("coloring.poseMode"))).toBe("fast");
+  const fastSeed = await generatePose(page, "fast");
   const poseCards = page.getByRole("button", { name: /^選 seed \d+ 為本頁角色動作$/ });
-  await expect(poseCards).toHaveCount(1);
-  await poseCards.first().click();
-  await expect(poseCards.first()).toHaveAttribute("aria-pressed", "true");
+  await expect(poseCards).toHaveCount(2);
+  await expect(poseCard(page, preciseSeed).getByText("精準", { exact: true })).toBeVisible();
+  await expect(poseCard(page, fastSeed).getByText("快速", { exact: true })).toBeVisible();
+  const pickPrecise = poseCard(page, preciseSeed).getByRole("button", { name: /^選 seed \d+ 為本頁角色動作$/ });
+  await pickPrecise.click();
+  await expect(pickPrecise).toHaveAttribute("aria-pressed", "true");
+  await expect(poseCard(page, preciseSeed).getByText("使用中")).toBeVisible();
   await expect(page.getByRole("img", { name: "角色動作（去背預覽）" })).toBeVisible();
 
   // ---- 合成：拖曳＋方向鍵移動角色 → 立刻確認合成（位置先寫完才合成）----
@@ -179,4 +217,35 @@ test("沒設角色：不能產生角色動作，後端的 409 訊息會顯示在
   await generate.click();
   expect((await rejected).status()).toBe(409);
   await expect(page.getByRole("alert").filter({ hasText: "請先設定角色" })).toBeVisible();
+});
+
+test("精準模式不可用：「精準」停用並顯示缺少什麼，改用「快速」產生", async ({ page, request }) => {
+  const book = await createBook(request, uniqueTitle("e2e 精準不可用"));
+  await setCharacter(request, book.id);
+  const p = await createPage(request, book.id, "in a park");
+  // 後端快取的 preflight（假後端不跑 preflight → 兩種都可用）：在瀏覽器這端改成精準不可用
+  const missing = ["qwen-image-edit-2511-Q4_K_M.gguf", "UnetLoaderGGUF"];
+  await page.route("**/api/system/pose-modes", (route) =>
+    route.fulfill({
+      json: { precise: { available: false, missing }, fast: { available: true, missing: [] } },
+    }),
+  );
+  await page.goto(`/books/${book.id}/editor?page=${p.id}&mode=pose`);
+  await expect(page.getByRole("tab", { name: "角色", exact: true })).toHaveAttribute("aria-selected", "true");
+
+  const poseModes = page.getByRole("radiogroup", { name: "產生方式" });
+  const precise = poseModes.getByRole("radio", { name: "精準" });
+  const fast = poseModes.getByRole("radio", { name: "快速" });
+  const reason = `精準模式缺少：${missing.join("、")}`;
+  await expect(precise).toBeDisabled();
+  await expect(precise).toHaveAttribute("aria-checked", "false");
+  await expect(fast).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByText(reason)).toBeVisible();
+  await expect(poseModes).toHaveAccessibleDescription(`約 10 秒，可能和角色有落差 ${reason}`);
+  // 改用快速只是畫面上的退路：不改寫記住的選擇（精準恢復後會回到精準）
+  expect(await page.evaluate(() => localStorage.getItem("coloring.poseMode"))).toBeNull();
+
+  await page.getByRole("button", { name: "揮手" }).click();
+  const seed = await generatePose(page, "fast");
+  await expect(poseCard(page, seed).getByText("快速", { exact: true })).toBeVisible();
 });

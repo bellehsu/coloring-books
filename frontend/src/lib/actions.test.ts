@@ -6,6 +6,14 @@ describe("actions", () => {
     expect(ACTIONS.map((a) => a.label)).toEqual(["站著", "坐著", "走路", "跑步", "揮手", "指向前方", "拿著東西", "跳起來", "看書", "開心笑"]);
     expect(ACTIONS[4].phrase).toBe("waving one hand");
     expect(ACTIONS[6].phrase).toBe("holding something with both hands");
+    // 校準：單獨的 "sitting" 不可靠
+    expect(ACTIONS[1].phrase).toBe("sitting on the ground");
+  });
+  it("plain 'sitting' does not count as the 坐著 preset being added", () => {
+    const sit = ACTIONS[1].phrase;
+    expect(hasPhrase("sitting, waving one hand", sit)).toBe(false);
+    expect(hasPhrase("Sitting on the ground and smiling", sit)).toBe(true);
+    expect(appendPhrase("sitting", sit)).toBe("sitting, sitting on the ground");
   });
   it("appends with a comma and does not duplicate", () => {
     expect(appendPhrase("", "standing")).toBe("standing");

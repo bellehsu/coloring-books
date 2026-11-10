@@ -19,7 +19,8 @@ from app.services.workflow_registry import ParameterError, WorkflowNotReady, Wor
 CHARACTER_WORKFLOW = "sdxl_text2img"
 PAGE_WORKFLOW = "route_a_sdxl_ipadapter_cn"
 BACKGROUND_WORKFLOW = "sdxl_background"
-POSE_WORKFLOW = "sdxl_pose_cutout"
+# 角色動作：模式 → workflow（GenerationRequest.pose_mode）
+POSE_WORKFLOWS: dict[str, str] = {"precise": "qwen_edit_pose_cutout", "fast": "sdxl_pose_cutout"}
 UPLOAD_SUBFOLDER = "coloring_books"
 
 # 頁面生成的固定參數（Phase 1 實驗結論）
@@ -84,8 +85,13 @@ class ComfyEngine:
             raise EngineError("頁面生成需要角色參考圖")
         if req.kind == GenKind.POSE and req.character_image is None:
             raise EngineError("角色動作需要角色參考圖")
-        name = {GenKind.PAGE: PAGE_WORKFLOW, GenKind.BACKGROUND: BACKGROUND_WORKFLOW,
-                GenKind.POSE: POSE_WORKFLOW}.get(req.kind, CHARACTER_WORKFLOW)
+        if req.kind == GenKind.POSE:
+            if req.pose_mode not in POSE_WORKFLOWS:
+                raise EngineError(f"未知的角色動作模式：{req.pose_mode}")
+            name = POSE_WORKFLOWS[req.pose_mode]
+        else:
+            name = {GenKind.PAGE: PAGE_WORKFLOW, GenKind.BACKGROUND: BACKGROUND_WORKFLOW}.get(
+                req.kind, CHARACTER_WORKFLOW)
         entry = self.registry.get(name)
 
         async with self.client_factory() as client:
@@ -106,6 +112,11 @@ class ComfyEngine:
                     "controlnet_end_percent": PAGE_FIXED["controlnet_end_percent"],
                     "controlnet_strength": req.structure_strength if req.structure_image else 0.0,
                 }
+            elif req.kind == GenKind.POSE and req.pose_mode == "precise":
+                # Qwen 指令式編輯：沒有 negative_prompt／IP-Adapter 參數（steps、cfg、LoRA 用 manifest 預設）
+                char_ref = await self._upload(client, req.character_image.read_bytes(), "char")
+                values = {"prompt": req.prompt, "seed": req.seed, "width": req.width, "height": req.height,
+                          "character_image": char_ref}
             elif req.kind == GenKind.POSE:
                 char_ref = await self._upload(client, req.character_image.read_bytes(), "char")
                 values = {
@@ -140,9 +151,12 @@ class ComfyEngine:
                 extra["mask"] = await client.download(by_title["MASK"])
             elif req.kind == GenKind.POSE:
                 raise EngineError("去背失敗：沒有遮罩輸出")
+            params = dict(built.params)
+            if req.kind == GenKind.POSE and req.variation:
+                params["variation"] = req.variation  # 已併入 prompt，另外記錄方便查詢
             return GenerationResult(
                 image=image, elapsed_s=time.monotonic() - started, engine="comfyui",
                 workflow_name=built.workflow_name, workflow_version=built.workflow_version,
-                workflow_hash=built.workflow_hash, models=built.models, params=built.params,
+                workflow_hash=built.workflow_hash, models=built.models, params=params,
                 extra_images=extra,
             )

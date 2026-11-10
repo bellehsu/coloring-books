@@ -25,11 +25,12 @@ backend/app/
   services/layout.py           版面尺寸計算（五種紙張、兩種列印模式）
   services/prompts.py          提示詞組裝（角色、背景、角色動作）
   services/compose.py          背景＋去背角色合成（Placement、cutout）
+  services/pose_modes.py       角色動作精準／快速模式可用性（看快取的 preflight）
   services/lineart_extract.py  生成圖轉線稿（呼叫 lineart_post）
   services/workflow_registry.py workflow 登錄、白名單參數、hash
   services/preflight.py        節點／模型／輸入欄位檢查
   services/lineart_post.py     線稿後處理與指標
-comfy_workflows/<name>/        workflow_api.json + manifest.yaml（sdxl_text2img、route_a_sdxl_ipadapter_cn、sdxl_background、sdxl_pose_cutout）
+comfy_workflows/<name>/        workflow_api.json + manifest.yaml（sdxl_text2img、route_a_sdxl_ipadapter_cn、sdxl_background、sdxl_pose_cutout、qwen_edit_pose_cutout）
 docs/superpowers/
   specs/                       設計規格
   plans/                       實作計畫（各 Phase）
@@ -108,7 +109,7 @@ npm run build && npm test && npm run lint
 `scripts/dev_fake_backend.py` 是真正的 FastAPI 後端，但生成引擎換成 `DemoEngine`：每張圖延遲 0.3 秒、回報 3 次進度，用 Pillow 畫彩色圖：
 - 背景：太陽、雲、樹、草叢幾個大物件，上方一個不填色的大框，上緣刻意留了約 7 px 的缺口（A4 300 DPI 線稿上約 20 px）。
   物件都避開角色的預設位置，合成後 QA 一定會報 1 個「線條有缺口」，按「自動補線」後缺口歸零。
-- 角色動作：白底上的角色（832×1216）＋同尺寸遮罩（角色處白、其他黑），可以去背、合成。
+- 角色動作：白底上的角色（832×1216）＋同尺寸遮罩（角色處白、其他黑），可以去背、合成。精準／快速兩種模式畫法相同。
 - 角色候選（與舊流程的頁面圖）：白底、黑色粗外框的角色與幾個背景方塊（同樣留一個缺口）。
 
 ```bash
@@ -117,6 +118,8 @@ BACKEND_URL=http://127.0.0.1:8000 npm run dev   # 另一個終端機，在 front
 ```
 
 設定沿用 `config/settings.yaml`（或 `APP_SETTINGS_FILE`），但資料庫與檔案一律放在 `--storage`（預設：新的暫存資料夾），不會碰到正式資料。
+啟動時不跑 ComfyUI preflight（`create_app(startup_preflight=False)`）：本機 ComfyUI 開著與否、workflow 能不能跑都不影響它，
+`GET /api/system/pose-modes` 一律回報精準／快速都可用（e2e 要測「精準不可用」時在瀏覽器端攔截這個 API）。
 
 ### 端對端測試（Playwright）
 
@@ -130,14 +133,16 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `playwright.config.ts` 會自動啟動兩個服務：假後端（`127.0.0.1:8010`，每次執行用新的暫存 storage）與 `next dev -p 3010`（`BACKEND_URL=http://127.0.0.1:8010`）。
   非 CI 時若這兩個埠已有服務就直接重用（資料會累積；測試不依賴既有資料）。
 - 只用 chromium，並以 `--disable-gpu --disable-software-rasterizer` 啟動：WSL2 上 headless chromium 的 GPU 行程常卡住，`requestAnimationFrame` 不觸發、點擊一直等不到。
-- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 產生並設定角色 → 新增頁、在畫板畫方框 → 產生背景並選用 → 點「揮手」產生角色動作並選用 →
+- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 產生並設定角色 → 新增頁、在畫板畫方框 → 產生背景並選用 →
+  點「揮手」，產生方式預設「精準」產生一張（送出 `mode:"precise"`、縮圖標「精準」），切到「快速」再產生一張（標「快速」），選用精準那張 →
   合成：拖曳＋方向鍵移動角色後立刻「確認合成」（位置 PUT 故意變慢，檢查合成在最後一次位置寫完後才送出）→ 自動切到線稿、看到紅圈 →
   自動補線後缺口 0 → QA 一致 → 標為通過 → 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）；
-  以及沒設角色時角色分頁停用、後端 409「請先設定角色」原樣顯示。
+  以及沒設角色時角色分頁停用、後端 409「請先設定角色」原樣顯示；
+  `/api/system/pose-modes` 回報精準不可用時「精準」停用並顯示「精準模式缺少：…」、改選「快速」，產生時送出 `mode:"fast"`。
 - `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器（背景、畫構圖、角色、線稿模式）與合成分頁（角色移到邊緣外也一樣），
   整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
 - `next dev` 同一個 `frontend/` 只能跑一份：`scripts/dev.sh`（或其他 `next dev`）還開著時 e2e 會出現「Another next dev server is already running」，先關掉它再跑。
-- 全部約 20 秒（第一次 `next dev` 編譯會再久一點）。
+- 全部約 30 秒（第一次 `next dev` 編譯會再久一點）。
 
 ## 內網部署
 
@@ -149,8 +154,13 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 
 1. **背景**：輸入場景描述，按「產生背景」，每次一張（`sdxl_background`，不用 IP-Adapter，提示詞要求無人物、少量大物件）。
    畫構圖（ControlNet scribble）為選用；不畫就不使用 ControlNet。
-2. **角色動作**：輸入動作文字或點常用動作按鈕（揮手、跑步…），按「產生角色動作」，每次一張
-   （`sdxl_pose_cutout`：角色參考圖 IP-Adapter 0.55、832×1216 白底，ComfyUI 內建 `RemoveBackground` 產生遮罩）。
+2. **角色動作**：輸入動作文字或點常用動作按鈕（揮手、跑步…），選「產生方式」後按「產生角色動作」，每次一張，832×1216 白底＋去背遮罩。
+   - **精準**（預設，約 30 秒，角色最像、動作最準）：`qwen_edit_pose_cutout`，Qwen-Image-Edit-2511 GGUF（Q4_K_M）＋Lightning 4 步 LoRA
+     以角色參考圖直接編輯出新動作，需要 ComfyUI-GGUF；BiRefNet 去背。
+   - **快速**（約 10 秒，可能和角色有落差）：`sdxl_pose_cutout`，角色參考圖 IP-Adapter 0.55，ComfyUI 內建 `RemoveBackground` 產生遮罩。
+   - 精準是預設；選擇記在瀏覽器（localStorage `coloring.poseMode`）。後端快取的 preflight 判定精準不可用（例如沒裝 ComfyUI-GGUF、缺 GGUF 檔）時，
+     「精準」停用並顯示缺少的項目，自動改用快速（退路，不改寫記住的選擇）。歷史縮圖左上角標「精準」／「快速」（Phase 5 的舊資料算快速）。
+     兩種模式產生的角色動作都只保留遮罩最大的一塊（去掉分離的影子或碎塊）。
 3. **合成**：拖曳、拉角落、方向鍵調整角色位置與大小，可水平翻轉；位置自動儲存。按「確認合成」後，後端用 Pillow
    把去背角色貼到背景上，存成一筆 `composite` 生成紀錄並設為本頁 `selected_generation_id`。
 4. **線稿、QA、匯出**：與之前相同（xdog 擷取 → 後處理 → 補線 → 角色一致確認 → 通過 → PDF）。
@@ -182,7 +192,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
 | POST | `/pages/{page_id}/candidates` | 產生頁面候選（非同步，202） |
 | POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202；可用構圖草圖） |
-| POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩（非同步，202；未設角色 409） |
+| POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩；`mode`：`"precise"`（預設，Qwen）或 `"fast"`（SDXL），其他值 422（非同步，202；未設角色 409；精準不可用 503「精準模式缺少：…」） |
 | POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
 | POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |
 | PUT | `/pages/{page_id}/placement` | 儲存角色位置 `{cx, cy, height, flip}`（中心點與高度為背景的比例） |
@@ -209,7 +219,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | GET | `/books/{book_id}/export.pdf` | 匯出書本 PDF（`include=passed|all`） |
 | GET | `/pages/{page_id}/print.png` | 單頁完整版面 1-bit PNG（300 DPI） |
 | GET | `/system/queue` | 佇列狀態（worker 狀態、排隊數、執行中任務） |
-| GET | `/system/preflight` | ComfyUI 連線、模型與節點檢查 |
+| GET | `/system/preflight` | ComfyUI 連線、模型與節點檢查（並更新快取） |
+| GET | `/system/pose-modes` | 角色動作精準／快速是否可用 `{precise, fast: {available, missing}}`（只讀快取的 preflight，不連 ComfyUI；ComfyUI 連不上或尚未檢查時都算可用） |
 
 ## 線稿與 QA
 

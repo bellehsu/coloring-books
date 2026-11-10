@@ -4,7 +4,7 @@ import pytest
 
 from app.models import GenKind
 from app.services.comfy_engine import (
-    BACKGROUND_WORKFLOW, CHARACTER_WORKFLOW, PAGE_FIXED, POSE_WORKFLOW, PAGE_WORKFLOW, ComfyEngine, page_params,
+    BACKGROUND_WORKFLOW, CHARACTER_WORKFLOW, PAGE_FIXED, POSE_WORKFLOWS, PAGE_WORKFLOW, ComfyEngine, page_params,
 )
 from app.services.engine import EngineError, EngineUnavailable, GenerationRequest
 from app.services.workflow_registry import WorkflowRegistry
@@ -12,7 +12,8 @@ from tests.conftest import REPO
 from tests.fake_comfy import FakeComfy, png_bytes
 
 
-def make_req(tmp_path: Path, kind=GenKind.PAGE, character=True, structure=False, strength=0.4, **kw):
+def make_req(tmp_path: Path, kind=GenKind.PAGE, character=True, structure=False, strength=0.4,
+             width=640, height=896, **kw):
     char = None
     if character:
         char = tmp_path / "char.png"
@@ -21,7 +22,7 @@ def make_req(tmp_path: Path, kind=GenKind.PAGE, character=True, structure=False,
     if structure:
         struct = tmp_path / "struct.png"
         struct.write_bytes(png_bytes())
-    return GenerationRequest(kind=kind, prompt="a cat", negative_prompt="color", seed=7, width=640, height=896,
+    return GenerationRequest(kind=kind, prompt="a cat", negative_prompt="color", seed=7, width=width, height=height,
                              character_image=char, structure_image=struct, structure_strength=strength, **kw)
 
 
@@ -124,7 +125,7 @@ async def test_pose_sends_ip_params_and_downloads_both_outputs(tmp_path):
     fake = FakeComfy()
     res = await make_engine(fake).generate(
         make_req(tmp_path, kind=GenKind.POSE, structure=False))
-    assert res.workflow_name == POSE_WORKFLOW == "sdxl_pose_cutout"
+    assert res.workflow_name == POSE_WORKFLOWS["fast"] == "sdxl_pose_cutout"
     sent = fake.prompts[0]["prompt"]
     assert by_title(sent, "IPADAPTER")["weight"] == 0.55
     assert by_title(sent, "IPADAPTER")["end_at"] == 0.6
@@ -144,3 +145,52 @@ async def test_pose_missing_mask_output_errors(tmp_path):
     fake.skip_output_titles = {"MASK"}
     with pytest.raises(EngineError, match="去背失敗：沒有遮罩輸出"):
         await make_engine(fake).generate(make_req(tmp_path, kind=GenKind.POSE))
+
+
+def test_pose_workflows_by_mode():
+    assert POSE_WORKFLOWS == {"precise": "qwen_edit_pose_cutout", "fast": "sdxl_pose_cutout"}
+
+
+def test_pose_request_defaults_to_fast(tmp_path):
+    # 舊的（Phase 5）request_json 沒有 pose_mode → 快速
+    assert make_req(tmp_path, kind=GenKind.POSE).pose_mode == "fast"
+
+
+async def test_fast_pose_mode_uses_sdxl(tmp_path):
+    fake = FakeComfy()
+    res = await make_engine(fake).generate(make_req(tmp_path, kind=GenKind.POSE, pose_mode="fast"))
+    assert res.workflow_name == "sdxl_pose_cutout"
+    assert by_title(fake.prompts[0]["prompt"], "IPADAPTER")["weight"] == 0.55
+
+
+async def test_precise_pose_uses_qwen_with_character_ref(tmp_path):
+    fake = FakeComfy()
+    req = make_req(tmp_path, kind=GenKind.POSE, pose_mode="precise", width=832, height=1216)
+    req.negative_prompt = ""
+    res = await make_engine(fake).generate(req)
+    assert res.workflow_name == "qwen_edit_pose_cutout"
+    sent = fake.prompts[0]["prompt"]
+    assert len(fake.uploads) == 1  # 角色參考圖
+    ref = by_title(sent, "CHARACTER_REF")["image"]
+    assert ref.endswith("_char.png") and ref == res.params["character_image"]
+    assert by_title(sent, "POSITIVE")["prompt"] == "a cat"
+    assert by_title(sent, "SAMPLER")["seed"] == 7
+    assert by_title(sent, "LATENT")["width"] == 832 and by_title(sent, "LATENT")["height"] == 1216
+    assert not any(k.startswith("ipadapter") for k in res.params)
+    assert "negative_prompt" not in res.params
+    assert res.params["steps"] == 4 and res.params["cfg"] == 1.0
+    assert "variation" not in res.params
+    assert res.extra_images == {"mask": fake.mask_image}
+
+
+async def test_precise_pose_records_variation_in_params(tmp_path):
+    fake = FakeComfy()
+    req = make_req(tmp_path, kind=GenKind.POSE, pose_mode="precise", variation="facing left",
+                   width=832, height=1216)
+    res = await make_engine(fake).generate(req)
+    assert res.params["variation"] == "facing left"
+
+
+async def test_unknown_pose_mode_errors(tmp_path):
+    with pytest.raises(EngineError, match="未知的角色動作模式"):
+        await make_engine(FakeComfy()).generate(make_req(tmp_path, kind=GenKind.POSE, pose_mode="qwen"))

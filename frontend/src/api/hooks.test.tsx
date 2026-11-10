@@ -8,6 +8,7 @@ import {
   useGenerateBackground,
   useGeneratePose,
   useGenerations,
+  usePoseModes,
   useQueue,
   useSelectBackground,
   useSelectGeneration,
@@ -35,6 +36,31 @@ beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe("usePoseModes", () => {
+  it("GET /system/pose-modes，一分鐘內不重抓", async () => {
+    const body = { precise: { available: false, missing: ["ComfyUI-GGUF"] }, fast: { available: true, missing: [] } };
+    const f = vi.fn().mockImplementation(async () => jsonRes(body));
+    vi.stubGlobal("fetch", f);
+    const { wrapper } = setup();
+    const a = renderHook(() => usePoseModes(), { wrapper });
+    await waitFor(() => expect(a.result.current.data).toEqual(body));
+    expect(f.mock.calls[0][0]).toBe("/api/system/pose-modes");
+    a.unmount();
+    renderHook(() => usePoseModes(), { wrapper });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("enabled=false 時不抓", async () => {
+    const f = vi.fn();
+    vi.stubGlobal("fetch", f);
+    const { wrapper } = setup();
+    renderHook(() => usePoseModes(false), { wrapper });
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(f).not.toHaveBeenCalled();
+  });
 });
 
 describe("polling", () => {
@@ -101,13 +127,34 @@ describe("compose-flow hooks", () => {
     expect(keys()).toContain(JSON.stringify(qk.queue()));
   });
 
-  it("useGeneratePose POST /pages/5/poses 帶 action", async () => {
+  it("useGeneratePose POST /pages/5/poses 帶 action 與 mode", async () => {
     const { f, wrapper, keys } = run();
     const { result } = renderHook(() => useGeneratePose(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ pageId: 5, action: "揮手" }); });
+    await act(async () => { await result.current.mutateAsync({ pageId: 5, action: "揮手", mode: "fast" }); });
     expect(f.mock.calls[0][0]).toBe("/api/pages/5/poses");
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ action: "揮手" });
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ action: "揮手", mode: "fast" });
     expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
+  });
+
+  it("useGeneratePose: 503 invalidates pose-modes; other errors do not", async () => {
+    for (const [status, expected] of [[503, true], [409, false]] as const) {
+      const f = vi.fn().mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ detail: "精準模式缺少：x" }), {
+            status,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+      vi.stubGlobal("fetch", f);
+      const { client, wrapper } = setup();
+      const spy = vi.spyOn(client, "invalidateQueries");
+      const { result } = renderHook(() => useGeneratePose(1), { wrapper });
+      await act(async () => {
+        await result.current.mutateAsync({ pageId: 5, action: "揮手", mode: "precise" }).catch(() => {});
+      });
+      const keys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+      expect(keys.includes(JSON.stringify(qk.poseModes()))).toBe(expected);
+    }
   });
 
   it.each([

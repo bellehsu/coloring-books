@@ -174,3 +174,69 @@ def test_composite_matches():
     assert not composite_matches(_composite(params, kind=GenKind.PAGE), 1, 2, DEFAULT_PLACEMENT)
     for bad in ("", "not json", "{}", '{"background_generation_id": 1}'):
         assert not composite_matches(_composite(bad), 1, 2, DEFAULT_PLACEMENT)
+
+
+def _png(arr):
+    import io
+
+    buf = io.BytesIO()
+    Image.fromarray(arr, "L").save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _two_blobs():
+    a = np.zeros((100, 100), np.uint8)
+    a[10:50, 10:50] = 255
+    a[80:85, 60:90] = 255
+    return a
+
+
+def test_largest_component_drops_detached_blob():
+    from app.services.compose import largest_component
+    import io
+
+    out = Image.open(io.BytesIO(largest_component(_png(_two_blobs()))))
+    assert out.mode == "L" and out.size == (100, 100)
+    o = np.asarray(out)
+    assert (o[10:50, 10:50] == 255).all()
+    assert int((o > 0).sum()) == 40 * 40
+    assert (o[80:85, 60:90] == 0).all()
+
+
+def test_largest_component_keeps_all_black():
+    from app.services.compose import largest_component
+    import io
+
+    out = Image.open(io.BytesIO(largest_component(_png(np.zeros((20, 30), np.uint8)))))
+    assert out.size == (30, 20) and int(np.asarray(out).max()) == 0
+
+
+def test_largest_component_soft_edges():
+    from app.services.compose import largest_component
+    import io
+
+    a = np.zeros((50, 50), np.uint8)
+    a[10:30, 10:30] = 255
+    a[10:30, 30] = 200
+    a[10:30, 31] = 90
+    a[10:30, 32] = 40
+    a[10:30, 33] = 60  # 超出 2 px 膨脹範圍 → 0
+    o = np.asarray(Image.open(io.BytesIO(largest_component(_png(a)))))
+    assert (o[10:30, 10:30] == 255).all()
+    assert (o[10:30, 30] == 200).all()
+    assert (o[10:30, 31] == 90).all()
+    assert (o[10:30, 32] == 40).all()
+    assert (o[10:30, 33] == 0).all()
+
+
+def test_largest_component_keeps_soft_fringe_but_zeroes_detached_grey():
+    from app.services.compose import largest_component
+    import io
+
+    a = _two_blobs()
+    a[5:10, 10:50] = 90  # 主體上緣的柔邊
+    a[82, 60:90] = 255
+    a[70:73, 70:73] = 100  # 遠處的灰色碎塊
+    o = np.asarray(Image.open(io.BytesIO(largest_component(_png(a)))))
+    assert (o[8:10, 10:50] == 90).all()
+    assert (o[70:73, 70:73] == 0).all() and (o[80:85, 60:90] == 0).all()

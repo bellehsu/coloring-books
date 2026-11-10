@@ -18,6 +18,10 @@
   color: var(--muted-2);
   cursor: pointer;
 }
+.item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .item[data-on="true"] {
   background: var(--surface);
   color: var(--ink);

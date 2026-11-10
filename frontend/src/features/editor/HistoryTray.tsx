@@ -11,6 +11,9 @@ import styles from "./HistoryTray.module.css";
 /** 有歷史托盤的種類。合成圖（composite）沒有托盤：只能經由「確認合成」產生或選回，不可 /select。 */
 export type HistoryKind = "background" | "pose";
 
+/** 角色動作縮圖的產生方式標記（後端依 request_json 推得；Phase 5 舊資料算快速）。 */
+const MODE_BADGE: Record<NonNullable<Generation["pose_mode"]>, string> = { precise: "精準", fast: "快速" };
+
 const TEXT: Record<HistoryKind, { title: string; noun: string; empty: string }> = {
   background: { title: "背景歷史", noun: "背景", empty: "還沒有背景。寫好場景描述後按「產生背景」。" },
   pose: { title: "角色動作歷史", noun: "角色動作", empty: "還沒有角色動作。輸入動作後按「產生角色動作」。" },
@@ -124,6 +127,11 @@ function Card({
 
   return (
     <li className={styles.card} data-on={on ? "true" : "false"} data-off={g.discarded ? "true" : "false"} data-wait={pending ? "true" : "false"}>
+      {g.kind === "pose" && g.pose_mode && (
+        <span className={styles.mode} data-mode={g.pose_mode}>
+          {MODE_BADGE[g.pose_mode]}
+        </span>
+      )}
       {ok && !g.discarded ? (
         <button
           type="button"

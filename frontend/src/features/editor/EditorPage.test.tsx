@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -125,9 +125,18 @@ vi.mock("./BackgroundPanel", () => ({
 }));
 vi.mock("./PosePanel", () => ({
   PosePanel: (p: PosePanelProps) => (
-    <section data-testid="pose-panel" data-active={p.activeCount} data-has-character={String(p.hasCharacter)}>
-      <button type="button" disabled={p.generating} onClick={() => void p.onGenerate("waving one hand")}>
+    <section
+      data-testid="pose-panel"
+      data-active={p.activeCount}
+      data-has-character={String(p.hasCharacter)}
+      data-mode={p.mode}
+      data-reason={p.preciseUnavailableReason ?? ""}
+    >
+      <button type="button" disabled={p.generating} onClick={() => void p.onGenerate("waving one hand", p.mode)}>
         stub-generate-pose
+      </button>
+      <button type="button" onClick={() => p.onModeChange("fast")}>
+        stub-mode-fast
       </button>
     </section>
   ),
@@ -265,6 +274,8 @@ let genStatus: number;
 let failWith: Record<string, number>;
 /** POST /books/1/pages 回傳的新頁 id（測 id 被沿用）。 */
 let nextPageId: number;
+/** GET /system/pose-modes 的回應。 */
+let poseModes: O;
 
 const j = (data: unknown, status = 200) =>
   new Response(data === undefined ? null : JSON.stringify(data), {
@@ -283,6 +294,8 @@ beforeEach(() => {
   genStatus = 202;
   failWith = {};
   nextPageId = 10;
+  poseModes = { precise: { available: true, missing: [] }, fast: { available: true, missing: [] } };
+  localStorage.clear();
   sketchSaves.length = 0;
   let blobN = 0;
   URL.createObjectURL = vi.fn(() => `blob:${++blobN}`);
@@ -311,6 +324,7 @@ beforeEach(() => {
         return j(pages);
       }
       if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0, running_id: null });
+      if (url === "/api/system/pose-modes") return j(poseModes);
       if (url.startsWith("/api/books/1/generations")) {
         const q = new URL(url, "http://x").searchParams;
         let list = gens;
@@ -628,8 +642,47 @@ describe("EditorPage", () => {
     await waitFor(() => expect(screen.getByTestId("pose-stage")).toHaveAttribute("data-pose", "7"));
     await userEvent.click(screen.getByRole("button", { name: "stub-generate-pose" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/poses")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "waving one hand" });
+    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "waving one hand", mode: "precise" });
     await waitFor(() => expect(screen.getByTestId("pose-panel")).toHaveAttribute("data-active", "1"));
+  });
+
+  it("角色模式：精準不可用 → 退回快速並說明缺漏，產生送出 mode:fast（不寫入記憶）", async () => {
+    search = "page=1&mode=pose";
+    poseModes = {
+      precise: { available: false, missing: ["ComfyUI-GGUF", "unet/qwen-image-edit-2511-Q4_K_M.gguf"] },
+      fast: { available: true, missing: [] },
+    };
+    setup();
+    const panel = await screen.findByTestId("pose-panel");
+    await waitFor(() => expect(panel).toHaveAttribute("data-mode", "fast"));
+    expect(panel).toHaveAttribute("data-reason", "精準模式缺少：ComfyUI-GGUF、unet/qwen-image-edit-2511-Q4_K_M.gguf");
+    await userEvent.click(screen.getByRole("button", { name: "stub-generate-pose" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/poses")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "waving one hand", mode: "fast" });
+    expect(localStorage.getItem("coloring.poseMode")).toBeNull();
+  });
+
+  it("角色模式：精準不可用但沒有缺漏清單 → 「精準模式目前無法使用」", async () => {
+    search = "page=1&mode=pose";
+    poseModes = { precise: { available: false, missing: [] }, fast: { available: true, missing: [] } };
+    setup();
+    const panel = await screen.findByTestId("pose-panel");
+    await waitFor(() => expect(panel).toHaveAttribute("data-reason", "精準模式目前無法使用"));
+    expect(panel).toHaveAttribute("data-mode", "fast");
+  });
+
+  it("角色模式：切到快速後重新掛載仍是快速（localStorage）", async () => {
+    search = "page=1&mode=pose";
+    setup();
+    const panel = await screen.findByTestId("pose-panel");
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/system/pose-modes")).toBe(true));
+    expect(panel).toHaveAttribute("data-mode", "precise");
+    expect(panel).toHaveAttribute("data-reason", "");
+    await userEvent.click(screen.getByRole("button", { name: "stub-mode-fast" }));
+    expect(screen.getByTestId("pose-panel")).toHaveAttribute("data-mode", "fast");
+    cleanup();
+    setup();
+    expect(await screen.findByTestId("pose-panel")).toHaveAttribute("data-mode", "fast");
   });
 
   it("合成模式：舞台拿到背景與去背圖；移動 → PUT placement；確認合成（舞台停用）→ 切到線稿與修線", async () => {

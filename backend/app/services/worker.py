@@ -17,6 +17,7 @@ from app.services.engine import (
     GenerationEngine,
     GenerationRequest,
 )
+from app.services.compose import largest_component
 from app.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -40,23 +41,26 @@ def encode_request(
     character_image: str | None = None,
     structure_image: str | None = None,
     structure_strength: float = 0.0,
+    pose_mode: str | None = None,
+    variation: str | None = None,
 ) -> str:
-    """產生 Generation.request_json；圖片欄位為 storage 相對路徑。"""
-    return json.dumps(
-        {
-            "kind": GenKind(kind).value,
-            "prompt": prompt,
-            "negative_prompt": negative_prompt,
-            "seed": seed,
-            "width": width,
-            "height": height,
-            "character_image": character_image,
-            "structure_image": structure_image,
-            "structure_strength": structure_strength,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    """產生 Generation.request_json；圖片欄位為 storage 相對路徑。
+    pose_mode 有值時（角色動作）一併寫入 pose_mode 與 variation。"""
+    d = {
+        "kind": GenKind(kind).value,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "seed": seed,
+        "width": width,
+        "height": height,
+        "character_image": character_image,
+        "structure_image": structure_image,
+        "structure_strength": structure_strength,
+    }
+    if pose_mode is not None:
+        d["pose_mode"] = pose_mode
+        d["variation"] = variation
+    return json.dumps(d, ensure_ascii=False, sort_keys=True)
 
 
 def decode_request(text: str, storage: Storage) -> GenerationRequest:
@@ -76,6 +80,8 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
         character_image=_abs(d.get("character_image")),
         structure_image=_abs(d.get("structure_image")),
         structure_strength=d.get("structure_strength", 0.0),
+        pose_mode=d.get("pose_mode") or "fast",  # 舊列沒有 → 快速
+        variation=d.get("variation"),
     )
 
 
@@ -210,7 +216,10 @@ class GenerationWorker:
             mask_rel = None
             if result.extra_images.get("mask"):
                 mask_rel = self.storage.generation_mask(gen.book_id, gen_id)
-                self.storage.write(mask_rel, result.extra_images["mask"])
+                mask_png = result.extra_images["mask"]
+                if req.kind == GenKind.POSE:
+                    mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
+                self.storage.write(mask_rel, mask_png)
             self._finish(
                 gen_id,
                 mask_path=mask_rel,
