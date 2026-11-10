@@ -57,3 +57,7 @@
   place-items: center;
   cursor: pointer;
 }
+.close:disabled {
+  cursor: not-allowed;
+  color: var(--muted-3);
+}

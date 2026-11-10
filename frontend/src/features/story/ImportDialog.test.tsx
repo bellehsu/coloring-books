@@ -88,6 +88,33 @@ describe("ImportDialog", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("取消、關閉與 Esc 在匯入中都不能關掉對話框", async () => {
+    let release!: () => void;
+    create.mockImplementation(() => new Promise<void>((r) => (release = r)));
+    const onClose = setup(TEXT_OK);
+    await userEvent.click(screen.getByRole("button", { name: "匯入（新增 1 頁、填入 5 格）" }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "關閉" })).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    release();
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("開場白與結語（沒有頁碼）各自一列，不佔頁碼", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    setup("好的，以下是分鏡：\n\n場景：森林\n動作：跑步\n\n希望對你有幫助！");
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByText("森林")).toBeInTheDocument();
+    expect(within(rows[0]).getAllByRole("cell")[0]).toHaveTextContent("1");
+    expect(screen.getByText("好的，以下是分鏡：")).toBeInTheDocument();
+    expect(screen.getByText("希望對你有幫助！")).toBeInTheDocument();
+    expect(err.mock.calls.flat().join(" ")).not.toMatch(/same key/);
+    err.mockRestore();
+  });
+
   it("copy prompt writes AI_PROMPT(n) to clipboard", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });

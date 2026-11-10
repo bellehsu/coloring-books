@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ApiError, type Generation, type Page } from "@/api/client";
 import {
@@ -9,6 +10,7 @@ import {
   useCreatePage,
   useGenerations,
   usePages,
+  usePagesFollowJobs,
   useUpdatePage,
   useUploadBackground,
 } from "@/api/hooks";
@@ -36,6 +38,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
   const book = useBook(bookId);
   const pagesQ = usePages(bookId);
   const gensQ = useGenerations(bookId);
+  usePagesFollowJobs(bookId, gensQ.data); // worker 自動選用後，縮圖與「還有 K 張」跟著更新
   const createPage = useCreatePage(bookId);
   const updatePage = useUpdatePage(bookId);
   const upload = useUploadBackground(bookId);
@@ -63,14 +66,19 @@ export function StoryPage({ bookId }: { bookId: number }) {
   }, [gensQ.data]);
   const gensOf = (p: Page) => byPage.get(p.id) ?? { background: [], pose: [] };
 
-  const modeOf = (p: Page): BgMode => {
-    const set = modes[p.id];
-    if (set) return set;
-    const sel = gensOf(p).background.find((g) => g.id === p.background_generation_id);
-    return sel?.source === "upload" ? "upload" : "ai";
-  };
+  /** 頁面選用的背景是上傳的圖片。 */
+  const uploadedBg = (p: Page) =>
+    gensOf(p).background.find((g) => g.id === p.background_generation_id)?.source === "upload";
+  const modeOf = (p: Page): BgMode => modes[p.id] ?? (uploadedBg(p) ? "upload" : "ai");
+  /** 舊流程頁（選定圖是整頁候選圖）：後端「產生全部素材」會略過，所以不算在「還有 K 張」裡。 */
+  const legacyIds = useMemo(
+    () => new Set((gensQ.data ?? []).filter((g) => g.kind === "page").map((g) => g.id)),
+    [gensQ.data],
+  );
+  const isLegacy = (p: Page) => p.selected_generation_id != null && legacyIds.has(p.selected_generation_id);
 
   const missing = pages.reduce((k, p) => {
+    if (isLegacy(p)) return k;
     const g = gensOf(p);
     const bg = modeOf(p) === "ai" && p.scene_prompt.trim() !== "" && !hasMaterial(p.background_generation_id, g.background);
     const pose = p.action_prompt.trim() !== "" && !hasMaterial(p.pose_generation_id, g.pose);
@@ -136,6 +144,11 @@ export function StoryPage({ bookId }: { bookId: number }) {
     <>
       <AppBar crumbs={[{ label: "我的繪本", href: "/" }, { label: b.title }]} />
       <BookBar book={b} current="story" onExport={() => router.push(`/books/${bookId}/editor`)} />
+      {b.character_generation_id == null && (
+        <p className={styles.notice}>
+          這本繪本還沒設定角色，不能產生角色動作。<Link href={`/books/${bookId}/character`}>前往角色工作室</Link>
+        </p>
+      )}
       <main className={styles.main}>
         <div className={styles.head}>
           <div className={styles.titles}>
@@ -180,6 +193,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
             mode={modeOf(p)}
             onModeChange={(m) => setModes((s) => ({ ...s, [p.id]: m }))}
             fileName={files[p.id]}
+            uploaded={uploadedBg(p)}
             uploading={upload.isPending && upload.variables?.pageId === p.id}
             onUpload={(f) => void doUpload(p, f)}
             onSave={(patch) => save(p.id, patch)}

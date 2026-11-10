@@ -32,7 +32,7 @@ export function BookCard({ book }: { book: Book }) {
           <div className={styles.track} aria-hidden="true">
             <div className={styles.fill} style={{ width: `${pct}%` }} />
           </div>
-          <span className={styles.count}>{pages ? `${passed} / ${pages} 頁通過` : "尚無頁面"}</span>
+          <span className={styles.count}>{pages ? `${passed} / ${pages} 頁完成` : "尚無頁面"}</span>
         </div>
         <Chip tone={step.tone}>{step.text}</Chip>
       </div>

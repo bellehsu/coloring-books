@@ -50,6 +50,23 @@ describe("parseStory", () => {
     expect(r.pages[1].scene).toBe("海邊");
   });
 
+  it("TSV: a first row that merely mentions 背景/場景 is data, not a header", () => {
+    const r = parseStory("森林的背景有大樹\t跑步\n海邊\t游泳");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "森林的背景有大樹", action: "跑步" },
+      { n: 2, scene: "海邊", action: "游泳" },
+    ]);
+  });
+
+  it("TSV: header columns decide which column is which (頁 | 場景 | 動作, 動作 | 背景)", () => {
+    expect(parseStory("頁\t場景\t動作\n1\t森林\t跑步\n2\t海邊\t游泳").pages).toEqual([
+      { n: 1, scene: "森林", action: "跑步" },
+      { n: 2, scene: "海邊", action: "游泳" },
+    ]);
+    expect(parseStory("動作\t背景\n跑步\t森林").pages).toEqual([{ n: 1, scene: "森林", action: "跑步" }]);
+    expect(parseStory("頁數\t角色\t場景\n1\t跑步\t森林").pages).toEqual([{ n: 1, scene: "森林", action: "跑步" }]);
+  });
+
   it("TSV with header row", () => {
     const r = parseStory("場景\t動作\n森林\t跑步\n海邊\t游泳\n");
     expect(r.pages).toEqual([
@@ -59,10 +76,79 @@ describe("parseStory", () => {
     expect(parseStory("森林\t跑步").pages).toHaveLength(1);
   });
 
-  it("block without labels is an error with excerpt", () => {
-    const r = parseStory("場景：森林\n動作：跑步\n\n這是一段沒有標籤的文字");
-    expect(r.pages).toHaveLength(1);
+  it("block without labels between labelled blocks is an error with its page number", () => {
+    const r = parseStory("場景：森林\n動作：跑步\n\n這是一段沒有標籤的文字\n\n場景：海邊");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "森林", action: "跑步" },
+      { n: 3, scene: "海邊", action: "" },
+    ]);
     expect(r.errors).toEqual([{ n: 2, excerpt: "這是一段沒有標籤的文字", reason: "找不到「場景：」或「動作：」" }]);
+  });
+
+  it("no headings: an unlabelled preamble does not take page 1, a sign-off is not a page (n: null)", () => {
+    const r = parseStory("好的，以下是分鏡：\n\n場景：森林\n動作：跑步\n\n場景：海邊\n動作：游泳\n\n希望對你有幫助！");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "森林", action: "跑步" },
+      { n: 2, scene: "海邊", action: "游泳" },
+    ]);
+    expect(r.errors).toEqual([
+      { n: null, excerpt: "好的，以下是分鏡：", reason: "找不到「場景：」或「動作：」" },
+      { n: null, excerpt: "希望對你有幫助！", reason: "找不到「場景：」或「動作：」" },
+    ]);
+  });
+
+  it("no headings: a repeated label inside one block starts the next page", () => {
+    const r = parseStory("場景：森林\n動作：跑步\n場景：海邊\n動作：游泳");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "森林", action: "跑步" },
+      { n: 2, scene: "海邊", action: "游泳" },
+    ]);
+  });
+
+  it("text on the heading line is cleaned like any other line (bold label)", () => {
+    expect(parseStory("**第1頁** **場景：** 森林\n動作：跑步").pages).toEqual([{ n: 1, scene: "森林", action: "跑步" }]);
+  });
+
+  it("strips markdown bullets - • ・ before labels", () => {
+    const r = parseStory("第1頁\n- 場景：森林\n• 動作：跑步\n第2頁\n・場景：海邊\n- 動作：游泳");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "森林", action: "跑步" },
+      { n: 2, scene: "海邊", action: "游泳" },
+    ]);
+  });
+
+  it("number-led continuation lines (3.5公尺、3. 隻小鳥) are not headings", () => {
+    const r = parseStory("第1頁\n場景：一棵\n3.5公尺高的樹\n動作：樹上有\n3. 隻小鳥\n第2頁\n場景：海邊");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "一棵\n3.5公尺高的樹", action: "樹上有\n3. 隻小鳥" },
+      { n: 2, scene: "海邊", action: "" },
+    ]);
+    // 沒有其他標題時也一樣：「3. 隻小鳥」不會把後面切成新的一頁
+    expect(parseStory("場景：樹上有\n3. 隻小鳥\n動作：飛").pages).toEqual([{ n: 1, scene: "樹上有\n3. 隻小鳥", action: "飛" }]);
+  });
+
+  it("numbered headings in order still work, with a title after the number", () => {
+    const r = parseStory("1. 森林的早晨\n場景：森林\n動作：跑步\n2. 海邊的午後\n場景：海邊\n動作：游泳");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "森林", action: "跑步" },
+      { n: 2, scene: "海邊", action: "游泳" },
+    ]);
+  });
+
+  it.each(["第一頁", "第十頁", "第十二頁", "第二十頁", "第三十五頁", "第四十頁", "一、"])(
+    "accepts Chinese numeral heading %s with text on the same line",
+    (h) => {
+      expect(parseStory(`${h} 場景：森林\n動作：跑步`)).toEqual({ pages: [{ n: 1, scene: "森林", action: "跑步" }], errors: [] });
+    },
+  );
+
+  it("Chinese numeral headings split pages (第一頁／第二頁, 一、／二、)", () => {
+    const want = [
+      { n: 1, scene: "森林", action: "" },
+      { n: 2, scene: "海邊", action: "" },
+    ];
+    expect(parseStory("第一頁\n場景：森林\n第二頁\n場景：海邊").pages).toEqual(want);
+    expect(parseStory("一、\n場景：森林\n二、\n場景：海邊").pages).toEqual(want);
   });
 
   it("more than 40 pages flags the rest", () => {

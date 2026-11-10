@@ -111,7 +111,7 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
       ? "還沒選圖"
       : needsFix.has(pageId)
         ? "需要修線"
-        : "未通過 QA";
+        : "未完成";
 
   let hint: string;
   if (summary.isLoading) hint = "讀取中…";
@@ -119,7 +119,7 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
   else if (count === 0)
     hint =
       include === "passed"
-        ? "沒有通過的頁面可以匯出，先讓頁面通過 QA。"
+        ? "沒有完成的頁面可以匯出，先在 ② 補線 按「完成這一頁 ✓」。"
         : "沒有已選圖的頁面可以匯出。";
   else hint = "約 10 秒";
 
@@ -135,11 +135,11 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
         <>
           <div className={styles.stats}>
             <div className={`${styles.stat} ${styles.ok}`}>
-              <span>已通過</span>
+              <span>已完成</span>
               <b data-testid="passed-count">{data ? passed : "–"}</b>
             </div>
             <div className={`${styles.stat} ${styles.warn}`}>
-              <span>未通過</span>
+              <span>未完成</span>
               <b data-testid="failed-count">
                 {data ? data.total - passed : "–"}
               </b>
@@ -151,11 +151,11 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
             <legend className={styles.legend}>匯出範圍</legend>
             {(
               [
-                ["passed", "只有通過的頁面", `${passed} 頁，可直接送印`],
+                ["passed", "只有完成的頁面", `${passed} 頁，可直接送印`],
                 [
                   "all",
                   "所有已選圖的頁面",
-                  `${selectedCount} 頁，含未通過，試印用`,
+                  `${selectedCount} 頁，含未完成，試印用`,
                 ],
               ] as const
             ).map(([v, name, note]) => (

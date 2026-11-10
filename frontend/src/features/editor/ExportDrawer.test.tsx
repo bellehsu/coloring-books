@@ -77,7 +77,7 @@ function setup() {
 }
 
 describe("ExportDrawer", () => {
-  it("顯示通過／未通過數字、版面說明與不會匯出的頁面原因", async () => {
+  it("顯示已完成／未完成數字、版面說明與不會匯出的頁面原因（不再用「通過／QA」）", async () => {
     summary = {
       total: 4,
       passed: 1,
@@ -97,6 +97,11 @@ describe("ExportDrawer", () => {
       expect(screen.getByTestId("passed-count")).toHaveTextContent("1"),
     );
     expect(screen.getByTestId("failed-count")).toHaveTextContent("3");
+    expect(screen.getByTestId("passed-count").parentElement).toHaveTextContent("已完成");
+    expect(screen.getByTestId("failed-count").parentElement).toHaveTextContent("未完成");
+    expect(screen.getByRole("radio", { name: /只有完成的頁面/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /所有已選圖的頁面/ }).closest("label")).toHaveTextContent("含未完成，試印用");
+    expect(screen.queryByText(/通過|QA/)).not.toBeInTheDocument();
     expect(
       screen.getByText(/A4 印刷廠版面：每頁 21.6 × 30.3 cm（含 3 mm 出血）/),
     ).toBeInTheDocument();
@@ -109,11 +114,11 @@ describe("ExportDrawer", () => {
       ),
     );
     expect(screen.getByText(/第 4 頁/).parentElement).toHaveTextContent(
-      "未通過 QA",
+      "未完成",
     );
   });
 
-  it("沒有通過頁時下載按鈕停用並顯示原因", async () => {
+  it("沒有完成的頁時下載按鈕停用，提示到 ② 補線按「完成這一頁 ✓」", async () => {
     summary = {
       total: 1,
       passed: 0,
@@ -121,7 +126,7 @@ describe("ExportDrawer", () => {
       skipped: [{ page_id: 1, position: 0, reason: "not_passed" }],
     };
     setup();
-    expect(await screen.findByText(/沒有通過的頁面/)).toBeInTheDocument();
+    expect(await screen.findByText("沒有完成的頁面可以匯出，先在 ② 補線 按「完成這一頁 ✓」。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /下載 PDF/ })).toBeDisabled();
   });
 

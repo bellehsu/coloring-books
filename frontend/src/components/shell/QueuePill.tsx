@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useQueue } from "@/api/hooks";
 import { estimateSeconds, formatRemaining } from "@/lib/eta";
 import styles from "./QueuePill.module.css";
@@ -17,39 +17,60 @@ type Track = {
   ready: boolean;
 };
 
+const INITIAL: Track = { total: 0, prev: 0, ready: false };
+
+/**
+ * n/m 與「就緒」放在模組層級：膠囊在每個頁面的 AppBar 裡，換頁會卸載再掛上，
+ * 放在元件 state 的話 n/m 會從 1 重新算起、就緒會提早消失。
+ */
+const tracker = {
+  state: INITIAL,
+  listeners: new Set<() => void>(),
+  timer: null as ReturnType<typeof setTimeout> | null,
+  set(next: Track) {
+    this.state = next;
+    this.listeners.forEach((fn) => fn());
+  },
+  /** 依待處理數的變化調整：新增的工作算進 m（完成的不會讓 m 變小）；清空時進入就緒，READY_MS 後結束。 */
+  observe(count: number) {
+    const t = this.state;
+    if (count === t.prev) return;
+    if (this.timer != null) clearTimeout(this.timer);
+    this.timer = null;
+    if (count > 0) {
+      const total = t.prev === 0 ? count : t.total + Math.max(0, count - t.prev);
+      this.set({ total, prev: count, ready: false });
+    } else {
+      this.set({ total: 0, prev: 0, ready: true });
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        this.set({ ...this.state, ready: false });
+      }, READY_MS);
+    }
+  },
+};
+const subscribe = (fn: () => void) => {
+  tracker.listeners.add(fn);
+  return () => void tracker.listeners.delete(fn);
+};
+const snapshot = () => tracker.state;
+
+/** 測試用：清掉模組層級的計數與就緒計時。 */
+export function resetQueueTracker() {
+  if (tracker.timer != null) clearTimeout(tracker.timer);
+  tracker.timer = null;
+  tracker.state = INITIAL;
+}
+
 export function QueuePill() {
   const { data } = useQueue();
   const pending = data?.pending ?? [];
   const count = pending.length;
-  const [track, setTrack] = useState<Track>({
-    total: 0,
-    prev: 0,
-    ready: false,
-  });
-
-  // 依待處理數的變化調整 track（在 render 中比對上一次的值，不用 effect）。
-  if (count !== track.prev) {
-    if (count > 0) {
-      // 新增的工作（待處理數增加）算進 m；完成的工作不會讓 m 變小。
-      const total =
-        track.prev === 0
-          ? count
-          : track.total + Math.max(0, count - track.prev);
-      setTrack({ total, prev: count, ready: false });
-    } else {
-      setTrack({ total: 0, prev: 0, ready: true });
-    }
-  }
-
-  const ready = track.ready;
+  const track = useSyncExternalStore(subscribe, snapshot, snapshot);
   useEffect(() => {
-    if (!ready) return;
-    const id = setTimeout(
-      () => setTrack((t) => ({ ...t, ready: false })),
-      READY_MS,
-    );
-    return () => clearTimeout(id);
-  }, [ready]);
+    if (data) tracker.observe(count);
+  }, [data, count]);
+  const ready = track.ready;
 
   let tone: "ok" | "warn" | "idle" = "idle";
   let text = "GPU 閒置";

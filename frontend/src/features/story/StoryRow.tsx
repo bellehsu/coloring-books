@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import type { Generation, Page } from "@/api/client";
 import { Icons } from "@/components/ui/Icons";
 import { Segmented } from "@/components/ui/Segmented";
+import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
+import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import styles from "./StoryPage.module.css";
 
 export type BgMode = "ai" | "upload";
-export const MAX_SCENE = 800;
-export const MAX_ACTION = 300;
 export const ACTION_CHIPS = ["站著", "揮手", "跳起來", "拿著東西", "看書"] as const;
 const DEBOUNCE_MS = 600;
 
@@ -42,37 +42,53 @@ export function slotView(gens: readonly Generation[], selectedId: number | null)
   return { kind: "empty" };
 }
 
-/** 輸入中的文字：停手 600 ms 或離開欄位就存；伺服器值追上之後回到顯示伺服器值。 */
+/**
+ * 輸入中的文字：停手 600 ms 或離開欄位就存；伺服器值追上之後回到顯示伺服器值。
+ * 卸載（離開故事頁）時還在等的輸入馬上存。
+ */
 function useAutosave(server: string, save: (v: string) => Promise<unknown>) {
   const [draft, setDraft] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 送出中的文字：避免同一段文字在回應前又送一次（例如停手存檔後馬上離開欄位）。送完就清掉。 */
   const sent = useRef<string | null>(null);
+  /** 還在等 debounce 的文字。 */
+  const waiting = useRef<string | null>(null);
   const saveRef = useRef(save);
+  const serverRef = useRef(server);
   useEffect(() => {
     saveRef.current = save;
+    serverRef.current = server;
   });
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
   useEffect(() => {
     if (draft !== null && draft === server && !timer.current) setDraft(null);
   }, [draft, server]);
 
-  const flush = (v: string) => {
+  // 只用 ref，卸載時的 cleanup 也能呼叫
+  const flushRef = useRef((v: string) => {
     if (timer.current) {
       clearTimeout(timer.current);
       timer.current = null;
     }
-    if (v === server || v === sent.current) return;
+    waiting.current = null;
+    if (v === serverRef.current || v === sent.current) return;
     sent.current = v;
-    saveRef.current(v).catch(() => {
-      sent.current = null; // 失敗：同一段文字之後還能再送
-    });
-  };
+    const done = () => {
+      if (sent.current === v) sent.current = null; // 送完（成功或失敗）：同一段文字之後還能再送
+    };
+    saveRef.current(v).then(done, done);
+  });
+  const flush = (v: string) => flushRef.current(v);
+  useEffect(() => {
+    const flushNow = flushRef.current;
+    return () => {
+      if (waiting.current !== null) flushNow(waiting.current);
+    };
+  }, []);
   return {
     value: draft ?? server,
     onChange(v: string) {
       setDraft(v);
+      waiting.current = v;
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         timer.current = null;
@@ -96,6 +112,8 @@ export interface StoryRowProps {
   onModeChange: (m: BgMode) => void;
   /** 這個畫面剛上傳的檔名；沒有時（重新整理後）顯示「已上傳圖片」。 */
   fileName?: string;
+  /** 頁面選用的背景是上傳的圖片（AI 產生的背景不算）。 */
+  uploaded?: boolean;
   uploading?: boolean;
   onUpload: (file: File) => void;
   /** 回傳的 Promise 失敗（呼叫端已提示）時，同一段文字之後可以再送。 */
@@ -107,10 +125,17 @@ export interface StoryRowProps {
   actionHintId?: string;
 }
 
-export function StoryRow({ n, page, mode, onModeChange, fileName, uploading, onUpload, onSave, bg, pose, onRetry, actionHintId }: StoryRowProps) {
+export function StoryRow({ n, page, mode, onModeChange, fileName, uploaded = false, uploading, onUpload, onSave, bg, pose, onRetry, actionHintId }: StoryRowProps) {
   const scene = useAutosave(page.scene_prompt, (v) => onSave({ scene_prompt: v }));
   const action = useAutosave(page.action_prompt, (v) => onSave({ action_prompt: v }));
   const fileInput = useRef<HTMLInputElement>(null);
+  const hasUpload = !!fileName || uploaded;
+  /** 常用動作：欄位空的時候填入；已有文字就用「、」接在後面（超過字數就不加）。 */
+  const addChip = (c: string) => {
+    const cur = action.value.trim();
+    const next = cur ? `${cur}、${c}` : c;
+    if (next.length <= MAX_ACTION) action.setNow(next);
+  };
 
   return (
     <article className={styles.row} aria-label={`第 ${n} 頁`}>
@@ -148,14 +173,14 @@ export function StoryRow({ n, page, mode, onModeChange, fileName, uploading, onU
               <span className={styles.fileName}>
                 {uploading
                   ? "上傳中…"
-                  : fileName || bg.kind === "image"
+                  : hasUpload
                     ? `${fileName ?? "已上傳圖片"}（已裁成頁面比例）`
                     : "選一張圖片當這頁的背景"}
               </span>
               <input
                 ref={fileInput}
                 type="file"
-                accept="image/*"
+                accept={UPLOAD_ACCEPT}
                 hidden
                 aria-label={`第 ${n} 頁背景圖片`}
                 onChange={(e) => {
@@ -165,10 +190,10 @@ export function StoryRow({ n, page, mode, onModeChange, fileName, uploading, onU
                 }}
               />
               <button type="button" className={styles.chip} disabled={uploading} onClick={() => fileInput.current?.click()}>
-                {fileName || bg.kind === "image" ? "換一張" : "選擇圖片"}
+                {hasUpload ? "換一張" : "選擇圖片"}
               </button>
             </div>
-            <span className={styles.hint}>線條簡單的插畫效果最好；照片擷取的線稿可能很亂。</span>
+            <span className={styles.hint}>{UPLOAD_HINT}</span>
           </>
         )}
       </div>
@@ -186,7 +211,7 @@ export function StoryRow({ n, page, mode, onModeChange, fileName, uploading, onU
         />
         <div className={styles.chips}>
           {ACTION_CHIPS.map((c) => (
-            <button key={c} type="button" className={styles.chip} onClick={() => action.setNow(c)}>
+            <button key={c} type="button" className={styles.chip} onClick={() => addChip(c)}>
               {c}
             </button>
           ))}

@@ -14,6 +14,7 @@ import {
   useSelectBackground,
   useSelectPose,
   useUploadBackground,
+  usePagesFollowJobs,
   qk,
 } from "./hooks";
 
@@ -104,8 +105,9 @@ describe("compose-flow hooks", () => {
     expect(sent.name).toBe("forest.png");
     // multipart：不自己設 Content-Type（瀏覽器帶 boundary）
     expect(new Headers(init.headers).get("content-type")).toBeNull();
-    expect(keys()).toContain(JSON.stringify(qk.pages(1)));
-    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
+    // 同 useSelectBackground：上傳等於改選背景，頁面的線稿／QA／書的統計都要重抓
+    for (const k of [qk.generationsOf(1), qk.pages(1), qk.qa(5), qk.edits(5), qk.book(1), qk.exportSummary(1)])
+      expect(keys()).toContain(JSON.stringify(k));
   });
 
   it("useCharacterCandidates POST /books/1/character/candidates 只帶描述（後端一次一張，不送 count）", async () => {
@@ -200,5 +202,38 @@ describe("compose-flow hooks", () => {
       await expect(result.current.mutateAsync({ pageId: 5 })).rejects.toThrow("位置尚未儲存，請重試");
     });
     expect(f.mock.calls.map((c) => c[0])).toEqual(["/api/pages/5/placement"]);
+  });
+});
+
+describe("usePagesFollowJobs", () => {
+  type G = { id: number; status: string };
+  function mount(initial: G[] | undefined) {
+    const { client, wrapper } = setup();
+    const spy = vi.spyOn(client, "invalidateQueries").mockResolvedValue();
+    const keys = () => spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    const r = renderHook(({ gens }: { gens: G[] | undefined }) => usePagesFollowJobs(1, gens as never), {
+      wrapper,
+      initialProps: { gens: initial },
+    });
+    return { keys, rerender: (gens: G[] | undefined) => r.rerender({ gens }) };
+  }
+
+  it("排隊／執行中的任務結束（worker 可能自動選用）→ 重抓 pages 與 book", () => {
+    const { keys, rerender } = mount([{ id: 1, status: "queued" }, { id: 2, status: "running" }]);
+    expect(keys()).toEqual([]);
+    rerender([{ id: 1, status: "running" }, { id: 2, status: "running" }]);
+    expect(keys()).toEqual([]);
+    rerender([{ id: 1, status: "succeeded" }, { id: 2, status: "running" }]);
+    expect(keys()).toEqual([JSON.stringify(qk.pages(1)), JSON.stringify(qk.book(1))]);
+    rerender([{ id: 1, status: "succeeded" }, { id: 2, status: "failed" }]);
+    expect(keys()).toHaveLength(4);
+  });
+
+  it("一開始就已完成的、新出現的任務、載入中（undefined）都不觸發", () => {
+    const { keys, rerender } = mount(undefined);
+    rerender([{ id: 1, status: "succeeded" }]);
+    rerender([{ id: 1, status: "succeeded" }, { id: 2, status: "queued" }]);
+    rerender(undefined);
+    expect(keys()).toEqual([]);
   });
 });

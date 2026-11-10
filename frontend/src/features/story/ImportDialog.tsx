@@ -93,7 +93,7 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
 
   const errorRows = parsed.errors;
   return (
-    <Dialog open={open} onClose={onClose} title="貼上整本故事">
+    <Dialog open={open} onClose={onClose} title="貼上整本故事" closeDisabled={busy}>
       <div className={styles.body}>
         <p className={styles.hint}>
           把分鏡貼在下面（每頁寫「場景：」「動作：」，或從試算表貼兩欄）。已有內容的欄位不會被覆蓋，也不會刪除任何頁面。
@@ -125,9 +125,10 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
                   </tr>
                 </thead>
                 <tbody>
+                  {/* 沒有頁碼的（開場白、結語）放最後 */}
                   {[...rows.map((r) => ({ n: r.n, row: r, err: null })), ...errorRows.map((e) => ({ n: e.n ?? 1e9, row: null, err: e }))]
                     .sort((a, b) => a.n - b.n)
-                    .map((x) =>
+                    .map((x, i) =>
                       x.row ? (
                         <tr key={`r${x.n}`}>
                           <td>{x.row.n}</td>
@@ -138,7 +139,7 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
                           </td>
                         </tr>
                       ) : (
-                        <tr key={`e${x.n}`}>
+                        <tr key={`e${x.err!.n ?? `-${i}`}`}>
                           <td>{x.err!.n ?? ""}</td>
                           <td colSpan={2}>{x.err!.excerpt}</td>
                           <td className={styles.bad}>{x.err!.reason}</td>
@@ -151,7 +152,9 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
           </>
         )}
         <div className={styles.row}>
-          <Button onClick={onClose}>取消</Button>
+          <Button disabled={busy} onClick={onClose}>
+            取消
+          </Button>
           <Button variant="primary" disabled={busy || nothing} onClick={apply}>
             {`匯入（新增 ${createCount} 頁、填入 ${fillCells} 格）`}
           </Button>

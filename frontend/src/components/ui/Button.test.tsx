@@ -17,7 +17,7 @@ describe("ui basics", () => {
     expect(screen.getByRole("button", { name: "關閉" })).toBeInTheDocument();
   });
   it("Chip 顯示文字", () => {
-    render(<Chip tone="ok">已通過</Chip>);
-    expect(screen.getByText("已通過")).toBeInTheDocument();
+    render(<Chip tone="ok">已完成</Chip>);
+    expect(screen.getByText("已完成")).toBeInTheDocument();
   });
 });

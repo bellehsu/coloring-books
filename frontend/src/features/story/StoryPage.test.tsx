@@ -33,7 +33,8 @@ const gen = (id: number, o: O = {}): O => ({
   progress: null,
   ...o,
 });
-const book = {
+let book: O;
+const BOOK = {
   id: 1,
   title: "小兔豆豆",
   paper_size: "a4",
@@ -52,6 +53,7 @@ const j = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 
 beforeEach(() => {
+  book = { ...BOOK };
   pages = [
     page(1, { scene_prompt: "溫暖的廚房", action_prompt: "捧著餅乾" }),
     page(2, { scene_prompt: "舊書堆", action_prompt: "" }),
@@ -205,6 +207,45 @@ describe("StoryPage", () => {
     await userEvent.click(within(rows[2]).getByRole("radio", { name: "上傳圖片" }));
     const done = screen.getByRole("button", { name: "產生全部素材（還有 1 張）" });
     expect(done).toBeEnabled(); // 第 3 頁沒有場景，切上傳不影響動作
+  });
+
+  it("batch count leaves out legacy pages (selected whole-page image), which the backend skips", async () => {
+    gens = [gen(20, { page_id: 1, kind: "page" })];
+    pages[0] = page(1, { scene_prompt: "a", action_prompt: "b", selected_generation_id: 20 });
+    setup();
+    // 第 1 頁是舊流程整頁圖 → 不算；第 2 頁缺背景、第 3 頁缺動作 → 2
+    expect(await screen.findByRole("button", { name: "產生全部素材（還有 2 張）" })).toBeEnabled();
+  });
+
+  it("all-legacy book reaches 0 and the button is disabled", async () => {
+    gens = [gen(20, { page_id: 1, kind: "page" })];
+    pages = [page(1, { scene_prompt: "a", action_prompt: "b", selected_generation_id: 20 })];
+    setup();
+    expect(await screen.findByRole("button", { name: "產生全部素材（還有 0 張）" })).toBeDisabled();
+  });
+
+  it("上傳模式只在選用的背景是上傳圖時顯示「已上傳圖片」", async () => {
+    gens = [gen(5, { page_id: 1 })];
+    pages[0] = page(1, { scene_prompt: "a", action_prompt: "b", background_generation_id: 5 });
+    setup();
+    const row = (await screen.findAllByRole("article"))[0];
+    await userEvent.click(within(row).getByRole("radio", { name: "上傳圖片" }));
+    expect(within(row).getByText("選一張圖片當這頁的背景")).toBeInTheDocument();
+    expect(within(row).queryByText(/已上傳圖片/)).not.toBeInTheDocument();
+  });
+
+  it("沒有角色：提示並連到角色工作室", async () => {
+    book = { ...BOOK, character_generation_id: null };
+    setup();
+    const notice = await screen.findByText(/這本繪本還沒設定角色/);
+    expect(notice).toHaveTextContent("這本繪本還沒設定角色，不能產生角色動作。前往角色工作室");
+    expect(within(notice).getByRole("link", { name: "前往角色工作室" })).toHaveAttribute("href", "/books/1/character");
+  });
+
+  it("有角色：沒有角色提示", async () => {
+    setup();
+    await screen.findAllByRole("article");
+    expect(screen.queryByText(/還沒設定角色/)).not.toBeInTheDocument();
   });
 
   it("is disabled at 0 missing materials", async () => {

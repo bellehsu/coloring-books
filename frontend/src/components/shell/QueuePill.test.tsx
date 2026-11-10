@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QueuePill } from "./QueuePill";
+import { QueuePill, resetQueueTracker } from "./QueuePill";
 
 const useQueue = vi.fn();
 vi.mock("@/api/hooks", () => ({ useQueue: () => useQueue() }));
@@ -24,6 +24,7 @@ describe("QueuePill", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     useQueue.mockReset();
+    resetQueueTracker();
   });
   afterEach(() => vi.useRealTimers());
 
@@ -53,7 +54,7 @@ describe("QueuePill", () => {
     rerender(<QueuePill />);
     expect(screen.getByText("生成中 1/6 · 剩約 3 分鐘")).toBeInTheDocument();
 
-    // 完成 1 張：剩 5 張 × 25 s = 125 s → 2/6、剩約 3 分鐘；用較短的歷史耗時
+    // 完成 1 張：最近一張角色動作耗時 24 s → 剩 5 張 × 24 s = 120 s → 2/6、剩約 2 分鐘
     useQueue.mockReturnValue(busy(5, "pose", [{ kind: "pose", elapsed_s: 24 }]));
     rerender(<QueuePill />);
     expect(screen.getByText("生成中 2/6 · 剩約 2 分鐘")).toBeInTheDocument();
@@ -87,5 +88,31 @@ describe("QueuePill", () => {
     useQueue.mockReturnValue(busy(1));
     rerender(<QueuePill />);
     expect(screen.getByText(/生成中 1\/1/)).toBeInTheDocument();
+  });
+
+  it("換頁（膠囊卸載再掛上）不會把 n/m 重新算起", () => {
+    useQueue.mockReturnValue(busy(3));
+    const first = render(<QueuePill />);
+    expect(screen.getByText(/生成中 1\/3/)).toBeInTheDocument();
+    useQueue.mockReturnValue(busy(2));
+    first.rerender(<QueuePill />);
+    expect(screen.getByText(/生成中 2\/3/)).toBeInTheDocument();
+    first.unmount();
+    render(<QueuePill />);
+    expect(screen.getByText(/生成中 2\/3/)).toBeInTheDocument();
+  });
+
+  it("就緒期間換頁仍顯示就緒，時間到才變閒置", () => {
+    useQueue.mockReturnValue(busy(1));
+    const first = render(<QueuePill />);
+    useQueue.mockReturnValue(q());
+    first.rerender(<QueuePill />);
+    expect(screen.getByText("GPU 就緒")).toBeInTheDocument();
+    first.unmount();
+    act(() => void vi.advanceTimersByTime(60_000));
+    render(<QueuePill />);
+    expect(screen.getByText("GPU 就緒")).toBeInTheDocument();
+    act(() => void vi.advanceTimersByTime(4 * 60_000));
+    expect(screen.getByText("GPU 閒置")).toBeInTheDocument();
   });
 });

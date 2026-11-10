@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   useMutation,
   useQuery,
@@ -67,6 +68,26 @@ export function useGenerations(bookId: number, f: GenFilter = {}) {
     },
     refetchInterval: (query) => (query.state.data?.some(isActive) ? 2000 : false),
   });
+}
+
+/**
+ * 任務結束時 worker 可能把它自動選用到頁面的空欄位（背景、角色動作），但 pages 不會自己重抓：
+ * gens（useGenerations 的資料）裡原本排隊／執行中的任務結束了 → invalidate pages 與 book。
+ * 故事頁與編輯器都用，畫面不用重新整理就會看到自動選用的素材。
+ */
+export function usePagesFollowJobs(bookId: number, gens: readonly Generation[] | undefined) {
+  const qc = useQueryClient();
+  const active = useRef<Set<number> | null>(null);
+  useEffect(() => {
+    if (!gens) return;
+    const now = new Set(gens.filter(isActive).map((g) => g.id));
+    const before = active.current;
+    active.current = now;
+    if (before && [...before].some((id) => !now.has(id))) {
+      void qc.invalidateQueries({ queryKey: qk.pages(bookId) });
+      void qc.invalidateQueries({ queryKey: qk.book(bookId) });
+    }
+  }, [gens, qc, bookId]);
 }
 
 /** 佇列狀態每 5 秒輪詢。 */
@@ -299,14 +320,16 @@ export function useGenerateBackground(bookId: number) {
   });
 }
 
-/** 上傳圖片當這頁的背景（後端置中裁成頁面比例並選用）→ pages, generations, queue */
+/**
+ * 上傳圖片當這頁的背景（後端置中裁成頁面比例並選用）：等於改選背景 → 同 useSelectBackground
+ * （invalidatePage：pages, qa, edits, book, books, exportSummary），另加 generations 與 queue。
+ */
 export function useUploadBackground(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ pageId, file }: { pageId: number; file: File }) =>
       api.upload<Page>(`/pages/${pageId}/backgrounds/upload`, file),
-    onSuccess: () =>
-      Promise.all([qc.invalidateQueries({ queryKey: qk.pages(bookId) }), invalidateJobs(qc, bookId)]),
+    onSuccess: (_d, v) => Promise.all([invalidatePage(qc, bookId, v.pageId), invalidateJobs(qc, bookId)]),
   });
 }
 
