@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
+import type { BgStyle } from "@/lib/bgStyle";
 import { batchConfirmText, type BatchPlan } from "./batchBackgrounds";
 import styles from "./Filmstrip.module.css";
 
@@ -25,6 +26,10 @@ export interface FilmstripProps {
   onDelete: (pageId: number) => void;
   /** 「產生所有背景」的前端預估（planBatchBackgrounds）：按鈕狀態與確認對話框用。 */
   bgPlan: BatchPlan;
+  /** 產生所有背景實際送出的風格（記住的風格，已套用「簡潔不可用 → 細緻」）。 */
+  bgStyle: BgStyle;
+  /** 會排入的頁裡有可用構圖草圖的頁數（這些頁用細緻）。 */
+  bgSketchCount: number;
   /** 使用者在確認對話框按下產生後才呼叫。 */
   onGenerateAll: () => void;
   /** 產生所有背景進行中（等存檔＋POST）。 */
@@ -51,6 +56,8 @@ export function Filmstrip({
   onMove,
   onDelete,
   bgPlan,
+  bgStyle,
+  bgSketchCount,
   onGenerateAll,
   generatingAll,
 }: FilmstripProps) {
@@ -144,7 +151,7 @@ export function Filmstrip({
       </Dialog>
 
       <Dialog open={confirmAll} onClose={() => setConfirmAll(false)} title="產生所有背景？">
-        <p className={styles.confirmText}>{batchConfirmText(bgPlan)}</p>
+        <p className={styles.confirmText}>{batchConfirmText(bgPlan, bgStyle, bgSketchCount)}</p>
         <p className={styles.confirmNote}>
           背景會依頁面順序排隊，一次產生一張；排隊時可以繼續編輯其他頁。
           {bgPlan.estimate && "頁面的生成紀錄還在載入，頁數是估計值，實際以送出後的結果為準。"}

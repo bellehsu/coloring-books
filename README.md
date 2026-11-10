@@ -82,11 +82,13 @@ APP_COMFY__URL=http://127.0.0.1:8190 \
 
 - 後端必須以單一 process 執行（不要用 `uvicorn --workers N`）：生成 worker 在 process 內，且啟動時會把 `running` 的任務重新排隊。
 - 生成任務由 FastAPI 內的單一背景 worker 依序執行，狀態存在 SQLite。
-- 佇列依模型家族分組：Qwen（精準角色動作）與 SDXL（背景、快速角色動作、角色與舊流程頁面候選）。worker 優先挑和上一個任務同家族的任務
+- 佇列依模型家族分組：Qwen（精準角色動作、簡潔背景）與 SDXL（細緻背景、快速角色動作、角色與舊流程頁面候選）。worker 優先挑和上一個任務同家族的任務
   （同家族內最舊的先），減少 ComfyUI 換模型的時間；等待超過 `queue.max_wait_s`（預設 180 秒，可用 `APP_QUEUE__MAX_WAIT_S` 覆寫）
   的任務不論家族都最先執行，不會一直被插隊。重啟後還不知道上一個家族，先依建立時間（最舊的先）。生成紀錄的 `queue_position` 就是實際執行順序。
   「等待過久」以上一次取任務的時間判斷：任務執行中顯示的順位（例如「第 1 位」）不會中途改變，下一個被取走的就是它；
   防插隊因此最多晚一個任務生效。佇列清空（閒置）後改用現在時間。
+  一頁一頁做時，「快速」角色動作（SDXL）配「簡潔」背景（Qwen）會讓每頁流程在 SDXL／Qwen 之間交替、換模型較多；
+  「精準」角色動作配「簡潔」背景則同屬 Qwen，不必換模型。
 - ComfyUI 離線時任務保持 `queued`，不會失敗；`GET /api/system/queue` 的 `state` 會顯示 `engine_unavailable`，ComfyUI 恢復後自動續跑。
 - `config/settings.yaml` 預設 `comfy.url` 為 `http://127.0.0.1:8188`；以 `APP_COMFY__URL` 覆寫（8188 若已被其他服務佔用，可改用 8190 等埠）。
 
@@ -114,6 +116,7 @@ npm run build && npm test && npm run lint
 `scripts/dev_fake_backend.py` 是真正的 FastAPI 後端，但生成引擎換成 `DemoEngine`：每張圖延遲 0.3 秒、回報 3 次進度，用 Pillow 畫彩色圖：
 - 背景：太陽、雲、樹、草叢幾個大物件，上方一個不填色的大框，上緣刻意留了約 7 px 的缺口（A4 300 DPI 線稿上約 20 px）。
   物件都避開角色的預設位置，合成後 QA 一定會報 1 個「線條有缺口」，按「自動補線」後缺口歸零。
+- 背景的簡潔／細緻兩種風格畫法相同（生成紀錄照常記下實際風格）。
 - 角色動作：白底上的角色（832×1216）＋同尺寸遮罩（角色處白、其他黑），可以去背、合成。精準／快速兩種模式畫法相同。
 - 角色候選（與舊流程的頁面圖）：白底、黑色粗外框的角色與幾個背景方塊（同樣留一個缺口）。
 
@@ -124,7 +127,8 @@ BACKEND_URL=http://127.0.0.1:8000 npm run dev   # 另一個終端機，在 front
 
 設定沿用 `config/settings.yaml`（或 `APP_SETTINGS_FILE`），但資料庫與檔案一律放在 `--storage`（預設：新的暫存資料夾），不會碰到正式資料。
 啟動時不跑 ComfyUI preflight（`create_app(startup_preflight=False)`）：本機 ComfyUI 開著與否、workflow 能不能跑都不影響它，
-`GET /api/system/pose-modes` 一律回報精準／快速都可用（e2e 要測「精準不可用」時在瀏覽器端攔截這個 API）。
+`GET /api/system/pose-modes` 一律回報精準／快速都可用、`GET /api/system/background-styles` 一律回報簡潔／細緻都可用
+（e2e 要測「不可用」時在瀏覽器端攔截這兩個 API）。
 
 ### 端對端測試（Playwright）
 
@@ -144,12 +148,15 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
   自動補線後缺口 0 → QA 一致 → 標為通過 → 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）；
   以及沒設角色時角色分頁停用、後端 409「請先設定角色」原樣顯示；
   `/api/system/pose-modes` 回報精準不可用時「精準」停用並顯示「精準模式缺少：…」、改選「快速」，產生時送出 `mode:"fast"`。
-- `e2e/batch.spec.ts`：3 頁的書（2 頁有場景描述、1 頁沒有）按「產生所有背景」→ 確認對話框列出會產生 2 頁、略過第 3 頁 → 取消不送出、確認後只送出一次 →
-  第 1、2 頁各一張背景、第 3 頁沒有，按鈕變成停用（「沒有需要產生背景的頁面」）。
+- `e2e/batch.spec.ts`：3 頁的書（2 頁有場景描述、1 頁沒有）按「產生所有背景」→ 確認對話框列出會產生 2 頁（簡潔）、略過第 3 頁 → 取消不送出、
+  確認後只送出一次（body `{style:"simple"}`）→ 第 1、2 頁各一張背景、第 3 頁沒有，按鈕變成停用（「沒有需要產生背景的頁面」）。
+- `e2e/bgstyle.spec.ts`：背景風格預設「簡潔」→ 產生一張（送出 `style:"simple"`、縮圖標「簡潔」）→ 切到「細緻」再產生一張（標「細緻」）→
+  重新整理後仍是細緻（localStorage）；以 API 上傳構圖草圖的頁「簡潔」停用、顯示「有構圖草圖時用細緻，才會照草圖構圖」、產生時送出細緻，
+  構圖強度拉到 0 後簡潔恢復可選。
 - `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色工作室、頁面編輯器（背景、畫構圖、角色、線稿模式）與合成分頁（角色移到邊緣外也一樣），
   整頁不可水平捲動；390 時頁面清單 `overflow-x: auto`（在清單內捲動）、檢查面板在工作區下方。
 - `next dev` 同一個 `frontend/` 只能跑一份：`scripts/dev.sh`（或其他 `next dev`）還開著時 e2e 會出現「Another next dev server is already running」，先關掉它再跑。
-- 全部約 30 秒（第一次 `next dev` 編譯會再久一點）。
+- 全部約 50 秒（第一次 `next dev` 編譯會再久一點）。
 
 ## 內網部署
 
@@ -159,8 +166,15 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 
 設定好角色之後，每一頁依序做：
 
-1. **背景**：輸入場景描述，按「產生背景」，每次一張（`sdxl_background`，不用 IP-Adapter，提示詞要求無人物、少量大物件）。
-   畫構圖（ControlNet scribble）為選用；不畫就不使用 ControlNet。
+1. **背景**：輸入場景描述，選「背景風格」後按「產生背景」，每次一張（不用角色參考圖，提示詞要求無人物）。
+   - **簡潔**（預設，約 20 秒，線條少、適合小小孩）：`qwen_background`，Qwen-Image-Edit-2511 GGUF＋Lightning 4 步，不給參考圖，
+     需要 ComfyUI-GGUF；每張隨機挑一種構圖變化，且不會和本頁上一張簡潔背景相同（再產生時構圖一定換一種）。
+   - **細緻**（約 10 秒，細節多，可以照構圖草圖）：`sdxl_background`，SDXL＋（選用）ControlNet scribble，少量大物件。
+   - 畫構圖（ControlNet scribble）為選用，只有細緻會照草圖構圖：本頁有構圖草圖且構圖強度 > 0 時「簡潔」停用、一律用細緻
+     （顯示「有構圖草圖時用細緻，才會照草圖構圖」；強度拉到 0 或清空草圖就能再選簡潔）。
+   - 選擇記在瀏覽器（localStorage `coloring.bgStyle`）。後端快取的 preflight 判定簡潔不可用時，「簡潔」停用並顯示缺少的項目，改用細緻
+     （退路，不改寫記住的選擇）。最後由後端在排隊當下決定實際風格（有可用草圖或簡潔不可用 → 細緻），
+     歷史縮圖左上角標「簡潔」／「細緻」（背景風格上線前的舊資料算細緻）。
 2. **角色動作**：輸入動作文字或點常用動作按鈕（揮手、跑步…），選「產生方式」後按「產生角色動作」，每次一張，832×1216 白底＋去背遮罩。
    - **精準**（預設，約 30 秒，角色最像、動作最準）：`qwen_edit_pose_cutout`，Qwen-Image-Edit-2511 GGUF（Q4_K_M）＋Lightning 4 步 LoRA
      以角色參考圖直接編輯出新動作，需要 ComfyUI-GGUF；BiRefNet 去背。
@@ -173,7 +187,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 4. **線稿、QA、匯出**：與之前相同（xdog 擷取 → 後處理 → 補線 → 角色一致確認 → 通過 → PDF）。
 
 **一次做很多頁時**：先在每一頁寫好場景描述（需要的話畫構圖），按頁面清單上方的「產生所有背景」，確認後整本書一次排好背景；
-再一頁一頁做角色動作。背景（SDXL）會一批連續跑完，之後的精準角色動作（Qwen）不必和背景輪流換模型，整體等待較短。
+再一頁一頁做角色動作。同一種模型的任務會一批連續跑完（簡潔背景與精準角色動作是 Qwen，細緻背景是 SDXL），不必來回換模型，整體等待較短。
+確認對話框會顯示風格，例如「會為 3 頁產生背景（簡潔，有草圖的 1 頁用細緻）」；整批送出目前記住的風格（簡潔不可用時為細緻），有可用草圖的頁一律細緻。
 「產生所有背景」會略過沒有場景描述、已有背景（已選用，或歷史裡有成功且未捨棄的；舊流程選了整頁候選圖的頁也算）、背景產生中、
 草圖檔案遺失的頁，確認對話框列出會產生幾頁與略過的頁（草圖檔案遺失只有送出後才知道，完成提示會列出頁碼）；
 按下時先等本頁送出中的場景描述與構圖強度存好（之前存失敗的會重送，再失敗就不送出）。
@@ -205,8 +220,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | DELETE | `/pages/{page_id}/sketch` | 移除頁面構圖草圖 |
 | GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
 | POST | `/pages/{page_id}/candidates` | 產生頁面候選（非同步，202） |
-| POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202；可用構圖草圖） |
-| POST | `/books/{book_id}/backgrounds/batch` | 依頁面順序替每一頁排一張背景（無 body，202）：`{queued: Generation[], skipped: [{page_id, position, reason}]}`；`reason` 為「沒有場景描述」「已有背景」（含舊流程選了整頁候選圖）「背景產生中」「草圖檔案遺失」；同時多個呼叫會依序處理，不會重複排隊 |
+| POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202）；選填 body `{style: "simple" \| "detailed"}`，省略＝簡潔；有可用構圖草圖（強度 > 0）或簡潔不可用時後端改用細緻。`style` 是使用者的選擇（前端只在簡潔不可用時送細緻，草圖頁仍送使用者選的），記在 request_json 的 `background_style_requested`；生成紀錄的 `background_style` 為套用草圖／可用性規則後的實際風格 |
+| POST | `/books/{book_id}/backgrounds/batch` | 依頁面順序替每一頁排一張背景（202；選填 body `{style}` 同上，requested＝使用者的選擇，逐頁決定實際風格）：`{queued: Generation[], skipped: [{page_id, position, reason}]}`；`reason` 為「沒有場景描述」「已有背景」（含舊流程選了整頁候選圖）「背景產生中」「草圖檔案遺失」；同時多個呼叫會依序處理，不會重複排隊 |
 | POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩；`mode`：`"precise"`（預設，Qwen）或 `"fast"`（SDXL），其他值 422（非同步，202；未設角色 409；精準不可用 503「精準模式缺少：…」） |
 | POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
 | POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |
@@ -236,6 +251,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | GET | `/system/queue` | 佇列狀態（worker 狀態、排隊數、執行中任務） |
 | GET | `/system/preflight` | ComfyUI 連線、模型與節點檢查（並更新快取） |
 | GET | `/system/pose-modes` | 角色動作精準／快速是否可用 `{precise, fast: {available, missing}}`（只讀快取的 preflight，不連 ComfyUI；ComfyUI 連不上或尚未檢查時都算可用） |
+| GET | `/system/background-styles` | 背景簡潔／細緻是否可用 `{simple, detailed: {available, missing}}`（規則同上） |
 
 ## 線稿與 QA
 

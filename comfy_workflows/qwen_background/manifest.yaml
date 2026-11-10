@@ -1,0 +1,76 @@
+schema_version: 1
+name: qwen_background
+display_name: "Qwen 簡潔背景生成（無角色）"
+route: C
+status: draft
+description: >
+  Qwen-Image-Edit-2511（Q4_K_M GGUF）+ Lightning 4-step LoRA 當純文字生圖：TextEncodeQwenImageEditPlus 不接 image1，
+  生成不含角色、物件少而大的背景彩圖。沒有草圖（ControlNet），有草圖的頁面改用 sdxl_background。
+  NEGATIVE 為固定空字串（cfg = 1 時不起作用），不開放為參數。
+workflow_file: workflow_api.json
+notes: >
+  由 qwen_edit_pose_cutout 拿掉 CHARACTER_REF、REF_METHOD 與 BiRefNet 節點而來（spike 的 qwen_bg_graph 選項 a）；
+  節點與輸入欄位已用 ComfyUI 0.36.0 的 /object_info 驗證（TextEncodeQwenImageEditPlus 的 image1～3 為 optional）。
+  固定值：steps 4、cfg 1.0、euler / simple、denoise 1.0、ModelSamplingAuraFlow shift 3.1、CFGNorm 1.0、LoRA 1.0。
+  實驗紀錄：experiments/results/phase7_qwen_background_20261110_1104。
+
+parameters:
+  prompt:
+    type: string
+    required: true
+    max_length: 2000
+    description: 背景描述（prompts.qwen_background_prompt）
+    targets: [{title: POSITIVE, input: prompt}]
+  width:
+    type: int
+    min: 512
+    max: 1536
+    default: 864
+    description: 16 的倍數
+    targets: [{title: LATENT, input: width}]
+  height:
+    type: int
+    min: 512
+    max: 1536
+    default: 1216
+    targets: [{title: LATENT, input: height}]
+  seed:
+    type: int
+    min: 0
+    max: 4294967295
+    required: true
+    targets: [{title: SAMPLER, input: seed}]
+
+outputs:
+  - title: OUTPUT
+    kind: image
+
+models:
+  - id: qwen_edit_2511_q4km
+    filename: qwen-image-edit-2511-Q4_K_M.gguf
+    folder: unet
+    comfy_folder: unet_gguf
+    source: https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/blob/main/qwen-image-edit-2511-Q4_K_M.gguf
+    size_gb: 13.24
+    loader: {title: UNET, input: unet_name}
+  - id: qwen_text_encoder
+    filename: qwen_2.5_vl_7b_fp8_scaled.safetensors
+    folder: text_encoders
+    source: https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/blob/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors
+    loader: {title: TEXT_ENCODER, input: clip_name}
+  - id: qwen_vae
+    filename: qwen_image_vae.safetensors
+    folder: vae
+    source: https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/blob/main/split_files/vae/qwen_image_vae.safetensors
+    loader: {title: VAE, input: vae_name}
+  - id: lightning_lora_2511
+    filename: Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
+    folder: loras
+    source: https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/blob/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
+    loader: {title: LIGHTNING_LORA, input: lora_name}
+
+custom_nodes:
+  - name: ComfyUI-GGUF
+    repo: https://github.com/city96/ComfyUI-GGUF
+    provides: [UnetLoaderGGUF]
+    note: 需要 pip 套件 gguf>=0.13.0（裝在 ComfyUI 的 Python 環境）；以 6ea2651（2026-01-12）驗證

@@ -16,14 +16,20 @@ Family = Literal["qwen", "sdxl"]
 
 
 def family_of(kind: GenKind, request_json: str) -> Family:
-    """POSE 且 pose_mode == "precise" → qwen；其他（含無法解析的 request_json）→ sdxl。"""
-    if GenKind(kind) != GenKind.POSE:
+    """POSE 且 pose_mode == "precise" → qwen；BACKGROUND 且 background_style == "simple" → qwen；
+    其他（含無法解析的 request_json）→ sdxl。"""
+    kind = GenKind(kind)
+    if kind not in (GenKind.POSE, GenKind.BACKGROUND):
         return "sdxl"
     try:
         d = json.loads(request_json)
     except (TypeError, ValueError):
         return "sdxl"
-    if isinstance(d, dict) and d.get("pose_mode") == "precise":
+    if not isinstance(d, dict):
+        return "sdxl"
+    if kind == GenKind.POSE and d.get("pose_mode") == "precise":
+        return "qwen"
+    if kind == GenKind.BACKGROUND and d.get("background_style") == "simple":
         return "qwen"
     return "sdxl"
 

@@ -128,11 +128,13 @@
   line-height: 1.4;
   pointer-events: none;
 }
-.mode[data-mode="precise"] {
+.mode[data-mode="precise"],
+.mode[data-mode="simple"] {
   background: var(--accent-soft);
   color: var(--accent-ink);
 }
-.mode[data-mode="fast"] {
+.mode[data-mode="fast"],
+.mode[data-mode="detailed"] {
   background: var(--chip-bg);
   color: var(--muted-2);
 }

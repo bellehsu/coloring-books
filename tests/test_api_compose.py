@@ -13,7 +13,16 @@ from app.main import create_app
 from app.models import CharacterCheck, Generation, GenKind, GenStatus, PageStatus
 from app.services.compose import COMPOSE_VERSION, DEFAULT_PLACEMENT
 from app.services.engine import EngineError
-from app.services.prompts import POSE_NEGATIVE, POSE_SIZE, pose_prompt, qwen_pose_prompt
+from app.services.prompts import (
+    QWEN_BACKGROUND_VARIATIONS,
+    BACKGROUND_NEGATIVE,
+    POSE_NEGATIVE,
+    POSE_SIZE,
+    background_prompt,
+    pose_prompt,
+    qwen_background_prompt,
+    qwen_pose_prompt,
+)
 from tests.fake_engine import FakeEngine, make_png
 from tests.test_api_books import new_book, run_jobs
 from tests.test_api_lineart import (
@@ -130,6 +139,295 @@ def test_background_snapshots_sketch(client, app):
     # 之後刪掉草圖不影響已排入的快照
     client.delete(f"/api/pages/{p['id']}/sketch")
     assert req.structure_image.is_file()
+
+
+# ---- 背景風格（簡潔 Qwen／細緻 SDXL） -------------------------------------------------
+
+
+def _rj(app, gen_id) -> dict:
+    return json.loads(gen_row(app, gen_id).request_json)
+
+
+def _bg_post(client, page_id, body):
+    if body is None:
+        return client.post(f"/api/pages/{page_id}/backgrounds")
+    return client.post(f"/api/pages/{page_id}/backgrounds", json=body)
+
+
+@pytest.mark.parametrize("body", [None, {}])
+def test_background_default_style_simple(client, app, body):
+    app.state.preflight = None
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園裡的大樹")
+    r = _bg_post(client, p["id"], body)
+    assert r.status_code == 202, r.text
+    g = r.json()
+    assert g["background_style"] == "simple"
+    assert g["user_text"] == "公園裡的大樹"
+    assert g["prompt"].startswith("公園裡的大樹. ")
+    row = gen_row(app, g["id"])
+    assert row.negative_prompt == ""
+    rj = _rj(app, g["id"])
+    assert rj["background_style"] == "simple" and rj["background_style_requested"] == "simple"
+    # 構圖變化語：每張隨機一個（校正過的清單），寫進 prompt 並記在 request_json
+    assert rj["variation"] in QWEN_BACKGROUND_VARIATIONS
+    assert g["prompt"] == qwen_background_prompt("公園裡的大樹", rj["variation"])
+    assert rj["negative_prompt"] == "" and rj["structure_image"] is None
+    run_jobs(client, app)
+    req = app.state.engine.requests[-1]
+    assert req.kind == GenKind.BACKGROUND and req.background_style == "simple"
+    assert client.get(f"/api/generations/{g['id']}").json()["background_style"] == "simple"
+
+
+def test_background_explicit_detailed(client, app):
+    app.state.preflight = None
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    g = _bg_post(client, p["id"], {"style": "detailed"}).json()
+    assert g["background_style"] == "detailed"
+    assert g["prompt"] == background_prompt("公園")
+    assert gen_row(app, g["id"]).negative_prompt == BACKGROUND_NEGATIVE
+    rj = _rj(app, g["id"])
+    assert rj["background_style"] == "detailed" and rj["background_style_requested"] == "detailed"
+    assert rj["variation"] is None
+
+
+def test_background_simple_records_variation(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    app.state.preflight = None
+    monkeypatch.setattr(
+        compose_api, "pick_background_variation", lambda rng, exclude=None: "seen from far away"
+    )
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    g = _bg_post(client, p["id"], None).json()
+    assert g["prompt"] == qwen_background_prompt("公園", "seen from far away")
+    assert g["user_text"] == "公園"
+    assert _rj(app, g["id"])["variation"] == "seen from far away"
+    # 細緻不挑構圖變化
+    g = _bg_post(client, p["id"], {"style": "detailed"}).json()
+    assert "seen from far away" not in g["prompt"] and _rj(app, g["id"])["variation"] is None
+
+
+def _set_status(app, gen_id, status, *, discarded=False):
+    with app.state.sessions() as s:
+        row = s.get(Generation, gen_id)
+        row.status = status
+        row.discarded = discarded
+        s.add(row)
+        s.commit()
+
+
+def test_background_simple_regenerate_never_repeats_variation(client, app):
+    # 「再產生一張」：同一頁連續兩張簡潔背景的構圖變化語一定不同（排除上一張，不靠運氣）
+    app.state.preflight = None
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    prev = None
+    for _ in range(12):
+        g = _bg_post(client, p["id"], None).json()
+        v = _rj(app, g["id"])["variation"]
+        assert v in QWEN_BACKGROUND_VARIATIONS and v != prev
+        assert g["prompt"] == qwen_background_prompt("公園", v)
+        prev = v
+
+
+def test_background_simple_excludes_latest_simple_any_status(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    app.state.preflight = None
+    calls: list[str | None] = []
+    real = compose_api.pick_background_variation
+
+    def spy(rng, exclude=None):
+        calls.append(exclude)
+        return real(rng, exclude=exclude)
+
+    monkeypatch.setattr(compose_api, "pick_background_variation", spy)
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    other = new_page(client, b["id"], scene_prompt="公園")
+    first = _bg_post(client, p["id"], None).json()
+    assert calls == [None]  # 這頁還沒有簡潔背景
+    v1 = _rj(app, first["id"])["variation"]
+    # 失敗、丟棄的也算；中間夾一張細緻不影響（只看最近一張簡潔）
+    _set_status(app, first["id"], GenStatus.FAILED, discarded=True)
+    _bg_post(client, p["id"], {"style": "detailed"})
+    second = _bg_post(client, p["id"], None).json()
+    assert calls[-1] == v1
+    v2 = _rj(app, second["id"])["variation"]
+    assert v2 != v1
+    # 只看同一頁
+    _bg_post(client, other["id"], None)
+    assert calls[-1] is None
+    third = _bg_post(client, p["id"], None).json()
+    assert calls[-1] == v2 and _rj(app, third["id"])["variation"] != v2
+
+
+def test_batch_simple_excludes_latest_simple_per_page(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    app.state.preflight = None
+    b = new_book(client)
+    pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(2)]
+    prior = _bg_post(client, pages[0]["id"], None).json()
+    prior_v = _rj(app, prior["id"])["variation"]
+    _set_status(app, prior["id"], GenStatus.FAILED)  # 失敗的頁面批次仍會排
+    calls: dict[int, str | None] = {}
+    real = compose_api.pick_background_variation
+    order = iter(p["id"] for p in pages)
+
+    def spy(rng, exclude=None):
+        calls[next(order)] = exclude
+        return real(rng, exclude=exclude)
+
+    monkeypatch.setattr(compose_api, "pick_background_variation", spy)
+    queued = batch(client, b["id"])["queued"]
+    assert [g["page_id"] for g in queued] == [p["id"] for p in pages]
+    assert calls == {pages[0]["id"]: prior_v, pages[1]["id"]: None}
+    assert _rj(app, queued[0]["id"])["variation"] != prior_v
+
+
+def test_background_sketch_forces_detailed(client, app):
+    app.state.preflight = None
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    upload(client, p["id"], make_png((128, 128)))
+    client.patch(f"/api/pages/{p['id']}", json={"controlnet_strength": 0.4})
+    g = _bg_post(client, p["id"], {"style": "simple"}).json()
+    assert g["background_style"] == "detailed"
+    assert g["prompt"] == background_prompt("公園")
+    assert gen_row(app, g["id"]).negative_prompt == BACKGROUND_NEGATIVE
+    rj = _rj(app, g["id"])
+    assert rj["background_style"] == "detailed" and rj["background_style_requested"] == "simple"
+    assert rj["structure_image"] and rj["structure_strength"] == 0.4
+    run_jobs(client, app)
+    req = app.state.engine.requests[-1]
+    assert req.background_style == "detailed" and req.structure_image.name == f"sketch_{g['id']}.png"
+
+
+def test_background_sketch_strength_zero_uses_simple(client, app):
+    app.state.preflight = None
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    upload(client, p["id"], make_png((128, 128)))
+    client.patch(f"/api/pages/{p['id']}", json={"controlnet_strength": 0.0})
+    g = _bg_post(client, p["id"], None).json()
+    assert g["background_style"] == "simple"
+    rj = _rj(app, g["id"])
+    assert g["prompt"] == qwen_background_prompt("公園", rj["variation"])
+    assert rj["background_style"] == "simple" and rj["negative_prompt"] == ""
+    # 草圖快照仍然保存（出處紀錄），引擎不使用
+    assert rj["structure_image"] and rj["structure_strength"] == 0.0
+    assert app.state.storage.abs(rj["structure_image"]).is_file()
+
+
+def _qwen_background_missing_report():
+    from app.services.preflight import MissingModel, PreflightReport, WorkflowReport
+
+    return PreflightReport(ok=False, comfy_url="http://x", comfy_reachable=True, workflows=[
+        WorkflowReport(name="qwen_background", ok=False, version="1", missing_models=[
+            MissingModel("qwen_edit_2511_q4km", "qwen-image-edit-2511-Q4_K_M.gguf", "unet", "沒有此檔案")]),
+        WorkflowReport(name="sdxl_background", ok=True, version="1"),
+    ])
+
+
+def test_background_qwen_unavailable_falls_back(client, app):
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    app.state.preflight = _qwen_background_missing_report()
+    r = _bg_post(client, p["id"], None)
+    assert r.status_code == 202, r.text
+    g = r.json()
+    assert g["background_style"] == "detailed"
+    assert g["prompt"] == background_prompt("公園")
+    assert gen_row(app, g["id"]).negative_prompt == BACKGROUND_NEGATIVE
+    rj = _rj(app, g["id"])
+    assert rj["background_style"] == "detailed" and rj["background_style_requested"] == "simple"
+
+
+def test_background_invalid_style_422(client, app):
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    for bad in ("qwen", "", None, 1, "SIMPLE"):
+        r = _bg_post(client, p["id"], {"style": bad})
+        assert r.status_code == 422, bad
+    b = new_book(client)
+    assert client.post(f"/api/books/{b['id']}/backgrounds/batch", json={"style": "x"}).status_code == 422
+    with app.state.sessions() as s:  # 422 不會留下排隊中的 generation
+        assert not s.exec(select(Generation).where(Generation.kind == GenKind.BACKGROUND)).all()
+
+
+def test_background_missing_sketch_file_409_before_style(client, app):
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    upload(client, p["id"], make_png((128, 128)))
+    for f in app.state.storage.root.rglob("sketch*.png"):
+        f.unlink()
+    for body in (None, {"style": "simple"}, {"style": "detailed"}):
+        r = _bg_post(client, p["id"], body)
+        assert r.status_code == 409 and r.json()["detail"] == "草圖檔案遺失，請重新上傳"
+
+
+def test_batch_style_applies_per_page(client, app):
+    app.state.preflight = None
+    b = new_book(client)
+    pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(3)]
+    upload(client, pages[1]["id"], make_png((128, 128)))
+    client.patch(f"/api/pages/{pages[1]['id']}", json={"controlnet_strength": 0.4})
+    r = client.post(f"/api/books/{b['id']}/backgrounds/batch", json={"style": "simple"})
+    assert r.status_code == 202, r.text
+    styles = {g["page_id"]: g["background_style"] for g in r.json()["queued"]}
+    assert styles == {pages[0]["id"]: "simple", pages[1]["id"]: "detailed", pages[2]["id"]: "simple"}
+    for g in r.json()["queued"]:
+        rj = _rj(app, g["id"])
+        assert rj["background_style"] == styles[g["page_id"]]
+        assert rj["background_style_requested"] == "simple"
+    assert _rj(app, r.json()["queued"][1]["id"])["structure_image"]
+
+
+@pytest.mark.parametrize(("body", "expected"), [(None, "simple"), ({}, "simple"), ({"style": "detailed"}, "detailed")])
+def test_batch_style_body_optional(client, app, body, expected):
+    app.state.preflight = None
+    b = new_book(client)
+    new_page(client, b["id"], scene_prompt="公園")
+    url = f"/api/books/{b['id']}/backgrounds/batch"
+    r = client.post(url) if body is None else client.post(url, json=body)
+    assert r.status_code == 202, r.text
+    (g,) = r.json()["queued"]
+    assert g["background_style"] == expected
+    rj = _rj(app, g["id"])
+    assert rj["background_style"] == expected and rj["background_style_requested"] == expected
+
+
+def test_batch_qwen_unavailable_falls_back(client, app):
+    b = new_book(client)
+    new_page(client, b["id"], scene_prompt="公園")
+    app.state.preflight = _qwen_background_missing_report()
+    (g,) = batch(client, b["id"])["queued"]
+    assert g["background_style"] == "detailed"
+    assert _rj(app, g["id"])["background_style_requested"] == "simple"
+
+
+def test_generation_out_background_style_old_row_detailed(client, app):
+    app.state.preflight = None
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    old = gen_background(client, app, p["id"])
+    with app.state.sessions() as s:  # 模擬 Phase 7 以前的舊列：request_json 沒有風格欄位
+        row = s.get(Generation, old)
+        d = json.loads(row.request_json)
+        for k in ("background_style", "background_style_requested", "variation"):
+            d.pop(k)
+        row.request_json = json.dumps(d)
+        s.add(row)
+        s.commit()
+    assert client.get(f"/api/generations/{old}").json()["background_style"] == "detailed"
+    pose = gen_pose(client, app, p["id"])
+    assert client.get(f"/api/generations/{pose}").json()["background_style"] is None
+    queued = gen_background(client, app, p["id"], run=False)
+    assert client.get(f"/api/generations/{queued}").json()["background_style"] == "simple"
+
+
+def test_background_style_from_generation_tolerates_bad_request_json():
+    from app.api.schemas import GenerationOut
+
+    for rj in ("", "{oops", "[]", '{"background_style": "qwen"}'):
+        g = Generation(id=1, book_id=1, page_id=1, kind=GenKind.BACKGROUND, user_text="", prompt="",
+                       negative_prompt="", seed=0, width=8, height=8, request_json=rj)
+        assert GenerationOut.from_generation(g).background_style == "detailed", rj
 
 
 # ---- 角色動作 ------------------------------------------------------------------

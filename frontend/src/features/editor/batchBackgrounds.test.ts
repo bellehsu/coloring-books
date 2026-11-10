@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Generation, Page } from "@/api/client";
-import { batchConfirmText, batchResultText, planBatchBackgrounds } from "./batchBackgrounds";
+import { batchConfirmText, batchResultText, planBatchBackgrounds, sketchPageCount } from "./batchBackgrounds";
 
 const page = (id: number, o: Partial<Page> = {}): Page =>
   ({ id, position: id - 1, scene_prompt: `scene ${id}`, background_generation_id: null, ...o }) as Page;
@@ -61,20 +61,45 @@ describe("planBatchBackgrounds", () => {
 });
 
 describe("batchConfirmText", () => {
-  it("沒有略過", () => {
-    expect(batchConfirmText({ queued: [1, 2], skipped: [], estimate: false })).toBe("會為 2 頁產生背景");
+  const three = { queued: [1, 2, 3], skipped: [], estimate: false };
+  const skips = [
+    { pageId: 4, n: 4, reason: "沒有場景描述" },
+    { pageId: 5, n: 5, reason: "已有背景" },
+  ];
+
+  it("簡潔、沒有草圖頁", () => {
+    expect(batchConfirmText(three, "simple", 0)).toBe("會為 3 頁產生背景（簡潔）");
   });
-  it("列出略過的頁與原因", () => {
-    expect(
-      batchConfirmText({
-        queued: [1, 2],
-        skipped: [
-          { pageId: 3, n: 3, reason: "沒有場景描述" },
-          { pageId: 4, n: 4, reason: "已有背景" },
-        ],
-        estimate: false,
-      }),
-    ).toBe("會為 2 頁產生背景（2 頁略過：第 3 頁沒有場景描述、第 4 頁已有背景）");
+  it("細緻", () => {
+    expect(batchConfirmText(three, "detailed", 0)).toBe("會為 3 頁產生背景（細緻）");
+  });
+  it("簡潔＋有草圖的頁：括號裡加上「，有草圖的 K 頁用細緻」", () => {
+    expect(batchConfirmText(three, "simple", 1)).toBe("會為 3 頁產生背景（簡潔，有草圖的 1 頁用細緻）");
+  });
+  it("細緻不加草圖說明（本來就全部細緻）", () => {
+    expect(batchConfirmText(three, "detailed", 2)).toBe("會為 3 頁產生背景（細緻）");
+  });
+  it("列出略過的頁與原因（風格之後）", () => {
+    expect(batchConfirmText({ queued: [1, 2], skipped: skips, estimate: false }, "simple", 0)).toBe(
+      "會為 2 頁產生背景（簡潔；2 頁略過：第 4 頁沒有場景描述、第 5 頁已有背景）",
+    );
+    expect(batchConfirmText({ queued: [1, 2], skipped: skips, estimate: false }, "simple", 1)).toBe(
+      "會為 2 頁產生背景（簡潔，有草圖的 1 頁用細緻；2 頁略過：第 4 頁沒有場景描述、第 5 頁已有背景）",
+    );
+  });
+});
+
+describe("sketchPageCount", () => {
+  it("只算會排入、有草圖且構圖強度 > 0 的頁", () => {
+    const pages = [
+      page(1, { sketch_url: "/s/1", controlnet_strength: 0.4 }),
+      page(2, { sketch_url: "/s/2", controlnet_strength: 0 }),
+      page(3, { sketch_url: null, controlnet_strength: 0.4 }),
+      page(4, { sketch_url: "/s/4", controlnet_strength: 0.3 }), // 略過的頁不算
+      page(5, { sketch_url: "/s/5", controlnet_strength: 0.05 }),
+    ];
+    const plan = { queued: [1, 2, 3, 5], skipped: [{ pageId: 4, n: 4, reason: "已有背景" }], estimate: false };
+    expect(sketchPageCount(plan, pages)).toBe(2);
   });
 });
 

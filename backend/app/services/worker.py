@@ -50,9 +50,12 @@ def encode_request(
     structure_strength: float = 0.0,
     pose_mode: str | None = None,
     variation: str | None = None,
+    background_style: str | None = None,
+    background_style_requested: str | None = None,
 ) -> str:
     """產生 Generation.request_json；圖片欄位為 storage 相對路徑。
-    pose_mode 有值時（角色動作）一併寫入 pose_mode 與 variation。"""
+    pose_mode 有值時（角色動作）一併寫入 pose_mode 與 variation。
+    background_style 有值時（背景）一併寫入 background_style、background_style_requested 與 variation。"""
     d = {
         "kind": GenKind(kind).value,
         "prompt": prompt,
@@ -66,6 +69,10 @@ def encode_request(
     }
     if pose_mode is not None:
         d["pose_mode"] = pose_mode
+        d["variation"] = variation
+    if background_style is not None:
+        d["background_style"] = background_style
+        d["background_style_requested"] = background_style_requested
         d["variation"] = variation
     return json.dumps(d, ensure_ascii=False, sort_keys=True)
 
@@ -89,6 +96,7 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
         structure_strength=d.get("structure_strength", 0.0),
         pose_mode=d.get("pose_mode") or "fast",  # 舊列沒有 → 快速
         variation=d.get("variation"),
+        background_style=d.get("background_style") or "detailed",  # 舊列沒有 → 細緻（SDXL）
     )
 
 

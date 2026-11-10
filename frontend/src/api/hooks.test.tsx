@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import {
+  useBackgroundStyles,
+  useBatchBackgrounds,
   useCompose,
   useGenerateBackground,
   useGeneratePose,
@@ -63,6 +65,25 @@ describe("usePoseModes", () => {
   });
 });
 
+describe("useBackgroundStyles", () => {
+  it("GET /system/background-styles，一分鐘內不重抓；enabled=false 時不抓", async () => {
+    const body = { simple: { available: false, missing: ["ComfyUI-GGUF"] }, detailed: { available: true, missing: [] } };
+    const f = vi.fn().mockImplementation(async () => jsonRes(body));
+    vi.stubGlobal("fetch", f);
+    const { wrapper } = setup();
+    renderHook(() => useBackgroundStyles(false), { wrapper });
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(f).not.toHaveBeenCalled();
+    const a = renderHook(() => useBackgroundStyles(), { wrapper });
+    await waitFor(() => expect(a.result.current.data).toEqual(body));
+    expect(f.mock.calls[0][0]).toBe("/api/system/background-styles");
+    a.unmount();
+    renderHook(() => useBackgroundStyles(), { wrapper });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("polling", () => {
   it("useGenerations refetches every 2s while queued, then stops", async () => {
     const responses = [[gen("queued")], [gen("running")], [gen("succeeded")]];
@@ -117,14 +138,25 @@ describe("compose-flow hooks", () => {
     return { f, wrapper, keys };
   }
 
-  it("useGenerateBackground POST /pages/5/backgrounds，invalidate generations 與 queue", async () => {
+  it("useGenerateBackground POST /pages/5/backgrounds 帶 style，invalidate generations 與 queue", async () => {
     const { f, wrapper, keys } = run();
     const { result } = renderHook(() => useGenerateBackground(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ pageId: 5 }); });
+    await act(async () => { await result.current.mutateAsync({ pageId: 5, style: "simple" }); });
     expect(f.mock.calls[0][0]).toBe("/api/pages/5/backgrounds");
     expect(f.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ style: "simple" });
     expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
     expect(keys()).toContain(JSON.stringify(qk.queue()));
+  });
+
+  it("useBatchBackgrounds POST /books/1/backgrounds/batch 帶 style", async () => {
+    const { f, wrapper, keys } = run();
+    const { result } = renderHook(() => useBatchBackgrounds(1), { wrapper });
+    await act(async () => { await result.current.mutateAsync("detailed"); });
+    expect(f.mock.calls[0][0]).toBe("/api/books/1/backgrounds/batch");
+    expect(f.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ style: "detailed" });
+    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
   });
 
   it("useGeneratePose POST /pages/5/poses 帶 action 與 mode", async () => {

@@ -255,3 +255,63 @@ def test_qwen_pose_wiring():
     assert p[t["REMOVE_BG"]]["inputs"]["image"][0] == t["DECODE"]
     assert p[t["OUTPUT"]]["inputs"]["images"][0] == t["DECODE"]
     _assert_no_orphans(p)
+
+
+def test_qwen_background_manifest_loads():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    wf = reg.get("qwen_background")
+    assert wf.ok, wf.errors
+    assert set(wf.params) == {"prompt", "seed", "width", "height"}
+    assert {f"{m['folder']}/{m['filename']}" for m in wf.models} == {
+        "unet/qwen-image-edit-2511-Q4_K_M.gguf",
+        "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "vae/qwen_image_vae.safetensors",
+        "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"}
+    built = wf.build_prompt({"prompt": "p", "seed": 3})
+    p = built.prompt
+    classes = {n["class_type"] for n in p.values()}
+    assert "LoadImage" not in classes
+    assert not classes & {"LoadBackgroundRemovalModel", "RemoveBackground"}
+    assert not any("birefnet" in json.dumps(n).lower() for n in p.values())
+    by_title = {n["_meta"]["title"]: n for n in p.values()}
+    assert set(by_title) == {"UNET", "TEXT_ENCODER", "VAE", "MODEL_SAMPLING", "CFG_NORM", "LIGHTNING_LORA",
+                             "POSITIVE", "NEGATIVE", "LATENT", "SAMPLER", "DECODE", "OUTPUT"}
+    assert by_title["POSITIVE"]["inputs"]["prompt"] == "p"
+    assert by_title["NEGATIVE"]["inputs"]["prompt"] == ""
+    for t in ("POSITIVE", "NEGATIVE"):
+        assert by_title[t]["class_type"] == "TextEncodeQwenImageEditPlus"
+        assert "image1" not in by_title[t]["inputs"]
+    s = by_title["SAMPLER"]["inputs"]
+    assert (s["seed"], s["steps"], s["cfg"], s["sampler_name"], s["scheduler"], s["denoise"]) == (
+        3, 4, 1, "euler", "simple", 1.0)
+    assert (by_title["LATENT"]["inputs"]["width"], by_title["LATENT"]["inputs"]["height"]) == (864, 1216)
+    assert by_title["LATENT"]["class_type"] == "EmptySD3LatentImage"
+    assert by_title["MODEL_SAMPLING"]["inputs"]["shift"] == 3.1
+    assert by_title["CFG_NORM"]["inputs"]["strength"] == 1.0
+    assert by_title["LIGHTNING_LORA"]["inputs"]["strength_model"] == 1.0
+    assert by_title["OUTPUT"]["class_type"] == "SaveImage"
+    assert len(built.output_node_ids) == 1
+    for bad in ({"prompt": "p", "seed": 1, "width": 511}, {"prompt": "p", "seed": 1, "height": 1537},
+                {"prompt": "p", "seed": 1, "character_image": "c.png"}):
+        with pytest.raises(ParameterError):
+            wf.build_prompt(bad)
+
+
+def test_qwen_background_wiring():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    p = reg.get("qwen_background").build_prompt({"prompt": "x", "seed": 1}).prompt
+    t = {n["_meta"]["title"]: nid for nid, n in p.items()}
+    assert p[t["SAMPLER"]]["inputs"]["model"][0] == t["LIGHTNING_LORA"]
+    assert p[t["LIGHTNING_LORA"]]["inputs"]["model"][0] == t["CFG_NORM"]
+    assert p[t["CFG_NORM"]]["inputs"]["model"][0] == t["MODEL_SAMPLING"]
+    assert p[t["MODEL_SAMPLING"]]["inputs"]["model"][0] == t["UNET"]
+    assert p[t["SAMPLER"]]["inputs"]["positive"][0] == t["POSITIVE"]
+    assert p[t["SAMPLER"]]["inputs"]["negative"][0] == t["NEGATIVE"]
+    assert p[t["SAMPLER"]]["inputs"]["latent_image"][0] == t["LATENT"]
+    for enc in ("POSITIVE", "NEGATIVE"):
+        assert p[t[enc]]["inputs"]["clip"][0] == t["TEXT_ENCODER"]
+        assert p[t[enc]]["inputs"]["vae"][0] == t["VAE"]
+    assert p[t["DECODE"]]["inputs"]["samples"][0] == t["SAMPLER"]
+    assert p[t["DECODE"]]["inputs"]["vae"][0] == t["VAE"]
+    assert p[t["OUTPUT"]]["inputs"]["images"][0] == t["DECODE"]
+    _assert_no_orphans(p)

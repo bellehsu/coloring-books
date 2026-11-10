@@ -7,7 +7,19 @@ import {
 import { api, ApiError } from "./client";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
-import type { BatchBackgrounds, Book, Edits, ExportSummary, Generation, Page, PoseModes, QA, QueueStatus } from "./client";
+import type {
+  BackgroundStyles,
+  BatchBackgrounds,
+  Book,
+  Edits,
+  ExportSummary,
+  Generation,
+  Page,
+  PoseModes,
+  QA,
+  QueueStatus,
+} from "./client";
+import type { BgStyle } from "@/lib/bgStyle";
 import type { PoseMode } from "@/lib/poseMode";
 
 type S = components["schemas"];
@@ -26,6 +38,7 @@ export const qk = {
   edits: (pageId: number) => ["edits", pageId] as const,
   exportSummary: (bookId: number) => ["exportSummary", bookId] as const,
   poseModes: () => ["poseModes"] as const,
+  backgroundStyles: () => ["backgroundStyles"] as const,
 };
 
 export interface GenFilter {
@@ -75,6 +88,15 @@ export const usePoseModes = (enabled = true) =>
   useQuery({
     queryKey: qk.poseModes(),
     queryFn: () => api.get<PoseModes>("/system/pose-modes"),
+    staleTime: 60_000,
+    enabled,
+  });
+
+/** 背景風格（簡潔／細緻）可不可用：後端只看快取的 preflight。 */
+export const useBackgroundStyles = (enabled = true) =>
+  useQuery({
+    queryKey: qk.backgroundStyles(),
+    queryFn: () => api.get<BackgroundStyles>("/system/background-styles"),
     staleTime: 60_000,
     enabled,
   });
@@ -309,23 +331,25 @@ export function useUnpass(bookId: number) {
   });
 }
 
-/** 背景：新增一張（排隊）→ generations, queue */
+/** 背景：新增一張（排隊），一律帶風格（後端遇到可用草圖或簡潔不可用會改用細緻）→ generations, queue */
 export function useGenerateBackground(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pageId }: { pageId: number }) => api.post<Generation>(`/pages/${pageId}/backgrounds`),
+    mutationFn: ({ pageId, style }: { pageId: number; style: BgStyle }) =>
+      api.post<Generation>(`/pages/${pageId}/backgrounds`, { style } satisfies S["BackgroundCreate"]),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
 }
 
 /**
- * 整本書每一頁排一張背景（後端略過沒場景描述、已有背景、背景產生中、草圖遺失的頁）
- * → generations（qk.generationsOf 前綴涵蓋每一頁的歷史與排隊數）, queue
+ * 整本書每一頁排一張背景（後端略過沒場景描述、已有背景、背景產生中、草圖遺失的頁），一律帶風格
+ * （有可用草圖的頁後端用細緻）→ generations（qk.generationsOf 前綴涵蓋每一頁的歷史與排隊數）, queue
  */
 export function useBatchBackgrounds(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<BatchBackgrounds>(`/books/${bookId}/backgrounds/batch`),
+    mutationFn: (style: BgStyle) =>
+      api.post<BatchBackgrounds>(`/books/${bookId}/backgrounds/batch`, { style } satisfies S["BackgroundCreate"]),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
 }

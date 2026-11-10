@@ -1,8 +1,10 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { useState } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Page } from "@/api/client";
+import { readBgStyle, writeBgStyle, type BgStyle } from "@/lib/bgStyle";
 import { BackgroundPanel, type BackgroundPanelProps } from "./BackgroundPanel";
 
 const mkPage = (o: Partial<Page> = {}) =>
@@ -18,6 +20,22 @@ function deferred<T = unknown>() {
   return { promise, resolve, reject };
 }
 
+/** 風格由呼叫端持有並記住：這裡用 state＋localStorage 模擬 EditorPage，同時記錄 onStyleChange。 */
+function Host(props: BackgroundPanelProps) {
+  const [style, setStyle] = useState<BgStyle>(props.style);
+  return (
+    <BackgroundPanel
+      {...props}
+      style={style}
+      onStyleChange={(s) => {
+        props.onStyleChange(s);
+        writeBgStyle(s);
+        setStyle(s);
+      }}
+    />
+  );
+}
+
 function setup(over: Partial<BackgroundPanelProps> = {}, qc = new QueryClient()) {
   const props: BackgroundPanelProps = {
     page: mkPage(),
@@ -26,11 +44,14 @@ function setup(over: Partial<BackgroundPanelProps> = {}, qc = new QueryClient())
     onGenerate: vi.fn(() => Promise.resolve()),
     generating: false,
     activeCount: 0,
+    style: "simple",
+    onStyleChange: vi.fn(),
+    simpleUnavailableReason: null,
     ...over,
   };
   const ui = (p: BackgroundPanelProps) => (
     <QueryClientProvider client={qc}>
-      <BackgroundPanel key={p.page.id} {...p} />
+      <Host key={p.page.id} {...p} />
     </QueryClientProvider>
   );
   const r = render(ui(props));
@@ -38,12 +59,21 @@ function setup(over: Partial<BackgroundPanelProps> = {}, qc = new QueryClient())
 }
 
 const btn = () => screen.getByRole("button", { name: "產生背景" });
+const styleGroup = () => screen.getByRole("radiogroup", { name: "背景風格" });
+const radio = (name: "簡潔" | "細緻") => within(styleGroup()).getByRole("radio", { name });
+const SIMPLE_HINT = "約 20 秒，線條少、適合小小孩";
+const DETAILED_HINT = "約 10 秒，細節多，可以照構圖草圖";
+const SKETCH_NOTE = "有構圖草圖時用細緻，才會照草圖構圖";
+const withSketch = (o: Partial<Page> = {}) => mkPage({ sketch_url: "/api/pages/1/sketch?v=1", controlnet_strength: 0.4, ...o });
+
+beforeEach(() => localStorage.clear());
 
 describe("BackgroundPanel", () => {
-  it("shows the time hint and the button", () => {
+  it("shows the button and no fixed time hint", () => {
     setup();
     expect(btn()).toBeEnabled();
-    expect(screen.getByText("約 10 秒")).toBeInTheDocument();
+    expect(screen.queryByText("約 10 秒")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("");
   });
 
   it("shows the batch hint", () => {
@@ -53,7 +83,7 @@ describe("BackgroundPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the queued count instead of the time hint", () => {
+  it("shows the queued count", () => {
     setup({ activeCount: 2 });
     expect(screen.getByRole("status")).toHaveTextContent("本頁 2 張排隊或生成中");
   });
@@ -200,5 +230,116 @@ describe("BackgroundPanel", () => {
     first.unmount();
     setup({}, qc); // 伺服器的 page 還是舊的 "kitchen"
     expect(screen.getByLabelText("場景描述")).toHaveValue("garden");
+  });
+
+  describe("背景風格", () => {
+    it("簡潔 is checked by default with its hint", () => {
+      setup();
+      expect(radio("簡潔")).toHaveAttribute("aria-checked", "true");
+      expect(radio("簡潔")).toBeEnabled();
+      expect(radio("細緻")).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByText(SIMPLE_HINT)).toBeInTheDocument();
+      expect(styleGroup()).toHaveAccessibleDescription(SIMPLE_HINT);
+      expect(screen.queryByText(SKETCH_NOTE)).not.toBeInTheDocument();
+    });
+
+    it("choosing 細緻 swaps the hint and stores detailed", async () => {
+      const { props } = setup();
+      await userEvent.click(radio("細緻"));
+      expect(props.onStyleChange).toHaveBeenCalledWith("detailed");
+      expect(radio("細緻")).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByText(DETAILED_HINT)).toBeInTheDocument();
+      expect(screen.queryByText(SIMPLE_HINT)).not.toBeInTheDocument();
+      expect(readBgStyle()).toBe("detailed");
+    });
+
+    it("a page with a sketch (strength 0.4): 簡潔 disabled, 細緻 shown, note shown, stored choice unchanged", async () => {
+      writeBgStyle("simple");
+      const { props } = setup({ page: withSketch() });
+      expect(radio("簡潔")).toBeDisabled();
+      expect(radio("簡潔")).toHaveAttribute("aria-checked", "false");
+      expect(radio("細緻")).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByText(SKETCH_NOTE)).toBeInTheDocument();
+      expect(screen.getByText(DETAILED_HINT)).toBeInTheDocument();
+      expect(styleGroup()).toHaveAccessibleDescription(`${DETAILED_HINT} ${SKETCH_NOTE}`);
+      await userEvent.click(radio("簡潔"));
+      // 重按已（被迫）選中的細緻也不改寫記憶
+      await userEvent.click(radio("細緻"));
+      expect(props.onStyleChange).not.toHaveBeenCalled();
+      expect(localStorage.getItem("coloring.bgStyle")).toBe("simple");
+    });
+
+    it("dragging the strength to 0 frees 簡潔 again (live slider value)", () => {
+      setup({ page: withSketch() });
+      expect(radio("簡潔")).toBeDisabled();
+      fireEvent.change(screen.getByLabelText(/構圖強度/), { target: { value: "0" } });
+      expect(radio("簡潔")).toBeEnabled();
+      expect(radio("簡潔")).toHaveAttribute("aria-checked", "true");
+      expect(screen.queryByText(SKETCH_NOTE)).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(/構圖強度/), { target: { value: "0.05" } });
+      expect(radio("簡潔")).toBeDisabled();
+    });
+
+    it("hasSketch overrides page.sketch_url (a sketch saved this session before the pages refetch)", () => {
+      setup({ page: mkPage({ sketch_url: null }), hasSketch: true });
+      expect(radio("簡潔")).toBeDisabled();
+      expect(radio("細緻")).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("simple unavailable: 簡潔 disabled and the missing list shown", async () => {
+      const reason = "簡潔風格缺少：ComfyUI-GGUF、qwen-image-edit-2511-Q4_K_M.gguf";
+      const { props } = setup({ simpleUnavailableReason: reason });
+      expect(radio("簡潔")).toBeDisabled();
+      expect(radio("細緻")).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByText(reason)).toBeInTheDocument();
+      expect(styleGroup()).toHaveAccessibleDescription(`${DETAILED_HINT} ${reason}`);
+      await userEvent.click(radio("簡潔"));
+      expect(props.onStyleChange).not.toHaveBeenCalled();
+    });
+
+    it("產生背景 sends simple by default", async () => {
+      const { props } = setup();
+      await userEvent.click(btn());
+      await waitFor(() => expect(props.onGenerate).toHaveBeenCalledWith("simple"));
+    });
+
+    it("產生背景 sends detailed when chosen", async () => {
+      const { props } = setup({ style: "detailed" });
+      await userEvent.click(btn());
+      await waitFor(() => expect(props.onGenerate).toHaveBeenCalledWith("detailed"));
+    });
+
+    it("產生背景 sends the user's choice on a sketch page (the backend forces 細緻), detailed when unavailable", async () => {
+      // 送出＝使用者選的（只套用可用性，同「產生所有背景」）；草圖改用細緻由後端決定，畫面仍顯示細緻
+      const a = setup({ page: withSketch() });
+      expect(radio("細緻")).toHaveAttribute("aria-checked", "true");
+      await userEvent.click(btn());
+      await waitFor(() => expect(a.props.onGenerate).toHaveBeenCalledWith("simple"));
+      a.unmount();
+      const b = setup({ simpleUnavailableReason: "簡潔風格目前無法使用" });
+      await userEvent.click(btn());
+      await waitFor(() => expect(b.props.onGenerate).toHaveBeenCalledWith("detailed"));
+    });
+
+    it("a sketch that lands while saving (before the POST) still sends the user's choice", async () => {
+      const d = deferred();
+      const qc = new QueryClient();
+      const first = setup({ beforeGenerate: vi.fn(() => d.promise) }, qc);
+      await userEvent.click(btn());
+      // flush 存好草圖：pages 重抓後 page 帶 sketch_url，面板重新 render
+      first.rerender({ ...first.props, page: withSketch() });
+      d.resolve(undefined);
+      await waitFor(() => expect(first.props.onGenerate).toHaveBeenCalledWith("simple"));
+    });
+
+    it("simple becoming unavailable while saving (before the POST) makes the POST detailed", async () => {
+      const d = deferred();
+      const qc = new QueryClient();
+      const first = setup({ beforeGenerate: vi.fn(() => d.promise) }, qc);
+      await userEvent.click(btn());
+      first.rerender({ ...first.props, simpleUnavailableReason: "簡潔風格目前無法使用" });
+      d.resolve(undefined);
+      await waitFor(() => expect(first.props.onGenerate).toHaveBeenCalledWith("detailed"));
+    });
   });
 });

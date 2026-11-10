@@ -94,6 +94,14 @@ def test_precise_unavailable_detail():
     assert precise_unavailable_detail(report(two)) == f"精準模式缺少：{GGUF}、UnetLoaderGGUF"
 
 
+def test_availability_accepts_other_workflow_mapping():
+    """availability 可以換成別的 {模式: workflow} 對應（背景風格共用同一套規則）。"""
+    mapping = {"a": QWEN, "b": "other_wf"}
+    res = availability(report(qwen_missing_gguf(), ok_wf("other_wf")), mapping)
+    assert res == {"a": {"available": False, "missing": [GGUF]}, "b": {"available": True, "missing": []}}
+    assert availability(None, mapping) == {m: {"available": True, "missing": []} for m in mapping}
+
+
 # ---- API ---------------------------------------------------------------------
 
 

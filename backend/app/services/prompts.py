@@ -73,3 +73,35 @@ def qwen_pose_prompt(action: str, variation: str | None = None) -> str:
 
 def pick_variation(rng: random.Random) -> str | None:
     return rng.choice(QWEN_POSE_VARIATIONS) if QWEN_POSE_VARIATIONS else None
+
+
+# --- 簡潔背景（qwen_background）：Qwen-Image-Edit-2511 當純文字生圖 ---
+# 措辭為 experiments/results/phase7_qwen_background_20261110_1104 的 QA1。
+# cfg 1 → 負向提示詞無效，排除條件寫在正向；生成紀錄的 negative_prompt 存空字串。
+QWEN_BACKGROUND_TEMPLATE = (
+    "{scene}. {variation}Simple coloring book background, a few large simple objects, lots of empty space, "
+    "children's picture book illustration, flat colors, thick clean black outlines, simple shapes. "
+    "Empty scene, no people, no animals, no characters, no text."
+)
+# 構圖變化語（「再產生一張」用，每張隨機一個）：experiments/results/phase8_qwen_background_variation_20261110
+# 校正通過的 VB（主體位置）：缺口 9.8、過小區域 73.2（基準 9.5／82.3），同場景兩張構圖明顯不同。
+QWEN_BACKGROUND_VARIATIONS: tuple[str, ...] = (
+    "The main objects are on the left side",
+    "The main objects are on the right side",
+    "The main objects are in the middle, seen from a low angle",
+    "The main objects are in the back, open space in front",
+)
+
+
+def qwen_background_prompt(scene: str, variation: str | None = None) -> str:
+    var = f"{variation.strip()}. " if variation and variation.strip() else ""
+    return QWEN_BACKGROUND_TEMPLATE.format(scene=scene.strip(), variation=var)
+
+
+def pick_background_variation(rng: random.Random, exclude: str | None = None) -> str | None:
+    """隨機挑一個構圖變化語；exclude（同頁上一張簡潔背景用的）不挑，避免再產生時構圖重複。
+    排除後沒得挑（清單只有一個）就從整份清單挑。"""
+    if not QWEN_BACKGROUND_VARIATIONS:
+        return None
+    choices = [v for v in QWEN_BACKGROUND_VARIATIONS if v != exclude] or list(QWEN_BACKGROUND_VARIATIONS)
+    return rng.choice(choices)

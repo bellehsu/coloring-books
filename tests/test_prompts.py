@@ -59,3 +59,76 @@ def test_qwen_pose_prompt():
     assert "running, facing slightly to the left." in v
     assert prompts.QWEN_POSE_VARIATIONS == ()
     assert pick_variation(random.Random(1)) is None
+
+
+QA1_TAIL = ("Simple coloring book background, a few large simple objects, lots of empty space, children's "
+            "picture book illustration, flat colors, thick clean black outlines, simple shapes. Empty scene, "
+            "no people, no animals, no characters, no text.")
+
+
+def test_qwen_background_prompt():
+    from app.services.prompts import qwen_background_prompt
+
+    assert qwen_background_prompt("in a park") == f"in a park. {QA1_TAIL}"
+    assert qwen_background_prompt("  in a park ") == f"in a park. {QA1_TAIL}"
+    v = qwen_background_prompt("in a park", variation="wide view")
+    assert "in a park. wide view. Simple coloring book background" in v
+    assert v == f"in a park. wide view. {QA1_TAIL}"
+
+
+def test_pick_background_variation_empty_returns_none(monkeypatch):
+    import random
+
+    from app.services import prompts
+
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ())
+    assert prompts.pick_background_variation(random.Random(1)) is None
+
+
+def test_background_variations_calibrated():
+    # phase8_qwen_background_variation_20261110：VB（主體位置）通過；VA 過小區域、VC 缺口超標
+    from app.services.prompts import QWEN_BACKGROUND_VARIATIONS
+
+    assert QWEN_BACKGROUND_VARIATIONS == (
+        "The main objects are on the left side",
+        "The main objects are on the right side",
+        "The main objects are in the middle, seen from a low angle",
+        "The main objects are in the back, open space in front",
+    )
+    assert all(v.strip() for v in QWEN_BACKGROUND_VARIATIONS)
+
+
+def test_pick_background_variation_uses_list(monkeypatch):
+    import random
+
+    from app.services import prompts
+
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b"))
+    assert prompts.pick_background_variation(random.Random(1)) in ("a", "b")
+
+
+def test_pick_background_variation_excludes_previous(monkeypatch):
+    # 「再產生一張」：排除上一張的構圖變化語，避免連續兩張構圖幾乎一樣
+    import random
+
+    from app.services import prompts
+
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b", "c"))
+    for seed in range(50):
+        assert prompts.pick_background_variation(random.Random(seed), exclude="a") in ("b", "c")
+    # 不在清單裡（例如清單改過）→ 從整份清單挑
+    picks = {prompts.pick_background_variation(random.Random(s), exclude="zzz") for s in range(50)}
+    assert picks == {"a", "b", "c"}
+    picks = {prompts.pick_background_variation(random.Random(s), exclude=None) for s in range(50)}
+    assert picks == {"a", "b", "c"}
+
+
+def test_pick_background_variation_exclude_everything_falls_back(monkeypatch):
+    import random
+
+    from app.services import prompts
+
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a",))
+    assert prompts.pick_background_variation(random.Random(1), exclude="a") == "a"
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ())
+    assert prompts.pick_background_variation(random.Random(1), exclude="a") is None

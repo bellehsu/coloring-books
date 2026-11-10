@@ -1,4 +1,5 @@
 import type { BatchBackgrounds, Generation, Page } from "@/api/client";
+import type { BgStyle } from "@/lib/bgStyle";
 
 /** 「產生所有背景」略過的原因（同後端 POST /books/{id}/backgrounds/batch）。 */
 export const SKIP_NO_SCENE = "沒有場景描述";
@@ -53,10 +54,26 @@ export function planBatchBackgrounds(pages: readonly Page[], gens: readonly Gene
 const listSkips = (items: readonly { n: number; reason: string }[]) =>
   items.map((s) => `第 ${s.n} 頁${s.reason}`).join("、");
 
-/** 確認對話框：「會為 N 頁產生背景（M 頁略過：第 x 頁沒有場景描述、…）」。 */
-export function batchConfirmText(plan: BatchPlan): string {
-  const head = `會為 ${plan.queued.length} 頁產生背景`;
-  return plan.skipped.length ? `${head}（${plan.skipped.length} 頁略過：${listSkips(plan.skipped)}）` : head;
+/**
+ * 會排入的頁裡，有可用構圖草圖（有草圖且構圖強度 > 0）的頁數：這些頁後端一律用細緻。
+ * 用頁面欄位（伺服器上的值）；產生所有背景會先等草圖與構圖強度存好才送出。
+ */
+export function sketchPageCount(plan: BatchPlan, pages: readonly Page[]): number {
+  const queued = new Set(plan.queued);
+  return pages.filter((p) => queued.has(p.id) && p.sketch_url != null && p.controlnet_strength > 0).length;
+}
+
+const STYLE_LABEL: Record<BgStyle, string> = { simple: "簡潔", detailed: "細緻" };
+
+/**
+ * 確認對話框：「會為 N 頁產生背景（簡潔，有草圖的 K 頁用細緻；M 頁略過：第 x 頁沒有場景描述、…）」。
+ * style 是實際送出的風格（已套用「簡潔不可用 → 細緻」）；細緻時不提草圖（本來就全部細緻）。
+ */
+export function batchConfirmText(plan: BatchPlan, style: BgStyle, sketchCount: number): string {
+  let inner = STYLE_LABEL[style];
+  if (style === "simple" && sketchCount > 0) inner += `，有草圖的 ${sketchCount} 頁用細緻`;
+  if (plan.skipped.length) inner += `；${plan.skipped.length} 頁略過：${listSkips(plan.skipped)}`;
+  return `會為 ${plan.queued.length} 頁產生背景（${inner}）`;
 }
 
 /**

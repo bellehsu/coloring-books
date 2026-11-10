@@ -192,6 +192,7 @@ export interface paths {
         /**
          * Create Background
          * @description 產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。
+         *     body 可省略（＝簡潔）；草圖遺失先回 409，之後才決定風格。
          */
         post: operations["create_background_api_pages__page_id__backgrounds_post"];
         delete?: never;
@@ -213,6 +214,7 @@ export interface paths {
          * Create Backgrounds Batch
          * @description 替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、
          *     背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。
+         *     body 的風格套用到每一頁（可省略＝簡潔，Phase 7 前端不送 body），實際風格逐頁決定。
          */
         post: operations["create_backgrounds_batch_api_books__book_id__backgrounds_batch_post"];
         delete?: never;
@@ -711,6 +713,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/background-styles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Background Styles
+         * @description 背景簡潔／細緻風格能不能用：只讀快取的 preflight，不連 ComfyUI。
+         */
+        get: operations["background_styles_api_system_background_styles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -751,6 +773,20 @@ export interface components {
             lineart_url: string;
             /** Autofix Added */
             autofix_added: number;
+        };
+        /** BackgroundCreate */
+        BackgroundCreate: {
+            /**
+             * Style
+             * @default simple
+             * @enum {string}
+             */
+            style: "simple" | "detailed";
+        };
+        /** BackgroundStylesOut */
+        BackgroundStylesOut: {
+            simple: components["schemas"]["PoseModeStatus"];
+            detailed: components["schemas"]["PoseModeStatus"];
         };
         /** BatchBackgroundsOut */
         BatchBackgroundsOut: {
@@ -929,6 +965,8 @@ export interface components {
             cutout_url: string | null;
             /** Pose Mode */
             pose_mode: ("precise" | "fast") | null;
+            /** Background Style */
+            background_style: ("simple" | "detailed") | null;
             /** Error */
             error: string | null;
             /** Elapsed S */
@@ -1789,7 +1827,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BackgroundCreate"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -1820,7 +1862,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BackgroundCreate"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -2768,6 +2814,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PoseModesOut"];
+                };
+            };
+        };
+    };
+    background_styles_api_system_background_styles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackgroundStylesOut"];
                 };
             };
         };
