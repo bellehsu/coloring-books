@@ -768,3 +768,154 @@ def test_cutout_is_cacheable(client, app):
     r = client.get(f"/api/generations/{pose}/cutout")
     assert r.status_code == 200
     assert r.headers["cache-control"] == "private, max-age=86400"
+
+
+# ---- 批次背景 ------------------------------------------------------------------
+
+
+def batch(client, book_id):
+    r = client.post(f"/api/books/{book_id}/backgrounds/batch")
+    assert r.status_code == 202, r.text
+    return r.json()
+
+
+def test_batch_backgrounds_skip_reasons_and_order(client, app):
+    b = new_book(client)
+    pages = [new_page(client, b["id"], scene_prompt=t) for t in ("  ", "有背景", "已選", "排隊中", "新的一頁", "另一頁")]
+    ok_bg = gen_background(client, app, pages[1]["id"])
+    picked_bg = gen_background(client, app, pages[2]["id"])
+    picked(client, pages[2]["id"], "background", picked_bg)
+    gen_background(client, app, pages[3]["id"], run=False)
+    # 把順序反過來，確認依 position 走
+    ids = [p["id"] for p in pages]
+    client.post(f"/api/books/{b['id']}/pages/order", json={"page_ids": ids[::-1]})
+    out = batch(client, b["id"])
+    reasons = {s["page_id"]: s["reason"] for s in out["skipped"]}
+    assert reasons == {
+        ids[0]: "沒有場景描述",
+        ids[1]: "已有背景",
+        ids[2]: "已有背景",
+        ids[3]: "背景產生中",
+    }
+    assert [s["position"] for s in out["skipped"]] == sorted(s["position"] for s in out["skipped"])
+    assert [g["page_id"] for g in out["queued"]] == [ids[5], ids[4]]
+    assert all(g["kind"] == "background" and g["status"] == "queued" for g in out["queued"])
+    assert ok_bg
+
+
+def test_batch_backgrounds_twice_second_is_all_in_progress(client, app):
+    b = new_book(client)
+    pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(3)]
+    assert len(batch(client, b["id"])["queued"]) == 3
+    out = batch(client, b["id"])
+    assert out["queued"] == []
+    assert {s["page_id"]: s["reason"] for s in out["skipped"]} == {
+        p["id"]: "背景產生中" for p in pages
+    }
+
+
+def test_batch_backgrounds_discarded_only_background_is_queued(client, app):
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    bg = gen_background(client, app, p["id"])
+    assert client.patch(f"/api/generations/{bg}", json={"discarded": True}).status_code == 200
+    out = batch(client, b["id"])
+    assert [g["page_id"] for g in out["queued"]] == [p["id"]] and out["skipped"] == []
+
+
+def test_batch_backgrounds_snapshots_sketch(client, app):
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    upload(client, p["id"], make_png((128, 128)))
+    gid = batch(client, b["id"])["queued"][0]["id"]
+    assert json.loads(gen_row(app, gid).request_json)["structure_image"]
+
+
+def test_batch_backgrounds_missing_sketch_file_is_skipped(client, app):
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    upload(client, p["id"], make_png((128, 128)))
+    for f in app.state.storage.root.rglob("sketch*.png"):
+        f.unlink()
+    out = batch(client, b["id"])
+    assert out["queued"] == []
+    assert [s["reason"] for s in out["skipped"]] == ["草圖檔案遺失"]
+
+
+def test_batch_backgrounds_unknown_book(client):
+    assert client.post("/api/books/999/backgrounds/batch").status_code == 404
+
+
+def test_batch_backgrounds_skips_legacy_page_selection(client, app):
+    """舊流程：選用的是整頁候選圖（kind PAGE）→ 視為已有背景。"""
+    b, p, ids = selected_page(client, app)
+    set_page(app, p["id"], scene_prompt="公園")
+    assert gen_row(app, ids[0]).kind == GenKind.PAGE
+    out = batch(client, b["id"])
+    assert out["queued"] == []
+    assert out["skipped"] == [{"page_id": p["id"], "position": p["position"], "reason": "已有背景"}]
+
+
+def _state(app, page_id):
+    pg = get_page(app, page_id)
+    return (pg.selected_generation_id, pg.status, pg.background_generation_id,
+            pg.pose_generation_id, pg.passed_at)
+
+
+def test_batch_backgrounds_leaves_page_state_alone(client, app):
+    b, composed, _bg, _pose = compose_ready(client, app)
+    composed = confirm(client, composed["id"])
+    assert composed["selected_generation_id"] is not None
+    # 舊流程頁面：選了整頁候選圖並已通過
+    legacy = new_page(client, b["id"], scene_prompt="海邊")
+    cand = client.post(f"/api/pages/{legacy['id']}/candidates", json={"count": 1}).json()
+    run_jobs(client, app)
+    assert client.post(f"/api/pages/{legacy['id']}/select",
+                       json={"generation_id": cand[0]["id"]}).status_code == 200
+    make_passed(app, legacy["id"])
+    # 會被排入的頁面：只選了角色動作
+    fresh = new_page(client, b["id"], scene_prompt="森林")
+    picked(client, fresh["id"], "pose", gen_pose(client, app, fresh["id"]))
+    pids = [composed["id"], legacy["id"], fresh["id"]]
+    before = {pid: _state(app, pid) for pid in pids}
+    assert before[legacy["id"]][1] == PageStatus.PASSED
+    assert before[fresh["id"]][3] is not None
+
+    out = batch(client, b["id"])
+    assert [g["page_id"] for g in out["queued"]] == [fresh["id"]]
+    assert {s["page_id"]: s["reason"] for s in out["skipped"]} == {
+        composed["id"]: "已有背景", legacy["id"]: "已有背景",
+    }
+    assert {pid: _state(app, pid) for pid in pids} == before
+
+
+def test_batch_backgrounds_concurrent_calls_queue_once_per_page(client, app, monkeypatch):
+    """兩個分頁同時按：後端序列化，每頁總共只排一張背景。"""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    import app.api.compose as compose_api
+
+    b = new_book(client)
+    pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(3)]
+    original = compose_api._read_sketch
+    start = threading.Barrier(2)
+
+    def slow_read(storage, page):
+        time.sleep(0.05)  # 放大競爭窗口：沒有鎖時兩個請求都會先看到「沒有背景」
+        return original(storage, page)
+
+    monkeypatch.setattr(compose_api, "_read_sketch", slow_read)
+
+    def call():
+        start.wait()
+        return batch(client, b["id"])
+
+    with ThreadPoolExecutor(2) as ex:
+        outs = list(ex.map(lambda _: call(), range(2)))
+    queued = [g["page_id"] for o in outs for g in o["queued"]]
+    assert sorted(queued) == sorted(p["id"] for p in pages)
+    with app.state.sessions() as s:
+        rows = s.exec(select(Generation).where(Generation.kind == GenKind.BACKGROUND)).all()
+    assert sorted(g.page_id for g in rows) == sorted(p["id"] for p in pages)

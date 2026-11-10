@@ -55,7 +55,11 @@ def create_app(
         )
         app.state.engine = gen_engine
         app.state.worker = GenerationWorker(
-            gen_engine, app.state.sessions, app.state.storage, s.queue.retry_backoff_s
+            gen_engine,
+            app.state.sessions,
+            app.state.storage,
+            s.queue.retry_backoff_s,
+            max_wait_s=s.queue.max_wait_s,
         )
         app.state.preflight = None  # None＝狀態未知（兩種角色動作模式都算可用）
         try:

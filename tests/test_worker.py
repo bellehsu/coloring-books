@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -32,12 +32,12 @@ def env(tmp_path):
     return worker, engine, sessions, storage
 
 
-def add_gen(sessions, request_json=None, status=GenStatus.QUEUED, **kw):
+def add_gen(sessions, request_json=None, status=GenStatus.QUEUED, kind=GenKind.CHARACTER, pose_mode=None, **kw):
     rj = request_json or encode_request(
-        kind=GenKind.CHARACTER, prompt="p", negative_prompt="n", seed=7, width=64, height=64
+        kind=kind, prompt="p", negative_prompt="n", seed=7, width=64, height=64, pose_mode=pose_mode
     )
     with sessions() as s:
-        g = Generation(book_id=1, kind=GenKind.CHARACTER, user_text="u", prompt="p", negative_prompt="n",
+        g = Generation(book_id=1, kind=kind, user_text="u", prompt="p", negative_prompt="n",
                        seed=7, width=64, height=64, request_json=rj, status=status, **kw)
         s.add(g)
         s.commit()
@@ -223,6 +223,154 @@ def test_queue_position_counts_running_job(env):
     queued = add_gen(sessions)
     assert worker.queue_position(running) == 0
     assert worker.queue_position(queued) == 1
+
+
+def _qwen(sessions, **kw):
+    return add_gen(sessions, kind=GenKind.POSE, pose_mode="precise", **kw)
+
+
+def _sdxl(sessions, **kw):
+    return add_gen(sessions, kind=GenKind.BACKGROUND, **kw)
+
+
+def test_claim_order_matches_queue_position(env):
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    ids = [
+        _sdxl(sessions, created_at=t0),
+        _qwen(sessions, created_at=t0 + timedelta(seconds=1)),
+        _sdxl(sessions, created_at=t0 + timedelta(seconds=2)),
+        _qwen(sessions, created_at=t0 + timedelta(seconds=3)),
+        add_gen(sessions, created_at=t0 + timedelta(seconds=4)),  # CHARACTER → sdxl
+    ]
+    worker.last_family = "qwen"
+    positions = {i: worker.queue_position(i) for i in ids}
+    assert sorted(positions.values()) == [0, 1, 2, 3, 4]
+    predicted = sorted(ids, key=positions.__getitem__)
+    assert predicted == [ids[1], ids[3], ids[0], ids[2], ids[4]]
+
+    claimed = []
+    remaining = list(ids)
+    while remaining:
+        # 沒有任務執行中 → 位置 0 的那筆必須是下一個被取走的
+        head = [i for i in remaining if worker.queue_position(i) == 0]
+        gen = worker._claim()
+        assert gen is not None and [gen.id] == head
+        claimed.append(gen.id)
+        remaining.remove(gen.id)
+        assert worker.queue_position(gen.id) == 0
+        # 執行中 → 其餘依序為 1..n，且位置 1 就是下一個被取走的
+        assert sorted(worker.queue_position(i) for i in remaining) == list(range(1, len(remaining) + 1))
+        worker._finish(gen.id, status=GenStatus.SUCCEEDED, finished_at=datetime.now(timezone.utc))
+    assert claimed == predicted
+    assert worker._claim() is None
+
+
+def test_running_job_positions_follow_running_family(env):
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    q1 = _qwen(sessions, created_at=t0)
+    b2 = _sdxl(sessions, created_at=t0 + timedelta(seconds=1))
+    q3 = _qwen(sessions, created_at=t0 + timedelta(seconds=2))
+    assert worker._claim().id == q1
+    assert worker.last_family == "qwen"
+    assert worker.queue_position(q3) == 1 and worker.queue_position(b2) == 2
+    worker._finish(q1, status=GenStatus.SUCCEEDED)
+    assert worker._claim().id == q3
+
+
+def test_overdue_job_claimed_first(env):
+    worker, _, sessions, _ = env
+    now = datetime.now(timezone.utc)
+    old_bg = _sdxl(sessions, created_at=now - timedelta(seconds=200))
+    q = _qwen(sessions, created_at=now - timedelta(seconds=5))
+    worker.last_family = "qwen"
+    assert worker.queue_position(old_bg) == 0 and worker.queue_position(q) == 1
+    assert worker._claim().id == old_bg
+
+
+def test_position_stable_while_running_and_claim_uses_plan_clock(env, monkeypatch):
+    """執行中「逾時」以上次取任務的時間判斷：顯示的第 1 位就是下一個被取走的。"""
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    monkeypatch.setattr("app.services.worker.utcnow", lambda: clock[0])
+    p1 = _qwen(sessions, created_at=t0 - timedelta(seconds=110))
+    b = _sdxl(sessions, created_at=t0 - timedelta(seconds=100))
+    p2 = _qwen(sessions, created_at=t0 - timedelta(seconds=10))
+    assert worker._claim().id == p1
+    assert worker.plan_clock == t0
+    assert worker.queue_position(p2) == 1 and worker.queue_position(b) == 2
+    # P1 仍在執行，時間超過 max_wait_s：B 以現在時間看已逾時，但顯示不變
+    clock[0] = t0 + timedelta(seconds=100)
+    assert worker.queue_position(p2) == 1 and worker.queue_position(b) == 2
+    p3 = _qwen(sessions, created_at=t0 + timedelta(seconds=50))
+    assert [worker.queue_position(i) for i in (p2, p3, b)] == [1, 2, 3]
+    worker._finish(p1, status=GenStatus.SUCCEEDED)
+    assert worker.queue_position(p2) == 0  # 兩個任務之間也與下一次取任務一致
+    assert worker._claim().id == p2
+    assert worker.plan_clock == t0 + timedelta(seconds=100)
+    # 以新的 plan_clock 判斷：B 逾時，排在同家族的 P3 前面
+    assert worker.queue_position(b) == 1 and worker.queue_position(p3) == 2
+    worker._finish(p2, status=GenStatus.SUCCEEDED)
+    assert worker._claim().id == b
+
+
+def test_idle_uses_current_time_and_resets_plan_clock(env, monkeypatch):
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    monkeypatch.setattr("app.services.worker.utcnow", lambda: clock[0])
+    assert worker.plan_clock is None
+    q = _qwen(sessions, created_at=t0)
+    assert worker._claim().id == q and worker.plan_clock == t0
+    worker._finish(q, status=GenStatus.SUCCEEDED)
+    assert worker._claim() is None
+    assert worker.plan_clock is None  # 佇列空 → 閒置，之後以現在時間判斷
+    clock[0] = t0 + timedelta(seconds=500)
+    b = _sdxl(sessions, created_at=t0 + timedelta(seconds=10))  # 已等 490 秒
+    q2 = _qwen(sessions, created_at=t0 + timedelta(seconds=400))
+    assert worker.queue_position(b) == 0 and worker.queue_position(q2) == 1
+    assert worker._claim().id == b
+    assert worker.plan_clock == t0 + timedelta(seconds=500)
+
+
+def test_last_family_updates_on_claim(env):
+    worker, _, sessions, _ = env
+    assert worker.last_family is None
+    q = _qwen(sessions)
+    assert worker._claim().id == q
+    assert worker.last_family == "qwen"
+    worker._finish(q, status=GenStatus.SUCCEEDED)
+    b = _sdxl(sessions)
+    assert worker._claim().id == b
+    assert worker.last_family == "sdxl"
+    worker._finish(b, status=GenStatus.SUCCEEDED)
+    assert worker._claim() is None
+    assert worker.last_family == "sdxl"  # 佇列空時不改變
+
+
+def test_restart_requeued_running_job_sorts_oldest_first(env):
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    newer_ids = [_sdxl(sessions, created_at=t0 + timedelta(seconds=1)),
+                 _qwen(sessions, created_at=t0 + timedelta(seconds=2))]
+    interrupted = _qwen(sessions, status=GenStatus.RUNNING, started_at=t0, created_at=t0)
+    assert worker.last_family is None  # 重啟後不知道上一個家族
+    assert worker.requeue_interrupted() == 1
+    assert [worker.queue_position(i) for i in [interrupted, *newer_ids]] == [0, 1, 2]
+    assert worker._claim().id == interrupted
+
+
+def test_max_wait_s_passed_to_worker(env):
+    worker, engine, sessions, storage = env
+    assert worker.max_wait_s == 180.0
+    w = GenerationWorker(engine, sessions, storage, retry_backoff_s=0.05, max_wait_s=0)
+    t0 = datetime.now(timezone.utc)
+    b = _sdxl(sessions, created_at=t0 - timedelta(seconds=2))
+    _qwen(sessions, created_at=t0 - timedelta(seconds=1))
+    w.last_family = "qwen"
+    assert w._claim().id == b  # max_wait_s=0 → 任何等待都逾時 → 最舊優先
 
 
 async def _wait_status(sessions, gid, status, timeout=2.0):

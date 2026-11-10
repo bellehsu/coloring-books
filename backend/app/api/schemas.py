@@ -396,3 +396,14 @@ class QAOut(BaseModel):
 
 class AutofixOut(QAOut):
     autofix_added: int
+
+
+class BatchSkip(BaseModel):
+    page_id: int
+    position: int
+    reason: str
+
+
+class BatchBackgroundsOut(BaseModel):
+    queued: list[GenerationOut]
+    skipped: list[BatchSkip]

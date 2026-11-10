@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Page } from "@/api/client";
 import { Button } from "@/components/ui/Button";
@@ -24,6 +24,11 @@ export interface BackgroundPanelProps {
   generating: boolean;
   /** 本頁背景排隊中＋生成中的張數。 */
   activeCount: number;
+  /**
+   * 登記「存好本頁欄位」的函式（同產生前：送出中的等它完成、之前失敗的重送），回傳取消登記。
+   * 「產生所有背景」在 POST 前呼叫；reject＝有欄位沒存好（呼叫端已顯示訊息）。
+   */
+  registerSave?: (save: () => Promise<unknown>) => () => void;
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -33,7 +38,15 @@ const quiet = (p: Promise<unknown>) => p.catch(() => {});
  * 背景模式的面板：場景描述（離開欄位時存）、構圖強度（放開時存）、產生背景（一次一張）。
  * 產生前先 flush 草圖與欄位，全部成功才 POST；整段流程期間停用按鈕。
  */
-export function BackgroundPanel({ page, onPatch, beforeGenerate, onGenerate, generating, activeCount }: BackgroundPanelProps) {
+export function BackgroundPanel({
+  page,
+  onPatch,
+  beforeGenerate,
+  onGenerate,
+  generating,
+  activeCount,
+  registerSave,
+}: BackgroundPanelProps) {
   const sceneId = useId();
   const strengthId = useId();
   const qc = useQueryClient();
@@ -55,6 +68,13 @@ export function BackgroundPanel({ page, onPatch, beforeGenerate, onGenerate, gen
     if (!last && v === round2(page.controlnet_strength)) return Promise.resolve();
     return sendTracked(qc, page.id, "strength", v, () => onPatch({ controlnet_strength: v }));
   }
+
+  // 登記的函式透過 ref 取用最新一次 render 的 saveScene／saveStrength（欄位值）。
+  const saveFields = useRef<() => Promise<unknown>>(() => Promise.resolve());
+  useEffect(() => {
+    saveFields.current = () => Promise.all([saveScene(), saveStrength()]);
+  });
+  useEffect(() => registerSave?.(() => saveFields.current()), [registerSave]);
 
   // 整段流程（等存檔 → POST）期間停用按鈕；ref 擋住同一輪 render 前的第二次點擊。
   const [starting, setStarting] = useState(false);
@@ -127,6 +147,7 @@ export function BackgroundPanel({ page, onPatch, beforeGenerate, onGenerate, gen
       <span className={styles.hintCenter} role="status">
         {activeCount > 0 ? `本頁 ${activeCount} 張排隊或生成中` : "約 10 秒"}
       </span>
+      <p className={styles.note2}>先寫好每一頁的場景描述，再按頁面清單上方的『產生所有背景』，可以減少等待</p>
     </section>
   );
 }

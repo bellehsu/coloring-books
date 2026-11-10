@@ -54,6 +54,8 @@ class ComfySettings(BaseModel):
 class QueueSettings(BaseModel):
     # worker 遇到 ComfyUI 無法連線時，重試前等待的秒數（0 代表立即重試）
     retry_backoff_s: float = Field(10.0, ge=0)
+    # 防飢餓：等待超過此秒數的任務不論模型家族都最先執行
+    max_wait_s: float = Field(180.0, ge=0)
 
 
 class PathSettings(BaseModel):

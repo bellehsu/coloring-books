@@ -1,4 +1,9 @@
-"""單一背景生成 worker：依 id 順序逐筆執行 QUEUED 的 Generation（單 GPU，絕不並行）。"""
+"""單一背景生成 worker：依 plan_order 逐筆執行 QUEUED 的 Generation（單 GPU，絕不並行）。
+
+同模型家族（SDXL / Qwen）的任務優先，等待過久的任務最先；見 app.services.scheduling。
+「等待過久」以 plan_clock（上一次取任務的時間）判斷，所以任務執行中顯示的順位不會變，
+下一次取任務也用同一個時間，與顯示一致；佇列清空（閒置）後改用現在時間。
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from enum import Enum
 
 from sqlmodel import Session, col, select, update
@@ -18,6 +24,7 @@ from app.services.engine import (
     GenerationRequest,
 )
 from app.services.compose import largest_component
+from app.services.scheduling import QueuedJob, family_of, plan_order
 from app.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -92,11 +99,17 @@ class GenerationWorker:
         sessions: Callable[[], Session],
         storage: Storage,
         retry_backoff_s: float,
+        max_wait_s: float = 180.0,
     ) -> None:
         self.engine = engine
         self.sessions = sessions
         self.storage = storage
         self.retry_backoff_s = retry_backoff_s
+        self.max_wait_s = max_wait_s
+        # 上一個取走的任務的模型家族（只存在記憶體；重啟後為 None → 最舊優先）
+        self.last_family: str | None = None
+        # 上一次取任務的判斷時間；None 表示閒置（佇列清空後）→ 以現在時間判斷
+        self.plan_clock: datetime | None = None
         self.state = WorkerState.STOPPED
         self.last_error: str | None = None
         self.progress: dict[int, tuple[int, int]] = {}
@@ -157,25 +170,38 @@ class GenerationWorker:
                 return 0
             if gen.status != GenStatus.QUEUED:
                 return None
-            ahead = s.exec(
-                select(Generation.id).where(
-                    col(Generation.status) == GenStatus.QUEUED, col(Generation.id) < gen_id
-                )
-            ).all()
+            order = self._plan(s)
+            if gen_id not in order:  # 讀取之間狀態剛好改變
+                return None
             running = s.exec(select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING)).first()
-            return len(ahead) + (1 if running is not None else 0)
+            return order.index(gen_id) + (1 if running is not None else 0)
+
+    def _plan(self, s: Session) -> list[int]:
+        """目前 QUEUED 任務的執行順序（與 _claim 取任務的順序相同）。
+        逾時以 plan_clock 判斷（閒置時為現在時間），讓顯示的順位在任務執行中保持穩定。"""
+        rows = s.exec(
+            select(Generation.id, Generation.kind, Generation.request_json, Generation.created_at)
+            .where(col(Generation.status) == GenStatus.QUEUED)
+            .order_by(col(Generation.created_at), col(Generation.id))
+        ).all()
+        queued = [
+            QueuedJob(id=gid, family=family_of(kind, rj), created_at=created_at)
+            for gid, kind, rj, created_at in rows
+        ]
+        now = self.plan_clock if self.plan_clock is not None else utcnow()
+        return plan_order(queued, self.last_family, now, self.max_wait_s)
 
     def _claim(self) -> Generation | None:
-        """單一 UPDATE ... WHERE status=QUEUED 取得最小 id 的任務；rowcount 為 0 表示被搶走，重試。"""
+        """依 plan_order 的第一筆，以單一 UPDATE ... WHERE status=QUEUED 取得任務；
+        rowcount 為 0 表示被搶走（或被取消），重試。成功後記錄其模型家族與 plan_clock；
+        佇列空時清掉 plan_clock（閒置）。"""
         while True:
             with self.sessions() as s:
-                gen_id = s.exec(
-                    select(Generation.id)
-                    .where(col(Generation.status) == GenStatus.QUEUED)
-                    .order_by(col(Generation.id))
-                ).first()
-                if gen_id is None:
+                order = self._plan(s)
+                if not order:
+                    self.plan_clock = None
                     return None
+                gen_id = order[0]
                 res = s.exec(
                     update(Generation)
                     .where(col(Generation.id) == gen_id, col(Generation.status) == GenStatus.QUEUED)
@@ -183,7 +209,10 @@ class GenerationWorker:
                 )
                 s.commit()
                 if res.rowcount == 1:
-                    return s.get(Generation, gen_id)
+                    gen = s.get(Generation, gen_id)
+                    self.last_family = family_of(gen.kind, gen.request_json)
+                    self.plan_clock = utcnow()
+                    return gen
 
     def _finish(self, gen_id: int, **values) -> None:
         """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋）。"""

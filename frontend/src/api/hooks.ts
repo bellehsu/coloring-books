@@ -7,7 +7,7 @@ import {
 import { api, ApiError } from "./client";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
-import type { Book, Edits, ExportSummary, Generation, Page, PoseModes, QA, QueueStatus } from "./client";
+import type { BatchBackgrounds, Book, Edits, ExportSummary, Generation, Page, PoseModes, QA, QueueStatus } from "./client";
 import type { PoseMode } from "@/lib/poseMode";
 
 type S = components["schemas"];
@@ -314,6 +314,18 @@ export function useGenerateBackground(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ pageId }: { pageId: number }) => api.post<Generation>(`/pages/${pageId}/backgrounds`),
+    onSuccess: () => invalidateJobs(qc, bookId),
+  });
+}
+
+/**
+ * 整本書每一頁排一張背景（後端略過沒場景描述、已有背景、背景產生中、草圖遺失的頁）
+ * → generations（qk.generationsOf 前綴涵蓋每一頁的歷史與排隊數）, queue
+ */
+export function useBatchBackgrounds(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<BatchBackgrounds>(`/books/${bookId}/backgrounds/batch`),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
 }
