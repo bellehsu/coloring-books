@@ -29,3 +29,6 @@ paths:
 queue:
   # 生成 worker 遇到 ComfyUI 無法連線時，重試前等待的秒數（0 代表立即重試）
   retry_backoff_s: 10
+  # 佇列優先執行與上一個任務同模型家族（SDXL / Qwen）的任務，減少換模型；
+  # 等待超過此秒數的任務不論家族都最先執行（防飢餓）
+  max_wait_s: 180
