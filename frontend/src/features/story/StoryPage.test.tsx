@@ -250,6 +250,23 @@ describe("StoryPage", () => {
     expect(await screen.findAllByRole("article")).toHaveLength(4);
   });
 
+  it("貼上整本故事 is disabled until the pages have loaded", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const orig = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: string, i?: RequestInit) => {
+        if (u === "/api/books/1/pages" && (i?.method ?? "GET") === "GET") await gate;
+        return orig(u, i);
+      }),
+    );
+    setup();
+    expect(await screen.findByRole("button", { name: "貼上整本故事" })).toBeDisabled();
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: "貼上整本故事" })).toBeEnabled());
+  });
+
   it("貼上整本故事 opens the import dialog", async () => {
     setup();
     await screen.findAllByRole("article");

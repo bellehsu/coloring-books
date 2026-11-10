@@ -110,7 +110,7 @@ type PoseStageProps = import("./PoseStage").PoseStageProps;
 vi.mock("./PoseStage", () => ({
   PoseStage: (p: PoseStageProps) => <div data-testid="pose-stage" data-pose={p.pose?.id ?? ""} />,
 }));
-// realBgPanel = true 時用真的背景面板（產生所有背景要等面板裡的場景描述／構圖強度存好）
+// realBgPanel = true 時用真的背景面板
 let realBgPanel = false;
 vi.mock("./BackgroundPanel", async (orig) => {
   const real = await orig<typeof import("./BackgroundPanel")>();
@@ -134,9 +134,6 @@ vi.mock("./BackgroundPanel", async (orig) => {
             onClick={() => void p.beforeGenerate().then(() => p.onGenerate(p.style), () => {})}
           >
             stub-generate-background
-          </button>
-          <button type="button" onClick={() => p.onStyleChange("detailed")}>
-            stub-style-detailed
           </button>
         </section>
       ),

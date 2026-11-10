@@ -28,18 +28,13 @@ export interface BackgroundPanelProps {
   beforeGenerate: () => Promise<unknown>;
   /**
    * POST /pages/{id}/backgrounds {style}（一次一張）；失敗時呼叫端顯示 toast，promise 照常 resolve。
-   * style＝使用者選的（只套用可用性，同「產生所有背景」）；有草圖改用細緻由後端決定。
+   * style＝使用者選的（只套用可用性）；有草圖改用細緻由後端決定。
    */
   onGenerate: (style: BgStyle) => Promise<unknown>;
   /** POST 進行中。 */
   generating: boolean;
   /** 本頁背景排隊中＋生成中的張數。 */
   activeCount: number;
-  /**
-   * 登記「存好本頁欄位」的函式（同產生前：送出中的等它完成、之前失敗的重送），回傳取消登記。
-   * 「產生所有背景」在 POST 前呼叫；reject＝有欄位沒存好（呼叫端已顯示訊息）。
-   */
-  registerSave?: (save: () => Promise<unknown>) => () => void;
   /** 使用者記住的背景風格（未套用草圖／可用性）。 */
   style: BgStyle;
   /** 使用者切換風格；呼叫端負責記住（localStorage）。 */
@@ -67,7 +62,6 @@ export function BackgroundPanel({
   onGenerate,
   generating,
   activeCount,
-  registerSave,
   style,
   onStyleChange,
   simpleUnavailableReason,
@@ -112,21 +106,17 @@ export function BackgroundPanel({
     .join(" ");
 
   // 送出的風格＝使用者選的，只套用可用性（不套用草圖：後端依草圖決定實際風格），
-  // 所以 background_style_requested 在單張與「產生所有背景」都是使用者的選擇。
+  // 所以 background_style_requested 是使用者的選擇。
   const requested = effectiveBgStyle(style, {
     hasSketch: false,
     simpleAvailable: simpleUnavailableReason === null,
   });
 
-  // 登記的函式透過 ref 取用最新一次 render 的 saveScene／saveStrength（欄位值）。
-  const saveFields = useRef<() => Promise<unknown>>(() => Promise.resolve());
   // 產生時在存檔（含草圖 flush）之後才讀：等待期間簡潔變成不可用就送細緻
   const requestedRef = useRef(requested);
   useEffect(() => {
-    saveFields.current = () => Promise.all([saveScene(), saveStrength()]);
     requestedRef.current = requested;
   });
-  useEffect(() => registerSave?.(() => saveFields.current()), [registerSave]);
 
   // 整段流程（等存檔 → POST）期間停用按鈕；ref 擋住同一輪 render 前的第二次點擊。
   const [starting, setStarting] = useState(false);
@@ -225,7 +215,6 @@ export function BackgroundPanel({
       <span className={styles.hintCenter} role="status">
         {activeCount > 0 ? `本頁 ${activeCount} 張排隊或生成中` : null}
       </span>
-      <p className={styles.note2}>先寫好每一頁的場景描述，再按頁面清單上方的『產生所有背景』，可以減少等待</p>
     </section>
   );
 }

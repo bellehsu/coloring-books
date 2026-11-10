@@ -76,13 +76,6 @@ describe("BackgroundPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent("");
   });
 
-  it("shows the batch hint", () => {
-    setup();
-    expect(
-      screen.getByText("先寫好每一頁的場景描述，再按頁面清單上方的『產生所有背景』，可以減少等待"),
-    ).toBeInTheDocument();
-  });
-
   it("shows the queued count", () => {
     setup({ activeCount: 2 });
     expect(screen.getByRole("status")).toHaveTextContent("本頁 2 張排隊或生成中");
@@ -165,42 +158,6 @@ describe("BackgroundPanel", () => {
     await userEvent.click(btn());
     await waitFor(() => expect(props.onGenerate).toHaveBeenCalledTimes(1));
     expect(onPatch).toHaveBeenCalledTimes(3);
-  });
-
-  it("registerSave: the registered save awaits pending fields and resends a failed scene", async () => {
-    const d = deferred();
-    const onPatch = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("boom"))
-      .mockImplementationOnce(() => d.promise)
-      .mockResolvedValue(undefined);
-    let save: (() => Promise<unknown>) | null = null;
-    const off = vi.fn();
-    const registerSave = vi.fn((fn: () => Promise<unknown>) => {
-      save = fn;
-      return off;
-    });
-    const { unmount } = setup({ onPatch, registerSave });
-    expect(registerSave).toHaveBeenCalled();
-    await expect(save!()).resolves.toBeDefined(); // 沒改過 → 不送出
-    expect(onPatch).not.toHaveBeenCalled();
-    const box = screen.getByLabelText("場景描述");
-    fireEvent.change(box, { target: { value: "garden" } });
-    fireEvent.blur(box);
-    await waitFor(() => expect(onPatch).toHaveBeenCalledTimes(1)); // 失敗
-    fireEvent.change(screen.getByLabelText(/構圖強度/), { target: { value: "0.3" } });
-    let done = false;
-    const p = save!().then(() => (done = true));
-    // 重送場景描述（掛起）＋構圖強度
-    expect(onPatch).toHaveBeenNthCalledWith(2, { scene_prompt: "garden" });
-    expect(onPatch).toHaveBeenNthCalledWith(3, { controlnet_strength: 0.3 });
-    await Promise.resolve();
-    expect(done).toBe(false);
-    d.resolve(undefined);
-    await p;
-    expect(done).toBe(true);
-    unmount();
-    expect(off).toHaveBeenCalled();
   });
 
   it("a double click during the save sends only one POST and disables the button", async () => {
@@ -310,7 +267,7 @@ describe("BackgroundPanel", () => {
     });
 
     it("產生背景 sends the user's choice on a sketch page (the backend forces 細緻), detailed when unavailable", async () => {
-      // 送出＝使用者選的（只套用可用性，同「產生所有背景」）；草圖改用細緻由後端決定，畫面仍顯示細緻
+      // 送出＝使用者選的（只套用可用性）；草圖改用細緻由後端決定，畫面仍顯示細緻
       const a = setup({ page: withSketch() });
       expect(radio("細緻")).toHaveAttribute("aria-checked", "true");
       await userEvent.click(btn());

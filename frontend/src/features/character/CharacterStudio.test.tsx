@@ -126,7 +126,7 @@ describe("CharacterStudio", () => {
     gens = [gen(1), gen(2), gen(3)];
     setup();
     await userEvent.click(await screen.findByRole("button", { name: "選 seed 102" }));
-    await userEvent.click(screen.getByRole("button", { name: /設為本書角色，開始寫故事/ }));
+    await userEvent.click(screen.getByRole("button", { name: /用這個角色，開始寫故事/ }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1/story"));
     expect(calls.find((c) => c.url === "/api/books/1/character")?.body).toEqual({ generation_id: 2 });
   });
@@ -171,7 +171,7 @@ describe("CharacterStudio", () => {
     setup();
     await screen.findByRole("link", { name: /開始寫故事/ });
     expect(screen.queryByRole("button", { name: "產生 4 張" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /設為本書角色/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /用這個角色，開始寫故事/ })).not.toBeInTheDocument();
     expect(screen.getByText("a small bunny")).toBeInTheDocument();
     expect(screen.getByAltText("角色彩色圖")).toHaveAttribute("src", "/api/files/2.png");
   });
@@ -180,7 +180,7 @@ describe("CharacterStudio", () => {
     gens = [gen(1)];
     setCharacterResponse = () => j({ detail: "這本繪本已經設定過角色" }, 409);
     setup();
-    await userEvent.click(await screen.findByRole("button", { name: /設為本書角色/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /用這個角色，開始寫故事/ }));
     const alert = await screen.findByRole("alert");
     expect(within(alert).getByText("這本繪本已經設定過角色")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -176,7 +176,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
     writePoseMode(m);
   };
   // ---------- 背景風格：記住使用者選的；簡潔不可用時改用細緻（不改寫記憶）----------
-  // 可用狀態每個模式都要：頁面清單上方的「產生所有背景」在任何模式都能按
   const [storedBgStyle, setStoredBgStyle] = useState<BgStyle>(readBgStyle);
   const bgStyles = useBackgroundStyles().data;
   const simpleUnavailableReason =
@@ -246,14 +245,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
   useEffect(() => {
     currentIdRef.current = current?.id ?? null;
   });
-  // 背景面板（掛載時）登記的「存好本頁場景描述／構圖強度」；產生所有背景前呼叫
-  const bgSaveRef = useRef<(() => Promise<unknown>) | null>(null);
-  const registerBgSave = useCallback((save: () => Promise<unknown>) => {
-    bgSaveRef.current = save;
-    return () => {
-      if (bgSaveRef.current === save) bgSaveRef.current = null;
-    };
-  }, []);
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -509,7 +500,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
         onGenerate={(style) => generateBackground(current.id, style)}
         generating={generateBg.isPending}
         activeCount={activeOf("background")}
-        registerSave={registerBgSave}
         style={storedBgStyle}
         onStyleChange={changeBgStyle}
         simpleUnavailableReason={simpleUnavailableReason}

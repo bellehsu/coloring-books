@@ -186,13 +186,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
    把去背角色貼到背景上，存成一筆 `composite` 生成紀錄並設為本頁 `selected_generation_id`。
 4. **線稿、QA、匯出**：與之前相同（xdog 擷取 → 後處理 → 補線 → 角色一致確認 → 通過 → PDF）。
 
-**一次做很多頁時**：先在每一頁寫好場景描述（需要的話畫構圖），按頁面清單上方的「產生所有背景」，確認後整本書一次排好背景；
-再一頁一頁做角色動作。同一種模型的任務會一批連續跑完（簡潔背景與精準角色動作是 Qwen，細緻背景是 SDXL），不必來回換模型，整體等待較短。
-確認對話框會顯示風格，例如「會為 3 頁產生背景（簡潔，有草圖的 1 頁用細緻）」；整批送出目前記住的風格（簡潔不可用時為細緻），有可用草圖的頁一律細緻。
-「產生所有背景」會略過沒有場景描述、已有背景（已選用，或歷史裡有成功且未捨棄的；舊流程選了整頁候選圖的頁也算）、背景產生中、
-草圖檔案遺失的頁，確認對話框列出會產生幾頁與略過的頁（草圖檔案遺失只有送出後才知道，完成提示會列出頁碼）；
-按下時先等本頁送出中的場景描述與構圖強度存好（之前存失敗的會重送，再失敗就不送出）。
-連按兩次、或兩個分頁同時按，也不會重複排隊（後端以鎖序列化）。
+**一次做很多頁時**：到「故事」頁寫好每一頁的場景與角色動作（或選「上傳圖片」當背景），按一次「產生全部素材」，整本書缺的背景與角色動作依頁面順序排好；已有素材、沒有描述、產生中的會略過並在提示中列出。連按兩次、或兩個分頁同時按，也不會重複排隊（後端以鎖序列化）。
 
 背景與角色動作的歷史紀錄每頁各自保存。改選另一張背景或角色動作時，若本頁目前用的是合成圖，會清除選定並退回草稿；
 同一組背景、角色、位置再按確認會重用原本的合成圖。舊流程的整頁候選（`/pages/{id}/candidates`）仍保留，已選的舊頁面不受影響。
@@ -221,7 +215,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | GET | `/pages/{page_id}/sketch` | 下載頁面構圖草圖 |
 | POST | `/pages/{page_id}/candidates` | 產生頁面候選（非同步，202） |
 | POST | `/pages/{page_id}/backgrounds` | 產生一張背景（非同步，202）；選填 body `{style: "simple" \| "detailed"}`，省略＝簡潔；有可用構圖草圖（強度 > 0）或簡潔不可用時後端改用細緻。`style` 是使用者的選擇（前端只在簡潔不可用時送細緻，草圖頁仍送使用者選的），記在 request_json 的 `background_style_requested`；生成紀錄的 `background_style` 為套用草圖／可用性規則後的實際風格 |
-| POST | `/books/{book_id}/backgrounds/batch` | 依頁面順序替每一頁排一張背景（202；選填 body `{style}` 同上，requested＝使用者的選擇，逐頁決定實際風格）：`{queued: Generation[], skipped: [{page_id, position, reason}]}`；`reason` 為「沒有場景描述」「已有背景」（含舊流程選了整頁候選圖）「背景產生中」「草圖檔案遺失」；同時多個呼叫會依序處理，不會重複排隊 |
+| POST | `/books/{book_id}/materials/batch` | 產生全部素材（202）：依頁面順序替每頁補排缺的背景與角色動作；選填 body `{"upload_page_ids": [...]}`，這些頁改用上傳圖片，背景略過（reason「改用上傳圖片」）。回傳 `{queued: Generation[], skipped: [{kind: "background" \| "pose", page_id, position, reason}]}` |
 | POST | `/pages/{page_id}/poses` | 依 `action` 產生一張角色動作＋遮罩；`mode`：`"precise"`（預設，Qwen）或 `"fast"`（SDXL），其他值 422（非同步，202；未設角色 409；精準不可用 503「精準模式缺少：…」） |
 | POST | `/pages/{page_id}/background` | 選定本頁背景（`generation_id`） |
 | POST | `/pages/{page_id}/pose` | 選定本頁角色動作（`generation_id`） |

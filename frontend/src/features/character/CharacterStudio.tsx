@@ -21,7 +21,6 @@ import { useToast } from "@/components/ui/Toast";
 import styles from "./CharacterStudio.module.css";
 
 const MAX_DESC = 800;
-const ArrowRight = Icons["arrow-right"];
 
 const errMsg = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
@@ -245,12 +244,11 @@ export function CharacterStudio({ bookId }: { bookId: number }) {
               <Button
                 variant="primary"
                 size="lg"
-                icon={<ArrowRight size={18} />}
                 disabled={!selected || setCharacter.isPending}
                 onClick={confirm}
                 className={styles.confirm}
               >
-                設為本書角色，開始寫故事
+                用這個角色，開始寫故事 →
               </Button>
             </>
           )}

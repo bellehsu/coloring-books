@@ -143,7 +143,9 @@ export function StoryPage({ bookId }: { bookId: number }) {
             </span>
           </div>
           <div className={styles.actions}>
-            <Button onClick={() => setImportOpen(true)}>貼上整本故事</Button>
+            <Button disabled={!pagesQ.isSuccess} onClick={() => setImportOpen(true)}>
+              貼上整本故事
+            </Button>
             <Button disabled={createPage.isPending} onClick={() => createPage.mutate({ scene_prompt: "", action_prompt: "" }, { onError: (e) => toast.show(errMsg(e, "無法新增頁面"), "error") })}>
               ＋ 新增一頁
             </Button>
@@ -182,7 +184,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
           />
         ))}
       </main>
-      <ImportDialog bookId={bookId} open={importOpen} onClose={() => setImportOpen(false)} />
+      {pagesQ.isSuccess && <ImportDialog bookId={bookId} open={importOpen} onClose={() => setImportOpen(false)} />}
     </>
   );
 }
