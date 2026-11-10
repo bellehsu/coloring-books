@@ -1,4 +1,5 @@
 """角色動作的精準／快速模式能不能用：只看快取的 preflight 報告，絕不即時連 ComfyUI。
+`availability` 也接受其他 {模式: workflow} 對應（背景風格 background_styles 共用同一套規則）。
 
 規則（spec §10.3）：
 - 還沒有報告，或 ComfyUI 連不上（狀態未知）→ 算可用；但連不上時本機 load_errors 非空的模式仍不可用；真的缺東西時由生成失敗流程回報。
@@ -7,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TypedDict
 
 from .comfy_engine import POSE_WORKFLOWS
@@ -27,12 +29,15 @@ def _missing(rep: WorkflowReport) -> list[str]:
     return list(dict.fromkeys(items))  # 去重、保留順序
 
 
-def availability(report: PreflightReport | None) -> dict[str, ModeStatus]:
+def availability(
+    report: PreflightReport | None, workflows: Mapping[str, str] = POSE_WORKFLOWS
+) -> dict[str, ModeStatus]:
+    """每個模式（workflows 的 key）能不能用；預設為角色動作的精準／快速。"""
     if report is None:
-        return {mode: {"available": True, "missing": []} for mode in POSE_WORKFLOWS}
+        return {mode: {"available": True, "missing": []} for mode in workflows}
     by_name = {w.name: w for w in report.workflows}
     out: dict[str, ModeStatus] = {}
-    for mode, workflow in POSE_WORKFLOWS.items():
+    for mode, workflow in workflows.items():
         rep = by_name.get(workflow)
         if not report.comfy_reachable:
             # 連不上 ComfyUI：模型／節點狀態未知，但本機載入錯誤仍然有效

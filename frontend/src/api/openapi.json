@@ -750,7 +750,7 @@
           "compose"
         ],
         "summary": "Create Background",
-        "description": "產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。",
+        "description": "產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。\nbody 可省略（＝簡潔）；草圖遺失先回 409，之後才決定風格。",
         "operationId": "create_background_api_pages__page_id__backgrounds_post",
         "parameters": [
           {
@@ -763,6 +763,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BackgroundCreate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "Successful Response",
@@ -793,7 +810,7 @@
           "compose"
         ],
         "summary": "Create Backgrounds Batch",
-        "description": "替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、\n背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。",
+        "description": "替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、\n背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。\nbody 的風格套用到每一頁（可省略＝簡潔，Phase 7 前端不送 body），實際風格逐頁決定。",
         "operationId": "create_backgrounds_batch_api_books__book_id__backgrounds_batch_post",
         "parameters": [
           {
@@ -806,6 +823,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BackgroundCreate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "Successful Response",
@@ -2171,6 +2205,25 @@
           }
         }
       }
+    },
+    "/api/system/background-styles": {
+      "get": {
+        "summary": "Background Styles",
+        "description": "背景簡潔／細緻風格能不能用：只讀快取的 preflight，不連 ComfyUI。",
+        "operationId": "background_styles_api_system_background_styles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackgroundStylesOut"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2292,6 +2345,37 @@
           "autofix_added"
         ],
         "title": "AutofixOut"
+      },
+      "BackgroundCreate": {
+        "properties": {
+          "style": {
+            "type": "string",
+            "enum": [
+              "simple",
+              "detailed"
+            ],
+            "title": "Style",
+            "default": "simple"
+          }
+        },
+        "type": "object",
+        "title": "BackgroundCreate"
+      },
+      "BackgroundStylesOut": {
+        "properties": {
+          "simple": {
+            "$ref": "#/components/schemas/PoseModeStatus"
+          },
+          "detailed": {
+            "$ref": "#/components/schemas/PoseModeStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "simple",
+          "detailed"
+        ],
+        "title": "BackgroundStylesOut"
       },
       "BatchBackgroundsOut": {
         "properties": {
@@ -2781,6 +2865,21 @@
             ],
             "title": "Pose Mode"
           },
+          "background_style": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "simple",
+                  "detailed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Style"
+          },
           "error": {
             "anyOf": [
               {
@@ -2858,6 +2957,7 @@
           "mask_url",
           "cutout_url",
           "pose_mode",
+          "background_style",
           "error",
           "elapsed_s",
           "queue_position",

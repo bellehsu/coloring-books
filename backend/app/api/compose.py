@@ -18,8 +18,18 @@ from sqlmodel import Session, col, select, update
 from app.api.books import MAX_SEED, _book_or_404
 from app.api.deps import get_session, get_storage, get_worker
 from app.api.pages import _page_or_404, page_out, reset_review_when
-from app.api.schemas import BatchBackgroundsOut, BatchSkip, GenerationOut, PageOut, PagePlacement, PoseCreate, SelectGeneration
+from app.api.schemas import (
+    BackgroundCreate,
+    BatchBackgroundsOut,
+    BatchSkip,
+    GenerationOut,
+    PageOut,
+    PagePlacement,
+    PoseCreate,
+    SelectGeneration,
+)
 from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
+from app.services.background_styles import BackgroundStyle, decide_style, style_availability
 from app.services.compose import (
     COMPOSE_VERSION,
     Placement,
@@ -33,8 +43,10 @@ from app.services.prompts import (
     POSE_NEGATIVE,
     POSE_SIZE,
     background_prompt,
+    pick_background_variation,
     pick_variation,
     pose_prompt,
+    qwen_background_prompt,
     qwen_pose_prompt,
 )
 from app.services.pose_modes import precise_unavailable_detail
@@ -127,6 +139,12 @@ def _read_sketch(storage: Storage, page: Page) -> bytes | None:
     return storage.abs(page.sketch_path).read_bytes()
 
 
+def _simple_available(request: Request) -> bool:
+    """簡潔（qwen_background）能不能用：只看快取的 preflight，不連 ComfyUI。"""
+    report = getattr(request.app.state, "preflight", None)
+    return style_availability(report)["simple"]["available"]
+
+
 def _enqueue_background(
     session: Session,
     storage: Storage,
@@ -134,16 +152,32 @@ def _enqueue_background(
     book: Book,
     page: Page,
     sketch_bytes: bytes | None,
+    *,
+    requested: BackgroundStyle,
+    simple_available: bool,
 ) -> GenerationOut:
-    """單張與批次共用：用頁面場景描述與草圖快照排一筆背景。"""
+    """單張與批次共用：用頁面場景描述與草圖快照排一筆背景，排隊當下決定實際風格。
+    簡潔：Qwen 提示詞、負向空字串；有草圖（強度 0）仍存快照當出處紀錄，引擎不使用。
+    細緻：SDXL 提示詞、負向提示詞與草圖。"""
     width, height = compute_layout(book.paper_size, book.print_mode).generation_size
+    style = decide_style(
+        requested,
+        has_usable_sketch=sketch_bytes is not None and page.controlnet_strength > 0,
+        simple_available=simple_available,
+    )
+    variation: str | None = None
+    if style == "simple":
+        variation = pick_background_variation(random.Random())
+        prompt, negative = qwen_background_prompt(page.scene_prompt, variation), ""
+    else:
+        prompt, negative = background_prompt(page.scene_prompt), BACKGROUND_NEGATIVE
     gen = Generation(
         book_id=book.id,
         page_id=page.id,
         kind=GenKind.BACKGROUND,
         user_text=page.scene_prompt,
-        prompt=background_prompt(page.scene_prompt),
-        negative_prompt=BACKGROUND_NEGATIVE,
+        prompt=prompt,
+        negative_prompt=negative,
         seed=random.randint(0, MAX_SEED),
         width=width,
         height=height,
@@ -152,24 +186,32 @@ def _enqueue_background(
     return _enqueue(
         session, storage, worker, gen,
         sketch_bytes=sketch_bytes, structure_strength=page.controlnet_strength,
+        background_style=style, background_style_requested=requested, variation=variation,
     )
 
 
 @router.post("/pages/{page_id}/backgrounds", status_code=202, response_model=GenerationOut)
 def create_background(
     page_id: int,
+    request: Request,
+    body: BackgroundCreate | None = None,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
 ) -> GenerationOut:
-    """產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。"""
+    """產生一張背景：場景描述＋（有的話）構圖草圖；不使用角色參考圖。
+    body 可省略（＝簡潔）；草圖遺失先回 409，之後才決定風格。"""
+    requested = (body or BackgroundCreate()).style
     page = _page_or_404(session, page_id)
     book = _book_or_404(session, page.book_id)
     try:
         sketch_bytes = _read_sketch(storage, page)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(409, "草圖檔案遺失，請重新上傳") from e
-    return _enqueue_background(session, storage, worker, book, page, sketch_bytes)
+    return _enqueue_background(
+        session, storage, worker, book, page, sketch_bytes,
+        requested=requested, simple_available=_simple_available(request),
+    )
 
 
 @router.post(
@@ -177,18 +219,32 @@ def create_background(
 )
 def create_backgrounds_batch(
     book_id: int,
+    request: Request,
+    body: BackgroundCreate | None = None,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
 ) -> BatchBackgroundsOut:
     """替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、
-    背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。"""
+    背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。
+    body 的風格套用到每一頁（可省略＝簡潔，Phase 7 前端不送 body），實際風格逐頁決定。"""
+    requested = (body or BackgroundCreate()).style
+    simple_available = _simple_available(request)
     with _BATCH_LOCK:
-        return _batch_backgrounds(book_id, session, storage, worker)
+        return _batch_backgrounds(
+            book_id, session, storage, worker,
+            requested=requested, simple_available=simple_available,
+        )
 
 
 def _batch_backgrounds(
-    book_id: int, session: Session, storage: Storage, worker: GenerationWorker
+    book_id: int,
+    session: Session,
+    storage: Storage,
+    worker: GenerationWorker,
+    *,
+    requested: BackgroundStyle,
+    simple_available: bool,
 ) -> BatchBackgroundsOut:
     book = _book_or_404(session, book_id)
     pages = session.exec(
@@ -236,7 +292,10 @@ def _batch_backgrounds(
         if reason is not None:
             skipped.append(BatchSkip(page_id=page.id, position=page.position, reason=reason))
             continue
-        queued.append(_enqueue_background(session, storage, worker, book, page, sketch_bytes))
+        queued.append(_enqueue_background(
+            session, storage, worker, book, page, sketch_bytes,
+            requested=requested, simple_available=simple_available,
+        ))
     return BatchBackgroundsOut(queued=queued, skipped=skipped)
 
 

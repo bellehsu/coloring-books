@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.models import Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
+from app.services.background_styles import BackgroundStyle
 from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
@@ -121,6 +122,18 @@ def pose_mode_of(gen: Generation) -> PoseMode | None:
     return "precise" if mode == "precise" else "fast"
 
 
+def background_style_of(gen: Generation) -> BackgroundStyle | None:
+    """背景的實際風格（看 request_json，排隊中也算得出來）；其他 kind 為 None。
+    背景風格上線前的舊列沒有 background_style（或內容讀不懂）→ "detailed"。"""
+    if gen.kind != GenKind.BACKGROUND:
+        return None
+    try:
+        style = json.loads(gen.request_json or "{}").get("background_style")
+    except (ValueError, AttributeError):
+        return "detailed"
+    return "simple" if style == "simple" else "detailed"
+
+
 class GenerationOut(BaseModel):
     id: int
     book_id: int
@@ -137,6 +150,7 @@ class GenerationOut(BaseModel):
     mask_url: str | None  # pose：去背遮罩
     cutout_url: str | None  # pose：裁好的去背 RGBA 圖
     pose_mode: PoseMode | None  # pose：精準／快速；其他 kind 為 None
+    background_style: BackgroundStyle | None  # background：實際風格（簡潔／細緻）；其他 kind 為 None
     error: str | None
     elapsed_s: float | None
     queue_position: int | None
@@ -167,6 +181,7 @@ class GenerationOut(BaseModel):
             mask_url=f"/api/generations/{gen.id}/mask" if gen.mask_path else None,
             cutout_url=f"/api/generations/{gen.id}/cutout" if gen.mask_path else None,
             pose_mode=pose_mode_of(gen),
+            background_style=background_style_of(gen),
             error=gen.error,
             elapsed_s=gen.elapsed_s,
             queue_position=queue_position,
@@ -204,6 +219,10 @@ class PoseCreate(BaseModel):
     mode: PoseMode = "precise"  # 精準（Qwen）或快速（SDXL）；前端一律明確送出
 
 
+class BackgroundCreate(BaseModel):
+    style: BackgroundStyle = "simple"  # 要求的風格；有可用草圖或簡潔不可用時，排隊時改用細緻
+
+
 class PoseModeStatus(BaseModel):
     available: bool
     missing: list[str]  # 不可用時缺的模型檔、節點類別或錯誤
@@ -212,6 +231,11 @@ class PoseModeStatus(BaseModel):
 class PoseModesOut(BaseModel):
     precise: PoseModeStatus
     fast: PoseModeStatus
+
+
+class BackgroundStylesOut(BaseModel):
+    simple: PoseModeStatus
+    detailed: PoseModeStatus
 
 
 class PagePlacement(BaseModel):
