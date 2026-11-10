@@ -200,3 +200,58 @@ def test_repo_compose_workflows_wiring():
     assert src == t["IPADAPTER"]
     assert _src(pose, "IPADAPTER", "image")[0] == t["CHARACTER_REF"]
     _assert_no_orphans(pose)
+
+
+def test_qwen_pose_manifest_loads_and_maps_titles():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    wf = reg.get("qwen_edit_pose_cutout")
+    assert wf.ok, wf.errors
+    built = wf.build_prompt({"prompt": "p", "seed": 1, "width": 832, "height": 1216,
+                             "character_image": "c.png"})
+    by_title = {n["_meta"]["title"]: n for n in built.prompt.values()}
+    assert by_title["CHARACTER_REF"]["inputs"]["image"] == "c.png"
+    assert by_title["POSITIVE"]["inputs"]["prompt"] == "p"
+    assert by_title["NEGATIVE"]["inputs"]["prompt"] == ""
+    s = by_title["SAMPLER"]["inputs"]
+    assert (s["seed"], s["steps"], s["cfg"]) == (1, 4, 1)
+    assert (by_title["LATENT"]["inputs"]["width"], by_title["LATENT"]["inputs"]["height"]) == (832, 1216)
+    assert {f"{m['folder']}/{m['filename']}" for m in wf.models} == {
+        "unet/qwen-image-edit-2511-Q4_K_M.gguf",
+        "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "vae/qwen_image_vae.safetensors",
+        "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "background_removal/birefnet.safetensors"}
+    assert [by_title[t]["class_type"] for t in ("OUTPUT", "MASK")] == ["SaveImage"] * 2
+    assert len(built.output_node_ids) == 2
+
+
+def _trace(prompt, nid, inp, target_title):
+    """沿著 inputs 往上游找 target_title；找到回傳 True。"""
+    seen, stack = set(), [prompt[nid]["inputs"][inp][0]]
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        if prompt[cur]["_meta"]["title"] == target_title:
+            return True
+        stack += [v[0] for v in prompt[cur]["inputs"].values()
+                  if isinstance(v, list) and len(v) == 2]
+    return False
+
+
+def test_qwen_pose_wiring():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    p = reg.get("qwen_edit_pose_cutout").build_prompt(
+        {"prompt": "x", "seed": 1, "character_image": "c.png"}).prompt
+    t = {n["_meta"]["title"]: nid for nid, n in p.items()}
+    assert _trace(p, t["SAMPLER"], "model", "LIGHTNING_LORA")
+    assert _trace(p, t["LIGHTNING_LORA"], "model", "UNET")
+    assert _trace(p, t["SAMPLER"], "model", "CFG_NORM")
+    assert _trace(p, t["SAMPLER"], "model", "MODEL_SAMPLING")
+    for neg in ("POSITIVE", "NEGATIVE"):
+        assert p[t[neg]]["inputs"]["image1"][0] == t["CHARACTER_REF"]
+    assert p[t["SAMPLER"]]["inputs"]["negative"] and _trace(p, t["SAMPLER"], "negative", "NEGATIVE")
+    assert p[t["REMOVE_BG"]]["inputs"]["image"][0] == t["DECODE"]
+    assert p[t["OUTPUT"]]["inputs"]["images"][0] == t["DECODE"]
+    _assert_no_orphans(p)
