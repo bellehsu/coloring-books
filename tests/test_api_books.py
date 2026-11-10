@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import select
@@ -5,7 +7,8 @@ from sqlmodel import select
 from app.config import load_settings
 from app.main import create_app
 from app.models import Generation, GenKind, GenStatus
-from app.services.prompts import CHARACTER_NEGATIVE, character_prompt
+from app.services import prompts
+from app.services.prompts import QWEN_CHARACTER_SIZE, qwen_character_prompt
 from app.services.worker import encode_request
 from tests.fake_engine import FakeEngine
 
@@ -65,33 +68,109 @@ def test_list_patch_and_404(client):
     assert client.post("/api/books/999/character", json={"generation_id": 1}).status_code == 404
 
 
-def test_character_candidates_queue_four(client):
+def candidate_ids(client, book_id, n, **kw):
+    """一次一張：連按 n 次「產生角色」，回傳 generation id。"""
+    out = []
+    for _ in range(n):
+        r = candidates(client, book_id, **kw)
+        assert r.status_code == 202, r.text
+        out += [g["id"] for g in r.json()]
+    return out
+
+
+def _variation(app, gid):
+    with app.state.sessions() as s:
+        return json.loads(s.get(Generation, gid).request_json)["variation"]
+
+
+def test_character_candidates_one_image_per_click(client, app):
     b = new_book(client)
     r = candidates(client, b["id"], seed=100)
     assert r.status_code == 202
     gens = r.json()
-    assert len(gens) == 4
-    assert [g["seed"] for g in gens] == [100, 101, 102, 103]
-    assert {g["status"] for g in gens} == {"queued"}
-    assert {g["kind"] for g in gens} == {"character"}
-    assert {(g["width"], g["height"]) for g in gens} == {(832, 1216)}
-    assert all("一隻戴帽子的小熊" in g["prompt"] for g in gens)
-    assert [g["queue_position"] for g in gens] == [0, 1, 2, 3]
-    assert all(g["image_url"] is None and g["progress"] is None for g in gens)
+    assert len(gens) == 1
+    g = gens[0]
+    assert g["seed"] == 100 and g["status"] == "queued" and g["kind"] == "character"
+    assert (g["width"], g["height"]) == QWEN_CHARACTER_SIZE
+    assert "一隻戴帽子的小熊" in g["prompt"]
+    assert g["queue_position"] == 0 and g["image_url"] is None and g["progress"] is None
+    with app.state.sessions() as s:
+        row = s.get(Generation, g["id"])
+        assert row.negative_prompt == ""
+        assert json.loads(row.request_json)["variation"] in prompts.QWEN_CHARACTER_VARIATIONS
+    # 舊前端會送 count：接受但忽略，一律一張
+    for count in (4, 1, 8):
+        r = candidates(client, b["id"], count=count)
+        assert r.status_code == 202 and len(r.json()) == 1
 
 
 def test_candidates_stored_fields_and_random_seed(client, app):
     b = new_book(client)
-    gens = candidates(client, b["id"], count=2).json()
-    assert gens[1]["seed"] == gens[0]["seed"] + 1
+    gid = candidates(client, b["id"]).json()[0]["id"]
     with app.state.sessions() as s:
-        g = s.get(Generation, gens[0]["id"])
+        g = s.get(Generation, gid)
+        v = json.loads(g.request_json)["variation"]
         assert g.user_text == "一隻戴帽子的小熊"
-        assert g.prompt == character_prompt("一隻戴帽子的小熊")
-        assert g.negative_prompt == CHARACTER_NEGATIVE
+        assert v in prompts.QWEN_CHARACTER_VARIATIONS
+        assert g.prompt == qwen_character_prompt("一隻戴帽子的小熊", v)
+        assert g.negative_prompt == ""
         assert g.request_json == encode_request(
-            kind=GenKind.CHARACTER, prompt=g.prompt, negative_prompt=CHARACTER_NEGATIVE,
-            seed=g.seed, width=832, height=1216)
+            kind=GenKind.CHARACTER, prompt=g.prompt, negative_prompt="",
+            seed=g.seed, width=QWEN_CHARACTER_SIZE[0], height=QWEN_CHARACTER_SIZE[1], variation=v)
+        assert 0 <= g.seed <= 2**32 - 1
+
+
+def test_character_variation_never_repeats_consecutively(client, app):
+    b = new_book(client)
+    seen = [_variation(app, i) for i in candidate_ids(client, b["id"], 8)]
+    assert all(v in prompts.QWEN_CHARACTER_VARIATIONS for v in seen)
+    assert all(x != y for x, y in zip(seen, seen[1:])), seen
+
+
+def test_character_variation_exclusion_is_per_book(client, app, monkeypatch):
+    from app.api import books as books_mod
+
+    b = new_book(client)
+    last = _variation(app, candidates(client, b["id"]).json()[0]["id"])
+    other = new_book(client, title="別本")
+    excluded = []
+    real = books_mod.pick_character_variation
+
+    def spy(rng, exclude=None):
+        excluded.append(exclude)
+        return real(rng, exclude)
+
+    monkeypatch.setattr(books_mod, "pick_character_variation", spy)
+    candidates(client, other["id"])
+    candidates(client, b["id"])
+    assert excluded == [None, last]
+
+
+def test_character_variation_excludes_latest_any_status(client, app, monkeypatch):
+    # 「上一張」＝這本書最近一筆有變化語的角色候選（失敗、捨棄也算）；沒有變化語的舊列略過
+    from app.api import books as books_mod
+
+    b = new_book(client)
+    gid = candidates(client, b["id"]).json()[0]["id"]
+    with app.state.sessions() as s:
+        g = s.get(Generation, gid)
+        g.status, g.discarded = GenStatus.FAILED, True
+        v = json.loads(g.request_json)["variation"]
+        s.add(Generation(book_id=b["id"], kind=GenKind.CHARACTER, user_text="x", prompt="x",
+                         negative_prompt="old", seed=1, width=8, height=8,
+                         request_json=encode_request(kind=GenKind.CHARACTER, prompt="x",
+                                                     negative_prompt="old", seed=1, width=8, height=8)))
+        s.commit()
+    excluded = []
+    real = books_mod.pick_character_variation
+
+    def spy(rng, exclude=None):
+        excluded.append(exclude)
+        return real(rng, exclude)
+
+    monkeypatch.setattr(books_mod, "pick_character_variation", spy)
+    candidates(client, b["id"])
+    assert excluded == [v]
 
 
 def test_candidates_validate_prompt_length(client, app):
@@ -104,13 +183,11 @@ def test_candidates_validate_prompt_length(client, app):
     assert r.status_code == 202
     assert len(r.json()[0]["prompt"]) < 2000
     assert r.json()[0]["user_text"] == "熊" * 800
-    for bad in ({"count": 0}, {"count": 9}):
-        assert candidates(client, b["id"], **bad).status_code == 422
 
 
 def test_set_character_and_lock(client, app):
     b = new_book(client)
-    gens = candidates(client, b["id"], seed=1, count=2).json()
+    gens = [{"id": i} for i in candidate_ids(client, b["id"], 2, seed=1)]
     run_jobs(client, app)
     done = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gens[0]["id"]})
     assert done.status_code == 200
@@ -127,8 +204,8 @@ def test_set_character_and_lock(client, app):
 def test_set_character_rejects_invalid(client, app):
     b = new_book(client)
     other = new_book(client, title="別本")
-    mine = candidates(client, b["id"], count=3).json()
-    theirs = candidates(client, other["id"], count=1).json()
+    mine = [{"id": i} for i in candidate_ids(client, b["id"], 3)]
+    theirs = candidates(client, other["id"]).json()
     run_jobs(client, app, 4)
     with app.state.sessions() as s:
         s.get(Generation, mine[0]["id"]).status = GenStatus.FAILED
@@ -151,7 +228,7 @@ def test_set_character_is_atomic_under_race(client, app, monkeypatch):
     from app.api import books as books_mod
 
     b = new_book(client)
-    gens = candidates(client, b["id"], seed=1, count=2).json()
+    gens = [{"id": i} for i in candidate_ids(client, b["id"], 2, seed=1)]
     run_jobs(client, app, 2)
     real = books_mod._book_or_404
 
@@ -200,12 +277,10 @@ def test_candidates_blocked_by_racing_set_character(client, app, monkeypatch):
 def test_candidates_seed_range(client):
     b = new_book(client)
     top = 2**32 - 1
-    r = candidates(client, b["id"], seed=top - 3, count=4)
-    assert r.status_code == 202
-    assert [g["seed"] for g in r.json()][-1] == top
-    r = candidates(client, new_book(client)["id"], seed=top - 2, count=4)
-    assert r.status_code == 422 and "seed" in r.json()["detail"]
+    r = candidates(client, b["id"], seed=top)
+    assert r.status_code == 202 and r.json()[0]["seed"] == top
     assert candidates(client, b["id"], seed=top + 1).status_code == 422
+    assert candidates(client, b["id"], seed=-1).status_code == 422
 
 
 def test_candidates_notify_worker(client, app, monkeypatch):
@@ -223,7 +298,7 @@ def test_blank_text_rejected_and_stripped(client, app):
     assert client.patch(f"/api/books/{b['id']}", json={"title": "  "}).status_code == 422
     assert client.patch(f"/api/books/{b['id']}", json={"title": " 新名 "}).json()["title"] == "新名"
     assert candidates(client, b["id"], description="   ").status_code == 422
-    g = candidates(client, b["id"], description="  小熊  ", seed=1, count=1).json()[0]
+    g = candidates(client, b["id"], description="  小熊  ", seed=1).json()[0]
     with app.state.sessions() as s:
         assert s.get(Generation, g["id"]).user_text == "小熊"
 
@@ -232,7 +307,7 @@ def test_set_character_blocked_by_racing_discard(client, app, monkeypatch):
     from app.api import books as books_mod
 
     b = new_book(client)
-    gens = candidates(client, b["id"], seed=1, count=2).json()
+    gens = [{"id": i} for i in candidate_ids(client, b["id"], 2, seed=1)]
     run_jobs(client, app, 2)
     real = books_mod.utcnow
 
@@ -253,7 +328,7 @@ def test_set_character_blocked_by_racing_discard(client, app, monkeypatch):
 
 def test_set_character_cancels_other_queued_candidates(client, app):
     b = new_book(client)
-    gens = candidates(client, b["id"], seed=1, count=4).json()
+    gens = [{"id": i} for i in candidate_ids(client, b["id"], 4, seed=1)]
     run_jobs(client, app, 1)
     r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gens[0]["id"]})
     assert r.status_code == 200
