@@ -8,15 +8,13 @@ import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { ACTION_HINT, ACTIONS, appendPhrase, hasPhrase } from "@/lib/actions";
+import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
+import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import { errMsg } from "./errMsg";
 import { thumbNumber, Thumbs, useThumbList } from "./Thumbs";
 import panel from "./Inspector.module.css";
 import styles from "./ComposeWorkspace.module.css";
 
-export const MAX_SCENE = 800;
-export const MAX_ACTION = 300;
-export const UPLOAD_ACCEPT = "image/png,image/jpeg,image/webp";
-export const UPLOAD_HINT = "線條簡單的插畫效果最好；照片擷取的線稿可能很亂，需要多補線。";
 
 export interface ComposeWorkspaceProps {
   bookId: number;

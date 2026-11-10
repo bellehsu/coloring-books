@@ -51,8 +51,6 @@ export interface LineFixCanvasProps {
    */
   zoom?: number;
   onZoomChange?: (zoom: number) => void;
-  /** 工具列最後面的插槽（Task 9 放「自動補線」按鈕）。 */
-  toolbarExtra?: ReactNode;
   /** 寫入佇列忙碌中：狀態列顯示「更新中…」（橘色圈可能還是舊的）。 */
   pending?: boolean;
   /** 取代狀態列（缺口數／更新中）的內容，以 role="alert" 顯示：例如「修線尚未儲存」＋重試。 */
@@ -130,7 +128,6 @@ export function LineFixCanvas({
   lineWidthPx,
   zoom: zoomProp,
   onZoomChange,
-  toolbarExtra,
   pending = false,
   statusOverride,
 }: LineFixCanvasProps) {
@@ -412,7 +409,6 @@ export function LineFixCanvas({
             <ZoomControls zoom={zoom} onZoomChange={setZoom} />
           </>
         )}
-        {toolbarExtra}
       </div>
 
       <div

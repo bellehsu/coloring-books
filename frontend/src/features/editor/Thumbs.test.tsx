@@ -133,7 +133,10 @@ describe("Thumbs", () => {
     const bar = screen.getByRole("progressbar", { name: "生成進度" });
     expect(bar).toHaveAttribute("aria-valuenow", "3");
     expect(bar).toHaveAttribute("aria-valuemax", "8");
-    expect(screen.getByText("失敗")).toHaveAttribute("title", "ComfyUI 沒有回應");
+    const fail = screen.getByText((_, el) => el?.getAttribute("title") === "ComfyUI 沒有回應");
+    // 原因不只在 title：螢幕閱讀器也讀得到
+    expect(fail).toHaveTextContent("失敗：ComfyUI 沒有回應");
+    expect(within(fail).getByText("：ComfyUI 沒有回應")).toHaveClass(/srOnly/);
     expect(screen.getByText("已取消")).toBeInTheDocument();
     expect(screen.queryAllByRole("radio")).toHaveLength(0);
     await userEvent.click(screen.getByRole("button", { name: "取消背景第 1 張" }));
@@ -164,11 +167,18 @@ describe("Thumbs", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("正被頁面使用或作為角色");
   });
 
-  it("選用進行中：其他張停用", async () => {
+  it("選用進行中：其他張 aria-disabled、點了不選；不用 disabled，鍵盤焦點留在原地", async () => {
     gens = [gen(3), gen(5)];
-    setup({ selectedId: 5, picking: true });
-    expect(await screen.findByRole("radio", { name: "背景第 1 張" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "背景第 2 張" })).not.toBeDisabled();
+    const { onPick } = setup({ selectedId: 5, picking: true });
+    const other = await screen.findByRole("radio", { name: "背景第 1 張" });
+    expect(other).toHaveAttribute("aria-disabled", "true");
+    expect(other).not.toBeDisabled();
+    expect(screen.getByRole("radio", { name: "背景第 2 張" })).not.toHaveAttribute("aria-disabled");
+    other.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(other);
+    expect(onPick).not.toHaveBeenCalled();
+    expect(other).toHaveFocus();
   });
 
   it("方向鍵在縮圖間移動焦點（只有一張可 Tab 進入）；Enter 選用", async () => {

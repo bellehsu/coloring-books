@@ -1,6 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import { createBook, createPage, getGenerations, getPages, grayPng, uniqueTitle } from "./seed";
+import {
+  createBook,
+  createPage,
+  getGenerations,
+  getPages,
+  grayPng,
+  ok,
+  setCharacter,
+  uniqueTitle,
+  uploadBackground,
+  type Generation,
+} from "./seed";
 
 const COMPOSE = /\/api\/pages\/\d+\/compose$/;
 const PLACEMENT = /\/api\/pages\/\d+\/placement$/;
@@ -136,6 +147,59 @@ test("構圖上傳背景圖：4000×800 的寬圖裁成頁面比例，縮圖有�
   expect(pg.background_generation_id).not.toBeNull();
   const [gen] = await getGenerations(request, book.id, "background");
   expect(gen.source).toBe("upload");
+});
+
+test("產生全部素材後馬上打開頁面：素材完成時舞台自動填上並合成，不用重新整理", async ({ page, request }) => {
+  const book = await createBook(request, uniqueTitle("e2e 先開頁面"));
+  await setCharacter(request, book.id);
+  const p = await createPage(request, book.id, "陽光公園", "揮手");
+  // 先在另一本書排幾張角色圖（假後端每張 0.3 秒，worker 依序做）：保證頁面打開時素材還沒好
+  const blocker = await createBook(request, uniqueTitle("e2e 排隊用"));
+  for (let i = 0; i < 8; i++) {
+    await ok(await request.post(`/api/books/${blocker.id}/character/candidates`, { data: { description: "一隻圓圓的小貓" } }));
+  }
+  await page.goto(`/books/${book.id}/story`);
+  const batched = page.waitForResponse((r) => r.url().endsWith(`/api/books/${book.id}/materials/batch`));
+  await page.getByRole("button", { name: "產生全部素材（還有 2 張）" }).click();
+  expect((await batched).status()).toBe(202);
+
+  await page.goto(`/books/${book.id}/editor?page=${p.id}`);
+  await expect(page.getByText("背景與角色動作產生中…")).toBeVisible();
+  // worker 完成後自動選用：編輯器自己重抓頁面 → 舞台出現 → 自動合成
+  const status = page.getByRole("status").filter({ hasText: /線稿已自動更新|更新中/ });
+  await expect(status).toHaveText("✓ 線稿已自動更新", { timeout: 20_000 });
+  await expect(page.getByRole("group", { name: "角色位置" })).toHaveAttribute("data-ready", "true");
+  const [pg] = await getPages(request, book.id);
+  expect(pg.selected_generation_id).not.toBeNull();
+});
+
+test("上傳背景圖一路做到補線：角色動作自動選用 → 上傳 → 自動合成 → ② 補線完成面板", async ({ page, request }) => {
+  const book = await createBook(request, uniqueTitle("e2e 上傳到補線"));
+  await setCharacter(request, book.id);
+  const p = await createPage(request, book.id, "", "揮手");
+  const pose = await ok<Generation>(await request.post(`/api/pages/${p.id}/poses`, { data: { action: "揮手" } }));
+  await expect
+    .poll(async () => (await getPages(request, book.id)).find((x) => x.id === p.id)?.pose_generation_id, { timeout: 20_000 })
+    .toBe(pose.id);
+  const uploaded = await uploadBackground(request, p.id);
+  expect(uploaded.background_generation_id).not.toBeNull();
+  expect(uploaded.pose_generation_id).toBe(pose.id);
+
+  await page.goto(`/books/${book.id}/editor?page=${p.id}`);
+  const thumbs = page.getByRole("radiogroup", { name: "選擇背景" });
+  await expect(thumbs.getByRole("radio", { name: "背景第 1 張（上傳的圖片）" })).toHaveAttribute("aria-checked", "true");
+  const status = page.getByRole("status").filter({ hasText: /線稿已自動更新|更新中/ });
+  await expect(status).toHaveText("✓ 線稿已自動更新");
+  const [pg] = await getPages(request, book.id);
+  expect(pg.selected_generation_id).not.toBeNull();
+
+  await page.getByRole("button", { name: "下一步：補線 →" }).click();
+  await expect(page.getByRole("tab", { name: /^② 補線/ })).toHaveAttribute("aria-selected", "true");
+  const finish = page.getByTestId("finish-panel");
+  await expect(finish).toBeVisible();
+  await expect(finish.getByText("角色看起來對嗎？")).toBeVisible();
+  await expect(finish.getByRole("button", { name: "完成這一頁 ✓" })).toBeVisible();
+  await expect(page.getByRole("toolbar", { name: "修線工具" })).toBeVisible();
 });
 
 test("沒設角色：角色動作「換一張」停用；前端資料過期時，後端的 409 訊息照樣顯示", async ({ page, request }) => {

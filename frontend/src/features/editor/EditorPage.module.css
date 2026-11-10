@@ -87,13 +87,6 @@
   color: var(--muted);
   text-align: center;
 }
-.placeholder {
-  padding: 24px;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--muted-2);
-  font-size: 14px;
-}
 
 @media (max-width: 1180px) {
   .ws {

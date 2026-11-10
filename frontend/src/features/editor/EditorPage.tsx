@@ -14,6 +14,7 @@ import {
   useEdits,
   useGenerations,
   usePages,
+  usePagesFollowJobs,
   useQA,
   useReorderPages,
   useSelectBackground,
@@ -77,17 +78,17 @@ type PagePatch = Partial<Pick<Page, "line_detail" | "line_width_px">>;
 
 interface AutoComposeDeps {
   compose: (pageId: number) => Promise<void>;
-  hasLineEdits: (pageId: number) => boolean;
+  lineEdits: (pageId: number) => string | null;
   /** 要問這頁「清掉補過的線？」，回傳使用者的選擇（等到那頁在畫面上才問）。 */
   ask: (pageId: number) => Promise<boolean>;
 }
 
 /** 編輯器的 autoCompose：只建立一次（計時跨 render 與換頁），回呼由 effect 換成最新 render 的版本。 */
 function createEditorAutoCompose() {
-  let deps: AutoComposeDeps = { compose: async () => {}, hasLineEdits: () => true, ask: async () => false };
+  let deps: AutoComposeDeps = { compose: async () => {}, lineEdits: () => "?", ask: async () => false };
   const ac = createAutoCompose({
     compose: (pageId) => deps.compose(pageId),
-    hasLineEdits: (pageId) => deps.hasLineEdits(pageId),
+    lineEdits: (pageId) => deps.lineEdits(pageId),
     confirm: (pageId) => deps.ask(pageId),
   });
   return { ac, setDeps: (d: AutoComposeDeps) => void (deps = d) };
@@ -113,6 +114,8 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const book = useBook(bookId);
   const pagesQ = usePages(bookId);
   const bookGens = useGenerations(bookId);
+  // 背景／角色動作完成時 worker 會自動選用：跟著重抓頁面，舞台才會填上並自動合成
+  usePagesFollowJobs(bookId, bookGens.data);
   const hasCharacter = book.data?.character_generation_id != null;
 
   // ---------- 目前頁與模式：本機狀態為準（立即反應），寫回網址；網址被外部改變時跟著改 ----------
@@ -196,8 +199,18 @@ export function EditorPage({ bookId }: { bookId: number }) {
   }, [qc]);
 
   const [zoom, setZoom] = useState(1);
-  /** 改選背景／角色動作或合成前，正在等舊選圖的修線寫入（縮圖暫時不能點）。 */
-  const [flushingSelect, setFlushingSelect] = useState(false);
+  /** 改選背景／角色動作或合成前，正在等舊選圖修線寫入的頁（頁 id → 進行中的次數；那頁的縮圖暫時不能點）。 */
+  const [flushing, setFlushing] = useState<ReadonlyMap<number, number>>(() => new Map());
+  const bumpFlushing = (pageId: number, d: 1 | -1) =>
+    setFlushing((m) => {
+      const next = new Map(m);
+      const n = (next.get(pageId) ?? 0) + d;
+      if (n > 0) next.set(pageId, n);
+      else next.delete(pageId);
+      return next;
+    });
+  /** 刪除請求已送出、還沒回來的頁：這期間回來的合成錯誤（404）不提示。 */
+  const deleting = useRef(new Set<number>());
   /** 非同步流程結束時用來判斷使用者是否已換頁。 */
   const currentIdRef = useRef<number | null>(null);
   useEffect(() => {
@@ -212,13 +225,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
     const sel = page.selected_generation_id;
     const pendingEdits = sel != null ? peekEditsQueue(qc, page.id, sel) : undefined;
     if (!pendingEdits?.busy()) return;
-    setFlushingSelect(true);
+    bumpFlushing(page.id, 1);
     try {
       await pendingEdits.flush();
     } catch {
       /* 失敗已提示過 */
     } finally {
-      setFlushingSelect(false);
+      bumpFlushing(page.id, -1);
     }
   };
 
@@ -231,19 +244,26 @@ export function EditorPage({ bookId }: { bookId: number }) {
     try {
       await compose.mutateAsync({ pageId });
     } catch (e) {
-      // 位置寫入失敗有自己的持續提示（位置尚未儲存＋重試），不再多跳 toast
-      if (!placementSaver.failed(pageId)) toast.show(errMsg(e, "無法合成"), "error");
+      // 位置寫入失敗有自己的持續提示（位置尚未儲存＋重試），不再多跳 toast；
+      // 頁面已刪除或正在刪除：合成回來的 404 是預期的，不提示
+      const gone = placementSaver.isGone(pageId) || deleting.current.has(pageId);
+      if (!placementSaver.failed(pageId) && !gone) toast.show(errMsg(e, "無法合成"), "error");
       throw e;
     }
   };
-  /** 這頁目前的選定圖有沒有補過的線；還不知道（修線圖層還沒載入）就當作有，寧可多問一次。 */
-  const hasLineEdits = (pageId: number) => {
+  /**
+   * 這頁目前選定圖上補過的線的記號（「選圖 id:筆數」）；沒有補線回 null。
+   * 還不知道（修線圖層還沒載入）就回「選圖 id:?」，當作有，寧可多問一次。
+   * 自動合成的同意只對問的當時那份補線有效：合成失敗後又補了線，筆數變了就再問。
+   */
+  const lineEditsOf = (pageId: number): string | null => {
     const sel = pageOf(pageId)?.selected_generation_id;
-    if (sel == null) return false;
+    if (sel == null) return null;
     const local = peekEditsQueue(qc, pageId, sel)?.latest;
-    if (local) return local.length > 0;
     const data = qc.getQueryData<Edits>(qk.edits(pageId));
-    return data?.generation_id === sel ? data.strokes.length > 0 : true;
+    const count = local ? local.length : data?.generation_id === sel ? data.strokes.length : null;
+    if (count === 0) return null;
+    return `${sel}:${count ?? "?"}`;
   };
   /**
    * 等著問「清掉補過的線？」的頁 → 回覆給 autoCompose 的函式。每頁同時最多一個（每頁一次只跑一個合成）。
@@ -255,7 +275,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   useEffect(() => {
     auto.setDeps({
       compose: composeNow,
-      hasLineEdits,
+      lineEdits: lineEditsOf,
       ask: (pageId) => new Promise<boolean>((resolve) => setLossAsks((m) => new Map(m).set(pageId, resolve))),
     });
   });
@@ -306,10 +326,10 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const autoDone = useRef(new Set<string>());
   useEffect(() => {
     if (!autoKey || !current || autoDone.current.has(autoKey)) return;
-    if (autoCompose.status(current.id) !== "idle" || hasLineEdits(current.id)) return;
+    if (autoCompose.status(current.id) !== "idle" || lineEditsOf(current.id) != null) return;
     autoDone.current.add(autoKey);
     autoCompose.schedule(current.id);
-    // hasLineEdits 讀快取：修線圖層載入後要再判斷一次
+    // lineEditsOf 讀快取：修線圖層載入後要再判斷一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoKey, autoCompose, editsQ.data]);
   const [exportOpen, setExportOpen] = useState(false);
@@ -369,11 +389,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
     const neighbor = pages[i + 1] ?? pages[i - 1];
     autoCompose.forget(id); // 還在等的自動合成不送
     settleAsk(id, false);
+    deleting.current.add(id);
     // 先切到相鄰頁（樂觀），避免刪除完成前後閃到別頁；失敗就留在相鄰頁並提示
     if (id === current?.id && neighbor) selectPage(neighbor.id);
     deletePage.mutate(id, {
       onSuccess: () => forgetDeletedPage(qc, id),
       onError: (e) => toast.show(errMsg(e, "無法刪除頁面"), "error"),
+      onSettled: () => deleting.current.delete(id),
     });
   };
 
@@ -383,7 +405,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
       throw e;
     });
 
-  const picking = selectBg.isPending || selectPose.isPending || flushingSelect;
+  const picking = selectBg.isPending || selectPose.isPending || flushing.has(current?.id ?? -1);
 
   /**
    * 縮圖選用：背景 → POST /background、角色動作 → POST /pose。合成圖只能經由合成產生。
@@ -587,7 +609,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
         book={b}
         page={current}
         qa={qa}
-        generation={selectedGen}
         onPatch={(body) => patchPage(current.id, body)}
         onGoCompose={() => go(current.id, "compose")}
       />
@@ -625,7 +646,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           {stage}
         </div>
       </section>
-      <Inspector title={`第 ${index + 1} 頁進度`} items={items}>
+      <Inspector title={`第 ${index + 1} 頁進度`} items={items} checklistLast={phone}>
         {panel}
       </Inspector>
     </div>,

@@ -43,7 +43,7 @@ export interface ThumbsProps {
 
 /**
  * 構圖卡片裡的縮圖列（單選）：這頁這個種類的 generations，舊的在前。
- * 成功的是選項（方向鍵移動焦點、Enter／空白鍵選用）；排隊中／生成中顯示進度與取消 ×；
+ * 成功的是選項（方向鍵移動焦點、Enter／空白鍵選用；選用中其他張 aria-disabled）；排隊中／生成中顯示進度與取消 ×；
  * 沒在用的（含失敗、已取消）可以捨棄 ×。使用中的不能捨棄（後端 409）。上傳的背景有「上傳」標記。
  */
 export function Thumbs({ bookId, kind, pageId, selectedId, onPick, picking }: ThumbsProps) {
@@ -111,8 +111,9 @@ export function Thumbs({ bookId, kind, pageId, selectedId, onPick, picking }: Th
                 aria-label={upload ? `${label}（上傳的圖片）` : label}
                 tabIndex={g.id === tabStop ? 0 : -1}
                 className={styles.pick}
-                disabled={picking && !on}
-                onClick={on ? undefined : () => onPick(g)}
+                // 不用 disabled：用鍵盤選用時焦點會因按鈕停用而掉到 body
+                aria-disabled={picking && !on ? true : undefined}
+                onClick={on || picking ? undefined : () => onPick(g)}
                 onKeyDown={(e) => onKeyDown(e, g.id)}
               >
                 <span className={styles.thumb} style={aspect ? { aspectRatio: aspect } : undefined} data-aspect={aspect}>
@@ -146,7 +147,7 @@ export function Thumbs({ bookId, kind, pageId, selectedId, onPick, picking }: Th
   );
 }
 
-/** 不能選的那幾種：排隊中、生成中（進度）、失敗（原因在 title）、已取消、成功但沒有圖。 */
+/** 不能選的那幾種：排隊中、生成中（進度）、失敗（原因在 title，螢幕閱讀器另外讀出）、已取消、成功但沒有圖。 */
 function Placeholder({ g, aspect }: { g: Generation; aspect: string | undefined }) {
   const running = g.status === "running" || g.queue_position === 0;
   const pct = g.progress && g.progress[1] > 0 ? Math.min(100, (g.progress[0] / g.progress[1]) * 100) : 0;
@@ -174,7 +175,7 @@ function Placeholder({ g, aspect }: { g: Generation; aspect: string | undefined 
   } else if (g.status === "failed") {
     body = (
       <span className={styles.fail} title={g.error || "生成失敗"}>
-        失敗
+        失敗<span className={styles.srOnly}>：{g.error || "生成失敗"}</span>
       </span>
     );
   } else if (g.status === "cancelled") {

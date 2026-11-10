@@ -21,7 +21,7 @@
   width: 100%;
   padding: 0;
   border: 2px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--chip-bg);
   overflow: hidden;
   cursor: pointer;
@@ -31,12 +31,12 @@
   box-shadow: 0 0 0 3px var(--accent-soft);
   cursor: default;
 }
-.pick:disabled {
+.pick[aria-disabled="true"] {
   cursor: progress;
   opacity: 0.6;
 }
 .pick:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .thumb {
@@ -56,7 +56,7 @@
 .wait {
   box-sizing: border-box;
   border: 1px dashed var(--step-line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   display: flex;
   flex-direction: column;
@@ -121,4 +121,13 @@
 .x:hover {
   background: var(--chip-bg);
   color: var(--ink);
+}
+/* 只給螢幕閱讀器：失敗原因（畫面上在 title） */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }

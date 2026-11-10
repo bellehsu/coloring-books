@@ -50,10 +50,6 @@
   outline: 3px solid var(--focus);
   outline-offset: 0;
 }
-.box[aria-disabled="true"] {
-  cursor: default;
-  outline-color: var(--muted-3);
-}
 .cutout {
   display: block;
   width: 100%;
@@ -82,10 +78,6 @@
   position: absolute;
   inset: -12px;
   border-radius: 50%;
-}
-.handle[data-disabled="true"] {
-  cursor: default;
-  border-color: var(--muted-3);
 }
 .loading {
   position: absolute;

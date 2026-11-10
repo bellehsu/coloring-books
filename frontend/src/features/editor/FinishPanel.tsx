@@ -2,7 +2,7 @@
 
 import { useId, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, type Book, type Generation, type Page, type QA } from "@/api/client";
+import { ApiError, type Book, type Page, type QA } from "@/api/client";
 import { qk, useAutofix, useCharacterCheck, usePass, useUnpass } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -33,8 +33,6 @@ export interface FinishPanelProps {
   page: Page;
   /** 本頁 QA；載入中為 undefined。 */
   qa: QA | undefined;
-  /** 目前選定的 generation；找不到為 undefined。 */
-  generation: Generation | undefined;
   /** PATCH 本頁的線條設定；失敗時呼叫端顯示 toast 並 reject。 */
   onPatch: (body: LinePatch) => Promise<unknown>;
   /** 角色「不太像，換一張」記錄後切到 ① 構圖。 */

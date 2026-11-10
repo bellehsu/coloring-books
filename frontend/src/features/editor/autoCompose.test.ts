@@ -6,9 +6,9 @@ afterEach(() => vi.useRealTimers());
 
 function make(o: Partial<AutoComposeOptions> = {}) {
   const compose = vi.fn<(pageId: number) => Promise<void>>(async () => {});
-  const hasLineEdits = vi.fn<(pageId: number) => boolean>(() => false);
+  const lineEdits = vi.fn<(pageId: number) => string | null>(() => null);
   const confirm = vi.fn(async () => true);
-  const ac = createAutoCompose({ delayMs: 600, compose, hasLineEdits, confirm, ...o });
+  const ac = createAutoCompose({ delayMs: 600, compose, lineEdits, confirm, ...o });
   return {
     ac,
     compose: (o.compose ?? compose) as Mock<(pageId: number) => Promise<void>>,
@@ -73,7 +73,7 @@ describe("createAutoCompose", () => {
   it("asks once when line edits exist; cancel skips compose", async () => {
     const answers = [false, true];
     const confirm = vi.fn(async () => answers.shift()!);
-    const { ac, compose } = make({ hasLineEdits: () => true, confirm });
+    const { ac, compose } = make({ lineEdits: () => "e", confirm });
     // 取消：不合成，回到 idle（沒有錯誤）
     ac.schedule(1);
     await vi.advanceTimersByTimeAsync(600);
@@ -95,7 +95,7 @@ describe("createAutoCompose", () => {
     const compose = vi.fn(async () => {
       edited = false; // 新的合成圖還沒有補過的線
     });
-    const { ac } = make({ hasLineEdits: () => edited, confirm, compose });
+    const { ac } = make({ lineEdits: () => (edited ? "e" : null), confirm, compose });
     ac.schedule(1);
     await vi.advanceTimersByTimeAsync(600);
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -117,7 +117,7 @@ describe("createAutoCompose", () => {
   it("consent survives a failed compose: the retry does not ask again", async () => {
     const confirm = vi.fn(async () => true);
     const compose = vi.fn().mockRejectedValueOnce(new Error("409")).mockResolvedValue(undefined);
-    const { ac } = make({ hasLineEdits: () => true, confirm, compose });
+    const { ac } = make({ lineEdits: () => "e", confirm, compose });
     ac.schedule(1);
     await vi.advanceTimersByTimeAsync(600);
     expect(ac.status(1)).toBe("error");
@@ -126,8 +126,30 @@ describe("createAutoCompose", () => {
     expect(confirm).toHaveBeenCalledTimes(1);
   });
 
+  it("consent is for the edits it was given for: fail → draw more → retry asks again", async () => {
+    let token = "7:2";
+    const confirm = vi.fn(async () => true);
+    const compose = vi.fn().mockRejectedValueOnce(new Error("500")).mockResolvedValue(undefined);
+    const { ac } = make({ lineEdits: () => token, confirm, compose });
+    ac.schedule(1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(ac.status(1)).toBe("error");
+    expect(confirm).toHaveBeenCalledTimes(1);
+    // 合成失敗後又在同一張舊合成圖上補了線：重試前要再問，取消就不合成
+    token = "7:3";
+    confirm.mockResolvedValueOnce(false);
+    await ac.flush(1);
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(compose).toHaveBeenCalledTimes(1);
+    // 移動後再合成：還是同一份補線，要再問；同意後合成
+    ac.schedule(1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(confirm).toHaveBeenCalledTimes(3);
+    expect(compose).toHaveBeenCalledTimes(2);
+  });
+
   it("no line edits → never asks; the other page still asks for its own edits", async () => {
-    const { ac, compose, confirm } = make({ hasLineEdits: (id) => id === 2 });
+    const { ac, compose, confirm } = make({ lineEdits: (id) => (id === 2 ? "e" : null) });
     ac.schedule(1);
     await vi.advanceTimersByTimeAsync(600);
     expect(confirm).not.toHaveBeenCalled();
@@ -140,7 +162,7 @@ describe("createAutoCompose", () => {
 
   it("while the confirmation is open the status is running", async () => {
     const answer = deferred<boolean>();
-    const { ac, compose } = make({ hasLineEdits: () => true, confirm: () => answer.promise });
+    const { ac, compose } = make({ lineEdits: () => "e", confirm: () => answer.promise });
     ac.schedule(1);
     await vi.advanceTimersByTimeAsync(600);
     expect(ac.status(1)).toBe("running");
@@ -257,9 +279,9 @@ describe("createAutoCompose", () => {
   });
 
   it("forget cancels this page only and clears its consent", async () => {
-    const hasLineEdits = () => true;
+    const lineEdits = () => "e";
     const confirm = vi.fn(async () => true);
-    const { ac, compose } = make({ hasLineEdits, confirm });
+    const { ac, compose } = make({ lineEdits, confirm });
     ac.schedule(1);
     await vi.advanceTimersByTimeAsync(600);
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -277,7 +299,7 @@ describe("createAutoCompose", () => {
 
   it("default delay is 600 ms", async () => {
     const compose = vi.fn(async () => {});
-    const ac = createAutoCompose({ compose, hasLineEdits: () => false, confirm: async () => true });
+    const ac = createAutoCompose({ compose, lineEdits: () => null, confirm: async () => true });
     ac.schedule(1);
     await vi.advanceTimersByTimeAsync(599);
     expect(compose).not.toHaveBeenCalled();

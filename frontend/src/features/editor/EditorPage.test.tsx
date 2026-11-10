@@ -21,7 +21,6 @@ type LineProps = {
   lineartUrl: string;
   strokes: unknown[];
   onChange: (s: unknown[]) => void;
-  toolbarExtra?: React.ReactNode;
   zoom?: number;
   pending?: boolean;
   gaps: unknown[];
@@ -39,7 +38,6 @@ vi.mock("./LineFixCanvas", async (orig) => {
         >
           stub-draw
         </button>
-        {p.toolbarExtra}
         {p.statusOverride ?? <p role="status">{p.gaps.length} 個缺口</p>}
       </div>
     ),
@@ -1084,6 +1082,92 @@ describe("EditorPage", () => {
     const order = calls.map((c) => `${c.method} ${c.url}`);
     expect(order.indexOf("PUT /api/pages/1/lineart/edits")).toBeLessThan(order.indexOf("POST /api/pages/1/backgrounds/upload"));
   });
+
+  it("第 1 頁等修線寫入時換到第 2 頁：第 2 頁的縮圖照常可選（等待狀態是每頁各自的）", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5), mkGen(6, { kind: "background" }), mkGen(7, { kind: "background", page_id: 2 })];
+    let release!: () => void;
+    gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await userEvent.click(composeTab());
+    await userEvent.click(await within(bgCard()).findByRole("radio", { name: "背景第 1 張" }));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(0);
+    await userEvent.click(pageButton(2));
+    const pick2 = await within(bgCard()).findByRole("radio", { name: "背景第 1 張" });
+    await waitFor(() => expect(pick2).not.toHaveAttribute("aria-disabled"));
+    await userEvent.click(pick2);
+    await waitFor(() => expect(calledWith("POST", "/api/pages/2/background")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(0);
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(1));
+  });
+
+  it("合成進行中刪除那頁：合成回來的 404 不跳「無法合成」", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    let releaseCompose!: () => void;
+    gate["POST /api/pages/1/compose"] = new Promise<void>((r) => (releaseCompose = r));
+    gate["DELETE /api/pages/1"] = new Promise<void>(() => {}); // 刪除還沒回來
+    failWith["POST /api/pages/1/compose"] = 404;
+    setup();
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await userEvent.click(screen.getByRole("button", { name: "第 1 頁的更多動作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "刪除…" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "刪除" }));
+    await waitFor(() => expect(calledWith("DELETE", "/api/pages/1")).toHaveLength(1));
+    await act(async () => releaseCompose());
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByText("伺服器壞了")).not.toBeInTheDocument();
+    expect(screen.queryByText(/無法合成/)).not.toBeInTheDocument();
+  });
+
+  it("合成失敗後又在舊合成圖上補線：重試前再問一次", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    edits = [{ op: "draw", width_px: 11, points: [[0.5, 0.5]] }];
+    failWith["POST /api/pages/1/compose"] = 500;
+    setup();
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    const ask = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
+    await userEvent.click(within(ask).getByRole("button", { name: "繼續" }));
+    const retry = await within(screen.getByTestId("compose-stage")).findByRole("button", { name: "更新失敗，重試" }, { timeout: 2000 });
+    // 在同一張舊合成圖上多補一筆
+    edits = [...edits, { op: "draw", width_px: 11, points: [[0.4, 0.4]] }];
+    await act(async () => {
+      await lastQc.invalidateQueries({ queryKey: qk.edits(1) });
+    });
+    delete failWith["POST /api/pages/1/compose"];
+    await userEvent.click(retry);
+    const again = await screen.findByRole("dialog", { name: "清掉補過的線？" });
+    await userEvent.click(within(again).getByRole("button", { name: "取消" }));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1);
+  });
+
+  it("開著編輯器時素材才完成（worker 自動選用）：不用重新整理，舞台填上並自動合成", async () => {
+    gens = [
+      mkGen(3, { kind: "background", status: "queued", image_url: null, queue_position: 0 }),
+      mkGen(4, { kind: "pose", status: "queued", image_url: null, queue_position: 1 }),
+    ];
+    setup();
+    expect(await screen.findByText("背景與角色動作產生中…")).toBeInTheDocument();
+    // worker 完成兩張並自動選用（後端改了 pages，前端沒有任何寫入）
+    const { o, g } = composedReady();
+    gens = g;
+    pages[0] = mkPage(1, { ...o, compose_pending: true });
+    await waitFor(() => expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-bg", "/img/3.png"), {
+      timeout: 4000,
+    });
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    expect(await within(screen.getByTestId("compose-stage")).findByText("✓ 線稿已自動更新")).toBeInTheDocument();
+  }, 10000);
 
   it("網址晚到：忽略我們較早寫的網址；外部改變才跟著改", async () => {
     setup();

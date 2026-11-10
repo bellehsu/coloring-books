@@ -4,9 +4,9 @@
  *
  * - 每頁各自計時：在第 2 頁拖完馬上換到第 3 頁，第 2 頁照樣合成，第 3 頁不受影響。
  * - 同一頁一次只跑一個合成；跑的時候又有變化 → 跑完再合成一次（位置以最後存的為準）。
- * - 這頁的選定圖有補過的線（hasLineEdits）時，合成前先問（confirm(pageId)）；取消就不合成、回到 idle，
- *   下次有變化再問。同意只算那一張合成圖：合成成功後就失效，之後在新合成圖上補的線，下次移動前會再問。
- *   合成失敗時同意還在（重試不再問）。
+ * - 這頁的選定圖有補過的線（lineEdits 回傳記號）時，合成前先問（confirm(pageId)）；取消就不合成、回到 idle，
+ *   下次有變化再問。同意只算問的當時那份補線（記號）：合成成功後就失效，之後在新合成圖上補的線，下次移動前會再問；
+ *   合成失敗時，補線沒變就不再問（重試），失敗後又補了線（記號不同）就再問一次。
  * - 合成失敗停在 error，不自動重試；flush（「更新失敗，重試」）或下一次 schedule 再試。
  */
 export type AutoComposeStatus = "idle" | "pending" | "running" | "error";
@@ -16,8 +16,11 @@ export interface AutoComposeOptions {
   delayMs?: number;
   /** 合成這一頁（等位置寫完 → POST compose）。reject = 失敗。 */
   compose: (pageId: number) => Promise<void>;
-  /** 這頁目前的選定圖有沒有補過的線（合成會換掉選定圖，補的線跟著不見）。 */
-  hasLineEdits: (pageId: number) => boolean;
+  /**
+   * 這頁目前選定圖上補過的線的記號（合成會換掉選定圖，補的線跟著不見）；沒有補線回 null。
+   * 補線一變（多畫一筆、換選圖）記號就要不同：同意只對問的當時那份補線有效。
+   */
+  lineEdits: (pageId: number) => string | null;
   /** 問使用者要不要清掉這頁補過的線；true = 繼續。 */
   confirm: (pageId: number) => Promise<boolean>;
 }
@@ -45,11 +48,11 @@ interface PageState {
   /** 合成中又有到期的變化：跑完再合成一次。 */
   again: boolean;
   error: boolean;
-  /** 使用者已同意清掉這頁目前選定圖上補過的線（合成成功後失效）。 */
-  confirmed: boolean;
+  /** 使用者同意清掉的那份補線的記號（合成成功後失效）。 */
+  confirmed: string | null;
 }
 
-export function createAutoCompose({ delayMs = 600, compose, hasLineEdits, confirm }: AutoComposeOptions): AutoCompose {
+export function createAutoCompose({ delayMs = 600, compose, lineEdits, confirm }: AutoComposeOptions): AutoCompose {
   const pages = new Map<number, PageState>();
   const listeners = new Set<() => void>();
   let active = true;
@@ -58,7 +61,7 @@ export function createAutoCompose({ delayMs = 600, compose, hasLineEdits, confir
   const stateOf = (pageId: number): PageState => {
     let s = pages.get(pageId);
     if (!s) {
-      s = { timer: null, running: null, again: false, error: false, confirmed: false };
+      s = { timer: null, running: null, again: false, error: false, confirmed: null };
       pages.set(pageId, s);
     }
     return s;
@@ -71,14 +74,15 @@ export function createAutoCompose({ delayMs = 600, compose, hasLineEdits, confir
 
   /** 一次合成（必要時先問）。 */
   const once = async (pageId: number, s: PageState) => {
-    if (!s.confirmed && hasLineEdits(pageId)) {
+    const edits = lineEdits(pageId);
+    if (edits != null && edits !== s.confirmed) {
       if (!(await confirm(pageId))) return; // 取消：不合成、不算失敗
-      s.confirmed = true;
+      s.confirmed = edits;
     }
     try {
       await compose(pageId);
       s.error = false;
-      s.confirmed = false; // 選定圖換成新的合成圖：之後補的線要再問
+      s.confirmed = null; // 選定圖換成新的合成圖：之後補的線要再問
     } catch {
       s.error = true;
     }

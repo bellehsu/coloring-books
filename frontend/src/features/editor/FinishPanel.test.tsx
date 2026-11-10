@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Book, Generation, Page, QA } from "@/api/client";
+import type { Book, Page, QA } from "@/api/client";
 import { ToastProvider } from "@/components/ui/Toast";
 import { editsQueueFor } from "./editsQueue";
 import { FinishPanel, type FinishPanelProps } from "./FinishPanel";
@@ -21,7 +21,6 @@ const mkPage = (o: O = {}) =>
     lineart_url: "/api/pages/7/lineart?v=k1",
     ...o,
   }) as unknown as Page;
-const gen = { id: 5, image_url: "/img/5.png" } as unknown as Generation;
 const msg = (code: string, message: string) => ({ code, message });
 const mkQA = (o: O = {}) =>
   ({
@@ -70,7 +69,6 @@ function setup(page: Page, qa: QA | undefined, over: Partial<FinishPanelProps> =
     book,
     page,
     qa,
-    generation: gen,
     onPatch: vi.fn(async () => ({})),
     onGoCompose: vi.fn(),
     ...over,

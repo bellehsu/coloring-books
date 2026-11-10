@@ -114,14 +114,11 @@
     border-top: 1px solid var(--line);
   }
 }
-/* 手機：舞台下方先接構圖卡片與「下一步」，本頁進度移到最後 */
+/* 手機：本頁進度移到最後由 Inspector 的 checklistLast 決定（DOM 順序，不用 CSS order） */
 @media (max-width: 640px) {
   .insp {
     padding: 14px 16px 20px;
     gap: 14px;
-  }
-  .insp > :first-child {
-    order: 1;
   }
 }
 .presets {
