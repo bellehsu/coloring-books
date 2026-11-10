@@ -841,6 +841,27 @@ describe("EditorPage", () => {
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/background")).toHaveLength(1));
   });
 
+  it("上傳背景圖前先等修線寫入完成（補線→構圖→上傳）", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    let release!: () => void;
+    gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await userEvent.click(composeTab());
+    const input = within(await screen.findByRole("region", { name: "背景" })).getByLabelText("上傳背景圖");
+    await userEvent.upload(input, new File(["png"], "mine.png", { type: "image/png" }));
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(0);
+    // 等修線期間不能再上傳或點縮圖
+    expect(within(bgCard()).getByLabelText(/上傳背景圖|上傳中/)).toBeDisabled();
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(1));
+    const order = calls.map((c) => `${c.method} ${c.url}`);
+    expect(order.indexOf("PUT /api/pages/1/lineart/edits")).toBeLessThan(order.indexOf("POST /api/pages/1/backgrounds/upload"));
+  });
+
   it("網址晚到：忽略我們較早寫的網址；外部改變才跟著改", async () => {
     setup();
     await screen.findByText("第 1 頁進度");

@@ -111,7 +111,9 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function setup(o: { page?: Page; background?: Generation; pose?: Generation; picking?: boolean } = {}) {
+function setup(
+  o: { page?: Page; background?: Generation; pose?: Generation; picking?: boolean; beforeReplaceBackground?: () => Promise<void> } = {},
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onPickBackground = vi.fn();
   const onPickPose = vi.fn();
@@ -126,6 +128,7 @@ function setup(o: { page?: Page; background?: Generation; pose?: Generation; pic
           onPickBackground={onPickBackground}
           onPickPose={onPickPose}
           picking={o.picking}
+          beforeReplaceBackground={o.beforeReplaceBackground}
         />
       </ToastProvider>
     </QueryClientProvider>,
@@ -182,6 +185,26 @@ describe("ComposeWorkspace", () => {
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(1));
     const form = calledWith("POST", "/api/pages/1/backgrounds/upload")[0].body as FormData;
     expect((form.get("file") as File).name).toBe("my.png");
+  });
+
+  it("上傳前先等 beforeReplaceBackground（呼叫端等修線寫完）；等待與上傳期間停用", async () => {
+    let release!: () => void;
+    const before = vi.fn(() => new Promise<void>((r) => (release = r)));
+    setup({ beforeReplaceBackground: before });
+    const input = within(card("背景")).getByLabelText("上傳背景圖");
+    await userEvent.upload(input, new File(["png"], "a.png", { type: "image/png" }));
+    expect(before).toHaveBeenCalledTimes(1);
+    await act(async () => {});
+    expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(0);
+    expect(within(card("背景")).getByLabelText(/上傳/)).toBeDisabled();
+    await act(async () => release());
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(1));
+    await waitFor(() => expect(within(card("背景")).getByLabelText("上傳背景圖")).not.toBeDisabled());
+  });
+
+  it("選用進行中：「上傳背景圖」停用", () => {
+    setup({ picking: true });
+    expect(within(card("背景")).getByLabelText("上傳背景圖")).toBeDisabled();
   });
 
   it("上傳失敗 → toast", async () => {

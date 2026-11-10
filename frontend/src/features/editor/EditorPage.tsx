@@ -402,6 +402,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           onPickBackground={(g) => void pickThumb("background", g)}
           onPickPose={(g) => void pickThumb("pose", g)}
           picking={picking}
+          beforeReplaceBackground={() => flushSelectedEdits(current)}
         />
         {hasBg && hasPose && (
           <ComposePanel

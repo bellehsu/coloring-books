@@ -28,8 +28,13 @@ export interface ComposeWorkspaceProps {
   /** 點縮圖選用；呼叫端負責先等修線寫完再 useSelectBackground／useSelectPose。 */
   onPickBackground: (g: Generation) => void;
   onPickPose: (g: Generation) => void;
-  /** 選用請求進行中：縮圖暫時不能點。 */
+  /** 選用請求進行中（或正在等修線寫完）：縮圖與「上傳背景圖」暫時不能用。 */
   picking?: boolean;
+  /**
+   * 上傳背景前呼叫並等它完成：上傳會換掉背景（並清掉合成圖），呼叫端先讓目前選圖的修線寫完，
+   * 否則晚到的修線 PUT 會被後端拒絕。和點縮圖選用走同一個前置步驟。
+   */
+  beforeReplaceBackground?: () => Promise<unknown>;
 }
 
 /**
@@ -101,7 +106,7 @@ function useSavePage(bookId: number, pageId: number) {
     });
 }
 
-function BackgroundCard({ bookId, page, background, onPickBackground, picking }: ComposeWorkspaceProps) {
+function BackgroundCard({ bookId, page, background, onPickBackground, picking, beforeReplaceBackground }: ComposeWorkspaceProps) {
   const id = useId();
   const toast = useToast();
   const savePage = useSavePage(bookId, page.id);
@@ -109,6 +114,7 @@ function BackgroundCard({ bookId, page, background, onPickBackground, picking }:
   const generate = useGenerateBackground(bookId);
   const upload = useUploadBackground(bookId);
   const flight = useSingleFlight();
+  const uploading = useSingleFlight();
   const { list } = useThumbList(bookId, "background", page.id);
 
   const n = thumbNumber(list, background?.id);
@@ -136,8 +142,16 @@ function BackgroundCard({ bookId, page, background, onPickBackground, picking }:
     const file = e.target.files?.[0];
     e.target.value = ""; // 同一個檔案再選一次也會觸發
     if (!file) return;
-    upload.mutate({ pageId: page.id, file }, { onError: (err) => toast.show(errMsg(err, "無法上傳背景圖"), "error") });
+    // 先等修線寫完再上傳；整段期間停用（ref 擋住同一輪 render 前的第二次選檔）
+    void uploading.run(async () => {
+      await beforeReplaceBackground?.();
+      await upload
+        .mutateAsync({ pageId: page.id, file })
+        .catch((err: unknown) => toast.show(errMsg(err, "無法上傳背景圖"), "error"));
+    });
   };
+  const uploadBusy = uploading.busy || upload.isPending;
+  const uploadDisabled = uploadBusy || !!picking;
 
   return (
     <section aria-labelledby={`${id}-h`} className={styles.card}>
@@ -159,14 +173,14 @@ function BackgroundCard({ bookId, page, background, onPickBackground, picking }:
         <Button aria-label="換一張背景" disabled={flight.busy || generate.isPending} onClick={() => void regenerate()}>
           換一張
         </Button>
-        <label className={styles.upload} data-busy={upload.isPending}>
+        <label className={styles.upload} data-busy={uploadBusy} data-disabled={uploadDisabled}>
           <Icons.upload size={18} />
-          {upload.isPending ? "上傳中…" : "上傳背景圖"}
+          {uploadBusy ? "上傳中…" : "上傳背景圖"}
           <input
             type="file"
             accept={UPLOAD_ACCEPT}
             className={styles.file}
-            disabled={upload.isPending}
+            disabled={uploadDisabled}
             aria-describedby={`${id}-hint`}
             onChange={onFile}
           />
