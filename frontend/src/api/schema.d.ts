@@ -1199,6 +1199,14 @@ export interface components {
             /** Force Reason */
             force_reason?: string | null;
         };
+        /** PendingJob */
+        PendingJob: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "character" | "background" | "pose";
+        };
         /** PoseCreate */
         PoseCreate: {
             /** Action */
@@ -1273,6 +1281,20 @@ export interface components {
             queued: number;
             /** Running Id */
             running_id: number | null;
+            /** Pending */
+            pending: components["schemas"]["PendingJob"][];
+            /** Recent */
+            recent: components["schemas"]["RecentJob"][];
+        };
+        /** RecentJob */
+        RecentJob: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "character" | "background" | "pose";
+            /** Elapsed S */
+            elapsed_s: number;
         };
         /** SelectGeneration */
         SelectGeneration: {

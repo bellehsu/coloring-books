@@ -58,7 +58,7 @@ describe("AppBar", () => {
     expect(screen.getByRole("link", { name: /繪本工作室/ })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "我的繪本" })).toHaveAttribute("href", "/");
     expect(screen.getByText("小兔子的一天")).toHaveAttribute("aria-current", "page");
-    expect(screen.getByText("佇列空閒")).toBeInTheDocument();
+    expect(screen.getByText("GPU 閒置")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "繪本工作室" })).toBeInTheDocument();
   });
 });

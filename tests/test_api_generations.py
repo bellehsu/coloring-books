@@ -89,7 +89,10 @@ def test_cancel_only_queued(client, app):
 
 def test_queue_status_reports_engine_unavailable(client, app, engine):
     q = client.get("/api/system/queue").json()
-    assert q == {"state": "stopped", "last_error": None, "queued": 0, "running_id": None}
+    assert q == {
+        "state": "stopped", "last_error": None, "queued": 0, "running_id": None,
+        "pending": [], "recent": [],
+    }
     b = new_book(client)
     candidates(client, b["id"], seed=1, count=2)
     assert client.get("/api/system/queue").json()["queued"] == 2
@@ -108,3 +111,44 @@ def test_discard_queued_also_cancels(client, app, engine):
     assert r.json()["status"] == "cancelled" and r.json()["discarded"] is True
     assert not client.portal.call(app.state.worker.run_once)
     assert engine.requests == []
+
+
+def _add_gens(app, rows):
+    from datetime import timedelta
+
+    from app.models import Generation, GenKind, GenStatus, utcnow
+
+    t0 = utcnow()
+    with app.state.sessions() as s:
+        for i, (kind, status, elapsed) in enumerate(rows):
+            s.add(Generation(
+                book_id=1, kind=GenKind(kind), status=GenStatus(status), user_text="u", prompt="p",
+                negative_prompt="n", seed=1, width=8, height=8, request_json="{}", elapsed_s=elapsed,
+                created_at=t0 + timedelta(seconds=i),
+            ))
+        s.commit()
+
+
+def test_queue_status_pending_lists_kinds_oldest_first(client, app):
+    new_book(client)
+    _add_gens(app, [
+        ("pose", "running", None), ("character", "queued", None), ("composite", "queued", None),
+        ("page", "queued", None), ("background", "queued", None), ("pose", "failed", None),
+        ("background", "cancelled", None),
+    ])
+    q = client.get("/api/system/queue").json()
+    assert q["pending"] == [{"kind": "pose"}, {"kind": "character"}, {"kind": "background"}]
+
+
+def test_queue_status_recent_filters_orders_and_caps_per_kind(client, app):
+    new_book(client)
+    rows = [("pose", "succeeded", 100.0 + i) for i in range(12)]  # 最舊 100 … 最新 111
+    rows += [("background", "succeeded", 5.0), ("background", "succeeded", None),
+             ("background", "failed", 9.0), ("composite", "succeeded", 1.0),
+             ("page", "succeeded", 1.0), ("character", "queued", 3.0)]
+    _add_gens(app, rows)
+    recent = client.get("/api/system/queue").json()["recent"]
+    pose = [r["elapsed_s"] for r in recent if r["kind"] == "pose"]
+    assert pose == [111.0 - i for i in range(10)]
+    assert [r for r in recent if r["kind"] == "background"] == [{"kind": "background", "elapsed_s": 5.0}]
+    assert {r["kind"] for r in recent} == {"pose", "background"}

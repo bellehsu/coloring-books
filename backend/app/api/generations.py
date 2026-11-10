@@ -1,6 +1,7 @@
 """generation 查詢、圖片、捨棄、取消與佇列狀態端點。"""
 
 import io
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -24,11 +25,27 @@ class GenerationUpdate(BaseModel):
     discarded: bool
 
 
+_ETA_KINDS = (GenKind.CHARACTER, GenKind.BACKGROUND, GenKind.POSE)
+_RECENT_PER_KIND = 10
+
+
+class PendingJob(BaseModel):
+    kind: Literal["character", "background", "pose"]
+
+
+class RecentJob(BaseModel):
+    kind: Literal["character", "background", "pose"]
+    elapsed_s: float
+
+
 class QueueStatus(BaseModel):
     state: WorkerState
     last_error: str | None
     queued: int
     running_id: int | None
+    # 供狀態膠囊估算剩餘時間：排隊中／執行中（舊→新），與各類型最近成功的耗時（新→舊）。
+    pending: list[PendingJob]
+    recent: list[RecentJob]
 
 
 def _gen_or_404(session: Session, gen_id: int) -> Generation:
@@ -196,6 +213,32 @@ def queue_status(
     running_id = session.exec(
         select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING).limit(1)
     ).first()
+    pending = session.exec(
+        select(Generation.kind)
+        .where(
+            col(Generation.status).in_([GenStatus.QUEUED, GenStatus.RUNNING]),
+            col(Generation.kind).in_(_ETA_KINDS),
+        )
+        .order_by(col(Generation.created_at), col(Generation.id))
+    ).all()
+    recent: list[RecentJob] = []
+    for kind in _ETA_KINDS:
+        rows = session.exec(
+            select(Generation.elapsed_s)
+            .where(
+                col(Generation.status) == GenStatus.SUCCEEDED,
+                col(Generation.kind) == kind,
+                col(Generation.elapsed_s).is_not(None),
+            )
+            .order_by(col(Generation.created_at).desc(), col(Generation.id).desc())
+            .limit(_RECENT_PER_KIND)
+        ).all()
+        recent += [RecentJob(kind=kind.value, elapsed_s=e) for e in rows]
     return QueueStatus(
-        state=worker.state, last_error=worker.last_error, queued=queued, running_id=running_id
+        state=worker.state,
+        last_error=worker.last_error,
+        queued=queued,
+        running_id=running_id,
+        pending=[PendingJob(kind=k.value) for k in pending],
+        recent=recent,
     )

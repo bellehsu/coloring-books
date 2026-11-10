@@ -3613,6 +3613,24 @@
         "type": "object",
         "title": "PassIn"
       },
+      "PendingJob": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "character",
+              "background",
+              "pose"
+            ],
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "PendingJob"
+      },
       "PoseCreate": {
         "properties": {
           "action": {
@@ -3830,6 +3848,20 @@
               }
             ],
             "title": "Running Id"
+          },
+          "pending": {
+            "items": {
+              "$ref": "#/components/schemas/PendingJob"
+            },
+            "type": "array",
+            "title": "Pending"
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/RecentJob"
+            },
+            "type": "array",
+            "title": "Recent"
           }
         },
         "type": "object",
@@ -3837,9 +3869,34 @@
           "state",
           "last_error",
           "queued",
-          "running_id"
+          "running_id",
+          "pending",
+          "recent"
         ],
         "title": "QueueStatus"
+      },
+      "RecentJob": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "character",
+              "background",
+              "pose"
+            ],
+            "title": "Kind"
+          },
+          "elapsed_s": {
+            "type": "number",
+            "title": "Elapsed S"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "elapsed_s"
+        ],
+        "title": "RecentJob"
       },
       "SelectGeneration": {
         "properties": {
