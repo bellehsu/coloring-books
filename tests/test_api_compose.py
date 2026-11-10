@@ -14,6 +14,7 @@ from app.models import CharacterCheck, Generation, GenKind, GenStatus, PageStatu
 from app.services.compose import COMPOSE_VERSION, DEFAULT_PLACEMENT
 from app.services.engine import EngineError
 from app.services.prompts import (
+    QWEN_BACKGROUND_VARIATIONS,
     BACKGROUND_NEGATIVE,
     POSE_NEGATIVE,
     POSE_SIZE,
@@ -163,12 +164,13 @@ def test_background_default_style_simple(client, app, body):
     assert g["background_style"] == "simple"
     assert g["user_text"] == "公園裡的大樹"
     assert g["prompt"].startswith("公園裡的大樹. ")
-    assert g["prompt"] == qwen_background_prompt("公園裡的大樹")
     row = gen_row(app, g["id"])
     assert row.negative_prompt == ""
     rj = _rj(app, g["id"])
     assert rj["background_style"] == "simple" and rj["background_style_requested"] == "simple"
-    assert "variation" in rj and rj["variation"] is None
+    # 構圖變化語：每張隨機一個（校正過的清單），寫進 prompt 並記在 request_json
+    assert rj["variation"] in QWEN_BACKGROUND_VARIATIONS
+    assert g["prompt"] == qwen_background_prompt("公園裡的大樹", rj["variation"])
     assert rj["negative_prompt"] == "" and rj["structure_image"] is None
     run_jobs(client, app)
     req = app.state.engine.requests[-1]
@@ -227,8 +229,8 @@ def test_background_sketch_strength_zero_uses_simple(client, app):
     client.patch(f"/api/pages/{p['id']}", json={"controlnet_strength": 0.0})
     g = _bg_post(client, p["id"], None).json()
     assert g["background_style"] == "simple"
-    assert g["prompt"] == qwen_background_prompt("公園")
     rj = _rj(app, g["id"])
+    assert g["prompt"] == qwen_background_prompt("公園", rj["variation"])
     assert rj["background_style"] == "simple" and rj["negative_prompt"] == ""
     # 草圖快照仍然保存（出處紀錄），引擎不使用
     assert rj["structure_image"] and rj["structure_strength"] == 0.0

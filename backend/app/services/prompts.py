@@ -83,8 +83,14 @@ QWEN_BACKGROUND_TEMPLATE = (
     "children's picture book illustration, flat colors, thick clean black outlines, simple shapes. "
     "Empty scene, no people, no animals, no characters, no text."
 )
-# 構圖變化語（「再產生一張」用）；GPU 校正通過才填入（Task 3），空的時候不加。
-QWEN_BACKGROUND_VARIATIONS: tuple[str, ...] = ()
+# 構圖變化語（「再產生一張」用，每張隨機一個）：experiments/results/phase8_qwen_background_variation_20261110
+# 校正通過的 VB（主體位置）：缺口 9.8、過小區域 73.2（基準 9.5／82.3），同場景兩張構圖明顯不同。
+QWEN_BACKGROUND_VARIATIONS: tuple[str, ...] = (
+    "The main objects are on the left side",
+    "The main objects are on the right side",
+    "The main objects are in the middle, seen from a low angle",
+    "The main objects are in the back, open space in front",
+)
 
 
 def qwen_background_prompt(scene: str, variation: str | None = None) -> str:

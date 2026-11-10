@@ -76,14 +76,26 @@ def test_qwen_background_prompt():
     assert v == f"in a park. wide view. {QA1_TAIL}"
 
 
-def test_pick_background_variation_empty_returns_none():
+def test_pick_background_variation_empty_returns_none(monkeypatch):
     import random
 
     from app.services import prompts
-    from app.services.prompts import pick_background_variation
 
-    assert prompts.QWEN_BACKGROUND_VARIATIONS == ()
-    assert pick_background_variation(random.Random(1)) is None
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ())
+    assert prompts.pick_background_variation(random.Random(1)) is None
+
+
+def test_background_variations_calibrated():
+    # phase8_qwen_background_variation_20261110：VB（主體位置）通過；VA 過小區域、VC 缺口超標
+    from app.services.prompts import QWEN_BACKGROUND_VARIATIONS
+
+    assert QWEN_BACKGROUND_VARIATIONS == (
+        "The main objects are on the left side",
+        "The main objects are on the right side",
+        "The main objects are in the middle, seen from a low angle",
+        "The main objects are in the back, open space in front",
+    )
+    assert all(v.strip() for v in QWEN_BACKGROUND_VARIATIONS)
 
 
 def test_pick_background_variation_uses_list(monkeypatch):
