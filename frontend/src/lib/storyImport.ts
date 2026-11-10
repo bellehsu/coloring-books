@@ -90,11 +90,9 @@ export function parseStory(text: string): { pages: ParsedPage[]; errors: ParseEr
   for (let i = 0; i < lines.length; i++) {
     const line = cleaned[i];
     if (!line) {
-      // 沒有標題時，空行分段；有標題時空行只是排版。
-      if (!hasHeading) {
-        cur = null;
-        field = null;
-      }
+      // 空行結束目前欄位的接續文字；沒有標題時並分段（有標題時段落由標題界定）。
+      field = null;
+      if (!hasHeading) cur = null;
       continue;
     }
     const h = HEADING.exec(line);
@@ -104,6 +102,8 @@ export function parseStory(text: string): { pages: ParsedPage[]; errors: ParseEr
       if (h[2].trim()) feed(h[2].trim());
       continue;
     }
+    // 第一個標題之前的文字（AI 的開場白）不算任何一頁。
+    if (hasHeading && !cur) continue;
     feed(line);
   }
 

@@ -75,6 +75,17 @@ describe("parseStory", () => {
     ]);
   });
 
+  it("ignores a preamble before the first heading", () => {
+    const r = parseStory("好的，以下是分鏡：\n\n第1頁\n場景：森林\n動作：跑步");
+    expect(r).toEqual({ pages: [{ n: 1, scene: "森林", action: "跑步" }], errors: [] });
+  });
+
+  it("does not append a trailing sign-off to the last action", () => {
+    const r = parseStory("第1頁\n場景：森林\n動作：跑步\n\n希望對你有幫助！");
+    expect(r.pages).toEqual([{ n: 1, scene: "森林", action: "跑步" }]);
+    expect(r.errors).toEqual([]);
+  });
+
   it("empty input gives nothing", () => {
     expect(parseStory("  \n\n")).toEqual({ pages: [], errors: [] });
   });

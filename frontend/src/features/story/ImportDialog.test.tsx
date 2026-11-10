@@ -51,13 +51,13 @@ beforeEach(() => {
 describe("ImportDialog", () => {
   it("preview summary counts", () => {
     setup(TEXT);
-    expect(screen.getByText("4 段：新增 1 頁、填入 3 格、略過 1 格、1 段看不懂")).toBeInTheDocument();
+    expect(screen.getByText("4 段：新增 1 頁、填入 5 格、略過 1 格、1 段看不懂")).toBeInTheDocument();
     const rows = screen.getAllByRole("row");
     expect(within(rows[1]).getByText("填入場景、動作")).toBeInTheDocument();
     expect(within(rows[2]).getByText("填入動作")).toBeInTheDocument();
     expect(within(rows[3]).getByText("新增這一頁")).toBeInTheDocument();
     expect(within(rows[4]).getByText("找不到「場景：」或「動作：」")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "匯入（新增 1 頁、填入 3 格）" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "匯入（新增 1 頁、填入 5 格）" })).toBeEnabled();
   });
 
   it("shows 已有內容，略過 when nothing can be filled", () => {
@@ -68,7 +68,7 @@ describe("ImportDialog", () => {
 
   it("apply creates then patches and never deletes", async () => {
     const onClose = setup(TEXT_OK);
-    await userEvent.click(screen.getByRole("button", { name: "匯入（新增 1 頁、填入 3 格）" }));
+    await userEvent.click(screen.getByRole("button", { name: "匯入（新增 1 頁、填入 5 格）" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(create).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledWith({ scene_prompt: "山", action_prompt: "爬山" });

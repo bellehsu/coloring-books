@@ -44,7 +44,7 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
   const ok = rows.filter((r) => r.problems.length === 0);
   const maxCreateN = Math.max(existing.length, ...ok.filter((r) => r.create).map((r) => r.n));
   const createCount = maxCreateN - existing.length;
-  const fillCells = ok.filter((r) => !r.create).reduce((s, r) => s + +r.fill.scene + +r.fill.action, 0);
+  const fillCells = ok.reduce((s, r) => s + +r.fill.scene + +r.fill.action, 0);
   const skipCells = ok
     .filter((r) => !r.create)
     .reduce((s, r) => s + +(r.scene !== "" && !r.fill.scene) + +(r.action !== "" && !r.fill.action), 0);
