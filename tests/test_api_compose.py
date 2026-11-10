@@ -194,7 +194,9 @@ def test_background_simple_records_variation(client, app, monkeypatch):
     from app.api import compose as compose_api
 
     app.state.preflight = None
-    monkeypatch.setattr(compose_api, "pick_background_variation", lambda rng: "seen from far away")
+    monkeypatch.setattr(
+        compose_api, "pick_background_variation", lambda rng, exclude=None: "seen from far away"
+    )
     p = new_page(client, new_book(client)["id"], scene_prompt="公園")
     g = _bg_post(client, p["id"], None).json()
     assert g["prompt"] == qwen_background_prompt("公園", "seen from far away")
@@ -203,6 +205,84 @@ def test_background_simple_records_variation(client, app, monkeypatch):
     # 細緻不挑構圖變化
     g = _bg_post(client, p["id"], {"style": "detailed"}).json()
     assert "seen from far away" not in g["prompt"] and _rj(app, g["id"])["variation"] is None
+
+
+def _set_status(app, gen_id, status, *, discarded=False):
+    with app.state.sessions() as s:
+        row = s.get(Generation, gen_id)
+        row.status = status
+        row.discarded = discarded
+        s.add(row)
+        s.commit()
+
+
+def test_background_simple_regenerate_never_repeats_variation(client, app):
+    # 「再產生一張」：同一頁連續兩張簡潔背景的構圖變化語一定不同（排除上一張，不靠運氣）
+    app.state.preflight = None
+    p = new_page(client, new_book(client)["id"], scene_prompt="公園")
+    prev = None
+    for _ in range(12):
+        g = _bg_post(client, p["id"], None).json()
+        v = _rj(app, g["id"])["variation"]
+        assert v in QWEN_BACKGROUND_VARIATIONS and v != prev
+        assert g["prompt"] == qwen_background_prompt("公園", v)
+        prev = v
+
+
+def test_background_simple_excludes_latest_simple_any_status(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    app.state.preflight = None
+    calls: list[str | None] = []
+    real = compose_api.pick_background_variation
+
+    def spy(rng, exclude=None):
+        calls.append(exclude)
+        return real(rng, exclude=exclude)
+
+    monkeypatch.setattr(compose_api, "pick_background_variation", spy)
+    b = new_book(client)
+    p = new_page(client, b["id"], scene_prompt="公園")
+    other = new_page(client, b["id"], scene_prompt="公園")
+    first = _bg_post(client, p["id"], None).json()
+    assert calls == [None]  # 這頁還沒有簡潔背景
+    v1 = _rj(app, first["id"])["variation"]
+    # 失敗、丟棄的也算；中間夾一張細緻不影響（只看最近一張簡潔）
+    _set_status(app, first["id"], GenStatus.FAILED, discarded=True)
+    _bg_post(client, p["id"], {"style": "detailed"})
+    second = _bg_post(client, p["id"], None).json()
+    assert calls[-1] == v1
+    v2 = _rj(app, second["id"])["variation"]
+    assert v2 != v1
+    # 只看同一頁
+    _bg_post(client, other["id"], None)
+    assert calls[-1] is None
+    third = _bg_post(client, p["id"], None).json()
+    assert calls[-1] == v2 and _rj(app, third["id"])["variation"] != v2
+
+
+def test_batch_simple_excludes_latest_simple_per_page(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    app.state.preflight = None
+    b = new_book(client)
+    pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(2)]
+    prior = _bg_post(client, pages[0]["id"], None).json()
+    prior_v = _rj(app, prior["id"])["variation"]
+    _set_status(app, prior["id"], GenStatus.FAILED)  # 失敗的頁面批次仍會排
+    calls: dict[int, str | None] = {}
+    real = compose_api.pick_background_variation
+    order = iter(p["id"] for p in pages)
+
+    def spy(rng, exclude=None):
+        calls[next(order)] = exclude
+        return real(rng, exclude=exclude)
+
+    monkeypatch.setattr(compose_api, "pick_background_variation", spy)
+    queued = batch(client, b["id"])["queued"]
+    assert [g["page_id"] for g in queued] == [p["id"] for p in pages]
+    assert calls == {pages[0]["id"]: prior_v, pages[1]["id"]: None}
+    assert _rj(app, queued[0]["id"])["variation"] != prior_v
 
 
 def test_background_sketch_forces_detailed(client, app):

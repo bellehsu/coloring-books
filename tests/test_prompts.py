@@ -105,3 +105,30 @@ def test_pick_background_variation_uses_list(monkeypatch):
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b"))
     assert prompts.pick_background_variation(random.Random(1)) in ("a", "b")
+
+
+def test_pick_background_variation_excludes_previous(monkeypatch):
+    # 「再產生一張」：排除上一張的構圖變化語，避免連續兩張構圖幾乎一樣
+    import random
+
+    from app.services import prompts
+
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b", "c"))
+    for seed in range(50):
+        assert prompts.pick_background_variation(random.Random(seed), exclude="a") in ("b", "c")
+    # 不在清單裡（例如清單改過）→ 從整份清單挑
+    picks = {prompts.pick_background_variation(random.Random(s), exclude="zzz") for s in range(50)}
+    assert picks == {"a", "b", "c"}
+    picks = {prompts.pick_background_variation(random.Random(s), exclude=None) for s in range(50)}
+    assert picks == {"a", "b", "c"}
+
+
+def test_pick_background_variation_exclude_everything_falls_back(monkeypatch):
+    import random
+
+    from app.services import prompts
+
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a",))
+    assert prompts.pick_background_variation(random.Random(1), exclude="a") == "a"
+    monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ())
+    assert prompts.pick_background_variation(random.Random(1), exclude="a") is None

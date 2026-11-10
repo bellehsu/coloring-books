@@ -214,6 +214,20 @@ async def test_background_simple_routes_to_qwen(tmp_path):
     assert "qwen-image-edit-2511-Q4_K_M.gguf" in res.models
 
 
+async def test_background_simple_records_variation_in_params(tmp_path):
+    # 構圖變化語已併入 prompt，另外記在結果參數方便查詢（同角色動作）
+    fake = FakeComfy()
+    res = await make_engine(fake).generate(
+        make_req(tmp_path, kind=GenKind.BACKGROUND, character=False, background_style="simple",
+                 variation="The main objects are on the left side"))
+    assert res.params["variation"] == "The main objects are on the left side"
+    fake = FakeComfy()
+    res = await make_engine(fake).generate(
+        make_req(tmp_path, kind=GenKind.BACKGROUND, character=False, background_style="detailed",
+                 variation=None))
+    assert "variation" not in res.params
+
+
 async def test_background_detailed_unchanged(tmp_path):
     fake = FakeComfy()
     res = await make_engine(fake).generate(

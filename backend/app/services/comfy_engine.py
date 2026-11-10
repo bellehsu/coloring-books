@@ -159,7 +159,7 @@ class ComfyEngine:
             elif req.kind == GenKind.POSE:
                 raise EngineError("去背失敗：沒有遮罩輸出")
             params = dict(built.params)
-            if req.kind == GenKind.POSE and req.variation:
+            if req.kind in (GenKind.POSE, GenKind.BACKGROUND) and req.variation:
                 params["variation"] = req.variation  # 已併入 prompt，另外記錄方便查詢
             return GenerationResult(
                 image=image, elapsed_s=time.monotonic() - started, engine="comfyui",

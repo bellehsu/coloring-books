@@ -98,5 +98,10 @@ def qwen_background_prompt(scene: str, variation: str | None = None) -> str:
     return QWEN_BACKGROUND_TEMPLATE.format(scene=scene.strip(), variation=var)
 
 
-def pick_background_variation(rng: random.Random) -> str | None:
-    return rng.choice(QWEN_BACKGROUND_VARIATIONS) if QWEN_BACKGROUND_VARIATIONS else None
+def pick_background_variation(rng: random.Random, exclude: str | None = None) -> str | None:
+    """隨機挑一個構圖變化語；exclude（同頁上一張簡潔背景用的）不挑，避免再產生時構圖重複。
+    排除後沒得挑（清單只有一個）就從整份清單挑。"""
+    if not QWEN_BACKGROUND_VARIATIONS:
+        return None
+    choices = [v for v in QWEN_BACKGROUND_VARIATIONS if v != exclude] or list(QWEN_BACKGROUND_VARIATIONS)
+    return rng.choice(choices)

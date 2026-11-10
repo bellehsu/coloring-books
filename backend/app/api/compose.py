@@ -145,6 +145,24 @@ def _simple_available(request: Request) -> bool:
     return style_availability(report)["simple"]["available"]
 
 
+def _last_simple_variation(session: Session, page_id: int) -> str | None:
+    """這頁最近一張簡潔背景（依 id，不論狀態、是否丟棄）的構圖變化語；沒有回 None。
+    再產生時排除它，連續兩張的構圖才會不同。"""
+    for rj in session.exec(
+        select(Generation.request_json)
+        .where(Generation.page_id == page_id, Generation.kind == GenKind.BACKGROUND)
+        .order_by(col(Generation.id).desc())
+    ):
+        try:
+            d = json.loads(rj)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(d, dict) and d.get("background_style") == "simple":
+            v = d.get("variation")
+            return v if isinstance(v, str) else None
+    return None
+
+
 def _enqueue_background(
     session: Session,
     storage: Storage,
@@ -167,7 +185,9 @@ def _enqueue_background(
     )
     variation: str | None = None
     if style == "simple":
-        variation = pick_background_variation(random.Random())
+        variation = pick_background_variation(
+            random.Random(), exclude=_last_simple_variation(session, page.id)
+        )
         prompt, negative = qwen_background_prompt(page.scene_prompt, variation), ""
     else:
         prompt, negative = background_prompt(page.scene_prompt), BACKGROUND_NEGATIVE
