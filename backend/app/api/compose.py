@@ -7,6 +7,7 @@
 import io
 import json
 import random
+import threading
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -46,6 +47,9 @@ NEED_BACKGROUND = "請先選好背景"
 NEED_POSE = "請先選好角色動作"
 FILE_MISSING = "圖片檔案遺失，請重新產生"
 INPUTS_CHANGED = "背景、角色動作或位置剛被更改，請重新確認合成"
+
+# 批次背景：後端是單一行程、handler 是同步的，用一把鎖序列化，兩個分頁同時按也不會重複排隊
+_BATCH_LOCK = threading.Lock()
 
 _LABEL = {GenKind.BACKGROUND: "背景", GenKind.POSE: "角色動作"}
 _PAGE_FIELD = {GenKind.BACKGROUND: "background_generation_id", GenKind.POSE: "pose_generation_id"}
@@ -177,7 +181,15 @@ def create_backgrounds_batch(
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
 ) -> BatchBackgroundsOut:
-    """替整本書每一頁排一張背景；沒場景描述、已有背景、背景產生中、草圖遺失的頁面略過並回報原因。"""
+    """替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、
+    背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。"""
+    with _BATCH_LOCK:
+        return _batch_backgrounds(book_id, session, storage, worker)
+
+
+def _batch_backgrounds(
+    book_id: int, session: Session, storage: Storage, worker: GenerationWorker
+) -> BatchBackgroundsOut:
     book = _book_or_404(session, book_id)
     pages = session.exec(
         select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
@@ -190,6 +202,14 @@ def create_backgrounds_batch(
     ).all():
         if g.page_id is not None:
             backgrounds.setdefault(g.page_id, []).append(g)
+    selected_ids = [p.selected_generation_id for p in pages if p.selected_generation_id is not None]
+    legacy_selected = set(
+        session.exec(
+            select(Generation.id).where(
+                col(Generation.id).in_(selected_ids), Generation.kind == GenKind.PAGE
+            )
+        ).all()
+    ) if selected_ids else set()
 
     queued: list[GenerationOut] = []
     skipped: list[BatchSkip] = []
@@ -197,8 +217,10 @@ def create_backgrounds_batch(
         gens = backgrounds.get(page.id, [])
         if not page.scene_prompt.strip():
             reason = "沒有場景描述"
-        elif page.background_generation_id is not None or any(
-            g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens
+        elif (
+            page.background_generation_id is not None
+            or page.selected_generation_id in legacy_selected  # 舊流程整頁候選圖
+            or any(g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens)
         ):
             reason = "已有背景"
         elif any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):

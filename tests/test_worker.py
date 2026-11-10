@@ -289,6 +289,52 @@ def test_overdue_job_claimed_first(env):
     assert worker._claim().id == old_bg
 
 
+def test_position_stable_while_running_and_claim_uses_plan_clock(env, monkeypatch):
+    """執行中「逾時」以上次取任務的時間判斷：顯示的第 1 位就是下一個被取走的。"""
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    monkeypatch.setattr("app.services.worker.utcnow", lambda: clock[0])
+    p1 = _qwen(sessions, created_at=t0 - timedelta(seconds=110))
+    b = _sdxl(sessions, created_at=t0 - timedelta(seconds=100))
+    p2 = _qwen(sessions, created_at=t0 - timedelta(seconds=10))
+    assert worker._claim().id == p1
+    assert worker.plan_clock == t0
+    assert worker.queue_position(p2) == 1 and worker.queue_position(b) == 2
+    # P1 仍在執行，時間超過 max_wait_s：B 以現在時間看已逾時，但顯示不變
+    clock[0] = t0 + timedelta(seconds=100)
+    assert worker.queue_position(p2) == 1 and worker.queue_position(b) == 2
+    p3 = _qwen(sessions, created_at=t0 + timedelta(seconds=50))
+    assert [worker.queue_position(i) for i in (p2, p3, b)] == [1, 2, 3]
+    worker._finish(p1, status=GenStatus.SUCCEEDED)
+    assert worker.queue_position(p2) == 0  # 兩個任務之間也與下一次取任務一致
+    assert worker._claim().id == p2
+    assert worker.plan_clock == t0 + timedelta(seconds=100)
+    # 以新的 plan_clock 判斷：B 逾時，排在同家族的 P3 前面
+    assert worker.queue_position(b) == 1 and worker.queue_position(p3) == 2
+    worker._finish(p2, status=GenStatus.SUCCEEDED)
+    assert worker._claim().id == b
+
+
+def test_idle_uses_current_time_and_resets_plan_clock(env, monkeypatch):
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    monkeypatch.setattr("app.services.worker.utcnow", lambda: clock[0])
+    assert worker.plan_clock is None
+    q = _qwen(sessions, created_at=t0)
+    assert worker._claim().id == q and worker.plan_clock == t0
+    worker._finish(q, status=GenStatus.SUCCEEDED)
+    assert worker._claim() is None
+    assert worker.plan_clock is None  # 佇列空 → 閒置，之後以現在時間判斷
+    clock[0] = t0 + timedelta(seconds=500)
+    b = _sdxl(sessions, created_at=t0 + timedelta(seconds=10))  # 已等 490 秒
+    q2 = _qwen(sessions, created_at=t0 + timedelta(seconds=400))
+    assert worker.queue_position(b) == 0 and worker.queue_position(q2) == 1
+    assert worker._claim().id == b
+    assert worker.plan_clock == t0 + timedelta(seconds=500)
+
+
 def test_last_family_updates_on_claim(env):
     worker, _, sessions, _ = env
     assert worker.last_family is None

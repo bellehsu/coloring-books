@@ -211,7 +211,8 @@ export interface paths {
         put?: never;
         /**
          * Create Backgrounds Batch
-         * @description 替整本書每一頁排一張背景；沒場景描述、已有背景、背景產生中、草圖遺失的頁面略過並回報原因。
+         * @description 替整本書每一頁排一張背景；沒場景描述、已有背景（含舊流程選了整頁候選圖）、
+         *     背景產生中、草圖遺失的頁面略過並回報原因。同時多個呼叫會依序處理，不會重複排隊。
          */
         post: operations["create_backgrounds_batch_api_books__book_id__backgrounds_batch_post"];
         delete?: never;
