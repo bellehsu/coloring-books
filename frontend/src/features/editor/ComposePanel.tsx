@@ -18,7 +18,7 @@ export interface ComposePanelProps {
   onPlacementChange: (p: Placement) => void;
   /**
    * 確認合成：EditorPage 先等舊選圖的修線寫完，useCompose 再等位置寫完（placementSaver.whenIdle），
-   * 然後 POST /compose；成功後切到「線稿與修線」。失敗時 EditorPage 顯示 toast，promise 照常 resolve。
+   * 然後 POST /compose；成功後切到「② 補線」。失敗時 EditorPage 顯示 toast，promise 照常 resolve。
    */
   onConfirm: () => Promise<unknown>;
   /** 確認合成整段流程進行中（停用按鈕防連點；舞台同時停用）。 */
@@ -50,7 +50,7 @@ export function ComposePanel({ page, placement, onPlacementChange, onConfirm, co
   return (
     <section aria-label="合成設定" className={styles.panel}>
       <h2 className={styles.h2}>合成</h2>
-      <p className={styles.note2}>把角色拖到背景上想要的位置，拖右下角把手調整大小。確認後產生合成圖，接著到「線稿與修線」。</p>
+      <p className={styles.note2}>把角色拖到背景上想要的位置，拖右下角把手調整大小。確認後產生合成圖，接著到「② 補線」。</p>
       <p role="status" className={own.readout}>
         水平 {pct(placement.cx)}・垂直 {pct(placement.cy)}・高度 {pct(placement.height)}
       </p>

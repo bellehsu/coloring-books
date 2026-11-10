@@ -1,0 +1,123 @@
+/* 「① 構圖」右欄的背景／角色動作卡片。 */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.info {
+  font-size: 13px;
+  color: var(--muted-2);
+  text-align: right;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.actions > * {
+  flex: 1 1 120px;
+}
+/* 「上傳背景圖」：label 包住隱藏的 file input，外觀同次要按鈕 */
+.upload {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  white-space: nowrap;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 500;
+  cursor: pointer;
+}
+.upload:hover {
+  background: var(--bg);
+}
+.upload:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.upload[data-busy="true"] {
+  opacity: 0.5;
+  cursor: progress;
+}
+.file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-2);
+  line-height: 1.5;
+}
+.details {
+  font-size: 14px;
+}
+/* 摘要：自己的展開箭頭＋最多兩行文字（場景可以很長） */
+.summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-height: 32px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted-2);
+  line-height: 1.5;
+}
+.summary::-webkit-details-marker {
+  display: none;
+}
+.chev {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  transition: transform 0.15s;
+}
+.details[open] .chev {
+  transform: rotate(90deg);
+}
+.summaryText {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.details[open] .summaryText {
+  -webkit-line-clamp: unset;
+}
+.editor {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

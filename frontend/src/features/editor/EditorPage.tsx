@@ -6,16 +6,12 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_PLACEMENT, type Generation, type Page, type Placement } from "@/api/client";
 import {
-  useBackgroundStyles,
   useBook,
   useCompose,
   useCreatePage,
   useDeletePage,
-  useGenerateBackground,
-  useGeneratePose,
   useGenerations,
   usePages,
-  usePoseModes,
   useQA,
   useReorderPages,
   useSelectBackground,
@@ -28,34 +24,28 @@ import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
-import { readBgStyle, writeBgStyle, type BgStyle } from "@/lib/bgStyle";
-import { effectiveMode, readPoseMode, writePoseMode, type PoseMode } from "@/lib/poseMode";
-import { BackgroundPanel } from "./BackgroundPanel";
-import { BackgroundStage } from "./BackgroundStage";
 import { ComposePanel } from "./ComposePanel";
 import { ComposeStage } from "./ComposeStage";
+import { ComposeWorkspace } from "./ComposeWorkspace";
 import { peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 import { forgetDeletedPage, forgetPageId } from "./forgetPage";
 import { errMsg } from "./errMsg";
 import { BookSettingsDialog } from "@/features/books/BookSettingsDialog";
 import { ExportDrawer } from "./ExportDrawer";
 import { Filmstrip } from "./Filmstrip";
-import { HistoryTray, type HistoryKind } from "./HistoryTray";
 import { Inspector } from "./Inspector";
 import { LineFixStage } from "./LineFixStage";
 import { LinePanel } from "./LinePanel";
-import { QACompare } from "./QACompare";
 import { onBeforeUnload } from "./pendingWrites";
 import { placementSaverFor } from "./placementSaver";
-import { PosePanel } from "./PosePanel";
-import { PoseStage } from "./PoseStage";
 import { QAPanel } from "./QAPanel";
 import { sketchSaverFor } from "./sketchSaver";
+import type { ThumbKind } from "./Thumbs";
 import {
   allowedMode,
   DEFAULT_MODE,
-  isEditorMode,
   modeBlockers,
+  normalizeMode,
   StageHeader,
   tabIdOf,
   type EditorMode,
@@ -76,15 +66,16 @@ function parseNav(sp: URLSearchParams): Nav {
   const m = sp.get("mode");
   return {
     page: Number.isInteger(n) && n > 0 ? n : null,
-    mode: isEditorMode(m) ? m : DEFAULT_MODE,
+    mode: normalizeMode(m),
   };
 }
 
-type PagePatch = Partial<Pick<Page, "scene_prompt" | "controlnet_strength" | "line_detail" | "line_width_px">>;
+type PagePatch = Partial<Pick<Page, "line_detail" | "line_width_px">>;
 
 /**
- * 頁面編輯器（/books/{id}/editor?page=<id>&mode=<background|pose|compose|line|qa>）。
- * 模式：背景 → 角色 → 合成 → 線稿與修線 → QA 檢查；前一步沒完成時後面的分頁停用（modeBlockers）。
+ * 頁面編輯器（/books/{id}/editor?page=<id>&mode=<compose|line>；舊網址的 background／pose／qa 照常可開，見 normalizeMode）。
+ * 兩步：① 構圖（舞台是背景＋去背角色，右欄是背景與角色動作卡片）→ ② 補線（修線畫布、線條設定與 QA）；
+ * 還沒有選定圖時補線停用（modeBlockers）。
  * 版面：BookBar＋三區 grid（> 1180 px 三欄；761–1180 兩欄、檢查面板在下；≤ 760 單欄、頁面清單橫向捲動）。
  */
 export function EditorPage({ bookId }: { bookId: number }) {
@@ -121,12 +112,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const pages = pagesQ.data ?? [];
   const current = pages.find((p) => p.id === nav.page) ?? pages[0] ?? null;
   const hasSel = current?.selected_generation_id != null;
-  const gateOf = (p: Page | null | undefined): ModeGate => ({
-    hasCharacter,
-    backgroundId: p?.background_generation_id ?? null,
-    poseId: p?.pose_generation_id ?? null,
-    selectedId: p?.selected_generation_id ?? null,
-  });
+  const gateOf = (p: Page | null | undefined): ModeGate => ({ selectedId: p?.selected_generation_id ?? null });
   const mode: EditorMode = allowedMode(nav.mode, gateOf(current));
 
   const go = (page: number, m: EditorMode) => {
@@ -138,13 +124,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
     if (next !== qs) setWrites((w) => [...w, next]);
     router.replace(`${pathname}?${next}`, { scroll: false });
   };
-  /** 換頁：目標頁不能用目前的模式就回到背景（否則之後條件成立時會突然跳過去）。 */
+  /** 換頁：目標頁不能用目前的模式就回到構圖（否則之後條件成立時會突然跳過去）。 */
   const selectPage = (id: number) => {
     const target = pages.find((p) => p.id === id);
     go(id, allowedMode(mode, gateOf(target)));
   };
 
-  // 本頁所有種類（背景、角色動作、合成、舊流程 page）：找選定圖／選用的背景與動作、算排隊數
+  // 本頁所有種類（背景、角色動作、合成、舊流程 page）：找選定圖與選用的背景、動作
   const pageGens = useGenerations(bookId, { pageId: current?.id, includeDiscarded: true });
   const qaQ = useQA(current?.id ?? 0, current != null && hasSel);
   const qa = hasSel ? qaQ.data : undefined;
@@ -153,57 +139,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const updatePage = useUpdatePage(bookId);
   const deletePage = useDeletePage(bookId);
   const reorder = useReorderPages(bookId);
-  const generateBg = useGenerateBackground(bookId);
-  const generatePose = useGeneratePose(bookId);
-
-  // ---------- 角色動作的產生方式：記住使用者選的；精準不可用時畫面與送出改用快速（不改寫記憶） ----------
-  // 面板只在資料載入後（client）出現，localStorage 在初始值讀取不會造成 hydration 差異
-  const [storedPoseMode, setStoredPoseMode] = useState<PoseMode>(readPoseMode);
-  const poseModesQ = usePoseModes(mode === "pose");
-  const poseAvail = poseModesQ.data;
-  const poseMode = effectiveMode(
-    storedPoseMode,
-    poseAvail && { precise: poseAvail.precise.available, fast: poseAvail.fast.available },
-  );
-  const preciseUnavailableReason =
-    poseAvail && !poseAvail.precise.available
-      ? poseAvail.precise.missing.length > 0
-        ? `精準模式缺少：${poseAvail.precise.missing.join("、")}`
-        : "精準模式目前無法使用"
-      : null;
-  const changePoseMode = (m: PoseMode) => {
-    setStoredPoseMode(m);
-    writePoseMode(m);
-  };
-  // ---------- 背景風格：記住使用者選的；簡潔不可用時改用細緻（不改寫記憶）----------
-  const [storedBgStyle, setStoredBgStyle] = useState<BgStyle>(readBgStyle);
-  const bgStyles = useBackgroundStyles().data;
-  const simpleUnavailableReason =
-    bgStyles && !bgStyles.simple.available
-      ? bgStyles.simple.missing.length > 0
-        ? `簡潔風格缺少：${bgStyles.simple.missing.join("、")}`
-        : "簡潔風格目前無法使用"
-      : null;
-  const changeBgStyle = (s: BgStyle) => {
-    setStoredBgStyle(s);
-    writeBgStyle(s);
-  };
   const selectBg = useSelectBackground(bookId);
   const selectPose = useSelectPose(bookId);
   const compose = useCompose(bookId);
 
-  // ---------- 草圖存檔：每頁依呼叫順序（只保留最新），SketchCanvas 卸載後才呼叫也照樣送出 ----------
+  // 刪除中／已刪除的頁 id（id 被沿用時要清掉舊狀態，見 forgetPage）由 sketchSaver 記錄；編輯器不再有草圖畫板
   const qc = useQueryClient();
   const sketchSaver = sketchSaverFor(qc);
-  useEffect(() => {
-    sketchSaver.setErrorHandler((e) => toast.show(errMsg(e, "草圖儲存失敗"), "error"));
-  }, [sketchSaver, toast]);
-  // 本頁這個 session 最後送出的草圖（undefined＝沒存過、null＝清空）：一送出就反映到背景風格，不等 PUT 與 pages 重抓
-  const latestSketch = useSyncExternalStore(
-    sketchSaver.subscribe,
-    () => (current ? sketchSaver.latest(current.id) : undefined),
-    () => undefined,
-  );
 
   // ---------- 角色位置：自動存（每頁依序、只保留最新）；畫面用這個 session 最後存的值 ----------
   const placementSaver = placementSaverFor(qc);
@@ -232,7 +174,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   }, [qc, sketchSaver, pagesQ.data]);
 
   const [zoom, setZoom] = useState(1);
-  /** 改選背景／角色動作或合成前，正在等舊選圖的修線寫入（歷史托盤暫時不能點）。 */
+  /** 改選背景／角色動作或合成前，正在等舊選圖的修線寫入（縮圖暫時不能點）。 */
   const [flushingSelect, setFlushingSelect] = useState(false);
   /**
    * 正在確認合成（等修線 → 等位置 → POST compose）的頁面 id。以頁為單位：合成中換頁，另一頁照常可用。
@@ -318,26 +260,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
       throw e;
     });
 
-  /** 產生前：草圖立即存檔（不等 1 秒 debounce）並等它完成；失敗就不產生（後端在 POST 時讀 sketch_path）。 */
-  const flushSketch = async (pageId: number) => {
-    sketchSaver.flush(pageId);
-    try {
-      await sketchSaver.whenIdle(pageId);
-    } catch (e) {
-      // 寫入失敗的原因已由 saver 的錯誤 toast 顯示；這裡說明「沒有產生」，畫布下方有重試
-      toast.show("草圖尚未儲存，沒有產生背景；請按畫板下方的「重試」", "error");
-      throw e;
-    }
-  };
-
-  const generateBackground = (pageId: number, style: BgStyle) =>
-    generateBg.mutateAsync({ pageId, style }).catch((e: unknown) => toast.show(errMsg(e, "無法產生背景"), "error"));
-
-  const generatePoseFor = (pageId: number, action: string, m: PoseMode) =>
-    generatePose
-      .mutateAsync({ pageId, action, mode: m })
-      .catch((e: unknown) => toast.show(errMsg(e, "無法產生角色動作"), "error"));
-
   /**
    * 先讓目前選圖的修線寫完：改選背景／動作（合成圖會被清掉）或確認新合成後才到的 PUT
    * 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」。失敗已提示過，不擋後續動作。
@@ -358,8 +280,8 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const picking = selectBg.isPending || selectPose.isPending || flushingSelect;
 
-  /** 歷史托盤選用：背景 → POST /background、角色動作 → POST /pose。合成圖永遠不走 /select。 */
-  const pickHistory = async (kind: HistoryKind, g: Generation) => {
+  /** 縮圖選用：背景 → POST /background、角色動作 → POST /pose。合成圖永遠不走 /select。 */
+  const pickThumb = async (kind: ThumbKind, g: Generation) => {
     // 等修線寫入期間再點（連點）一律忽略，避免送出兩次
     if (!current || picking) return;
     const pageId = current.id;
@@ -373,7 +295,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const savePlacement = (pageId: number, p: Placement) => placementSaver.savePlacement(pageId, p);
 
-  /** 確認合成：等舊選圖的修線 → useCompose（內含等位置寫完）→ 成功後切到線稿與修線（還在這頁時）。 */
+  /** 確認合成：等舊選圖的修線 → useCompose（內含等位置寫完）→ 成功後切到補線（還在這頁時）。 */
   const confirmCompose = async () => {
     if (!current || confirmingRef.current.has(current.id)) return;
     const pageId = current.id;
@@ -426,7 +348,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const selectedGen = byId(current.selected_generation_id);
   const backgroundGen = byId(current.background_generation_id);
   const poseGen = byId(current.pose_generation_id);
-  const activeOf = (kind: Generation["kind"]) => gens.filter((g) => g.kind === kind && isActive(g)).length;
   const items = checklist(current, qa, { selectedKind: selectedGen?.kind });
   const confirming = confirmingIds.has(current.id);
   const contentPx = b.layout.content_px;
@@ -441,15 +362,21 @@ export function EditorPage({ bookId }: { bookId: number }) {
     </p>
   );
 
+  const blockers = modeBlockers(gateOf(current));
+  const nextHintId = `${idPrefix}-next`;
+
   let stage: ReactNode;
-  if (mode === "background") {
-    stage = <BackgroundStage bookId={bookId} page={current} layout={b.layout} background={backgroundGen} />;
-  } else if (mode === "pose") {
-    stage = <PoseStage pose={poseGen} />;
-  } else if (mode === "compose") {
-    // 分頁啟用時兩個 id 都有；圖片缺漏（沒有圖、沒有遮罩 → 沒有 cutout_url）由 ComposeStage 說明要重新產生
+  let panel: ReactNode;
+  if (mode === "compose") {
+    const hasBg = current.background_generation_id != null;
+    const hasPose = current.pose_generation_id != null;
+    // 兩個都選了才有舞台；圖片缺漏（沒有圖、沒有遮罩 → 沒有 cutout_url）由 ComposeStage 說明要重新產生
     stage =
-      backgroundGen && poseGen ? (
+      !hasBg || !hasPose ? (
+        <p className={styles.stageMsg}>
+          {!hasBg && !hasPose ? "先選好背景和角色動作" : !hasBg ? "先選好背景" : "先選好角色動作"}
+        </p>
+      ) : backgroundGen && poseGen ? (
         <ComposeStage
           backgroundUrl={backgroundGen.image_url}
           cutoutUrl={poseGen.cutout_url}
@@ -459,12 +386,50 @@ export function EditorPage({ bookId }: { bookId: number }) {
         />
       ) : pageGens.data && !pageGens.isFetching ? (
         <p role="alert" className={styles.stageMsg}>
-          找不到選用的背景或角色動作，請回到前面的步驟重新選擇
+          找不到選用的背景或角色動作，請重新選一張
         </p>
       ) : (
         loadingMsg
       );
-  } else if (mode === "line") {
+    panel = (
+      <>
+        <ComposeWorkspace
+          key={current.id}
+          bookId={bookId}
+          page={current}
+          background={backgroundGen}
+          pose={poseGen}
+          onPickBackground={(g) => void pickThumb("background", g)}
+          onPickPose={(g) => void pickThumb("pose", g)}
+          picking={picking}
+        />
+        {hasBg && hasPose && (
+          <ComposePanel
+            key={`compose-${current.id}`}
+            page={current}
+            placement={placement}
+            onPlacementChange={(p) => savePlacement(current.id, p)}
+            onConfirm={confirmCompose}
+            confirming={confirming}
+          />
+        )}
+        <Button
+          variant="primary"
+          size="lg"
+          disabled={!!blockers.line}
+          aria-describedby={blockers.line ? nextHintId : undefined}
+          onClick={() => go(current.id, "line")}
+        >
+          下一步：補線 →
+        </Button>
+        {blockers.line && (
+          <span id={nextHintId} className={styles.nextHint}>
+            {blockers.line}
+          </span>
+        )}
+      </>
+    );
+  } else {
     stage = qa ? (
       <LineFixStage
         bookId={bookId}
@@ -485,72 +450,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
         線稿計算中…
       </p>
     );
-  } else {
-    stage = <QACompare book={b} page={current} qa={qa} generation={selectedGen} />;
+    panel = (
+      <>
+        <LinePanel key={current.id} page={current} onPatch={(body) => patchPage(current.id, body)} />
+        <QAPanel book={b} page={current} qa={qa} generation={selectedGen} />
+      </>
+    );
   }
-
-  let panel: ReactNode;
-  if (mode === "background") {
-    panel = (
-      <BackgroundPanel
-        key={current.id}
-        page={current}
-        onPatch={(body) => patchPage(current.id, body)}
-        beforeGenerate={() => flushSketch(current.id)}
-        onGenerate={(style) => generateBackground(current.id, style)}
-        generating={generateBg.isPending}
-        activeCount={activeOf("background")}
-        style={storedBgStyle}
-        onStyleChange={changeBgStyle}
-        simpleUnavailableReason={simpleUnavailableReason}
-        hasSketch={latestSketch !== undefined ? latestSketch !== null : current.sketch_url != null}
-      />
-    );
-  } else if (mode === "pose") {
-    panel = (
-      <PosePanel
-        key={current.id}
-        page={current}
-        hasCharacter={hasCharacter}
-        characterHref={characterHref}
-        onGenerate={(action, m) => generatePoseFor(current.id, action, m)}
-        generating={generatePose.isPending}
-        activeCount={activeOf("pose")}
-        mode={poseMode}
-        onModeChange={changePoseMode}
-        preciseUnavailableReason={preciseUnavailableReason}
-      />
-    );
-  } else if (mode === "compose") {
-    panel = (
-      <ComposePanel
-        key={current.id}
-        page={current}
-        placement={placement}
-        onPlacementChange={(p) => savePlacement(current.id, p)}
-        onConfirm={confirmCompose}
-        confirming={confirming}
-      />
-    );
-  } else if (mode === "line") {
-    panel = <LinePanel key={current.id} page={current} onPatch={(body) => patchPage(current.id, body)} />;
-  } else {
-    panel = <QAPanel book={b} page={current} qa={qa} generation={selectedGen} />;
-  }
-
-  // 背景／角色模式：舞台下方是該種類的歷史托盤（合成圖沒有托盤，不可 /select）
-  const trayKind: HistoryKind | null = mode === "background" || mode === "pose" ? mode : null;
-  const trayFor = (kind: HistoryKind) => (
-    <HistoryTray
-      key={`${kind}-${current.id}`}
-      bookId={bookId}
-      kind={kind}
-      pageId={current.id}
-      selectedId={kind === "background" ? current.background_generation_id : current.pose_generation_id}
-      onPick={(g) => void pickHistory(kind, g)}
-      picking={picking}
-    />
-  );
 
   return shell(
     <div className={styles.ws}>
@@ -569,7 +475,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
         <StageHeader
           mode={mode}
           onModeChange={(m) => go(current.id, m)}
-          blockers={modeBlockers(gateOf(current))}
+          blockers={blockers}
           gapCount={qa?.gap_count ?? 0}
           idPrefix={idPrefix}
           panelId={panelId}
@@ -581,7 +487,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
           )}
           {stage}
         </div>
-        {trayKind && trayFor(trayKind)}
       </section>
       <Inspector title={`第 ${index + 1} 頁進度`} items={items}>
         {panel}

@@ -3,43 +3,42 @@
 import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import styles from "./StageHeader.module.css";
 
-export type EditorMode = "background" | "pose" | "compose" | "line" | "qa";
+export type EditorMode = "compose" | "line";
 
 export const MODES: { value: EditorMode; label: string }[] = [
-  { value: "background", label: "背景" },
-  { value: "pose", label: "角色" },
-  { value: "compose", label: "合成" },
-  { value: "line", label: "線稿與修線" },
-  { value: "qa", label: "QA 檢查" },
+  { value: "compose", label: "① 構圖" },
+  { value: "line", label: "② 補線" },
 ];
 
-export const DEFAULT_MODE: EditorMode = "background";
+export const DEFAULT_MODE: EditorMode = "compose";
 
 export const isEditorMode = (v: string | null): v is EditorMode => MODES.some((m) => m.value === v);
 
+/** 舊網址的模式（五個分頁時代）對到現在的兩步：背景／角色 → 構圖、QA 檢查 → 補線；其他 → 構圖。 */
+const LEGACY_MODES = new Map<string, EditorMode>([
+  ["background", "compose"],
+  ["pose", "compose"],
+  ["qa", "line"],
+]);
+
+/** 網址的 mode 參數 → 編輯器模式（書籤與舊連結照常可用）。 */
+export const normalizeMode = (v: string | null): EditorMode =>
+  isEditorMode(v) ? v : ((v != null && LEGACY_MODES.get(v)) || DEFAULT_MODE);
+
 /** 決定分頁能不能用的頁面狀態。 */
 export interface ModeGate {
-  hasCharacter: boolean;
-  backgroundId: number | null;
-  poseId: number | null;
   selectedId: number | null;
 }
 
 /**
  * 停用的分頁 → 原因（顯示在 tooltip 與 aria-describedby）；不在表內＝可用。
- * 背景永遠可用；角色要本書已設定角色；合成要已選背景＋角色動作；線稿與 QA 要有選定圖（舊流程頁面也成立）。
+ * 構圖永遠可用；補線要有選定圖（合成圖，或舊流程頁面的圖）。
  */
 export function modeBlockers(g: ModeGate): Partial<Record<EditorMode, string>> {
-  const out: Partial<Record<EditorMode, string>> = {};
-  if (!g.hasCharacter) out.pose = "請先在角色工作室設定角色";
-  if (g.backgroundId == null && g.poseId == null) out.compose = "請先選好背景與角色動作";
-  else if (g.backgroundId == null) out.compose = "請先選好背景";
-  else if (g.poseId == null) out.compose = "請先選好角色動作";
-  if (g.selectedId == null) out.line = out.qa = "請先確認合成";
-  return out;
+  return g.selectedId == null ? { line: "請先擺好角色位置" } : {};
 }
 
-/** 目標模式能用就用它，否則回到背景。 */
+/** 目標模式能用就用它，否則回到構圖。 */
 export const allowedMode = (m: EditorMode, g: ModeGate): EditorMode => (modeBlockers(g)[m] ? DEFAULT_MODE : m);
 
 export const tabIdOf = (prefix: string, m: EditorMode) => `${prefix}-tab-${m}`;
@@ -49,7 +48,7 @@ export interface StageHeaderProps {
   onModeChange: (m: EditorMode) => void;
   /** 停用的分頁 → 原因（modeBlockers）。 */
   blockers: Partial<Record<EditorMode, string>>;
-  /** QA 分頁的紅色數字（> 0 才顯示）。 */
+  /** 補線分頁的紅色數字（缺口數，> 0 才顯示）。 */
   gapCount?: number;
   /** tab id 前綴（tabIdOf）與舞台 tabpanel 的 id。 */
   idPrefix: string;
@@ -90,7 +89,7 @@ export function StageHeader({ mode, onModeChange, blockers, gapCount = 0, idPref
         {MODES.map((m, i) => {
           const on = m.value === mode;
           const ok = enabled(m.value);
-          const badge = m.value === "qa" && ok && gapCount > 0 ? gapCount : null;
+          const badge = m.value === "line" && ok && gapCount > 0 ? gapCount : null;
           return (
             <button
               key={m.value}
