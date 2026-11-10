@@ -34,7 +34,8 @@ def env(tmp_path):
 
 def add_gen(sessions, request_json=None, status=GenStatus.QUEUED, kind=GenKind.CHARACTER, pose_mode=None, **kw):
     rj = request_json or encode_request(
-        kind=kind, prompt="p", negative_prompt="n", seed=7, width=64, height=64, pose_mode=pose_mode
+        kind=kind, prompt="p", negative_prompt="n", seed=7, width=64, height=64,
+        extra={"pose_mode": pose_mode} if pose_mode is not None else None,
     )
     with sessions() as s:
         g = Generation(book_id=1, kind=kind, user_text="u", prompt="p", negative_prompt="n",
@@ -51,71 +52,78 @@ def get(sessions, gid):
 
 def test_encode_decode_roundtrip(tmp_path):
     storage = Storage(tmp_path)
-    text = encode_request(kind=GenKind.PAGE, prompt="中文", negative_prompt="n", seed=3, width=10, height=20,
-                          character_image="books/1/generations/1.png", structure_image="books/1/s.png",
-                          structure_strength=0.4)
-    assert json.loads(text)["kind"] == "page"
+    text = encode_request(kind=GenKind.POSE, prompt="中文", negative_prompt="", seed=3, width=10, height=20,
+                          character_image="books/1/generations/1.png", variation="facing left")
+    d = json.loads(text)
+    assert d == {"kind": "pose", "prompt": "中文", "negative_prompt": "", "seed": 3, "width": 10, "height": 20,
+                 "character_image": "books/1/generations/1.png", "variation": "facing left"}
+    assert "中文" in text  # ensure_ascii=False
     req = decode_request(text, storage)
-    assert req.kind == GenKind.PAGE and req.prompt == "中文" and req.seed == 3
-    assert (req.width, req.height, req.structure_strength) == (10, 20, 0.4)
+    assert req.kind == GenKind.POSE and req.prompt == "中文" and req.negative_prompt == "" and req.seed == 3
+    assert (req.width, req.height, req.variation) == (10, 20, "facing left")
     assert req.character_image == (tmp_path / "books/1/generations/1.png").resolve()
-    assert req.structure_image == (tmp_path / "books/1/s.png").resolve()
 
 
-def test_pose_mode_roundtrip_and_old_rows_are_fast(tmp_path):
+def test_encode_request_records_variation_and_extra(tmp_path):
+    # 變化語永遠寫（可為 null）；extra 併入 JSON 當作來源紀錄（pose_mode、background_style…）
     storage = Storage(tmp_path)
-    text = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=8, height=8,
-                          pose_mode="precise", variation="facing left")
-    d = json.loads(text)
-    assert d["pose_mode"] == "precise" and d["variation"] == "facing left"
-    req = decode_request(text, storage)
-    assert req.pose_mode == "precise" and req.variation == "facing left"
-    precise_plain = json.loads(encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1,
-                                              width=8, height=8, pose_mode="precise"))
-    assert "variation" in precise_plain and precise_plain["variation"] is None
-    # Phase 5 的舊列沒有 pose_mode → 快速
-    old = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="n", seed=1, width=8, height=8)
-    assert "pose_mode" not in json.loads(old)
-    req = decode_request(old, storage)
-    assert req.pose_mode == "fast" and req.variation is None
-
-
-def test_encode_decode_background_style_roundtrip(tmp_path):
-    storage = Storage(tmp_path)
+    d = json.loads(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1, width=8,
+                                  height=8))
+    assert "variation" in d and d["variation"] is None and d["character_image"] is None
+    for gone in ("structure_image", "structure_strength", "pose_mode", "background_style"):
+        assert gone not in d
     text = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="", seed=1, width=8, height=8,
-                          background_style="simple", background_style_requested="simple",
-                          variation="wide view")
+                          variation="wide view", extra={"background_style": "simple"})
     d = json.loads(text)
-    assert d["background_style"] == "simple" and d["background_style_requested"] == "simple"
-    assert d["variation"] == "wide view"
-    assert "pose_mode" not in d
+    assert d["background_style"] == "simple" and d["variation"] == "wide view"
     req = decode_request(text, storage)
-    assert req.background_style == "simple" and req.variation == "wide view"
-    # 退回 detailed：兩個風格都要記錄；沒有變化語也寫 variation=None
-    d = json.loads(encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="n", seed=1, width=8,
-                                  height=8, background_style="detailed", background_style_requested="simple"))
-    assert (d["background_style"], d["background_style_requested"]) == ("detailed", "simple")
-    assert "variation" in d and d["variation"] is None
+    assert req.kind == GenKind.BACKGROUND and req.variation == "wide view"
+    d = json.loads(encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                                  extra={"pose_mode": "precise"}))
+    assert d["pose_mode"] == "precise"
+    req = decode_request(json.dumps(d), storage)
+    assert req.kind == GenKind.POSE and req.variation is None
+    # extra 不能蓋掉核心欄位
+    with pytest.raises(ValueError):
+        encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                       extra={"kind": "page"})
 
 
-def test_decode_old_background_row_is_detailed(tmp_path):
+def test_decode_ignores_old_sdxl_keys_on_qwen_rows(tmp_path):
+    # 舊列（Phase 8）的簡潔背景／精準動作還帶 structure_* 與 background_style_requested：照常還原
     storage = Storage(tmp_path)
-    old = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="n", seed=1, width=8, height=8,
-                         structure_image="books/1/s.png", structure_strength=0.4)
-    d = json.loads(old)
-    assert "background_style" not in d and "background_style_requested" not in d and "variation" not in d
-    req = decode_request(old, storage)
-    assert req.background_style == "detailed" and req.variation is None
+    old = {"kind": "background", "prompt": "p", "negative_prompt": "", "seed": 1, "width": 8, "height": 8,
+           "character_image": None, "structure_image": None, "structure_strength": 0.0,
+           "background_style": "simple", "background_style_requested": "simple", "variation": "v"}
+    req = decode_request(json.dumps(old), storage)
+    assert req.kind == GenKind.BACKGROUND and req.variation == "v"
+    old_pose = {"kind": "pose", "prompt": "p", "negative_prompt": "", "seed": 1, "width": 8, "height": 8,
+                "character_image": "books/1/c.png", "structure_image": None, "structure_strength": 0.0,
+                "pose_mode": "precise", "variation": None}
+    req = decode_request(json.dumps(old_pose), storage)
+    assert req.kind == GenKind.POSE and req.character_image == (tmp_path / "books/1/c.png").resolve()
+
+
+@pytest.mark.parametrize("retired", [{"pose_mode": "fast"}, {"background_style": "detailed"}, {"kind": "page"}])
+def test_decode_request_rejects_retired(tmp_path, retired):
+    storage = Storage(tmp_path)
+    kind = {"pose_mode": GenKind.POSE, "background_style": GenKind.BACKGROUND}.get(next(iter(retired)),
+                                                                                   GenKind.CHARACTER)
+    d = json.loads(encode_request(kind=kind, prompt="p", negative_prompt="n", seed=1, width=8, height=8,
+                                  character_image="books/1/c.png"))
+    d.update(retired)
+    with pytest.raises(ValueError, match="這種生成已停用"):
+        decode_request(json.dumps(d), storage)
 
 
 def test_decode_null_images_and_bad_input(tmp_path):
     storage = Storage(tmp_path)
     req = decode_request(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1,
                                         width=1, height=1), storage)
-    assert req.character_image is None and req.structure_image is None
+    assert req.character_image is None
     with pytest.raises(ValueError):
-        decode_request(encode_request(kind=GenKind.PAGE, prompt="p", negative_prompt="", seed=1, width=1,
-                                      height=1, structure_image="../evil.png"), storage)
+        decode_request(encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=1,
+                                      height=1, character_image="../evil.png"), storage)
     with pytest.raises(ValueError):
         decode_request("not json", storage)
 
@@ -180,8 +188,8 @@ async def test_bad_request_json_marks_failed(env):
     worker, engine, sessions, _ = env
     bad = add_gen(sessions, request_json="{oops")
     outside = add_gen(sessions, request_json=encode_request(
-        kind=GenKind.PAGE, prompt="p", negative_prompt="", seed=1, width=1, height=1,
-        structure_image="../../etc/passwd"))
+        kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=1, height=1,
+        character_image="../../etc/passwd"))
     await worker.run_once()
     await worker.run_once()
     for gid in (bad, outside):

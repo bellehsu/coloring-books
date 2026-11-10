@@ -182,11 +182,9 @@ class DemoEngine:
             "width": image.width,
             "height": image.height,
             "has_character_image": req.character_image is not None,
-            "has_structure_image": req.structure_image is not None,
-            "structure_strength": req.structure_strength,
         }
-        if kind == GenKind.POSE:
-            params["pose_mode"] = req.pose_mode
+        if req.variation:
+            params["variation"] = req.variation
         return GenerationResult(
             image=_png(image),
             extra_images=extra,

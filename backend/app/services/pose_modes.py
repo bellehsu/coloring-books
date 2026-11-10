@@ -11,8 +11,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypedDict
 
-from .comfy_engine import POSE_WORKFLOWS
 from .preflight import PreflightReport, WorkflowReport
+
+# 模式 → workflow（引擎已不讀 pose_mode；這份對應與本檔由 Phase 9 Task 4 移除）
+POSE_WORKFLOWS: dict[str, str] = {"precise": "qwen_edit_pose_cutout", "fast": "sdxl_pose_cutout"}
 
 
 class ModeStatus(TypedDict):

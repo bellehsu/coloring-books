@@ -18,6 +18,7 @@ from sqlmodel import Session, col, select, update
 
 from app.models import Generation, GenKind, GenStatus, utcnow
 from app.services.engine import (
+    RETIRED,
     EngineError,
     EngineUnavailable,
     GenerationEngine,
@@ -38,6 +39,11 @@ class WorkerState(str, Enum):
     STOPPED = "stopped"
 
 
+# request_json 的核心欄位（extra 不能蓋掉）
+_CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
+                        "variation"})
+
+
 def encode_request(
     *,
     kind: GenKind,
@@ -47,16 +53,11 @@ def encode_request(
     width: int,
     height: int,
     character_image: str | None = None,
-    structure_image: str | None = None,
-    structure_strength: float = 0.0,
-    pose_mode: str | None = None,
     variation: str | None = None,
-    background_style: str | None = None,
-    background_style_requested: str | None = None,
+    extra: dict | None = None,
 ) -> str:
-    """產生 Generation.request_json；圖片欄位為 storage 相對路徑。
-    pose_mode 有值時（角色動作）一併寫入 pose_mode 與 variation。
-    background_style 有值時（背景）一併寫入 background_style、background_style_requested 與 variation。"""
+    """產生 Generation.request_json；character_image 為 storage 相對路徑，variation 一律寫入（可為 null）。
+    extra 併入 JSON，只當來源紀錄（例如 pose_mode、background_style）；引擎不讀，不能蓋掉核心欄位。"""
     d = {
         "kind": GenKind(kind).value,
         "prompt": prompt,
@@ -65,26 +66,30 @@ def encode_request(
         "width": width,
         "height": height,
         "character_image": character_image,
-        "structure_image": structure_image,
-        "structure_strength": structure_strength,
+        "variation": variation,
     }
-    if pose_mode is not None:
-        d["pose_mode"] = pose_mode
-        d["variation"] = variation
-    if background_style is not None:
-        d["background_style"] = background_style
-        d["background_style_requested"] = background_style_requested
-        d["variation"] = variation
+    if extra:
+        clash = _CORE_KEYS & set(extra)
+        if clash:
+            raise ValueError(f"extra 不能覆寫核心欄位：{', '.join(sorted(clash))}")
+        d.update(extra)
     return json.dumps(d, ensure_ascii=False, sort_keys=True)
 
 
+def _is_retired(d: dict) -> bool:
+    """需要已停用路線的請求：舊整頁流程，或明確要求 SDXL 的快速動作／細緻背景。
+    沒有 pose_mode／background_style 的列照 Qwen 執行（新列只把它們當來源紀錄）。"""
+    return d.get("kind") == GenKind.PAGE.value or d.get("pose_mode") == "fast" \
+        or d.get("background_style") == "detailed"
+
+
 def decode_request(text: str, storage: Storage) -> GenerationRequest:
-    """還原 GenerationRequest；相對路徑轉絕對路徑，超出 storage 根目錄會丟 ValueError。"""
+    """還原 GenerationRequest；相對路徑轉絕對路徑，超出 storage 根目錄會丟 ValueError。
+    需要已停用路線的請求丟 ValueError(RETIRED)。舊列多出的 structure_* 等欄位忽略。"""
     d = json.loads(text)
-
-    def _abs(rel):
-        return None if rel is None else storage.abs(rel)
-
+    if _is_retired(d):
+        raise ValueError(RETIRED)
+    rel = d.get("character_image")
     return GenerationRequest(
         kind=GenKind(d["kind"]),
         prompt=d["prompt"],
@@ -92,12 +97,8 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
         seed=d["seed"],
         width=d["width"],
         height=d["height"],
-        character_image=_abs(d.get("character_image")),
-        structure_image=_abs(d.get("structure_image")),
-        structure_strength=d.get("structure_strength", 0.0),
-        pose_mode=d.get("pose_mode") or "fast",  # 舊列沒有 → 快速
+        character_image=None if rel is None else storage.abs(rel),
         variation=d.get("variation"),
-        background_style=d.get("background_style") or "detailed",  # 舊列沒有 → 細緻（SDXL）
     )
 
 

@@ -151,10 +151,23 @@ def compose(
     return out
 
 
+def _fill_holes(binary: np.ndarray) -> np.ndarray:
+    """補滿前景（8 連通）內部被圍住的洞：從圖外一圈以 4 連通淹沒背景，淹不到的背景就是洞。
+    圖邊也算「外面」，所以被圖邊切到的角色和圖邊圍出的區域不會被補。"""
+    h, w = binary.shape
+    pad = np.zeros((h + 2, w + 2), np.uint8)
+    pad[1:-1, 1:-1] = binary
+    flood_mask = np.zeros((h + 4, w + 4), np.uint8)
+    cv2.floodFill(pad, flood_mask, (0, 0), 1, flags=4)  # 外面的背景塗成 1
+    return binary | (pad[1:-1, 1:-1] == 0).astype(np.uint8)
+
+
 def largest_component(mask_png: bytes) -> bytes:
-    """只保留遮罩中最大的 8 連通區塊（>128 視為前景），輸出同尺寸 L 模式 PNG。
-    該區塊向外膨脹 2 px 的範圍內保留原本的灰階值（BiRefNet 的柔邊），其餘一律 0；
-    用來丟掉與角色分離的陰影等碎塊。全黑遮罩原樣回傳全黑。"""
+    """只保留遮罩中最大的 8 連通區塊（>128 視為前景），並補滿它內部的洞，輸出同尺寸 L 模式 PNG。
+    該區塊（補洞後）向外膨脹 2 px 的範圍內保留原本的灰階值（BiRefNet 的柔邊），其餘一律 0；
+    用來丟掉與角色分離的陰影等碎塊。洞裡的像素（含洞內緣的柔邊、洞中的碎塊）一律 255：
+    Qwen 平塗風格的白色臉、頭盔內部常被 BiRefNet 當成背景挖掉（phase9_qwen_character_zh_20261110_1502）。
+    全黑遮罩原樣回傳全黑。"""
     with Image.open(io.BytesIO(mask_png)) as im:
         arr = np.asarray(im.convert("L"))
     binary = (arr > 128).astype(np.uint8)
@@ -162,8 +175,11 @@ def largest_component(mask_png: bytes) -> bytes:
     out = np.zeros_like(arr)
     if n > 1:
         best = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        keep = cv2.dilate((labels == best).astype(np.uint8), np.ones((5, 5), np.uint8))
+        main = (labels == best).astype(np.uint8)
+        filled = _fill_holes(main)
+        keep = cv2.dilate(filled, np.ones((5, 5), np.uint8))
         out[keep > 0] = arr[keep > 0]
+        out[(filled > 0) & (main == 0)] = 255
     buf = io.BytesIO()
     Image.fromarray(out, "L").save(buf, "PNG")
     return buf.getvalue()

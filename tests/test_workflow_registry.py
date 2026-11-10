@@ -315,3 +315,54 @@ def test_qwen_background_wiring():
     assert p[t["DECODE"]]["inputs"]["vae"][0] == t["VAE"]
     assert p[t["OUTPUT"]]["inputs"]["images"][0] == t["DECODE"]
     _assert_no_orphans(p)
+
+
+def test_registry_loads_qwen_character():
+    # 角色參考圖：與 qwen_background 同一張 Qwen 純文字生圖，預設尺寸為 QWEN_CHARACTER_SIZE
+    from app.services.prompts import QWEN_CHARACTER_SIZE
+
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    wf = reg.get("qwen_character")
+    assert wf.ok, wf.errors
+    assert wf.manifest["display_name"] == "Qwen 角色參考圖（白底全身）"
+    assert set(wf.params) == {"prompt", "seed", "width", "height"}
+    assert {f"{m['folder']}/{m['filename']}" for m in wf.models} == {
+        "unet/qwen-image-edit-2511-Q4_K_M.gguf",
+        "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "vae/qwen_image_vae.safetensors",
+        "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"}
+    built = wf.build_prompt({"prompt": "一隻小白兔", "seed": 3})
+    p = built.prompt
+    by_title = {n["_meta"]["title"]: n for n in p.values()}
+    assert set(by_title) == {"UNET", "TEXT_ENCODER", "VAE", "MODEL_SAMPLING", "CFG_NORM", "LIGHTNING_LORA",
+                             "POSITIVE", "NEGATIVE", "LATENT", "SAMPLER", "DECODE", "OUTPUT"}
+    assert by_title["POSITIVE"]["inputs"]["prompt"] == "一隻小白兔"
+    assert by_title["NEGATIVE"]["inputs"]["prompt"] == ""
+    for t in ("POSITIVE", "NEGATIVE"):
+        assert "image1" not in by_title[t]["inputs"]
+    assert "LoadImage" not in {n["class_type"] for n in p.values()}
+    assert (by_title["LATENT"]["inputs"]["width"], by_title["LATENT"]["inputs"]["height"]) == QWEN_CHARACTER_SIZE
+    assert by_title["SAMPLER"]["inputs"]["seed"] == 3
+    assert by_title["OUTPUT"]["inputs"]["filename_prefix"] == "coloring_books/character"
+    assert len(built.output_node_ids) == 1
+    # 同一張圖：除了預設尺寸與輸出檔名前綴，節點與固定值都和 qwen_background 一樣
+    bg = reg.get("qwen_background").build_prompt({"prompt": "一隻小白兔", "seed": 3, "width": 832}).prompt
+    for nid in p:
+        if by_title.get("OUTPUT") is p[nid]:
+            continue
+        assert p[nid] == bg[nid], nid
+    for bad in ({"prompt": "p", "seed": 1, "character_image": "c.png"},
+                {"prompt": "p", "seed": 1, "negative_prompt": "x"}):
+        with pytest.raises(ParameterError):
+            wf.build_prompt(bad)
+
+
+BIREFNET_URL = ("https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/"
+                "background_removal/birefnet.safetensors")
+
+
+def test_birefnet_source_matches_comfy_blueprint():
+    # ComfyUI 內建「Remove Background (BiRefNet)」藍圖下載的檔案
+    wf = WorkflowRegistry(REPO / "comfy_workflows").load().get("qwen_edit_pose_cutout")
+    m = next(m for m in wf.models if m["filename"] == "birefnet.safetensors")
+    assert (m["folder"], m["source"]) == ("background_removal", BIREFNET_URL)

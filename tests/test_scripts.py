@@ -31,6 +31,19 @@ def test_build_section_has_required_folders(tmp_path):
     assert REQUIRED <= set(sec)
 
 
+def test_build_section_maps_background_removal(tmp_path):
+    # Qwen 角色動作的 BiRefNet 去背模型放在 models_root/background_removal/
+    sec = sync.build_section(tmp_path)
+    assert sec["background_removal"] == "background_removal"
+
+
+def test_cli_create_dirs_creates_background_removal(settings_file, tmp_path):
+    out = tmp_path / "extra.yaml"
+    assert sync.main(["--settings", str(settings_file), "--output", str(out), "--create-dirs"]) == 0
+    assert (tmp_path / "models" / "background_removal").is_dir()
+    assert yaml.safe_load(out.read_text())["coloring_books"]["background_removal"] == "background_removal"
+
+
 def test_merge_keeps_other_sections_and_warns_on_same_base():
     existing = "ai_models:\n  base_path: /m\n  checkpoints: checkpoints\nother:\n  base_path: /x\n"
     text, warnings = sync.merge_into(existing, "coloring_books", sync.build_section(Path("/m")))
@@ -274,9 +287,8 @@ def test_demo_engine_kinds(kind, size, has_mask):
     assert res.params["kind"] == kind
 
 
-@pytest.mark.parametrize("mode", ["precise", "fast"])
-def test_demo_engine_pose_both_modes(mode):
-    """DemoEngine 兩種模式都回傳固定 832×1216 的角色圖與同尺寸遮罩。"""
+def test_demo_engine_pose_records_variation():
+    """DemoEngine 的角色動作回傳固定 832×1216 的角色圖與同尺寸遮罩；有變化語就記在 params（同 ComfyEngine）。"""
     import asyncio
     import io
 
@@ -286,11 +298,14 @@ def test_demo_engine_pose_both_modes(mode):
     from app.services.engine import GenerationRequest
 
     req = GenerationRequest(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=832, height=1216,
-                            pose_mode=mode)
+                            variation="facing left")
     res = asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req))
     img = Image.open(io.BytesIO(res.image))
     assert img.size == Image.open(io.BytesIO(res.extra_images["mask"])).size == (832, 1216)
-    assert res.params["pose_mode"] == mode
+    assert res.params["variation"] == "facing left"
+    assert not {"pose_mode", "structure_strength", "has_structure_image"} & set(res.params)
+    req.variation = None
+    assert "variation" not in asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req)).params
 
 
 def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):

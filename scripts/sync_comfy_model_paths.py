@@ -27,7 +27,10 @@ from app.config import SettingsError, load_settings  # noqa: E402
 
 SECTION_KEY = "coloring_books"
 
-# ComfyUI 的資料夾類型 → models_root 底下的子資料夾名稱
+# ComfyUI 的資料夾類型 → models_root 底下的子資料夾名稱。
+# 目前 workflow 只用 unet / text_encoders / vae / loras / background_removal；
+# SDXL 時期的類型（checkpoints、controlnet、ipadapter、clip_vision）保留，
+# 讓 archive/ 的舊 workflow 與既有模型仍可被 ComfyUI 找到（多列的資料夾不影響運作）。
 MODEL_SUBFOLDERS: dict[str, str] = {
     "checkpoints": "checkpoints",
     "loras": "loras",
@@ -39,6 +42,7 @@ MODEL_SUBFOLDERS: dict[str, str] = {
     "text_encoders": "text_encoders",
     "clip": "clip",
     "vae": "vae",
+    "background_removal": "background_removal",  # 內建 LoadBackgroundRemovalModel（BiRefNet）
     "upscale_models": "upscale_models",
     "embeddings": "embeddings",
 }

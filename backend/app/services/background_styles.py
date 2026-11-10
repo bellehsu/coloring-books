@@ -11,9 +11,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from .comfy_engine import BACKGROUND_WORKFLOWS
 from .pose_modes import ModeStatus, availability
 from .preflight import PreflightReport
+
+# 風格 → workflow（引擎已不讀 background_style；這份對應與本檔由 Phase 9 Task 4 移除）
+BACKGROUND_WORKFLOWS: dict[str, str] = {"simple": "qwen_background", "detailed": "sdxl_background"}
 
 BackgroundStyle = Literal["simple", "detailed"]
 
