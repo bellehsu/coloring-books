@@ -1,4 +1,4 @@
-/** 修線畫布的縮放／平移（純函式）。zoom 1 = 紙張基準寬（min(舞台寬, 440 px)，同草圖）。 */
+/** 修線畫布的縮放／平移（純函式）。zoom 1 = 紙張基準寬（min(舞台寬, 440 px)）。 */
 
 export const ZOOM_MIN = 0.5;
 export const ZOOM_MAX = 4;

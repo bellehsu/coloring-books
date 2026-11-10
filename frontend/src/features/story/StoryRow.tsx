@@ -103,9 +103,11 @@ export interface StoryRowProps {
   bg: SlotView;
   pose: SlotView;
   onRetry: () => void;
+  /** 動作欄位的說明（「只寫動作，地點寫在背景…」）元素 id；故事頁只顯示一次，每一列的動作欄位都連到它。 */
+  actionHintId?: string;
 }
 
-export function StoryRow({ n, page, mode, onModeChange, fileName, uploading, onUpload, onSave, bg, pose, onRetry }: StoryRowProps) {
+export function StoryRow({ n, page, mode, onModeChange, fileName, uploading, onUpload, onSave, bg, pose, onRetry, actionHintId }: StoryRowProps) {
   const scene = useAutosave(page.scene_prompt, (v) => onSave({ scene_prompt: v }));
   const action = useAutosave(page.action_prompt, (v) => onSave({ action_prompt: v }));
   const fileInput = useRef<HTMLInputElement>(null);
@@ -176,6 +178,7 @@ export function StoryRow({ n, page, mode, onModeChange, fileName, uploading, onU
           rows={2}
           className={styles.textarea}
           aria-label={`第 ${n} 頁角色動作`}
+          aria-describedby={actionHintId}
           maxLength={MAX_ACTION}
           value={action.value}
           onChange={(e) => action.onChange(e.target.value)}

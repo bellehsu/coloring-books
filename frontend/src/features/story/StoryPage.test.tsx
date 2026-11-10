@@ -116,6 +116,17 @@ describe("StoryPage", () => {
     }
   });
 
+  it("each action field is described by the place hint (shown once above the rows)", async () => {
+    setup();
+    const hint = "只寫動作，地點寫在背景的場景描述（例如：寫「坐著看書」，不要寫「坐在草地上看書」）";
+    expect(await screen.findByText(hint)).toBeInTheDocument();
+    expect(screen.getAllByText(hint)).toHaveLength(1);
+    for (const n of [1, 2, 3]) {
+      const box = await screen.findByRole("textbox", { name: `第 ${n} 頁角色動作` });
+      expect(box).toHaveAccessibleDescription(hint);
+    }
+  });
+
   it("toggle to 上傳圖片 shows upload zone and uploads on select", async () => {
     setup();
     const row = (await screen.findAllByRole("article"))[0];

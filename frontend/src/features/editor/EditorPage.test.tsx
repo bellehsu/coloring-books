@@ -559,7 +559,7 @@ describe("EditorPage", () => {
     expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
   });
 
-  it("角色動作卡片：點縮圖呼叫 POST /pose；「換一張」送出頁面的動作文字（精準）並顯示排隊中", async () => {
+  it("角色動作卡片：點縮圖呼叫 POST /pose；「換一張」只送出頁面的動作文字（沒有產生方式）並顯示排隊中", async () => {
     gens = [mkGen(5, { kind: "background" }), mkGen(7, { kind: "pose", width: 832, height: 1216, mask_url: "/api/generations/7/mask" })];
     setup();
     await screen.findByRole("region", { name: "角色動作" });
@@ -571,7 +571,7 @@ describe("EditorPage", () => {
     );
     await userEvent.click(within(poseCard()).getByRole("button", { name: "換一張角色動作" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/poses")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "action 1", mode: "precise" });
+    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "action 1" });
     expect(await within(poseCard()).findByText("排隊第 1 位")).toBeInTheDocument();
   });
 
@@ -887,12 +887,12 @@ describe("EditorPage", () => {
     expect(await screen.findByText("第 4 頁進度")).toBeInTheDocument();
   });
 
-  it("背景「換一張」：POST backgrounds {style: simple}；排隊中顯示在背景卡片；後端 409 訊息顯示在 toast", async () => {
+  it("背景「換一張」：POST backgrounds（不帶風格）；排隊中顯示在背景卡片；後端 409 訊息顯示在 toast", async () => {
     setup();
     await screen.findByRole("region", { name: "背景" });
     await userEvent.click(within(bgCard()).getByRole("button", { name: "換一張背景" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/backgrounds")[0].body).toEqual({ style: "simple" });
+    expect(calledWith("POST", "/api/pages/1/backgrounds")[0].body).toEqual({});
     expect(await within(bgCard()).findByText("排隊第 1 位")).toBeInTheDocument();
 
     genStatus = 409;

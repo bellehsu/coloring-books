@@ -7,7 +7,7 @@ import { useBook, useGenerateBackground, useGeneratePose, useUpdatePage, useUplo
 import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
-import { ACTIONS, appendPhrase, hasPhrase } from "@/lib/actions";
+import { ACTION_HINT, ACTIONS, appendPhrase, hasPhrase } from "@/lib/actions";
 import { errMsg } from "./errMsg";
 import { thumbNumber, Thumbs, useThumbList } from "./Thumbs";
 import panel from "./Inspector.module.css";
@@ -42,7 +42,7 @@ export interface ComposeWorkspaceProps {
 /**
  * 「① 構圖」的右欄：背景卡片與角色動作卡片。
  * 背景：縮圖（單選）、「換一張」（Qwen，用本頁場景文字）、「上傳背景圖」、收合的場景文字編輯。
- * 角色動作：縮圖、「換一張」（精準，用本頁動作文字；頁面沒寫就用最新一張的動作）、收合的動作文字編輯與常用動作。
+ * 角色動作：縮圖、「換一張」（用本頁動作文字；頁面沒寫就用最新一張的動作）、收合的動作文字編輯與常用動作。
  * 改過的文字在離開欄位或按「換一張」時存回頁面（PATCH），存好才產生。
  */
 export function ComposeWorkspace(props: ComposeWorkspaceProps) {
@@ -144,7 +144,7 @@ function BackgroundCard({
         return; // 存檔失敗已提示；不要用舊的場景產生
       }
       await generate
-        .mutateAsync({ pageId: page.id, style: "simple" })
+        .mutateAsync({ pageId: page.id })
         .catch((e: unknown) => toast.show(errMsg(e, "無法產生背景"), "error"));
     });
 
@@ -257,7 +257,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking }: ComposeWorkspaceP
         return;
       }
       await generate
-        .mutateAsync({ pageId: page.id, action: trimmed, mode: "precise" })
+        .mutateAsync({ pageId: page.id, action: trimmed })
         .catch((e: unknown) => toast.show(errMsg(e, "無法產生角色動作"), "error"));
     });
 
@@ -298,10 +298,13 @@ function PoseCard({ bookId, page, pose, onPickPose, picking }: ComposeWorkspaceP
               maxLength={MAX_ACTION}
               className={panel.textarea}
               value={action.value}
-              aria-describedby={`${id}-action-count`}
+              aria-describedby={`${id}-action-hint ${id}-action-count`}
               onChange={(e) => action.setValue(e.target.value)}
               onBlur={() => quiet(action.save())}
             />
+            <span id={`${id}-action-hint`} className={styles.hint}>
+              {ACTION_HINT}
+            </span>
             <span id={`${id}-action-count`} className={panel.counter}>
               {action.value.length} / {MAX_ACTION}
             </span>

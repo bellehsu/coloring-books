@@ -106,7 +106,7 @@ export function Filmstrip({
       </ol>
 
       <Dialog open={confirm !== null} onClose={() => setConfirm(null)} title={confirm ? `刪除第 ${confirm.n} 頁？` : ""}>
-        <p className={styles.confirmText}>這一頁的構圖草圖、所有候選圖與修線都會一起刪除，無法復原。</p>
+        <p className={styles.confirmText}>這一頁的背景、角色動作、所有候選圖與修線都會一起刪除，無法復原。</p>
         <div className={styles.confirmActions}>
           <Button onClick={() => setConfirm(null)}>取消</Button>
           <Button

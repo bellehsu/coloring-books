@@ -68,7 +68,7 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
     if (busy || count === 0) return;
     setBusy(true);
     setMsg(null);
-    // 先讓伺服器等於畫面：草圖（含 debounce 中的）與修線都寫完；有失敗就不匯出舊內容
+    // 先讓伺服器等於畫面：修線都寫完；有失敗就不匯出舊內容
     try {
       await whenBookWritesIdle(qc, book.id);
     } catch (e) {

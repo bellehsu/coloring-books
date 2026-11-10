@@ -214,12 +214,12 @@ describe("ComposeWorkspace", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("伺服器壞了");
   });
 
-  it("背景「換一張」送出 {style: simple}；改過的場景先存（PATCH）再產生", async () => {
+  it("背景「換一張」送出空 body（不帶風格）；改過的場景先存（PATCH）再產生", async () => {
     setup();
     const bg = card("背景");
     await userEvent.click(within(bg).getByRole("button", { name: "換一張背景" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/backgrounds")[0].body).toEqual({ style: "simple" });
+    expect(calledWith("POST", "/api/pages/1/backgrounds")[0].body).toEqual({});
     expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(0);
 
     // 場景編輯器收在 details 裡，摘要是目前的場景
@@ -257,7 +257,7 @@ describe("ComposeWorkspace", () => {
     expect(within(pose).getByText("動作：抱著一本書往上爬")).toBeInTheDocument();
     await userEvent.click(within(pose).getByRole("button", { name: "換一張角色動作" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/poses")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "抱著一本書往上爬", mode: "precise" });
+    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "抱著一本書往上爬" });
     expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(0);
   });
 
@@ -268,7 +268,7 @@ describe("ComposeWorkspace", () => {
     await waitFor(() => expect(within(pose).getByText("動作：揮手")).toBeInTheDocument());
     await userEvent.click(within(pose).getByRole("button", { name: "換一張角色動作" }));
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/poses")).toHaveLength(1));
-    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "揮手", mode: "precise" });
+    expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({ action: "揮手" });
   });
 
   it("沒有任何動作文字 → 「換一張」停用", async () => {
@@ -287,10 +287,19 @@ describe("ComposeWorkspace", () => {
     expect(calledWith("PATCH", "/api/pages/1")[0].body).toEqual({ action_prompt: "抱著一本書往上爬, waving one hand" });
     expect(calledWith("POST", "/api/pages/1/poses")[0].body).toEqual({
       action: "抱著一本書往上爬, waving one hand",
-      mode: "precise",
     });
     const order = calls.map((c) => `${c.method} ${c.url}`);
     expect(order.indexOf("PATCH /api/pages/1")).toBeLessThan(order.indexOf("POST /api/pages/1/poses"));
+  });
+
+  it("動作描述提示：地點寫在背景的場景描述，用 aria-describedby 連到動作欄位", () => {
+    setup();
+    const pose = card("角色動作");
+    const hint = "只寫動作，地點寫在背景的場景描述（例如：寫「坐著看書」，不要寫「坐在草地上看書」）";
+    expect(within(pose).getByText(hint)).toBeInTheDocument();
+    const box = within(pose).getByLabelText("動作描述");
+    expect(box).toHaveAccessibleDescription(expect.stringContaining(hint));
+    expect(box).toHaveAccessibleDescription(expect.stringMatching(/\d+ \/ 300/));
   });
 
   it("離開欄位時存動作文字", async () => {

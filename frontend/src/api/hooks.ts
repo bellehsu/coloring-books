@@ -4,23 +4,19 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { api, ApiError } from "./client";
+import { api } from "./client";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
 import type {
-  BackgroundStyles,
   BatchMaterials,
   Book,
   Edits,
   ExportSummary,
   Generation,
   Page,
-  PoseModes,
   QA,
   QueueStatus,
 } from "./client";
-import type { BgStyle } from "@/lib/bgStyle";
-import type { PoseMode } from "@/lib/poseMode";
 
 type S = components["schemas"];
 
@@ -37,8 +33,6 @@ export const qk = {
   qa: (pageId: number) => ["qa", pageId] as const,
   edits: (pageId: number) => ["edits", pageId] as const,
   exportSummary: (bookId: number) => ["exportSummary", bookId] as const,
-  poseModes: () => ["poseModes"] as const,
-  backgroundStyles: () => ["backgroundStyles"] as const,
 };
 
 export interface GenFilter {
@@ -81,24 +75,6 @@ export const useQueue = () =>
     queryKey: qk.queue(),
     queryFn: () => api.get<QueueStatus>("/system/queue"),
     refetchInterval: 5000,
-  });
-
-/** 角色動作的精準／快速是否可用（後端快取的 preflight 結果）；一分鐘內不重抓。 */
-export const usePoseModes = (enabled = true) =>
-  useQuery({
-    queryKey: qk.poseModes(),
-    queryFn: () => api.get<PoseModes>("/system/pose-modes"),
-    staleTime: 60_000,
-    enabled,
-  });
-
-/** 背景風格（簡潔／細緻）可不可用：後端只看快取的 preflight。 */
-export const useBackgroundStyles = (enabled = true) =>
-  useQuery({
-    queryKey: qk.backgroundStyles(),
-    queryFn: () => api.get<BackgroundStyles>("/system/background-styles"),
-    staleTime: 60_000,
-    enabled,
   });
 
 export const useQA = (pageId: number, enabled = true) =>
@@ -166,11 +142,14 @@ export function useUpdateBook(bookId: number) {
   });
 }
 
-/** invalidate: generations, queue */
+/**
+ * 產生一張角色候選（後端一次只排一張；舊版的 count 後端會忽略，所以不送）→ generations, queue。
+ * 變化語不重複上一張由後端處理。
+ */
 export function useCharacterCandidates(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (b: S["CharacterCandidatesCreate"]) =>
+    mutationFn: (b: Omit<S["CharacterCandidatesCreate"], "count">) =>
       api.post<Generation[]>(`/books/${bookId}/character/candidates`, b),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
@@ -248,26 +227,6 @@ export function useReorderPages(bookId: number) {
   });
 }
 
-/** invalidate: generations, queue */
-export function usePageCandidates(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ pageId, ...body }: S["PageCandidatesCreate"] & { pageId: number }) =>
-      api.post<Generation[]>(`/pages/${pageId}/candidates`, body),
-    onSuccess: () => invalidateJobs(qc, bookId),
-  });
-}
-
-/** select → pages, qa, edits, book, books, exportSummary */
-export function useSelectGeneration(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ pageId, generationId }: { pageId: number; generationId: number }) =>
-      api.post<Page>(`/pages/${pageId}/select`, { generation_id: generationId }),
-    onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
-  });
-}
-
 /** discard → generations；若捨棄的是已選圖，頁面也可能被清除選擇，所以一併 invalidate pages */
 export function useUpdateGeneration(bookId: number) {
   const qc = useQueryClient();
@@ -331,12 +290,12 @@ export function useUnpass(bookId: number) {
   });
 }
 
-/** 背景：新增一張（排隊），一律帶風格（後端遇到可用草圖或簡潔不可用會改用細緻）→ generations, queue */
+/** 背景：新增一張（排隊，Qwen，用頁面的場景描述；沒有風格可選）→ generations, queue */
 export function useGenerateBackground(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pageId, style }: { pageId: number; style: BgStyle }) =>
-      api.post<Generation>(`/pages/${pageId}/backgrounds`, { style } satisfies S["BackgroundCreate"]),
+    mutationFn: ({ pageId }: { pageId: number }) =>
+      api.post<Generation>(`/pages/${pageId}/backgrounds`, {} satisfies S["BackgroundCreate"]),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
 }
@@ -346,7 +305,7 @@ export function useUploadBackground(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ pageId, file }: { pageId: number; file: File }) =>
-      api.upload<Page>(`/pages/${pageId}/backgrounds/upload`, file, "POST"),
+      api.upload<Page>(`/pages/${pageId}/backgrounds/upload`, file),
     onSuccess: () =>
       Promise.all([qc.invalidateQueries({ queryKey: qk.pages(bookId) }), invalidateJobs(qc, bookId)]),
   });
@@ -366,17 +325,13 @@ export function useBatchMaterials(bookId: number) {
   });
 }
 
-/** 角色動作：新增一張（排隊，自動去背），一律帶產生方式 → generations, queue */
+/** 角色動作：新增一張（排隊，Qwen 精準模式，自動去背；沒有產生方式可選）→ generations, queue */
 export function useGeneratePose(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pageId, action, mode }: { pageId: number; action: string; mode: PoseMode }) =>
-      api.post<Generation>(`/pages/${pageId}/poses`, { action, mode } satisfies S["PoseCreate"]),
+    mutationFn: ({ pageId, action }: { pageId: number; action: string }) =>
+      api.post<Generation>(`/pages/${pageId}/poses`, { action } satisfies S["PoseCreate"]),
     onSuccess: () => invalidateJobs(qc, bookId),
-    // 503 = 精準模式剛變成不可用：馬上重抓可用狀態，切換元件才會退回快速
-    onError: (e) => {
-      if (e instanceof ApiError && e.status === 503) void qc.invalidateQueries({ queryKey: qk.poseModes() });
-    },
   });
 }
 
@@ -410,7 +365,7 @@ export function useSelectPose(bookId: number) {
 
 /**
  * 合成（無 body；後端用已存的背景／動作／位置；編輯器的自動合成呼叫它）→ pages, qa, edits, book, books, exportSummary, generations。
- * mutationFn 內會先等 placementSaver.whenIdle(pageId)，位置寫入失敗則拒絕（「位置尚未儲存，請重試」）且不送出合成。合成圖只能經由這裡產生或選回，不要對 composite 呼叫 /select。
+ * mutationFn 內會先等 placementSaver.whenIdle(pageId)，位置寫入失敗則拒絕（「位置尚未儲存，請重試」）且不送出合成。合成圖只能經由這裡產生。
  */
 export function useCompose(bookId: number) {
   const qc = useQueryClient();

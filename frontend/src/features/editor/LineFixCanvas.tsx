@@ -61,7 +61,7 @@ export interface LineFixCanvasProps {
 
 /** 疊層 canvas 最長邊（內容 2551×3579 時約 1460×2048，記憶體約 12 MB）。 */
 const OVERLAY_MAX_SIDE = 2048;
-/** 紙張基準寬（同草圖）。 */
+/** 紙張基準寬。 */
 const BASE_PAPER_W = 440;
 
 interface StrokeDrag {

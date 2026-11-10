@@ -63,11 +63,10 @@ beforeEach(() => {
       if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0, running_id: null });
       if (url.startsWith("/api/books/1/generations")) return j(gens);
       if (url === "/api/books/1/character/candidates") {
-        gens = [
-          ...gens,
-          ...[11, 12, 13, 14].map((id, i) => gen(id, { status: "queued", image_url: null, queue_position: i })),
-        ];
-        return j(gens.slice(-4), 201);
+        // Phase 9：一次一張（後端忽略 count）
+        const made = gen(11 + gens.length, { status: "queued", image_url: null, queue_position: 0, user_text: body.description });
+        gens = [...gens, made];
+        return j([made], 201);
       }
       if (url === "/api/books/1/character" && method === "POST") return setCharacterResponse();
       const m = url.match(/^\/api\/generations\/(\d+)$/);
@@ -96,21 +95,82 @@ function setup() {
 }
 
 describe("CharacterStudio", () => {
-  it("產生 4 張：送出描述與 count，出現 4 張排隊卡", async () => {
+  it("沒有候選時按鈕是「產生角色」：送出描述（不帶 count），出現 1 張排隊卡", async () => {
     setup();
     const ta = await screen.findByLabelText("描述角色的外型");
     await userEvent.type(ta, "  a small bunny ");
-    await userEvent.click(screen.getByRole("button", { name: "產生 4 張" }));
-    await waitFor(() => expect(screen.getAllByText(/排隊第 \d 位|生成中/)).toHaveLength(4));
-    expect(screen.getByText("生成中")).toBeInTheDocument();
-    expect(screen.getByText("排隊第 2 位")).toBeInTheDocument();
-    const post = calls.find((c) => c.url.endsWith("/character/candidates"));
-    expect(post?.body).toEqual({ description: "a small bunny", count: 4 });
+    await userEvent.click(screen.getByRole("button", { name: "產生角色" }));
+    await waitFor(() => expect(screen.getAllByText(/排隊第 \d 位|生成中/)).toHaveLength(1));
+    const posts = calls.filter((c) => c.url.endsWith("/character/candidates"));
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toEqual({ description: "a small bunny" });
+    expect(screen.queryByText(/產生 4 張/)).not.toBeInTheDocument();
+  });
+
+  it("產生中（排隊或生成中）停用按鈕；完成後變成「再產生一張」，每按一次一個請求、一張候選，舊的保留", async () => {
+    gens = [gen(1)];
+    setup();
+    const again = await screen.findByRole("button", { name: "再產生一張" });
+    expect(screen.queryByRole("button", { name: "產生角色" })).not.toBeInTheDocument();
+    await userEvent.click(again);
+    await waitFor(() => expect(screen.getByRole("button", { name: "再產生一張" })).toBeDisabled());
+    expect(screen.getByText("正在產生 1 張")).toBeInTheDocument();
+    expect(screen.queryByText(/0 張排隊中/)).not.toBeInTheDocument();
+    // 停用時連點不會再送
+    await userEvent.click(screen.getByRole("button", { name: "再產生一張" }));
+    expect(calls.filter((c) => c.url.endsWith("/character/candidates"))).toHaveLength(1);
+    // 生成完成 → 按鈕恢復；兩張候選都在
+    gens = gens.map((g) => ({ ...g, status: "succeeded", image_url: `/api/files/${g.id}.png`, queue_position: null }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "再產生一張" })).toBeEnabled(), { timeout: 4000 });
+    expect(screen.getByRole("button", { name: "選 seed 101" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "選 seed 112" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "再產生一張" }));
+    await waitFor(() => expect(calls.filter((c) => c.url.endsWith("/character/candidates"))).toHaveLength(2));
+    expect(calls.filter((c) => c.url.endsWith("/character/candidates")).every((c) => !("count" in (c.body as object)))).toBe(true);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^選 seed/ })).toHaveLength(2));
+    expect(screen.getAllByText(/排隊第 \d 位|生成中/)).toHaveLength(1);
+  });
+
+  it("沒有候選時的提示", async () => {
+    setup();
+    expect(await screen.findByText("還沒有候選圖。輸入描述後按「產生角色」。")).toBeInTheDocument();
+  });
+
+  it("候選都捨棄了：空白提示的按鈕名稱跟按鈕一致（「再產生一張」）", async () => {
+    gens = [gen(1, { discarded: true })];
+    setup();
+    expect(await screen.findByText("還沒有候選圖。輸入描述後按「再產生一張」。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "再產生一張" })).toBeInTheDocument();
+  });
+
+  it("排隊提示：有生成中的才說「正在產生 1 張」，排隊 0 張時不說排隊", async () => {
+    gens = [
+      gen(1),
+      gen(2, { status: "running", image_url: null, queue_position: 0 }),
+      gen(3, { status: "queued", image_url: null, queue_position: 1 }),
+    ];
+    setup();
+    expect(await screen.findByText("正在產生 1 張，1 張排隊中")).toBeInTheDocument();
+  });
+
+  it("排隊提示：都還在排隊時只說排隊張數", async () => {
+    gens = [gen(1, { status: "queued", image_url: null, queue_position: 2 })];
+    setup();
+    expect(await screen.findByText("1 張排隊中")).toBeInTheDocument();
+    expect(screen.queryByText(/正在產生/)).not.toBeInTheDocument();
+  });
+
+  it("描述提示：中英文都可以，不再要求英文；保留條紋、格子的建議", async () => {
+    setup();
+    await screen.findByRole("button", { name: "產生角色" });
+    expect(screen.getByText(/中文或英文都可以。/)).toBeInTheDocument();
+    expect(screen.getByText(/衣服避免條紋、格子等細碎圖樣/)).toBeInTheDocument();
+    expect(screen.queryByText(/用英文描述/)).not.toBeInTheDocument();
   });
 
   it("描述空白時不能產生", async () => {
     setup();
-    const btn = await screen.findByRole("button", { name: "產生 4 張" });
+    const btn = await screen.findByRole("button", { name: "產生角色" });
     expect(btn).toBeDisabled();
     await userEvent.type(screen.getByLabelText("描述角色的外型"), "   ");
     expect(btn).toBeDisabled();
@@ -170,7 +230,7 @@ describe("CharacterStudio", () => {
     bk = book({ character_generation_id: 2, character_description: "a small bunny" });
     setup();
     await screen.findByRole("link", { name: /開始寫故事/ });
-    expect(screen.queryByRole("button", { name: "產生 4 張" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /產生角色|再產生一張/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /用這個角色，開始寫故事/ })).not.toBeInTheDocument();
     expect(screen.getByText("a small bunny")).toBeInTheDocument();
     expect(screen.getByAltText("角色彩色圖")).toHaveAttribute("src", "/api/files/2.png");

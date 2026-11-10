@@ -4,17 +4,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import {
-  useBackgroundStyles,
   useBatchMaterials,
+  useCharacterCandidates,
   useCompose,
   useGenerateBackground,
   useGeneratePose,
   useGenerations,
-  usePoseModes,
   useQueue,
   useSelectBackground,
-  useSelectGeneration,
   useSelectPose,
+  useUploadBackground,
   qk,
 } from "./hooks";
 
@@ -38,50 +37,6 @@ beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-});
-
-describe("usePoseModes", () => {
-  it("GET /system/pose-modes，一分鐘內不重抓", async () => {
-    const body = { precise: { available: false, missing: ["ComfyUI-GGUF"] }, fast: { available: true, missing: [] } };
-    const f = vi.fn().mockImplementation(async () => jsonRes(body));
-    vi.stubGlobal("fetch", f);
-    const { wrapper } = setup();
-    const a = renderHook(() => usePoseModes(), { wrapper });
-    await waitFor(() => expect(a.result.current.data).toEqual(body));
-    expect(f.mock.calls[0][0]).toBe("/api/system/pose-modes");
-    a.unmount();
-    renderHook(() => usePoseModes(), { wrapper });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(f).toHaveBeenCalledTimes(1);
-  });
-
-  it("enabled=false 時不抓", async () => {
-    const f = vi.fn();
-    vi.stubGlobal("fetch", f);
-    const { wrapper } = setup();
-    renderHook(() => usePoseModes(false), { wrapper });
-    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-    expect(f).not.toHaveBeenCalled();
-  });
-});
-
-describe("useBackgroundStyles", () => {
-  it("GET /system/background-styles，一分鐘內不重抓；enabled=false 時不抓", async () => {
-    const body = { simple: { available: false, missing: ["ComfyUI-GGUF"] }, detailed: { available: true, missing: [] } };
-    const f = vi.fn().mockImplementation(async () => jsonRes(body));
-    vi.stubGlobal("fetch", f);
-    const { wrapper } = setup();
-    renderHook(() => useBackgroundStyles(false), { wrapper });
-    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-    expect(f).not.toHaveBeenCalled();
-    const a = renderHook(() => useBackgroundStyles(), { wrapper });
-    await waitFor(() => expect(a.result.current.data).toEqual(body));
-    expect(f.mock.calls[0][0]).toBe("/api/system/background-styles");
-    a.unmount();
-    renderHook(() => useBackgroundStyles(), { wrapper });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(f).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("polling", () => {
@@ -113,21 +68,6 @@ describe("polling", () => {
   });
 });
 
-describe("mutations", () => {
-  it("useSelectGeneration invalidates pages and qa", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => jsonRes({ id: 5, book_id: 1 })));
-    const { client, wrapper } = setup();
-    const spy = vi.spyOn(client, "invalidateQueries");
-    const { result } = renderHook(() => useSelectGeneration(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ pageId: 5, generationId: 9 }); });
-    const keys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
-    expect(keys).toContain(JSON.stringify(qk.pages(1)));
-    expect(keys).toContain(JSON.stringify(qk.qa(5)));
-    expect(keys).toContain(JSON.stringify(qk.edits(5)));
-    expect(keys).toContain(JSON.stringify(qk.book(1)));
-  });
-});
-
 describe("compose-flow hooks", () => {
   function run() {
     const f = vi.fn().mockImplementation(async () => jsonRes({ id: 5, book_id: 1 }));
@@ -138,15 +78,43 @@ describe("compose-flow hooks", () => {
     return { f, wrapper, keys };
   }
 
-  it("useGenerateBackground POST /pages/5/backgrounds 帶 style，invalidate generations 與 queue", async () => {
+  it("useGenerateBackground POST /pages/5/backgrounds 不帶風格，invalidate generations 與 queue", async () => {
     const { f, wrapper, keys } = run();
     const { result } = renderHook(() => useGenerateBackground(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ pageId: 5, style: "simple" }); });
+    await act(async () => { await result.current.mutateAsync({ pageId: 5 }); });
     expect(f.mock.calls[0][0]).toBe("/api/pages/5/backgrounds");
     expect(f.mock.calls[0][1].method).toBe("POST");
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ style: "simple" });
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({});
     expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
     expect(keys()).toContain(JSON.stringify(qk.queue()));
+  });
+
+  it("useUploadBackground posts multipart to /pages/{id}/backgrounds/upload，invalidate pages 與 generations", async () => {
+    const { f, wrapper, keys } = run();
+    const { result } = renderHook(() => useUploadBackground(1), { wrapper });
+    const file = new File(["png"], "forest.png", { type: "image/png" });
+    let page: unknown;
+    await act(async () => { page = await result.current.mutateAsync({ pageId: 5, file }); });
+    expect(page).toEqual({ id: 5, book_id: 1 });
+    expect(f.mock.calls[0][0]).toBe("/api/pages/5/backgrounds/upload");
+    const init = f.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    const sent = (init.body as FormData).get("file") as File;
+    expect(sent.name).toBe("forest.png");
+    // multipart：不自己設 Content-Type（瀏覽器帶 boundary）
+    expect(new Headers(init.headers).get("content-type")).toBeNull();
+    expect(keys()).toContain(JSON.stringify(qk.pages(1)));
+    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
+  });
+
+  it("useCharacterCandidates POST /books/1/character/candidates 只帶描述（後端一次一張，不送 count）", async () => {
+    const { f, wrapper, keys } = run();
+    const { result } = renderHook(() => useCharacterCandidates(1), { wrapper });
+    await act(async () => { await result.current.mutateAsync({ description: "一隻小兔子" }); });
+    expect(f.mock.calls[0][0]).toBe("/api/books/1/character/candidates");
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ description: "一隻小兔子" });
+    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
   });
 
   it("useBatchMaterials POST /books/1/materials/batch 帶 upload_page_ids", async () => {
@@ -160,34 +128,21 @@ describe("compose-flow hooks", () => {
     expect(keys()).toContain(JSON.stringify(qk.pages(1)));
   });
 
-  it("useGeneratePose POST /pages/5/poses 帶 action 與 mode", async () => {
+  it("useGeneratePose POST /pages/5/poses 只帶 action（不帶產生方式）", async () => {
     const { f, wrapper, keys } = run();
     const { result } = renderHook(() => useGeneratePose(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ pageId: 5, action: "揮手", mode: "fast" }); });
+    await act(async () => { await result.current.mutateAsync({ pageId: 5, action: "揮手" }); });
     expect(f.mock.calls[0][0]).toBe("/api/pages/5/poses");
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ action: "揮手", mode: "fast" });
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ action: "揮手" });
     expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
   });
 
-  it("useGeneratePose: 503 invalidates pose-modes; other errors do not", async () => {
-    for (const [status, expected] of [[503, true], [409, false]] as const) {
-      const f = vi.fn().mockImplementation(
-        async () =>
-          new Response(JSON.stringify({ detail: "精準模式缺少：x" }), {
-            status,
-            headers: { "content-type": "application/json" },
-          }),
-      );
-      vi.stubGlobal("fetch", f);
-      const { client, wrapper } = setup();
-      const spy = vi.spyOn(client, "invalidateQueries");
-      const { result } = renderHook(() => useGeneratePose(1), { wrapper });
-      await act(async () => {
-        await result.current.mutateAsync({ pageId: 5, action: "揮手", mode: "precise" }).catch(() => {});
-      });
-      const keys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
-      expect(keys.includes(JSON.stringify(qk.poseModes()))).toBe(expected);
-    }
+  it("hooks 不再提供已移除端點（切換、候選、/select）", async () => {
+    const hooks = await import("./hooks");
+    for (const name of ["usePoseModes", "useBackgroundStyles", "usePageCandidates", "useSelectGeneration", "useBatchBackgrounds"])
+      expect(hooks).not.toHaveProperty(name);
+    expect(hooks.qk).not.toHaveProperty("poseModes");
+    expect(hooks.qk).not.toHaveProperty("backgroundStyles");
   });
 
   it.each([

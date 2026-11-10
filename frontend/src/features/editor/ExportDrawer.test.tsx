@@ -6,7 +6,6 @@ import { ToastProvider } from "@/components/ui/Toast";
 import type { Book } from "@/api/client";
 import { editsQueueFor } from "./editsQueue";
 import { ExportDrawer } from "./ExportDrawer";
-import { sketchSaverFor } from "./sketchSaver";
 
 const book = {
   id: 1,
@@ -46,7 +45,7 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (url: string) => {
       calls.push(url);
-      if (url.includes("/lineart/edits") || url.endsWith("/sketch")) {
+      if (url.includes("/lineart/edits")) {
         if (writeGate) await writeGate;
         return new Response(JSON.stringify(writeStatus === 200 ? {} : { detail: "儲存失敗了" }), {
           status: writeStatus,
@@ -212,7 +211,7 @@ describe("ExportDrawer", () => {
 
   // ---------- final review：匯出前等寫入 ----------
 
-  it("下載前先等這本書的修線與草圖寫完，再要 PDF", async () => {
+  it("下載前先等這本書的修線都寫完，再要 PDF", async () => {
     summary = { total: 1, passed: 1, exportable_ids: [1], skipped: [] };
     const clicked: string[] = [];
     const orig = HTMLAnchorElement.prototype.click;
@@ -224,13 +223,13 @@ describe("ExportDrawer", () => {
       writeGate = new Promise<void>((r) => (release = r));
       const { qc } = setup();
       editsQueueFor(qc, 1, 10, 7).push([{ op: "draw", width_px: 11, points: [[0.1, 0.1]] }]);
-      sketchSaverFor(qc).save(1, 11, new Blob(["x"]));
+      editsQueueFor(qc, 1, 11, 9).push([{ op: "draw", width_px: 11, points: [[0.2, 0.2]] }]);
       await userEvent.click(await screen.findByRole("button", { name: /下載 PDF（1 頁）/ }));
       await act(async () => {});
       expect(calls.some((u) => u.includes("export.pdf"))).toBe(false);
       await act(async () => release());
       await waitFor(() => expect(clicked).toHaveLength(1));
-      const order = calls.filter((u) => /edits|sketch|export\.pdf/.test(u));
+      const order = calls.filter((u) => /edits|export\.pdf/.test(u));
       expect(order[order.length - 1]).toContain("export.pdf");
     } finally {
       HTMLAnchorElement.prototype.click = orig;

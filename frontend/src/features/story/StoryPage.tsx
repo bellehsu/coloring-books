@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, type Generation, type Page } from "@/api/client";
 import {
@@ -16,6 +16,7 @@ import { AppBar } from "@/components/shell/AppBar";
 import { BookBar } from "@/components/shell/BookBar";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
+import { ACTION_HINT } from "@/lib/actions";
 import { ImportDialog } from "./ImportDialog";
 import { slotView, StoryRow, type BgMode } from "./StoryRow";
 import styles from "./StoryPage.module.css";
@@ -39,6 +40,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
   const updatePage = useUpdatePage(bookId);
   const upload = useUploadBackground(bookId);
   const batch = useBatchMaterials(bookId);
+  const actionHintId = useId();
 
   const [modes, setModes] = useState<Record<number, BgMode>>({});
   const [files, setFiles] = useState<Record<number, string>>({});
@@ -141,6 +143,9 @@ export function StoryPage({ bookId }: { bookId: number }) {
             <span className={styles.hint}>
               每頁兩句中文就夠了。寫完按一次「產生全部素材」，背景和角色動作會一起排隊生成。
             </span>
+            <span id={actionHintId} className={styles.hint}>
+              {ACTION_HINT}
+            </span>
           </div>
           <div className={styles.actions}>
             <Button disabled={!pagesQ.isSuccess} onClick={() => setImportOpen(true)}>
@@ -181,6 +186,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
             bg={slotView(gensOf(p).background, p.background_generation_id)}
             pose={slotView(gensOf(p).pose, p.pose_generation_id)}
             onRetry={() => void generateAll()}
+            actionHintId={actionHintId}
           />
         ))}
       </main>

@@ -61,22 +61,25 @@ describe("api", () => {
     await expect(api.del("/pages/1")).resolves.toBeUndefined();
   });
 
-  it("upload sends FormData with field file", async () => {
-    const f = vi.fn().mockResolvedValue(jsonRes(200, {}));
+  it("upload POSTs FormData with field file and returns the JSON", async () => {
+    const f = vi.fn().mockResolvedValue(jsonRes(200, { id: 1 }));
     vi.stubGlobal("fetch", f);
-    const blob = new Blob(["x"], { type: "image/png" });
-    await api.upload("/pages/1/sketch", blob);
-    const [, init] = f.mock.calls[0];
-    expect(init.method).toBe("PUT");
+    const file = new File(["x"], "forest.png", { type: "image/png" });
+    await expect(api.upload("/pages/1/backgrounds/upload", file)).resolves.toEqual({ id: 1 });
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/pages/1/backgrounds/upload");
+    expect(init.method).toBe("POST");
     expect(init.body).toBeInstanceOf(FormData);
-    expect((init.body as FormData).get("file")).toBeInstanceOf(Blob);
+    expect(((init.body as FormData).get("file") as File).name).toBe("forest.png");
     expect(init.headers?.["Content-Type"]).toBeUndefined();
   });
 
-  it("blob returns a Blob", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("png", { status: 200 })));
-    const b = await api.blob("/books/1/reference-sketch", "POST");
-    expect(b).toBeInstanceOf(Blob);
+  it("upload errors become ApiError with the backend message", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(422, { detail: "圖片像素太多（最多 6400 萬像素）" })));
+    const err = await api.upload("/pages/1/backgrounds/upload", new Blob(["x"])).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(422);
+    expect((err as ApiError).message).toBe("圖片像素太多（最多 6400 萬像素）");
   });
 });
 

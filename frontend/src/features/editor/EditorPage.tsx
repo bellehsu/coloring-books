@@ -42,7 +42,6 @@ import { LinePanel } from "./LinePanel";
 import { onBeforeUnload } from "./pendingWrites";
 import { placementSaverFor } from "./placementSaver";
 import { QAPanel } from "./QAPanel";
-import { sketchSaverFor } from "./sketchSaver";
 import type { ThumbKind } from "./Thumbs";
 import {
   allowedMode,
@@ -167,11 +166,10 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const selectPose = useSelectPose(bookId);
   const compose = useCompose(bookId);
 
-  // 刪除中／已刪除的頁 id（id 被沿用時要清掉舊狀態，見 forgetPage）由 sketchSaver 記錄；編輯器不再有草圖畫板
   const qc = useQueryClient();
-  const sketchSaver = sketchSaverFor(qc);
 
   // ---------- 角色位置：自動存（每頁依序、只保留最新）；畫面用這個 session 最後存的值 ----------
+  // 已刪除的頁 id（id 被沿用時要清掉舊狀態，見 forgetPage）也由 placementSaver 記錄（isGone）
   const placementSaver = placementSaverFor(qc);
   useEffect(() => {
     placementSaver.setErrorHandler((e) => toast.show(errMsg(e, "位置儲存失敗"), "error"));
@@ -187,7 +185,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     () => false,
   );
 
-  // 關分頁／重新整理：草圖或修線還沒存好（送出中、失敗、畫布 debounce 中）就請瀏覽器確認
+  // 關分頁／重新整理：位置或修線還沒存好（送出中、失敗）就請瀏覽器確認
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => onBeforeUnload(qc, e);
     window.addEventListener("beforeunload", handler);
@@ -224,7 +222,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   // ---------- 自動合成（§4.5）：位置或素材變了 → debounce → 等修線與位置寫完 → POST compose ----------
   const pageOf = (pageId: number) => qc.getQueryData<Page[]>(qk.pages(bookId))?.find((p) => p.id === pageId);
   const composeNow = async (pageId: number) => {
-    if (sketchSaver.isGone(pageId)) return; // 頁面已刪除
+    if (placementSaver.isGone(pageId)) return; // 頁面已刪除
     const page = pageOf(pageId);
     if (page) await flushSelectedEdits(page);
     try {
@@ -263,13 +261,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
   // 換選圖後，舊選圖閒置的修線佇列就不需要了；已刪除的 id 又出現在清單（被新頁沿用）→ 當成全新的頁
   useEffect(() => {
     for (const p of pagesQ.data ?? []) {
-      if (sketchSaver.isGone(p.id)) {
+      if (placementSaver.isGone(p.id)) {
         forgetPageId(qc, p.id);
         autoCompose.forget(p.id);
       }
       pruneEditsQueues(qc, p.id, p.selected_generation_id);
     }
-  }, [qc, sketchSaver, autoCompose, pagesQ.data]);
+  }, [qc, placementSaver, autoCompose, pagesQ.data]);
   const composeStatus = useSyncExternalStore(
     autoCompose.subscribe,
     () => (current ? autoCompose.status(current.id) : "idle"),
@@ -366,18 +364,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const removePage = (id: number) => {
     const i = pages.findIndex((p) => p.id === id);
     const neighbor = pages[i + 1] ?? pages[i - 1];
-    // 切頁前先標記刪除中：畫布卸載時 flush 的草圖先停著，不和 DELETE 賽跑、不跳出誤導的「草圖儲存失敗」
-    sketchSaver.beginDelete(id);
     autoCompose.forget(id); // 還在等的自動合成不送
     settleAsk(id, false);
     // 先切到相鄰頁（樂觀），避免刪除完成前後閃到別頁；失敗就留在相鄰頁並提示
     if (id === current?.id && neighbor) selectPage(neighbor.id);
     deletePage.mutate(id, {
       onSuccess: () => forgetDeletedPage(qc, id),
-      onError: (e) => {
-        sketchSaver.endDelete(id, false); // 停著的草圖照常送出
-        toast.show(errMsg(e, "無法刪除頁面"), "error");
-      },
+      onError: (e) => toast.show(errMsg(e, "無法刪除頁面"), "error"),
     });
   };
 
@@ -390,7 +383,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const picking = selectBg.isPending || selectPose.isPending || flushingSelect;
 
   /**
-   * 縮圖選用：背景 → POST /background、角色動作 → POST /pose。合成圖永遠不走 /select。
+   * 縮圖選用：背景 → POST /background、角色動作 → POST /pose。合成圖只能經由合成產生。
    * 選好後兩個都有 → 自動合成。
    */
   const pickThumb = async (kind: ThumbKind, g: Generation) => {

@@ -2,7 +2,7 @@ import type { Generation, Page, QA } from "@/api/client";
 
 /**
  * done 完成（綠勾）、todo 待辦（空圈）、warn 需處理（橘色驚嘆號）、
- * skip 刻意不做（灰色，例如不畫構圖草圖；不是錯誤）。
+ * skip 刻意不做（灰色；不是錯誤）。
  */
 export type CheckState = "done" | "todo" | "warn" | "skip";
 export type CheckKey = "compose" | "line" | "passed";
