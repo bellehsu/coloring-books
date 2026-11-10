@@ -23,9 +23,9 @@ JSON schema：`backend/app/schemas/manifest.schema.json`（載入時自動驗證
 
 ```yaml
 schema_version: 1                 # 固定為 1
-name: route_a_sdxl_ipadapter_cn   # 必須與資料夾名稱相同；小寫英數與底線
+name: qwen_character              # 必須與資料夾名稱相同；小寫英數與底線
 display_name: "..."               # 選填
-route: A                          # 所屬路線（A / B …）
+route: C                          # 所屬路線（目前只有 C）
 status: draft                     # draft | ready（資訊用途）
 description: "..."
 workflow_file: workflow_api.json  # 選填，預設 workflow_api.json
@@ -48,20 +48,20 @@ outputs:                          # 要收集輸出的節點（通常是 SaveIma
   - {title: OUTPUT, kind: image}
 
 models:                           # 需要的模型檔（preflight 檢查、生成紀錄保存）
-  - id: sdxl_base
-    filename: sd_xl_base_1.0.safetensors   # ComfyUI 下拉選單中看到的名稱
-    folder: checkpoints                    # 應放在 models_root 底下哪個子資料夾
+  - id: qwen_edit_2511_q4km
+    filename: qwen-image-edit-2511-Q4_K_M.gguf  # ComfyUI 下拉選單中看到的名稱
+    folder: unet                           # 應放在 models_root 底下哪個子資料夾
     comfy_folder: unet_gguf                # 選填：ComfyUI 的資料夾類型與 folder 不同時填寫
     source: https://huggingface.co/...     # 下載頁面
-    source_file: diffusion_pytorch_model_promax.safetensors  # 選填：來源檔名（需改名時）
-    size_gb: 6.94
-    loader: {title: CKPT, input: ckpt_name}  # 選填：載入此模型的節點
+    source_file: ...                       # 選填：來源檔名（需改名時）
+    size_gb: 13.24
+    loader: {title: UNET, input: unet_name}  # 選填：載入此模型的節點
     note: "..."
 
 custom_nodes:                     # 選填：preflight 缺節點時提示安裝來源
-  - name: ComfyUI_IPAdapter_plus
-    repo: https://github.com/cubiq/ComfyUI_IPAdapter_plus
-    provides: [IPAdapterModelLoader, IPAdapterAdvanced]
+  - name: ComfyUI-GGUF
+    repo: https://github.com/city96/ComfyUI-GGUF
+    provides: [UnetLoaderGGUF]
 ```
 
 ## 參數型別
