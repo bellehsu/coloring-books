@@ -4,12 +4,14 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNod
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { DEFAULT_PLACEMENT, type Generation, type Page, type Placement } from "@/api/client";
+import { DEFAULT_PLACEMENT, type Edits, type Generation, type Page, type Placement } from "@/api/client";
 import {
+  qk,
   useBook,
   useCompose,
   useCreatePage,
   useDeletePage,
+  useEdits,
   useGenerations,
   usePages,
   useQA,
@@ -21,11 +23,12 @@ import {
 import { AppBar } from "@/components/shell/AppBar";
 import { BookBar } from "@/components/shell/BookBar";
 import { Button } from "@/components/ui/Button";
+import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
-import { ComposePanel } from "./ComposePanel";
-import { ComposeStage } from "./ComposeStage";
+import { createAutoCompose } from "./autoCompose";
+import { ComposePreview, ComposeStage, ComposeStatus } from "./ComposeStage";
 import { ComposeWorkspace } from "./ComposeWorkspace";
 import { peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 import { forgetDeletedPage, forgetPageId } from "./forgetPage";
@@ -55,6 +58,7 @@ import { ZoomControls } from "./LineFixCanvas";
 import styles from "./EditorPage.module.css";
 
 const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
+const hasBoth = (p: Page) => p.background_generation_id != null && p.pose_generation_id != null;
 
 interface Nav {
   page: number | null;
@@ -71,6 +75,32 @@ function parseNav(sp: URLSearchParams): Nav {
 }
 
 type PagePatch = Partial<Pick<Page, "line_detail" | "line_width_px">>;
+
+interface AutoComposeDeps {
+  compose: (pageId: number) => Promise<void>;
+  hasLineEdits: (pageId: number) => boolean;
+  /** 開「清掉補過的線？」對話框，回傳使用者的選擇。 */
+  ask: () => Promise<boolean>;
+}
+
+/**
+ * 編輯器的 autoCompose：只建立一次（計時跨 render 與換頁），回呼由 effect 換成最新 render 的版本。
+ * 確認框同時只開一個：兩頁同時要問時排隊。
+ */
+function createEditorAutoCompose() {
+  let deps: AutoComposeDeps = { compose: async () => {}, hasLineEdits: () => true, ask: async () => false };
+  let asking: Promise<unknown> = Promise.resolve();
+  const ac = createAutoCompose({
+    compose: (pageId) => deps.compose(pageId),
+    hasLineEdits: (pageId) => deps.hasLineEdits(pageId),
+    confirm: () => {
+      const answer = asking.then(() => deps.ask());
+      asking = answer.catch(() => {});
+      return answer;
+    },
+  });
+  return { ac, setDeps: (d: AutoComposeDeps) => void (deps = d) };
+}
 
 /**
  * 頁面編輯器（/books/{id}/editor?page=<id>&mode=<compose|line>；舊網址的 background／pose／qa 照常可開，見 normalizeMode）。
@@ -134,6 +164,8 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const pageGens = useGenerations(bookId, { pageId: current?.id, includeDiscarded: true });
   const qaQ = useQA(current?.id ?? 0, current != null && hasSel);
   const qa = hasSel ? qaQ.data : undefined;
+  // 補過的線（合成會換掉選定圖、線跟著不見）：構圖時自動合成前要知道有沒有。補線模式由 LineFixStage 載入同一份快取
+  const editsQ = useEdits(current?.id ?? 0, current != null && hasSel && mode === "compose");
 
   const createPage = useCreatePage(bookId);
   const updatePage = useUpdatePage(bookId);
@@ -157,6 +189,11 @@ export function EditorPage({ bookId }: { bookId: number }) {
     () => (current ? placementSaver.latest(current.id) : undefined),
     () => undefined,
   );
+  const placementFailed = useSyncExternalStore(
+    placementSaver.subscribe,
+    () => (current ? placementSaver.failed(current.id) : false),
+    () => false,
+  );
 
   // 關分頁／重新整理：草圖或修線還沒存好（送出中、失敗、畫布 debounce 中）就請瀏覽器確認
   useEffect(() => {
@@ -165,28 +202,112 @@ export function EditorPage({ bookId }: { bookId: number }) {
     return () => window.removeEventListener("beforeunload", handler);
   }, [qc]);
 
-  // 換選圖後，舊選圖閒置的修線佇列就不需要了；已刪除的 id 又出現在清單（被新頁沿用）→ 當成全新的頁
-  useEffect(() => {
-    for (const p of pagesQ.data ?? []) {
-      if (sketchSaver.isGone(p.id)) forgetPageId(qc, p.id);
-      pruneEditsQueues(qc, p.id, p.selected_generation_id);
-    }
-  }, [qc, sketchSaver, pagesQ.data]);
-
   const [zoom, setZoom] = useState(1);
   /** 改選背景／角色動作或合成前，正在等舊選圖的修線寫入（縮圖暫時不能點）。 */
   const [flushingSelect, setFlushingSelect] = useState(false);
-  /**
-   * 正在確認合成（等修線 → 等位置 → POST compose）的頁面 id。以頁為單位：合成中換頁，另一頁照常可用。
-   * ref 擋住同一輪 render 前的第二次點擊。
-   */
-  const [confirmingIds, setConfirmingIds] = useState<ReadonlySet<number>>(() => new Set());
-  const confirmingRef = useRef(new Set<number>());
   /** 非同步流程結束時用來判斷使用者是否已換頁。 */
   const currentIdRef = useRef<number | null>(null);
   useEffect(() => {
     currentIdRef.current = current?.id ?? null;
   });
+
+  /**
+   * 先讓這頁選定圖的修線寫完：改選背景／動作（合成圖會被清掉）或合成新的之後才到的 PUT
+   * 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」。失敗已提示過，不擋後續動作。
+   */
+  const flushSelectedEdits = async (page: Page) => {
+    const sel = page.selected_generation_id;
+    const pendingEdits = sel != null ? peekEditsQueue(qc, page.id, sel) : undefined;
+    if (!pendingEdits?.busy()) return;
+    setFlushingSelect(true);
+    try {
+      await pendingEdits.flush();
+    } catch {
+      /* 失敗已提示過 */
+    } finally {
+      setFlushingSelect(false);
+    }
+  };
+
+  // ---------- 自動合成（§4.5）：位置或素材變了 → debounce → 等修線與位置寫完 → POST compose ----------
+  const pageOf = (pageId: number) => qc.getQueryData<Page[]>(qk.pages(bookId))?.find((p) => p.id === pageId);
+  const composeNow = async (pageId: number) => {
+    if (sketchSaver.isGone(pageId)) return; // 頁面已刪除
+    const page = pageOf(pageId);
+    if (page) await flushSelectedEdits(page);
+    try {
+      await compose.mutateAsync({ pageId });
+    } catch (e) {
+      // 位置寫入失敗有自己的持續提示（位置尚未儲存＋重試），不再多跳 toast
+      if (!placementSaver.failed(pageId)) toast.show(errMsg(e, "無法合成"), "error");
+      throw e;
+    }
+  };
+  /** 這頁目前的選定圖有沒有補過的線；還不知道（修線圖層還沒載入）就當作有，寧可多問一次。 */
+  const hasLineEdits = (pageId: number) => {
+    const sel = pageOf(pageId)?.selected_generation_id;
+    if (sel == null) return false;
+    const local = peekEditsQueue(qc, pageId, sel)?.latest;
+    if (local) return local.length > 0;
+    const data = qc.getQueryData<Edits>(qk.edits(pageId));
+    return data?.generation_id === sel ? data.strokes.length > 0 : true;
+  };
+  /** 「清掉補過的線？」對話框開著時，回覆給 autoCompose 的函式。 */
+  const [lossAnswer, setLossAnswer] = useState<((ok: boolean) => void) | null>(null);
+  const [auto] = useState(createEditorAutoCompose);
+  const autoCompose = auto.ac;
+  useEffect(() => {
+    auto.setDeps({
+      compose: composeNow,
+      hasLineEdits,
+      ask: () => new Promise<boolean>((resolve) => setLossAnswer(() => resolve)),
+    });
+  });
+  useEffect(() => autoCompose.connect(), [autoCompose]);
+
+  // 換選圖後，舊選圖閒置的修線佇列就不需要了；已刪除的 id 又出現在清單（被新頁沿用）→ 當成全新的頁
+  useEffect(() => {
+    for (const p of pagesQ.data ?? []) {
+      if (sketchSaver.isGone(p.id)) {
+        forgetPageId(qc, p.id);
+        autoCompose.forget(p.id);
+      }
+      pruneEditsQueues(qc, p.id, p.selected_generation_id);
+    }
+  }, [qc, sketchSaver, autoCompose, pagesQ.data]);
+  const composeStatus = useSyncExternalStore(
+    autoCompose.subscribe,
+    () => (current ? autoCompose.status(current.id) : "idle"),
+    () => "idle" as const,
+  );
+  const answerLoss = (ok: boolean) => {
+    lossAnswer?.(ok);
+    setLossAnswer(null);
+  };
+
+  // 背景與角色動作都選好、但選定圖不是它們的合成圖（「產生全部素材」自動選用、合成前離開等）：
+  // 開著這頁時自動合成一次。舊流程圖片不自動換掉；有補過的線不自動問（等使用者動了才問）。
+  const curGens = pageGens.data;
+  const genOf = (id: number | null | undefined) => (id == null ? undefined : curGens?.find((g) => g.id === id));
+  const curSel = genOf(current?.selected_generation_id);
+  const autoKey =
+    current &&
+    hasBoth(current) &&
+    current.compose_pending &&
+    genOf(current.background_generation_id)?.image_url &&
+    genOf(current.pose_generation_id)?.cutout_url &&
+    (current.selected_generation_id == null || curSel?.kind === "composite")
+      ? `${current.id}:${current.background_generation_id}:${current.pose_generation_id}:${current.selected_generation_id}`
+      : null;
+  const autoDone = useRef(new Set<string>());
+  useEffect(() => {
+    if (!autoKey || !current || autoDone.current.has(autoKey)) return;
+    if (autoCompose.status(current.id) !== "idle" || hasLineEdits(current.id)) return;
+    autoDone.current.add(autoKey);
+    autoCompose.schedule(current.id);
+    // hasLineEdits 讀快取：修線圖層載入後要再判斷一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoKey, autoCompose, editsQ.data]);
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -223,6 +344,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
       {
         onSuccess: (p) => {
           forgetPageId(qc, p.id); // 後端若沿用了已刪除頁的 id，不要讓舊頁的狀態串過來
+          autoCompose.forget(p.id);
           go(p.id, DEFAULT_MODE);
         },
         onError: (e) => toast.show(errMsg(e, "無法新增頁面"), "error"),
@@ -243,6 +365,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     const neighbor = pages[i + 1] ?? pages[i - 1];
     // 切頁前先標記刪除中：畫布卸載時 flush 的草圖先停著，不和 DELETE 賽跑、不跳出誤導的「草圖儲存失敗」
     sketchSaver.beginDelete(id);
+    autoCompose.forget(id); // 還在等的自動合成不送
     // 先切到相鄰頁（樂觀），避免刪除完成前後閃到別頁；失敗就留在相鄰頁並提示
     if (id === current?.id && neighbor) selectPage(neighbor.id);
     deletePage.mutate(id, {
@@ -260,27 +383,12 @@ export function EditorPage({ bookId }: { bookId: number }) {
       throw e;
     });
 
-  /**
-   * 先讓目前選圖的修線寫完：改選背景／動作（合成圖會被清掉）或確認新合成後才到的 PUT
-   * 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」。失敗已提示過，不擋後續動作。
-   */
-  const flushSelectedEdits = async (page: Page) => {
-    const sel = page.selected_generation_id;
-    const pendingEdits = sel != null ? peekEditsQueue(qc, page.id, sel) : undefined;
-    if (!pendingEdits?.busy()) return;
-    setFlushingSelect(true);
-    try {
-      await pendingEdits.flush();
-    } catch {
-      /* 失敗已提示過 */
-    } finally {
-      setFlushingSelect(false);
-    }
-  };
-
   const picking = selectBg.isPending || selectPose.isPending || flushingSelect;
 
-  /** 縮圖選用：背景 → POST /background、角色動作 → POST /pose。合成圖永遠不走 /select。 */
+  /**
+   * 縮圖選用：背景 → POST /background、角色動作 → POST /pose。合成圖永遠不走 /select。
+   * 選好後兩個都有 → 自動合成。
+   */
   const pickThumb = async (kind: ThumbKind, g: Generation) => {
     // 等修線寫入期間再點（連點）一律忽略，避免送出兩次
     if (!current || picking) return;
@@ -289,30 +397,26 @@ export function EditorPage({ bookId }: { bookId: number }) {
     const m = kind === "background" ? selectBg : selectPose;
     m.mutate(
       { pageId, generationId: g.id },
-      { onError: (e) => toast.show(errMsg(e, kind === "background" ? "無法選用這張背景" : "無法選用這個角色動作"), "error") },
+      {
+        onSuccess: (page) => {
+          if (hasBoth(page)) autoCompose.schedule(pageId);
+        },
+        onError: (e) => toast.show(errMsg(e, kind === "background" ? "無法選用這張背景" : "無法選用這個角色動作"), "error"),
+      },
     );
   };
 
-  const savePlacement = (pageId: number, p: Placement) => placementSaver.savePlacement(pageId, p);
+  /** 放開拖曳／縮放、按鍵、翻轉、重設位置：存位置並排自動合成。 */
+  const placeCharacter = (pageId: number, p: Placement) => {
+    placementSaver.savePlacement(pageId, p);
+    autoCompose.schedule(pageId);
+  };
 
-  /** 確認合成：等舊選圖的修線 → useCompose（內含等位置寫完）→ 成功後切到補線（還在這頁時）。 */
-  const confirmCompose = async () => {
-    if (!current || confirmingRef.current.has(current.id)) return;
-    const pageId = current.id;
-    confirmingRef.current.add(pageId);
-    setConfirmingIds(new Set(confirmingRef.current));
-    try {
-      await flushSelectedEdits(current);
-      await compose.mutateAsync({ pageId });
-      if (currentIdRef.current === pageId) go(pageId, "line");
-    } catch (e) {
-      // useCompose 在位置寫入失敗時丟一般 Error（不是 ApiError），errMsg 會吃掉它的訊息
-      const msg = placementSaver.failed(pageId) ? "位置尚未儲存，沒有合成；請重試" : errMsg(e, "無法合成");
-      toast.show(msg, "error");
-    } finally {
-      confirmingRef.current.delete(pageId);
-      setConfirmingIds(new Set(confirmingRef.current));
-    }
+  /** 到 ② 補線：這頁還有在等（或正在跑）的自動合成就先做完，補線才會畫在新的合成圖上。 */
+  const toLine = async (pageId: number) => {
+    const st = autoCompose.status(pageId);
+    if (st === "pending" || st === "running") await autoCompose.flush(pageId);
+    if (currentIdRef.current === pageId) go(pageId, "line");
   };
 
   const shell = (body: ReactNode) => (
@@ -327,6 +431,15 @@ export function EditorPage({ bookId }: { bookId: number }) {
       {body}
       <ExportDrawer open={exportOpen} onClose={() => setExportOpen(false)} book={b} />
       <BookSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} book={b} />
+      <Dialog open={lossAnswer !== null} onClose={() => answerLoss(false)} title="清掉補過的線？">
+        <p className={styles.confirmText}>移動角色會清掉這頁補過的線，要繼續嗎？</p>
+        <div className={styles.confirmActions}>
+          <Button onClick={() => answerLoss(false)}>取消</Button>
+          <Button variant="primary" onClick={() => answerLoss(true)}>
+            繼續
+          </Button>
+        </div>
+      </Dialog>
     </>
   );
 
@@ -349,7 +462,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const backgroundGen = byId(current.background_generation_id);
   const poseGen = byId(current.pose_generation_id);
   const items = checklist(current, qa, { selectedKind: selectedGen?.kind });
-  const confirming = confirmingIds.has(current.id);
   const contentPx = b.layout.content_px;
   const placement: Placement = savedPlacement ?? current.placement ?? DEFAULT_PLACEMENT;
   const loadingMsg = pageGens.isError ? (
@@ -370,19 +482,44 @@ export function EditorPage({ bookId }: { bookId: number }) {
   if (mode === "compose") {
     const hasBg = current.background_generation_id != null;
     const hasPose = current.pose_generation_id != null;
-    // 兩個都選了才有舞台；圖片缺漏（沒有圖、沒有遮罩 → 沒有 cutout_url）由 ComposeStage 說明要重新產生
+    const busyKind = (kind: Generation["kind"]) => gens.some((g) => g.kind === kind && isActive(g));
+    const genSize = b.layout.generation_size;
+    // 兩個都選了才能擺位置；圖片缺漏（沒有圖、沒有遮罩 → 沒有 cutout_url）由 ComposeStage 說明要重新產生
     stage =
-      !hasBg || !hasPose ? (
+      !hasBg && !hasPose ? (
         <p className={styles.stageMsg}>
-          {!hasBg && !hasPose ? "先選好背景和角色動作" : !hasBg ? "先選好背景" : "先選好角色動作"}
+          {busyKind("background") || busyKind("pose") ? "背景與角色動作產生中…" : "先選好背景和角色動作"}
         </p>
+      ) : !hasBg || !hasPose ? (
+        // 只有一個：有什麼就顯示什麼，另一個產生中或還沒選
+        <ComposePreview
+          backgroundUrl={backgroundGen?.image_url}
+          cutoutUrl={hasPose ? poseGen?.cutout_url : null}
+          aspect={genSize[0] / genSize[1]}
+          message={
+            !hasBg
+              ? busyKind("background") ? "背景產生中…" : "先選好背景"
+              : busyKind("pose") ? "角色動作產生中…" : "先選好角色動作"
+          }
+        />
       ) : backgroundGen && poseGen ? (
         <ComposeStage
           backgroundUrl={backgroundGen.image_url}
           cutoutUrl={poseGen.cutout_url}
           placement={placement}
-          onChange={(p) => savePlacement(current.id, p)}
-          disabled={confirming}
+          onChange={(p) => placeCharacter(current.id, p)}
+          status={
+            <ComposeStatus
+              status={composeStatus}
+              upToDate={hasSel && !current.compose_pending}
+              onRetry={() => void autoCompose.flush(current.id)}
+              placementFailed={placementFailed}
+              onRetryPlacement={() => {
+                placementSaver.retry(current.id);
+                autoCompose.schedule(current.id);
+              }}
+            />
+          }
         />
       ) : pageGens.data && !pageGens.isFetching ? (
         <p role="alert" className={styles.stageMsg}>
@@ -403,23 +540,16 @@ export function EditorPage({ bookId }: { bookId: number }) {
           onPickPose={(g) => void pickThumb("pose", g)}
           picking={picking}
           beforeReplaceBackground={() => flushSelectedEdits(current)}
+          onBackgroundUploaded={(page) => {
+            if (hasBoth(page)) autoCompose.schedule(page.id);
+          }}
         />
-        {hasBg && hasPose && (
-          <ComposePanel
-            key={`compose-${current.id}`}
-            page={current}
-            placement={placement}
-            onPlacementChange={(p) => savePlacement(current.id, p)}
-            onConfirm={confirmCompose}
-            confirming={confirming}
-          />
-        )}
         <Button
           variant="primary"
           size="lg"
           disabled={!!blockers.line}
           aria-describedby={blockers.line ? nextHintId : undefined}
-          onClick={() => go(current.id, "line")}
+          onClick={() => void toLine(current.id)}
         >
           下一步：補線 →
         </Button>
@@ -475,7 +605,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
       <section aria-label="工作區" className={styles.work}>
         <StageHeader
           mode={mode}
-          onModeChange={(m) => go(current.id, m)}
+          onModeChange={(m) => (m === "line" ? void toLine(current.id) : go(current.id, m))}
           blockers={blockers}
           gapCount={qa?.gap_count ?? 0}
           idPrefix={idPrefix}

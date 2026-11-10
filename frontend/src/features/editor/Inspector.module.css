@@ -1,4 +1,4 @@
-/* 右欄：本頁進度＋模式面板（構圖：ComposeWorkspace＋ComposePanel；補線：LinePanel＋QAPanel）。 */
+/* 右欄：本頁進度＋模式面板（構圖：ComposeWorkspace；舞台下方有翻轉／重設與自動合成狀態；補線：LinePanel＋QAPanel）。 */
 .insp {
   grid-area: insp;
   background: var(--surface);

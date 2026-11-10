@@ -409,7 +409,7 @@ export function useSelectPose(bookId: number) {
 }
 
 /**
- * 確認合成（無 body；後端用已存的背景／動作／位置）→ pages, qa, edits, book, books, exportSummary, generations。
+ * 合成（無 body；後端用已存的背景／動作／位置；編輯器的自動合成呼叫它）→ pages, qa, edits, book, books, exportSummary, generations。
  * mutationFn 內會先等 placementSaver.whenIdle(pageId)，位置寫入失敗則拒絕（「位置尚未儲存，請重試」）且不送出合成。合成圖只能經由這裡產生或選回，不要對 composite 呼叫 /select。
  */
 export function useCompose(bookId: number) {

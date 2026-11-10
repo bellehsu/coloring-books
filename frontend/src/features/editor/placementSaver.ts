@@ -6,7 +6,7 @@ import { createLatestByKey } from "@/lib/latestByKey";
 /**
  * 角色位置存檔（PUT /pages/{id}/placement）：每頁依序、只保留最新。
  * 模組層級（每個 QueryClient 一個），拖曳中離開編輯器再回來也不會並行或倒序。
- * 確認合成前先 whenIdle(pageId)，合成才會用到畫面上的位置。
+ * 合成前先 whenIdle(pageId)（useCompose 內），合成才會用到畫面上的位置。
  */
 export interface PlacementSaver {
   savePlacement(pageId: number, p: Placement): void;

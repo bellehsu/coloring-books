@@ -46,36 +46,33 @@ vi.mock("./LineFixCanvas", async (orig) => {
   };
 });
 
-// ---------- 合成面板與合成舞台換成替身：這裡只測 EditorPage 傳進去的回呼（背景／角色動作卡片用真的） ----------
-type ComposePanelProps = import("./ComposePanel").ComposePanelProps;
+// ---------- 合成舞台換成替身：這裡只測 EditorPage 傳進去的回呼與狀態列（背景／角色動作卡片用真的） ----------
 type ComposeStageProps = import("./ComposeStage").ComposeStageProps;
-vi.mock("./ComposePanel", () => ({
-  ComposePanel: (p: ComposePanelProps) => (
-    <section data-testid="compose-panel" data-placement={JSON.stringify(p.placement)} data-confirming={String(p.confirming)}>
-      <button type="button" onClick={() => p.onPlacementChange({ ...p.placement, flip: !p.placement.flip })}>
-        stub-flip
-      </button>
-      <button type="button" onClick={() => void p.onConfirm()}>
-        stub-confirm
-      </button>
-    </section>
-  ),
-}));
-vi.mock("./ComposeStage", () => ({
-  ComposeStage: (p: ComposeStageProps) => (
-    <div
-      data-testid="compose-stage"
-      data-bg={p.backgroundUrl ?? ""}
-      data-cutout={p.cutoutUrl ?? ""}
-      data-disabled={String(!!p.disabled)}
-      data-placement={JSON.stringify(p.placement)}
-    >
-      <button type="button" onClick={() => p.onChange({ ...p.placement, cx: 0.25 })}>
-        stub-move
-      </button>
-    </div>
-  ),
-}));
+vi.mock("./ComposeStage", async (orig) => {
+  const real = await orig<typeof import("./ComposeStage")>();
+  return {
+    ...real,
+    ComposeStage: (p: ComposeStageProps) => (
+      <div
+        data-testid="compose-stage"
+        data-bg={p.backgroundUrl ?? ""}
+        data-cutout={p.cutoutUrl ?? ""}
+        data-placement={JSON.stringify(p.placement)}
+      >
+        <button type="button" onClick={() => p.onChange({ ...p.placement, cx: 0.25 })}>
+          stub-move
+        </button>
+        <button type="button" onClick={() => p.onChange({ ...p.placement, cx: p.placement.cx + 0.01 })}>
+          stub-nudge
+        </button>
+        <button type="button" onClick={() => p.onChange({ ...p.placement, flip: !p.placement.flip })}>
+          stub-flip
+        </button>
+        {p.status}
+      </div>
+    ),
+  };
+});
 
 // ---------- 假後端 ----------
 type O = Record<string, unknown>;
@@ -283,7 +280,9 @@ beforeEach(() => {
       if (m) {
         const made = mkGen(50 + gens.length, { kind: "composite", page_id: Number(m[1]) });
         gens = [...gens, made];
-        pages = pages.map((p) => (p.id === Number(m![1]) ? { ...p, selected_generation_id: made.id } : p));
+        pages = pages.map((p) =>
+          p.id === Number(m![1]) ? { ...p, selected_generation_id: made.id, compose_pending: false } : p,
+        );
         return j(pages.find((p) => p.id === Number(m![1])));
       }
       m = url.match(/^\/api\/pages\/(\d+)\/select$/);
@@ -415,11 +414,15 @@ describe("EditorPage", () => {
   it("只有背景或只有角色動作：舞台說明缺哪一個", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3 });
     pages[1] = mkPage(2, { pose_generation_id: 4 });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", page_id: 2 })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", page_id: 2, cutout_url: "/api/generations/4/cutout" })];
     setup();
+    // 有什麼就顯示什麼：只有背景 → 背景圖＋說明
     expect(await screen.findByText("先選好角色動作")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "背景圖" })).toHaveAttribute("src", "/img/3.png");
     await userEvent.click(pageButton(2));
     expect(await screen.findByText("先選好背景")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "角色動作" })).toHaveAttribute("src", "/api/generations/4/cutout");
+    expect(screen.queryByTestId("compose-stage")).not.toBeInTheDocument();
   });
 
   it("舊網址的模式：mode=background／pose → 構圖；mode=qa → 補線", async () => {
@@ -571,100 +574,218 @@ describe("EditorPage", () => {
     expect(await within(poseCard()).findByText("排隊第 1 位")).toBeInTheDocument();
   });
 
-  it("構圖：舞台拿到背景與去背圖；移動 → PUT placement；確認合成（舞台停用）→ 切到 ② 補線", async () => {
+  it("drag end triggers compose without a confirm button：放開 → 存位置 → 自動合成（等位置寫完），留在 ① 構圖", async () => {
     const { o, g } = composedReady();
-    pages[0] = mkPage(1, o);
-    gens = g;
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
     setup();
     const stage = await screen.findByTestId("compose-stage");
     expect(stage).toHaveAttribute("data-bg", "/img/3.png");
     expect(stage).toHaveAttribute("data-cutout", "/api/generations/4/cutout");
-    expect(stage).toHaveAttribute("data-disabled", "false");
     expect(JSON.parse(stage.getAttribute("data-placement")!)).toEqual({ cx: 0.5, cy: 0.66, height: 0.6, flip: false });
-    expect(within(progressTitle()).getByText("構圖")).toBeInTheDocument();
+    expect(await within(stage).findByText("✓ 線稿已自動更新")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /確認合成/ })).not.toBeInTheDocument();
     let release!: () => void;
     gate["PUT /api/pages/1/placement"] = new Promise<void>((r) => (release = r));
     await userEvent.click(within(stage).getByRole("button", { name: "stub-move" }));
-    // 畫面立即用新位置（不等伺服器）
-    expect(JSON.parse(screen.getByTestId("compose-panel").getAttribute("data-placement")!)).toMatchObject({ cx: 0.25 });
+    // 畫面立即用新位置（不等伺服器），狀態列顯示更新中
+    expect(JSON.parse(screen.getByTestId("compose-stage").getAttribute("data-placement")!)).toMatchObject({ cx: 0.25 });
+    expect(within(screen.getByTestId("compose-stage")).getByText("更新中…")).toBeInTheDocument();
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(1));
     expect(calledWith("PUT", "/api/pages/1/placement")[0].body).toEqual({ cx: 0.25, cy: 0.66, height: 0.6, flip: false });
-    // 位置還在送 → 確認合成要等它
-    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
-    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "true");
-    // 確認期間舞台不能改位置（合成結果＝畫面）
-    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "true");
-    await act(async () => {});
+    // debounce 過了，但位置還在送 → 合成要等它
+    await act(() => new Promise((r) => setTimeout(r, 700)));
     expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
     await act(async () => release());
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
-    await waitFor(() => expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=line", { scroll: false }));
-    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
-    await waitFor(() => expect(within(progressTitle()).getByText("已合成")).toBeInTheDocument());
+    const order = calls.map((c) => `${c.method} ${c.url}`);
+    expect(order.indexOf("PUT /api/pages/1/placement")).toBeLessThan(order.indexOf("POST /api/pages/1/compose"));
+    expect(await within(screen.getByTestId("compose-stage")).findByText("✓ 線稿已自動更新")).toBeInTheDocument();
+    // 不切到補線、不走 /select
+    expect(composeTab()).toHaveAttribute("aria-selected", "true");
+    expect(replace).not.toHaveBeenCalledWith(expect.stringContaining("mode=line"), expect.anything());
     expect(calledWith("POST", "/api/pages/1/select")).toHaveLength(0);
   });
 
-  it("確認合成中換到另一頁：只有正在合成的那頁停用，另一頁的舞台與確認按鈕照常可用", async () => {
+  it("連續調整只合成一次（debounce）", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    const stage = await screen.findByTestId("compose-stage");
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-nudge" }));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-nudge" }));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-flip" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(3));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1);
+  });
+
+  it("拖完馬上換頁（debounce 內）：只合成拖過的那頁，另一頁不變", async () => {
     const a = composedReady(1, 3, 4);
     const b = composedReady(2, 5, 6);
-    pages[0] = mkPage(1, a.o);
-    pages[1] = mkPage(2, b.o);
-    gens = [...a.g, ...b.g];
-    let release!: () => void;
-    gate["POST /api/pages/1/compose"] = new Promise<void>((r) => (release = r));
+    pages[0] = mkPage(1, { ...a.o, selected_generation_id: 50 });
+    pages[1] = mkPage(2, { ...b.o, selected_generation_id: 51 });
+    gens = [...a.g, ...b.g, mkGen(50, { kind: "composite" }), mkGen(51, { kind: "composite", page_id: 2 })];
     setup();
-    await screen.findByTestId("compose-stage");
-    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
-    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "true");
-    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "true");
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
     await userEvent.click(pageButton(2));
     await waitFor(() => expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-bg", "/img/5.png"));
-    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "false");
-    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-disabled", "false");
-    // 第 2 頁照常可以確認合成
-    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
-    await waitFor(() => expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(1));
-    await waitFor(() => expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2&mode=line", { scroll: false }));
-    // 第 1 頁的合成較晚結束：不會把畫面切回第 1 頁
-    await act(async () => release());
-    await act(async () => {});
-    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2&mode=line", { scroll: false });
+    // 第 2 頁沒動過：狀態列不是「更新中…」、位置是預設
+    expect(within(screen.getByTestId("compose-stage")).queryByText("更新中…")).not.toBeInTheDocument();
+    expect(JSON.parse(screen.getByTestId("compose-stage").getAttribute("data-placement")!)).toEqual({
+      cx: 0.5,
+      cy: 0.66,
+      height: 0.6,
+      flip: false,
+    });
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(calledWith("POST", "/api/pages/2/compose")).toHaveLength(0);
+    expect(calledWith("PUT", "/api/pages/2/placement")).toHaveLength(0);
+    expect(pages[1]).toMatchObject({ selected_generation_id: 51, placement: null });
+    // 畫面停在第 2 頁
+    expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=2", { scroll: false });
   });
 
-  it("compose_pending：進度清單的構圖顯示「待更新」", async () => {
-    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 50, compose_pending: true });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose" }), mkGen(50, { kind: "composite" })];
+  it("有補過的線：第一次自動合成前先問；取消不合成，繼續才合成，之後這頁不再問", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    edits = [{ op: "draw", width_px: 11, points: [[0.5, 0.5]] }];
     setup();
-    await waitFor(() => expect(within(progressTitle()).getByText("待更新")).toBeInTheDocument());
+    const stage = await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-move" }));
+    const dialog = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
+    expect(dialog).toHaveTextContent("移動角色會清掉這頁補過的線，要繼續嗎？");
+    await userEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
+    expect(within(screen.getByTestId("compose-stage")).queryByText("更新失敗，重試")).not.toBeInTheDocument();
+    // 再動一次：還沒同意過 → 再問；這次繼續
+    await userEvent.click(within(screen.getByTestId("compose-stage")).getByRole("button", { name: "stub-nudge" }));
+    const again = await screen.findByRole("dialog", { name: "清掉補過的線？" }, { timeout: 2000 });
+    await userEvent.click(within(again).getByRole("button", { name: "繼續" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1));
+    // 新合成圖上又補了線，再移動：這頁已經同意過，不再問
+    edits = [{ op: "draw", width_px: 11, points: [[0.4, 0.4]] }];
+    await act(async () => {
+      await lastQc.invalidateQueries({ queryKey: qk.edits(1) });
+    });
+    await userEvent.click(within(screen.getByTestId("compose-stage")).getByRole("button", { name: "stub-nudge" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(2), { timeout: 2000 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("構圖：位置從伺服器的草稿開始；翻轉 → PUT placement", async () => {
+  it("沒有補過的線：不問，直接合成", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    const stage = await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-flip" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("合成失敗：狀態列「更新失敗，重試」，按了重新合成", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    failWith["POST /api/pages/1/compose"] = 409;
+    setup();
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    const retry = await within(screen.getByTestId("compose-stage")).findByRole("button", { name: "更新失敗，重試" }, { timeout: 2000 });
+    expect(await screen.findByText("伺服器壞了")).toBeInTheDocument(); // 後端的原因用 toast 顯示
+    delete failWith["POST /api/pages/1/compose"];
+    await userEvent.click(retry);
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(2));
+    expect(await within(screen.getByTestId("compose-stage")).findByText("✓ 線稿已自動更新")).toBeInTheDocument();
+  });
+
+  it("「下一步：補線 →」先把還在等的合成做完再切換", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
+    await userEvent.click(screen.getByRole("button", { name: "下一步：補線 →" }));
+    // 不用等 debounce：馬上合成，合成完才切到補線
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 400 });
+    await waitFor(() => expect(replace).toHaveBeenLastCalledWith("/books/1/editor?page=1&mode=line", { scroll: false }));
+    const order = calls.map((c) => `${c.method} ${c.url}`);
+    expect(order.indexOf("POST /api/pages/1/compose")).toBeGreaterThan(-1);
+    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
+  });
+
+  it("背景與角色動作都選好但還沒合成（例如「產生全部素材」自動選用）：打開就自動合成", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, compose_pending: true });
+    gens = g;
+    setup();
+    await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await waitFor(() => expect(lineTab()).not.toHaveAttribute("aria-disabled"));
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1);
+  });
+
+  it("只有背景時角色動作自動選用送達 → 自動合成", async () => {
+    pages[0] = mkPage(1, { background_generation_id: 3 });
+    gens = [
+      mkGen(3, { kind: "background" }),
+      mkGen(4, { kind: "pose", status: "running", image_url: null, progress: 0.5 }),
+    ];
+    setup();
+    expect(await screen.findByText("角色動作產生中…")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "背景圖" })).toHaveAttribute("src", "/img/3.png");
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
+    // 工作完成，後端自動選用
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, compose_pending: true });
+    await act(async () => {
+      await lastQc.invalidateQueries();
+    });
+    await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+  });
+
+  it("構圖：位置從伺服器的草稿開始；翻轉 → PUT placement → 自動合成", async () => {
     pages[0] = mkPage(1, {
       background_generation_id: 3,
       pose_generation_id: 4,
+      selected_generation_id: 50,
       placement: { cx: 0.3, cy: 0.5, height: 0.4, flip: true },
     });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m" })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" }), mkGen(50, { kind: "composite" })];
     setup();
     const stage = await screen.findByTestId("compose-stage");
     expect(JSON.parse(stage.getAttribute("data-placement")!)).toEqual({ cx: 0.3, cy: 0.5, height: 0.4, flip: true });
     await userEvent.click(screen.getByRole("button", { name: "stub-flip" }));
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(1));
     expect(calledWith("PUT", "/api/pages/1/placement")[0].body).toMatchObject({ flip: false });
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
   });
 
-  it("位置寫入失敗時確認合成：不送 compose，提示位置尚未儲存", async () => {
-    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m" })];
+  it("位置寫入失敗：不合成，狀態列顯示「位置尚未儲存」與「更新失敗，重試」；位置重試成功後自動合成", async () => {
+    pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 50 });
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" }), mkGen(50, { kind: "composite" })];
     failWith["PUT /api/pages/1/placement"] = 500;
     setup();
     await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(1));
-    await userEvent.click(screen.getByRole("button", { name: "stub-confirm" }));
-    await waitFor(() => expect(screen.getByText(/位置尚未儲存/)).toBeInTheDocument());
+    const stage = screen.getByTestId("compose-stage");
+    expect(await within(stage).findByRole("button", { name: "更新失敗，重試" }, { timeout: 2000 })).toBeInTheDocument();
+    expect(within(stage).getByTestId("placement-save-failed")).toHaveTextContent("位置尚未儲存");
     expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
-    expect(screen.getByTestId("compose-panel")).toHaveAttribute("data-confirming", "false");
+    delete failWith["PUT /api/pages/1/placement"];
+    await userEvent.click(within(stage).getByRole("button", { name: "重試" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(2));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await waitFor(() => expect(within(stage).queryByTestId("placement-save-failed")).not.toBeInTheDocument());
   });
 
   it("構圖：角色動作沒有遮罩（後端 cutout_url 為 null）→ 舞台拿不到去背圖（由舞台說明要重新產生）", async () => {
@@ -693,7 +814,7 @@ describe("EditorPage", () => {
     expect(screen.queryByTestId("compose-stage")).not.toBeInTheDocument();
   });
 
-  it("已合成的頁改選不同背景 → 選圖被清空，② 補線停用", async () => {
+  it("已合成的頁改選不同背景 → 選圖被清空，② 補線停用，接著自動合成", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 9 });
     gens = [mkGen(3, { kind: "background" }), mkGen(8, { kind: "background" }), mkGen(4, { kind: "pose" }), mkGen(9, { kind: "composite" })];
     setup();
@@ -702,6 +823,9 @@ describe("EditorPage", () => {
     await userEvent.click(await within(bgCard()).findByRole("radio", { name: "背景第 2 張" }));
     await waitFor(() => expect(lineTab()).toHaveAttribute("aria-disabled", "true"));
     expect(within(progressTitle()).queryByText("已合成")).not.toBeInTheDocument();
+    // 改選完自動合成新的
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await waitFor(() => expect(lineTab()).not.toHaveAttribute("aria-disabled"));
   });
 
   it("Filmstrip 刪除：確認後 DELETE，選到相鄰頁", async () => {
@@ -754,6 +878,19 @@ describe("EditorPage", () => {
     const thumb = await within(bgCard()).findByRole("radio", { name: "背景第 1 張（上傳的圖片）" });
     await waitFor(() => expect(thumb).toHaveAttribute("aria-checked", "true"));
     expect(within(bgCard()).getByText("上傳的圖片")).toBeInTheDocument();
+  });
+
+  it("角色動作已選好時上傳背景圖 → 自動合成", async () => {
+    pages[0] = mkPage(1, { pose_generation_id: 4 });
+    gens = [mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    setup();
+    await screen.findByRole("region", { name: "背景" });
+    await userEvent.upload(
+      within(bgCard()).getByLabelText("上傳背景圖"),
+      new File(["png"], "mine.png", { type: "image/png" }),
+    );
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds/upload")).toHaveLength(1));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
   });
 
   it("線條設定：細緻度立即 PATCH；線寬顯示 mm、放開時 PATCH", async () => {

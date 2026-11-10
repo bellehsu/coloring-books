@@ -35,6 +35,8 @@ export interface ComposeWorkspaceProps {
    * 否則晚到的修線 PUT 會被後端拒絕。和點縮圖選用走同一個前置步驟。
    */
   beforeReplaceBackground?: () => Promise<unknown>;
+  /** 上傳的背景已成為這頁的背景（回傳更新後的頁）：EditorPage 用來排自動合成。 */
+  onBackgroundUploaded?: (page: Page) => void;
 }
 
 /**
@@ -106,7 +108,15 @@ function useSavePage(bookId: number, pageId: number) {
     });
 }
 
-function BackgroundCard({ bookId, page, background, onPickBackground, picking, beforeReplaceBackground }: ComposeWorkspaceProps) {
+function BackgroundCard({
+  bookId,
+  page,
+  background,
+  onPickBackground,
+  picking,
+  beforeReplaceBackground,
+  onBackgroundUploaded,
+}: ComposeWorkspaceProps) {
   const id = useId();
   const toast = useToast();
   const savePage = useSavePage(bookId, page.id);
@@ -145,9 +155,10 @@ function BackgroundCard({ bookId, page, background, onPickBackground, picking, b
     // 先等修線寫完再上傳；整段期間停用（ref 擋住同一輪 render 前的第二次選檔）
     void uploading.run(async () => {
       await beforeReplaceBackground?.();
-      await upload
-        .mutateAsync({ pageId: page.id, file })
-        .catch((err: unknown) => toast.show(errMsg(err, "無法上傳背景圖"), "error"));
+      await upload.mutateAsync({ pageId: page.id, file }).then(
+        (updated) => onBackgroundUploaded?.(updated),
+        (err: unknown) => toast.show(errMsg(err, "無法上傳背景圖"), "error"),
+      );
     });
   };
   const uploadBusy = uploading.busy || upload.isPending;

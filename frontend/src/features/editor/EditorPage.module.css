@@ -232,3 +232,16 @@
   height: 100%;
   object-fit: contain;
 }
+
+/* 「清掉補過的線？」確認框 */
+.confirmText {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--muted-2);
+}
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

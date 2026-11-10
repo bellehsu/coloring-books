@@ -1,8 +1,17 @@
 "use client";
 
-import { useId, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import type { Placement } from "@/api/client";
+import {
+  useId,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
+import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
 import { cornerResize, movePlacement, placementBox, resizePlacement } from "@/lib/placement";
+import type { AutoComposeStatus } from "./autoCompose";
+import editorStyles from "./EditorPage.module.css";
 import styles from "./ComposeStage.module.css";
 
 export interface ComposeStageProps {
@@ -15,13 +24,13 @@ export interface ComposeStageProps {
   cutoutUrl: string | null;
   /** 目前位置（本 session 最後存的 → 伺服器草稿 → DEFAULT_PLACEMENT）。 */
   placement: Placement;
-  /** 結束拖曳或每次按鍵時呼叫一次；EditorPage 會自動存（placementSaver，依序、最新為準）。 */
-  onChange: (p: Placement) => void;
   /**
-   * 確認合成進行中：不能改位置（拖曳、把手、鍵盤都忽略）。拖到一半時開始確認 → 取消拖曳、
-   * 畫面回到已存的位置，也就是合成會用的位置。
+   * 結束拖曳、縮放，每次按鍵，或按「水平翻轉」「重設位置」時呼叫一次；
+   * EditorPage 會自動存（placementSaver，依序、最新為準）並排自動合成。
    */
-  disabled?: boolean;
+  onChange: (p: Placement) => void;
+  /** 舞台下方、翻轉／重設旁的狀態（自動合成、位置存檔失敗）。 */
+  status?: ReactNode;
 }
 
 type Size = { w: number; h: number };
@@ -50,19 +59,16 @@ function readSize(img: HTMLImageElement): Size | undefined {
 }
 
 /**
- * 合成模式的舞台：背景圖上疊去背角色。
+ * 合成模式的舞台：背景圖上疊去背角色，下方是「水平翻轉」「重設位置」與狀態。
  * 拖曳角色移動、拖右下角把手等比縮放（左上角固定）；角色框可聚焦：方向鍵移動 1%、Shift＋方向鍵 5%、+／- 縮放 5%。
  * 位置用百分比擺放，舞台寬度跟著容器（手機寬也一樣）；超出背景的部分裁掉（與合成結果相同）。
  */
-export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, disabled = false }: ComposeStageProps) {
+export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, status }: ComposeStageProps) {
   const hintId = useId();
   const [bg, setBg] = useState<Loaded | null>(null);
   const [cut, setCut] = useState<Loaded | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
-
-  // 確認合成開始時取消進行中的拖曳（之後放開也不送），畫面回到已存的位置
-  if (disabled && drag) setDrag(null);
 
   if (!backgroundUrl) return <Msg>背景圖片無法載入，請重新產生</Msg>;
   if (!cutoutUrl) return <Msg>角色動作缺少去背遮罩，請重新產生</Msg>;
@@ -86,7 +92,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
   };
 
   const begin = (kind: Drag["kind"]) => (e: PointerEvent<HTMLElement>) => {
-    if (disabled || !ready || drag) return;
+    if (!ready || drag) return;
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const rect = overlay?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
@@ -112,7 +118,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (disabled || !ready || drag) return;
+    if (!ready || drag) return;
     // Ctrl／⌘＋−／＝ 是瀏覽器縮放，不要吃掉
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const step = e.shiftKey ? KEY_STEP_BIG : KEY_STEP;
@@ -178,7 +184,6 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
             aria-roledescription="可移動的角色"
             aria-label="角色位置"
             aria-describedby={hintId}
-            aria-disabled={disabled || undefined}
             tabIndex={0}
             className={styles.box}
             data-ready={ready}
@@ -208,13 +213,12 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
               aria-hidden="true"
               data-testid="resize-handle"
               className={styles.handle}
-              data-disabled={disabled}
               style={handleStyle}
               onPointerDown={begin("resize")}
               onPointerMove={move}
               onPointerUp={end}
-              onPointerCancel={cancel}
-            onLostPointerCapture={cancel}
+                onPointerCancel={cancel}
+              onLostPointerCapture={cancel}
             />
           )}
         </div>
@@ -224,10 +228,112 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, di
           </p>
         )}
       </div>
+      <div className={styles.bar}>
+        <button
+          type="button"
+          className={styles.mini}
+          aria-pressed={placement.flip}
+          onClick={() => onChange({ ...placement, flip: !placement.flip })}
+        >
+          水平翻轉
+        </button>
+        <button
+          type="button"
+          className={styles.mini}
+          onClick={() => {
+            const next = { ...DEFAULT_PLACEMENT, flip: placement.flip };
+            if (!same(next, placement)) onChange(next);
+          }}
+        >
+          重設位置
+        </button>
+        {status}
+      </div>
       <p id={hintId} className={styles.hint}>
-        拖曳角色移動，拖右下角把手縮放；也可以選取角色後用方向鍵移動（Shift 一次 5%）、＋／－ 縮放
+        拖曳角色移動，拉右下角圓點縮放；也可以選取角色後用方向鍵移動（Shift 一次 5%）、＋／－ 縮放。放開後自動合成，不用另外按確認。
       </p>
     </div>
+  );
+}
+
+/**
+ * 背景或角色動作還沒選好（或還在產生）時的舞台：有什麼就顯示什麼，加上一行說明。
+ * 只有背景 → 整張背景；只有角色動作 → 去背角色放在紙上。
+ */
+export function ComposePreview({
+  backgroundUrl,
+  cutoutUrl,
+  aspect,
+  message,
+}: {
+  backgroundUrl?: string | null;
+  cutoutUrl?: string | null;
+  /** 紙張（生成尺寸）寬／高：只有角色動作時用。 */
+  aspect: number;
+  message: string;
+}) {
+  return (
+    <div className={styles.wrap}>
+      <div
+        className={styles.frame}
+        data-ready="true"
+        style={{ aspectRatio: String(aspect), "--bg-aspect": aspect } as CSSProperties}
+      >
+        {backgroundUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={backgroundUrl} alt="背景圖" className={styles.bg} draggable={false} />
+        ) : cutoutUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={cutoutUrl} alt="角色動作" className={styles.lonePose} draggable={false} />
+        ) : null}
+      </div>
+      <p role="status" className={styles.waiting}>
+        {message}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 舞台下方的狀態：位置存檔失敗（持續顯示＋重試，toast 會消失）與自動合成
+ * （「更新中…」／「更新失敗，重試」按鈕／「✓ 線稿已自動更新」）。
+ */
+export function ComposeStatus({
+  status,
+  upToDate,
+  onRetry,
+  placementFailed,
+  onRetryPlacement,
+}: {
+  status: AutoComposeStatus;
+  /** 閒置時，選定圖就是目前這組背景＋角色動作＋位置的合成圖。 */
+  upToDate: boolean;
+  onRetry: () => void;
+  placementFailed: boolean;
+  onRetryPlacement: () => void;
+}) {
+  return (
+    <>
+      {placementFailed && (
+        <span role="alert" data-testid="placement-save-failed" className={`${editorStyles.saveFailed} ${editorStyles.sketchSaveFailed}`}>
+          位置尚未儲存
+          <button type="button" className={editorStyles.retry} onClick={onRetryPlacement}>
+            重試
+          </button>
+        </span>
+      )}
+      <span role="status" className={styles.status} data-status={status}>
+        {status === "pending" || status === "running" ? (
+          "更新中…"
+        ) : status === "error" ? (
+          <button type="button" className={`${styles.mini} ${styles.retry}`} onClick={onRetry}>
+            更新失敗，重試
+          </button>
+        ) : upToDate ? (
+          "✓ 線稿已自動更新"
+        ) : null}
+      </span>
+    </>
   );
 }
 
