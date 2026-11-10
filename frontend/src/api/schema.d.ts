@@ -262,6 +262,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pages/{page_id}/backgrounds/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Background
+         * @description 上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine="upload" 的背景並選用。
+         */
+        post: operations["upload_background_api_pages__page_id__backgrounds_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pages/{page_id}/pose": {
         parameters: {
             query?: never;
@@ -809,6 +829,11 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_upload_background_api_pages__page_id__backgrounds_upload_post */
+        Body_upload_background_api_pages__page_id__backgrounds_upload_post: {
+            /** File */
+            file: string;
+        };
         /** Body_upload_sketch_api_pages__page_id__sketch_put */
         Body_upload_sketch_api_pages__page_id__sketch_put: {
             /** File */
@@ -967,6 +992,11 @@ export interface components {
             pose_mode: ("precise" | "fast") | null;
             /** Background Style */
             background_style: ("simple" | "detailed") | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "generated" | "upload";
             /** Error */
             error: string | null;
             /** Elapsed S */
@@ -1949,6 +1979,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_background_api_pages__page_id__backgrounds_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_background_api_pages__page_id__backgrounds_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -969,6 +969,59 @@
         }
       }
     },
+    "/api/pages/{page_id}/backgrounds/upload": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Upload Background",
+        "description": "上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine=\"upload\" 的背景並選用。",
+        "operationId": "upload_background_api_pages__page_id__backgrounds_upload_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_background_api_pages__page_id__backgrounds_upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/pages/{page_id}/pose": {
       "post": {
         "tags": [
@@ -2438,6 +2491,20 @@
         ],
         "title": "Body_reference_sketch_api_books__book_id__reference_sketch_post"
       },
+      "Body_upload_background_api_pages__page_id__backgrounds_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_background_api_pages__page_id__backgrounds_upload_post"
+      },
       "Body_upload_sketch_api_pages__page_id__sketch_put": {
         "properties": {
           "file": {
@@ -2880,6 +2947,14 @@
             ],
             "title": "Background Style"
           },
+          "source": {
+            "type": "string",
+            "enum": [
+              "generated",
+              "upload"
+            ],
+            "title": "Source"
+          },
           "error": {
             "anyOf": [
               {
@@ -2958,6 +3033,7 @@
           "cutout_url",
           "pose_mode",
           "background_style",
+          "source",
           "error",
           "elapsed_s",
           "queue_position",

@@ -152,6 +152,7 @@ class GenerationOut(BaseModel):
     cutout_url: str | None  # pose：裁好的去背 RGBA 圖
     pose_mode: PoseMode | None  # pose：精準／快速；其他 kind 為 None
     background_style: BackgroundStyle | None  # background：實際風格（簡潔／細緻）；其他 kind 為 None
+    source: Literal["generated", "upload"]  # engine == "upload"：使用者上傳的圖
     error: str | None
     elapsed_s: float | None
     queue_position: int | None
@@ -183,6 +184,7 @@ class GenerationOut(BaseModel):
             cutout_url=f"/api/generations/{gen.id}/cutout" if gen.mask_path else None,
             pose_mode=pose_mode_of(gen),
             background_style=background_style_of(gen),
+            source="upload" if gen.engine == "upload" else "generated",
             error=gen.error,
             elapsed_s=gen.elapsed_s,
             queue_position=queue_position,

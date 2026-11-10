@@ -13,6 +13,7 @@ from app.main import create_app
 from app.models import CharacterCheck, Generation, GenKind, GenStatus, PageStatus
 from app.services.compose import COMPOSE_VERSION, DEFAULT_PLACEMENT
 from app.services.engine import EngineError
+from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.prompts import (
     QWEN_BACKGROUND_VARIATIONS,
     BACKGROUND_NEGATIVE,
@@ -1217,3 +1218,67 @@ def test_batch_backgrounds_concurrent_calls_queue_once_per_page(client, app, mon
     with app.state.sessions() as s:
         rows = s.exec(select(Generation).where(Generation.kind == GenKind.BACKGROUND)).all()
     assert sorted(g.page_id for g in rows) == sorted(p["id"] for p in pages)
+
+
+# ---- 上傳背景 ------------------------------------------------------------------
+
+
+def upload_bg(client, page_id, data, name="bg.png"):
+    return client.post(f"/api/pages/{page_id}/backgrounds/upload",
+                       files={"file": (name, data, "image/png")})
+
+
+def png_bytes(size=(2000, 900), color="green"):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_upload_background_creates_selected_generation(client, app):
+    b = new_book(client, **A5_HOME)
+    p = new_page(client, b["id"])
+    r = upload_bg(client, p["id"], png_bytes())
+    assert r.status_code == 201, r.text
+    page = r.json()
+    gid = page["background_generation_id"]
+    assert gid is not None
+    g = gen_row(app, gid)
+    assert (g.kind, g.status, g.engine) == (GenKind.BACKGROUND, GenStatus.SUCCEEDED, "upload")
+    assert g.workflow_name is None and g.seed == 0
+    assert (g.user_text, g.prompt, g.negative_prompt) == ("", "", "")
+    params = json.loads(g.params_json)
+    assert params["filename"] == "bg.png" and params["original_size"] == [2000, 900]
+    assert len(params["crop_box"]) == 4
+    assert json.loads(g.request_json)["source"] == "upload"
+    with Image.open(app.state.storage.abs(g.image_path)) as im:
+        assert im.size == (g.width, g.height) == compute_layout(
+            PaperSize(b["paper_size"]), PrintMode(b["print_mode"])).generation_size
+    assert client.get(f"/api/generations/{gid}").json()["source"] == "upload"
+    other = gen_background(client, app, p["id"])
+    assert client.get(f"/api/generations/{other}").json()["source"] == "generated"
+
+
+def test_upload_rejects_bad_file(client, app):
+    b = new_book(client)
+    p = new_page(client, b["id"])
+    r = upload_bg(client, p["id"], b"not an image")
+    assert r.status_code == 400 and "無法解析" in r.json()["detail"]
+    r = upload_bg(client, p["id"], b"x" * 11_000_000)
+    assert r.status_code == 400
+    assert get_page(app, p["id"]).background_generation_id is None
+    assert not list(app.state.storage.root.rglob("generation*"))
+
+
+def test_upload_resets_composite_like_pick(client, app):
+    b, p, bg, pose = compose_ready(client, app)
+    confirm(client, p["id"])
+    page = upload_bg(client, p["id"], png_bytes()).json()
+    assert page["background_generation_id"] != bg
+    assert page["selected_generation_id"] is None and page["status"] == "draft"
+
+
+def test_upload_on_legacy_page_keeps_page_image(client, app):
+    b, p, ids = selected_page(client, app)
+    page = upload_bg(client, p["id"], png_bytes()).json()
+    assert page["selected_generation_id"] == ids[0]
+    assert page["background_generation_id"] is not None

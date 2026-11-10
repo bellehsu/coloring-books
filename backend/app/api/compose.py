@@ -10,7 +10,7 @@ import random
 import threading
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from PIL import Image
 from sqlalchemy import and_, case, null
 from sqlmodel import Session, col, select, update
@@ -51,13 +51,15 @@ from app.services.prompts import (
 )
 from app.services.pose_modes import precise_unavailable_detail
 from app.services.worker import GenerationWorker, encode_request
-from app.storage import Storage
+from app.services.upload_bg import cover_crop
+from app.storage import ImageRejected, Storage, normalize_png
 
 router = APIRouter(prefix="/api", tags=["compose"])
 
 NEED_BACKGROUND = "請先選好背景"
 NEED_POSE = "請先選好角色動作"
 FILE_MISSING = "圖片檔案遺失，請重新產生"
+MAX_BG_UPLOAD_BYTES = 10_000_000
 INPUTS_CHANGED = "背景、角色動作或位置剛被更改，請重新確認合成"
 
 # 批次背景：後端是單一行程、handler 是同步的，用一把鎖序列化，兩個分頁同時按也不會重複排隊
@@ -421,6 +423,72 @@ def select_background(
     page_id: int, body: SelectGeneration, session: Session = Depends(get_session)
 ) -> PageOut:
     return _pick(session, page_id, body.generation_id, GenKind.BACKGROUND)
+
+
+@router.post("/pages/{page_id}/backgrounds/upload", status_code=201, response_model=PageOut)
+def upload_background(
+    page_id: int,
+    file: UploadFile,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+) -> PageOut:
+    """上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine="upload" 的背景並選用。"""
+    page = _page_or_404(session, page_id)
+    book = _book_or_404(session, page.book_id)
+    data = file.file.read(MAX_BG_UPLOAD_BYTES + 1)
+    if len(data) > MAX_BG_UPLOAD_BYTES:
+        raise HTTPException(400, f"檔案過大，上限 {MAX_BG_UPLOAD_BYTES} bytes")
+    try:
+        png, original_size = normalize_png(data, max_bytes=MAX_BG_UPLOAD_BYTES)
+    except ImageRejected as e:
+        raise HTTPException(400, str(e)) from e
+    width, height = compute_layout(book.paper_size, book.print_mode).generation_size
+    with Image.open(io.BytesIO(png)) as src:
+        out, crop_box = cover_crop(src, (width, height))
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    request = json.loads(encode_request(
+        kind=GenKind.BACKGROUND, prompt="", negative_prompt="", seed=0, width=width, height=height,
+    ))
+    request["source"] = "upload"
+    params = {"filename": file.filename, "original_size": list(original_size),
+              "crop_box": list(crop_box)}
+    now = utcnow()
+    written: str | None = None
+    try:
+        gen = Generation(
+            book_id=book.id,
+            page_id=page.id,
+            kind=GenKind.BACKGROUND,
+            status=GenStatus.SUCCEEDED,
+            user_text="",
+            prompt="",
+            negative_prompt="",
+            seed=0,
+            width=width,
+            height=height,
+            request_json=json.dumps(request, ensure_ascii=False, sort_keys=True),
+            engine="upload",
+            workflow_name=None,
+            models_json="[]",
+            params_json=json.dumps(params, ensure_ascii=False, sort_keys=True),
+            started_at=now,
+            finished_at=now,
+            elapsed_s=0.0,
+        )
+        session.add(gen)
+        session.flush()
+        rel = storage.generation_image(book.id, gen.id)
+        storage.write(rel, buf.getvalue())
+        written = rel
+        gen.image_path = rel
+        session.commit()
+        return _pick(session, page_id, gen.id, GenKind.BACKGROUND)
+    except Exception:
+        session.rollback()
+        if written:
+            storage.delete(written)
+        raise
 
 
 @router.post("/pages/{page_id}/pose", response_model=PageOut)
