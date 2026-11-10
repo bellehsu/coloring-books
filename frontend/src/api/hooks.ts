@@ -4,7 +4,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { api } from "./client";
+import { api, ApiError } from "./client";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
 import type { Book, Edits, ExportSummary, Generation, Page, PoseModes, QA, QueueStatus } from "./client";
@@ -325,6 +325,10 @@ export function useGeneratePose(bookId: number) {
     mutationFn: ({ pageId, action, mode }: { pageId: number; action: string; mode: PoseMode }) =>
       api.post<Generation>(`/pages/${pageId}/poses`, { action, mode } satisfies S["PoseCreate"]),
     onSuccess: () => invalidateJobs(qc, bookId),
+    // 503 = 精準模式剛變成不可用：馬上重抓可用狀態，切換元件才會退回快速
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 503) void qc.invalidateQueries({ queryKey: qk.poseModes() });
+    },
   });
 }
 

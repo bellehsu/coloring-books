@@ -177,7 +177,10 @@ def request_of(app, gen_id) -> dict:
     return json.loads(gen_row(app, gen_id).request_json)
 
 
-def test_pose_mode_defaults_to_precise(client, app):
+def test_pose_mode_defaults_to_precise(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    monkeypatch.setattr(compose_api, "pick_variation", lambda rng: None)
     b, _ = book_with_character(client, app)
     p = new_page(client, b["id"])
     r = client.post(f"/api/pages/{p['id']}/poses", json={"action": " waving hand "})

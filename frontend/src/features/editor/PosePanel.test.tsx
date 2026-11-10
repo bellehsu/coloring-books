@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { Page } from "@/api/client";
-import type { PoseMode } from "@/lib/poseMode";
+import { writePoseMode, type PoseMode } from "@/lib/poseMode";
 import { PosePanel, type PosePanelProps } from "./PosePanel";
 
 const page = { id: 1 } as Page;
@@ -155,5 +155,14 @@ describe("PosePanel", () => {
   it("caps at 300 characters", () => {
     setup();
     expect(box()).toHaveAttribute("maxlength", "300");
+  });
+
+  it("re-clicking the already selected 快速 (fallback) does not call onModeChange or write localStorage", async () => {
+    localStorage.removeItem("coloring.poseMode");
+    const onModeChange = vi.fn((m: PoseMode) => writePoseMode(m));
+    setup({ mode: "fast", preciseUnavailableReason: "精準模式缺少：x", onModeChange });
+    await userEvent.click(screen.getByRole("radio", { name: "快速" }));
+    expect(onModeChange).not.toHaveBeenCalled();
+    expect(localStorage.getItem("coloring.poseMode")).toBeNull();
   });
 });

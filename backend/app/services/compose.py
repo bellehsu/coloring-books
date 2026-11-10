@@ -152,16 +152,18 @@ def compose(
 
 
 def largest_component(mask_png: bytes) -> bytes:
-    """只保留遮罩中最大的 8 連通區塊（>128 視為前景），輸出同尺寸 L 模式 PNG（前景 255、其餘 0）。
+    """只保留遮罩中最大的 8 連通區塊（>128 視為前景），輸出同尺寸 L 模式 PNG。
+    該區塊向外膨脹 2 px 的範圍內保留原本的灰階值（BiRefNet 的柔邊），其餘一律 0；
     用來丟掉與角色分離的陰影等碎塊。全黑遮罩原樣回傳全黑。"""
     with Image.open(io.BytesIO(mask_png)) as im:
         arr = np.asarray(im.convert("L"))
     binary = (arr > 128).astype(np.uint8)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
-    out = np.zeros_like(binary)
+    out = np.zeros_like(arr)
     if n > 1:
         best = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        out[labels == best] = 255
+        keep = cv2.dilate((labels == best).astype(np.uint8), np.ones((5, 5), np.uint8))
+        out[keep > 0] = arr[keep > 0]
     buf = io.BytesIO()
     Image.fromarray(out, "L").save(buf, "PNG")
     return buf.getvalue()

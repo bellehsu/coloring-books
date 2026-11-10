@@ -55,7 +55,7 @@ export function Segmented<T extends string>({
     else if (e.key === "End") j = nextEnabled(0, -1);
     if (j < 0) return;
     e.preventDefault();
-    onChange(options[j].value);
+    if (options[j].value !== value) onChange(options[j].value);
     refs.current[j]?.focus();
   }
 
@@ -81,7 +81,9 @@ export function Segmented<T extends string>({
             disabled={o.disabled}
             className={styles.item}
             data-on={on ? "true" : "false"}
-            onClick={() => onChange(o.value)}
+            onClick={() => {
+              if (!on) onChange(o.value);
+            }}
             onKeyDown={(e) => onKeyDown(e, i)}
           >
             {o.label}

@@ -1,7 +1,7 @@
 """角色動作的精準／快速模式能不能用：只看快取的 preflight 報告，絕不即時連 ComfyUI。
 
 規則（spec §10.3）：
-- 還沒有報告，或 ComfyUI 連不上（狀態未知）→ 兩種模式都算可用；真的缺東西時由生成失敗流程回報。
+- 還沒有報告，或 ComfyUI 連不上（狀態未知）→ 算可用；但連不上時本機 load_errors 非空的模式仍不可用；真的缺東西時由生成失敗流程回報。
 - 否則該模式的 workflow 報告 ok=false → 不可用，missing 列出缺的模型檔名、節點類別與載入錯誤。
 """
 
@@ -28,13 +28,19 @@ def _missing(rep: WorkflowReport) -> list[str]:
 
 
 def availability(report: PreflightReport | None) -> dict[str, ModeStatus]:
-    if report is None or not report.comfy_reachable:
+    if report is None:
         return {mode: {"available": True, "missing": []} for mode in POSE_WORKFLOWS}
     by_name = {w.name: w for w in report.workflows}
     out: dict[str, ModeStatus] = {}
     for mode, workflow in POSE_WORKFLOWS.items():
         rep = by_name.get(workflow)
-        if rep is None:
+        if not report.comfy_reachable:
+            # 連不上 ComfyUI：模型／節點狀態未知，但本機載入錯誤仍然有效
+            if rep is not None and rep.load_errors:
+                out[mode] = {"available": False, "missing": list(dict.fromkeys(rep.load_errors))}
+            else:
+                out[mode] = {"available": True, "missing": []}
+        elif rep is None:
             out[mode] = {"available": False, "missing": [f"workflow {workflow}"]}
         elif rep.ok:
             out[mode] = {"available": True, "missing": []}

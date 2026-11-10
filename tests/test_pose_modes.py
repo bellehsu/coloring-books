@@ -36,9 +36,17 @@ def test_no_report_means_both_available():
     assert availability(None) == both_available()
 
 
-def test_unreachable_means_both_available():
-    bad = WorkflowReport(name=QWEN, ok=False, version="1", load_errors=["x"])
-    assert availability(report(bad, reachable=False)) == both_available()
+def test_unreachable_without_load_errors_means_both_available():
+    bad = WorkflowReport(name=QWEN, ok=False, version="1")
+    assert availability(report(bad, ok_wf(SDXL), reachable=False)) == both_available()
+
+
+def test_unreachable_but_load_errors_still_unavailable():
+    bad = WorkflowReport(name=QWEN, ok=False, version="1", load_errors=["manifest 壞了"])
+    res = availability(report(bad, ok_wf(SDXL), reachable=False))
+    assert res["precise"] == {"available": False, "missing": ["manifest 壞了"]}
+    assert res["fast"] == {"available": True, "missing": []}
+    assert precise_unavailable_detail(report(bad, reachable=False)) == "精準模式缺少：manifest 壞了"
 
 
 def test_all_ok():

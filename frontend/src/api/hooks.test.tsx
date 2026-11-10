@@ -136,6 +136,27 @@ describe("compose-flow hooks", () => {
     expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
   });
 
+  it("useGeneratePose: 503 invalidates pose-modes; other errors do not", async () => {
+    for (const [status, expected] of [[503, true], [409, false]] as const) {
+      const f = vi.fn().mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ detail: "精準模式缺少：x" }), {
+            status,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+      vi.stubGlobal("fetch", f);
+      const { client, wrapper } = setup();
+      const spy = vi.spyOn(client, "invalidateQueries");
+      const { result } = renderHook(() => useGeneratePose(1), { wrapper });
+      await act(async () => {
+        await result.current.mutateAsync({ pageId: 5, action: "揮手", mode: "precise" }).catch(() => {});
+      });
+      const keys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+      expect(keys.includes(JSON.stringify(qk.poseModes()))).toBe(expected);
+    }
+  });
+
   it.each([
     ["useSelectBackground", useSelectBackground, "background"],
     ["useSelectPose", useSelectPose, "pose"],
