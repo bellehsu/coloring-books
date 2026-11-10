@@ -37,7 +37,8 @@ The user chose (2026-11-10) "group the queue by model + generate all backgrounds
 - The worker remembers the family of the last job it ran (in memory; unknown after a restart).
 - The next job is the oldest waiting job in the same family. If there is none, it is the oldest waiting job overall.
 - **Anti-starvation:** if the oldest waiting job overall has waited longer than `queue.max_wait_s` (setting, default 180 s), it goes first.
-- One pure function `plan_order(queued, last_family, now, max_wait_s) -> list[id]` defines the order. It is used both for picking the next job and for computing `queue_position`, so the two always agree.
+- One pure function `plan_order(queued, last_family, now, max_wait_s) -> list[id]` defines the order.
+- **Stable display:** while a job is running, "overdue" is judged at the time that job was claimed, and the next claim uses that same time. A displayed 「第 1 位」 therefore doesn't change mid-run; anti-starvation is delayed by at most one job. It is used both for picking the next job and for computing `queue_position`, so the two always agree.
 
 ### 3.3 Generate all backgrounds at once
 - `POST /books/{book_id}/backgrounds/batch` (no body).
@@ -45,10 +46,12 @@ The user chose (2026-11-10) "group the queue by model + generate all backgrounds
     - `scene_prompt` is not blank;
     - no background is selected, and there is no successful, non-discarded background;
     - there is no queued or running background job.
-  - Response: `{queued: GenerationOut[], skipped: [{page_id, reason}]}`. Reasons (zh-Hant):
+  - Response: `{queued: GenerationOut[], skipped: [{page_id, position, reason}]}`. Reasons (zh-Hant):
     - 「沒有場景描述」
-    - 「已有背景」
+    - 「已有背景」: this also covers an old-flow page whose selected image is a whole-page candidate (kind PAGE).
     - 「背景產生中」
+    - 「草圖檔案遺失」: the page's sketch file is missing; that page is skipped and the rest continue. This was a ruling during implementation.
+  - Concurrent batch calls are serialised inside the backend, so two tabs pressing at the same time don't queue duplicates.
 - **Editor UI:** add a button 「產生所有背景」 to the top of the page list (Filmstrip).
   - Before running it shows a confirmation with the counts: 「會為 N 頁產生背景（M 頁略過：…）」.
   - Disabled when N = 0, with a reason shown in `title`.
