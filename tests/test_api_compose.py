@@ -1159,6 +1159,48 @@ def test_upload_rejects_bad_file(client, app):
     assert not list(app.state.storage.root.rglob("generation*"))
 
 
+def test_upload_16bit_grayscale_png_keeps_tones(client, app):
+    """16-bit 灰階 PNG 上傳後不會變成幾乎全白（Pillow 直接轉 RGB 會截到 255）。"""
+    import numpy as np
+
+    b = new_book(client, **A5_HOME)
+    p = new_page(client, b["id"])
+    ramp = np.tile(np.linspace(0, 65535, 1024).round().astype(np.uint16), (1024, 1))
+    src = Image.fromarray(ramp)
+    assert src.mode == "I;16"
+    buf = io.BytesIO()
+    src.save(buf, "PNG")
+    r = upload_bg(client, p["id"], buf.getvalue())
+    assert r.status_code == 201, r.text
+    with Image.open(app.state.storage.abs(gen_row(app, r.json()["background_generation_id"]).image_path)) as im:
+        out = im.convert("L")
+        w, h = out.size
+        mean = float(np.asarray(out, dtype=np.float64).mean())
+        left, right = out.getpixel((2, h // 2)), out.getpixel((w - 3, h // 2))
+    assert abs(mean - 127.5) < 8  # 置中裁切：左右對稱地切掉，平均不變
+    assert left < 60 and right > 195
+
+
+def test_upload_too_many_pixels_is_422_before_decoding(client, app, monkeypatch):
+    """小檔案、超大尺寸（單色 PNG 壓得很小）：解碼前就擋（422），避免吃光記憶體。"""
+    from PIL import ImageFile
+
+    b = new_book(client)
+    p = new_page(client, b["id"])
+    buf = io.BytesIO()
+    Image.new("1", (8001, 8000), 1).save(buf, "PNG")
+    assert len(buf.getvalue()) < 1024 * 1024
+
+    def no_decode(self):
+        raise AssertionError("不應該解碼")
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", no_decode)
+    r = upload_bg(client, p["id"], buf.getvalue())
+    assert r.status_code == 422 and r.json()["detail"] == "圖片像素太多（最多 6400 萬像素）"
+    assert get_page(app, p["id"]).background_generation_id is None
+    assert not list(app.state.storage.root.rglob("generation*"))
+
+
 def test_upload_resets_composite_like_pick(client, app):
     b, p, bg, pose = compose_ready(client, app)
     confirm(client, p["id"])

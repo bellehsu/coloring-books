@@ -47,7 +47,7 @@ from app.services.prompts import (
 )
 from app.services.worker import GenerationWorker, encode_request
 from app.services.upload_bg import cover_crop
-from app.storage import ImageRejected, Storage, normalize_png
+from app.storage import UPLOAD_MAX_PIXELS, ImageRejected, Storage, TooManyPixels, normalize_png
 
 router = APIRouter(prefix="/api", tags=["compose"])
 
@@ -403,7 +403,11 @@ def upload_background(
     if len(data) > MAX_BG_UPLOAD_BYTES:
         raise HTTPException(400, f"檔案過大，上限 {MAX_BG_UPLOAD_BYTES} bytes")
     try:
-        png, original_size = normalize_png(data, max_bytes=MAX_BG_UPLOAD_BYTES)
+        png, original_size = normalize_png(
+            data, max_bytes=MAX_BG_UPLOAD_BYTES, max_pixels=UPLOAD_MAX_PIXELS
+        )
+    except TooManyPixels as e:
+        raise HTTPException(422, str(e)) from e
     except ImageRejected as e:
         raise HTTPException(400, str(e)) from e
     width, height = compute_layout(book.paper_size, book.print_mode).generation_size
