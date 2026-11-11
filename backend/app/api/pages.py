@@ -16,6 +16,7 @@ from app.models import Book, Generation, GenStatus, LineartEdit, Owner, Page, Pa
 from app.services.compose import composite_matches, page_placement
 from app.services.layout import compute_layout
 from app.services.page_lineart import lineart_key
+from app.services.usage import refund_generations
 from app.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -185,11 +186,13 @@ def delete_page(
     page = owned_page(session, owner, page_id)
     book_id = page.book_id
     # 先取消排隊中的（條件式 UPDATE 取得寫入鎖，worker 之後無法再認領），再檢查有沒有執行中的
-    session.exec(
+    cancelled = session.exec(
         update(Generation)
         .where(col(Generation.page_id) == page_id, col(Generation.status) == GenStatus.QUEUED)
         .values(status=GenStatus.CANCELLED, error="頁面已刪除", finished_at=utcnow())
-    )
+        .returning(Generation.id)
+    ).scalars().all()
+    refund_generations(session, cancelled)  # 排隊中被取消的退回額度（頁面若刪不掉會一起 rollback）
     running = session.exec(
         select(
             select(Generation.id)

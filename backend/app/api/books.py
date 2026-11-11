@@ -20,6 +20,7 @@ from app.api.schemas import (
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
 from app.services.layout import PaperSize, ratio_group
 from app.services.page_lineart import ensure_page_lineart
+from app.services import usage
 from app.services.prompts import QWEN_CHARACTER_SIZE, pick_character_variation, qwen_character_prompt
 from app.services.worker import GenerationWorker, encode_request
 
@@ -194,6 +195,20 @@ def create_character_candidates(
     )
     prompt = qwen_character_prompt(body.description, variation)
     width, height = CHARACTER_SIZE
+    # 先以條件式 UPDATE 取得寫入鎖並確認角色仍未設定，與 set_character 互斥
+    res = session.exec(
+        update(Book)
+        .where(col(Book.id) == book_id, col(Book.character_generation_id).is_(None))
+        .values(updated_at=utcnow())
+    )
+    if res.rowcount == 0:
+        session.rollback()
+        raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
+    try:
+        day = usage.reserve(session, owner, 1, usage.clock())  # 同一個交易：429 時什麼都不寫
+    except HTTPException:
+        session.rollback()
+        raise
     gen = Generation(
         book_id=book_id,
         kind=GenKind.CHARACTER,
@@ -211,17 +226,9 @@ def create_character_candidates(
             width=width,
             height=height,
             variation=variation,
+            extra=usage.usage_extra(owner, day),
         ),
     )
-    # 先以條件式 UPDATE 取得寫入鎖並確認角色仍未設定，與 set_character 互斥
-    res = session.exec(
-        update(Book)
-        .where(col(Book.id) == book_id, col(Book.character_generation_id).is_(None))
-        .values(updated_at=utcnow())
-    )
-    if res.rowcount == 0:
-        session.rollback()
-        raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
     session.add(gen)
     session.commit()
     worker.notify()
@@ -281,7 +288,7 @@ def set_character(
         session.rollback()
         raise HTTPException(409, "這本繪本的角色已經設定，或這張候選圖已不可用")
     # 角色已定案：同本書其餘排隊中的角色候選不再需要，同一交易取消（執行中的不動）
-    session.exec(
+    cancelled = session.exec(
         update(Generation)
         .where(
             col(Generation.book_id) == book_id,
@@ -289,7 +296,9 @@ def set_character(
             col(Generation.status) == GenStatus.QUEUED,
         )
         .values(status=GenStatus.CANCELLED, finished_at=utcnow())
-    )
+        .returning(Generation.id)
+    ).scalars().all()
+    usage.refund_generations(session, cancelled)  # 取消的候選退回額度
     session.commit()
     session.refresh(book)
     return book_out(session, book)

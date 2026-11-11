@@ -166,7 +166,7 @@ export interface paths {
          * Create Materials Batch
          * @description 「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
          *     略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
-         *     _BATCH_LOCK 讓同時多個呼叫不會重複排隊。
+         *     _BATCH_LOCK 讓同時多個呼叫不會重複排隊。整批一次預留 N 次當日額度：不夠就 429，一筆都不排。
          */
         post: operations["create_materials_batch_api_books__book_id__materials_batch_post"];
         delete?: never;

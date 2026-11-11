@@ -38,6 +38,7 @@ from app.api.schemas import (
     SelectGeneration,
 )
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
+from app.services import usage
 from app.services.compose import (
     COMPOSE_VERSION,
     Placement,
@@ -103,36 +104,53 @@ def _is_usable(gen: Generation | None, kind: GenKind, page_id: int) -> bool:
     )
 
 
-def _enqueue(
-    session: Session,
-    worker: GenerationWorker,
-    gen: Generation,
-    *,
-    character_image: str | None = None,
-    variation: str | None = None,
-    extra: dict | None = None,
-) -> GenerationOut:
-    """新增一筆排隊中的 generation（request_json 由 gen 的欄位加上參數組成）。"""
+class _Job:
+    """還沒加進 session 的排隊任務：generation 加上組 request_json 用的參數。"""
+
+    def __init__(self, gen: Generation, *, character_image: str | None = None,
+                 variation: str | None = None, extra: dict | None = None) -> None:
+        self.gen = gen
+        self.character_image = character_image
+        self.variation = variation
+        self.extra = extra or {}
+
+
+def _add_queued(session: Session, job: _Job, usage_extra: dict) -> Generation:
+    """把排隊任務加進目前的交易（不 commit）；request_json 由 gen 的欄位加上參數與計數紀錄組成。"""
+    gen = job.gen
+    session.add(gen)
+    session.flush()
+    gen.request_json = encode_request(
+        kind=gen.kind,
+        prompt=gen.prompt,
+        negative_prompt=gen.negative_prompt,
+        seed=gen.seed,
+        width=gen.width,
+        height=gen.height,
+        character_image=job.character_image,
+        variation=job.variation,
+        extra={**job.extra, **usage_extra},
+    )
+    return gen
+
+
+def _enqueue_jobs(
+    session: Session, worker: GenerationWorker, owner: Owner, jobs: list[_Job]
+) -> list[GenerationOut]:
+    """同一個交易：預留 len(jobs) 次當日額度（不夠就 429，什麼都不排），再新增全部任務後一起 commit。
+    沒有任務就不計數。"""
+    if not jobs:
+        return []
     try:
-        session.add(gen)
-        session.flush()
-        gen.request_json = encode_request(
-            kind=gen.kind,
-            prompt=gen.prompt,
-            negative_prompt=gen.negative_prompt,
-            seed=gen.seed,
-            width=gen.width,
-            height=gen.height,
-            character_image=character_image,
-            variation=variation,
-            extra=extra,
-        )
+        day = usage.reserve(session, owner, len(jobs), usage.clock())
+        extra = usage.usage_extra(owner, day)
+        gens = [_add_queued(session, job, extra) for job in jobs]
         session.commit()
     except Exception:
         session.rollback()
         raise
     worker.notify()
-    return _out(gen, worker)
+    return [_out(gen, worker) for gen in gens]
 
 
 def _last_simple_variation(session: Session, page_id: int) -> str | None:
@@ -153,9 +171,7 @@ def _last_simple_variation(session: Session, page_id: int) -> str | None:
     return None
 
 
-def _enqueue_background(
-    session: Session, storage: Storage, worker: GenerationWorker, book: Book, page: Page
-) -> GenerationOut:
+def _background_job(session: Session, book: Book, page: Page) -> _Job:
     """單張與批次共用：用頁面場景描述排一筆簡潔（Qwen）背景，負向空字串，不用草圖。
     構圖變化語排除這頁上一張簡潔背景用的。"""
     width, height = compute_layout(book.paper_size, book.print_mode).generation_size
@@ -174,7 +190,7 @@ def _enqueue_background(
         height=height,
         request_json="",
     )
-    return _enqueue(session, worker, gen, variation=variation, extra={"background_style": "simple"})
+    return _Job(gen, variation=variation, extra={"background_style": "simple"})
 
 
 @router.post("/pages/{page_id}/backgrounds", status_code=202, response_model=GenerationOut)
@@ -189,7 +205,7 @@ def create_background(
     """產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。"""
     page = owned_page(session, owner, page_id)
     book = owned_book(session, owner, page.book_id)
-    return _enqueue_background(session, storage, worker, book, page)
+    return _enqueue_jobs(session, worker, owner, [_background_job(session, book, page)])[0]
 
 
 class _BookState:
@@ -239,20 +255,6 @@ class _BookState:
         return None
 
 
-def _batch_background_page(
-    session: Session,
-    storage: Storage,
-    worker: GenerationWorker,
-    book: Book,
-    page: Page,
-    state: _BookState,
-) -> GenerationOut | BatchSkip:
-    reason = state.skip_reason(page, GenKind.BACKGROUND)
-    if reason is not None:
-        return BatchSkip(kind="background", page_id=page.id, position=page.position, reason=reason)
-    return _enqueue_background(session, storage, worker, book, page)
-
-
 @router.post("/books/{book_id}/materials/batch", status_code=202, response_model=BatchMaterialsOut)
 def create_materials_batch(
     book_id: int,
@@ -264,7 +266,7 @@ def create_materials_batch(
 ) -> BatchMaterialsOut:
     """「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
     略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
-    _BATCH_LOCK 讓同時多個呼叫不會重複排隊。"""
+    _BATCH_LOCK 讓同時多個呼叫不會重複排隊。整批一次預留 N 次當日額度：不夠就 429，一筆都不排。"""
     upload_pages = set(body.upload_page_ids) if body else set()
     with _BATCH_LOCK:
         book = owned_book(session, owner, book_id)
@@ -275,16 +277,19 @@ def create_materials_batch(
             else None
         )
         has_character = char is not None and bool(char.image_path)
-        queued: list[GenerationOut] = []
+        jobs: list[_Job] = []
         skipped: list[BatchSkip] = []
         for page in state.pages:
             if page.id in upload_pages:
-                out = BatchSkip(
-                    kind="background", page_id=page.id, position=page.position, reason="改用上傳圖片"
+                reason = "改用上傳圖片"
+            else:
+                reason = state.skip_reason(page, GenKind.BACKGROUND)
+            if reason is not None:
+                skipped.append(
+                    BatchSkip(kind="background", page_id=page.id, position=page.position, reason=reason)
                 )
             else:
-                out = _batch_background_page(session, storage, worker, book, page, state)
-            (skipped if isinstance(out, BatchSkip) else queued).append(out)
+                jobs.append(_background_job(session, book, page))
             reason = state.skip_reason(page, GenKind.POSE)
             if reason is None and not has_character:
                 reason = "請先設定角色"
@@ -293,13 +298,12 @@ def create_materials_batch(
                     BatchSkip(kind="pose", page_id=page.id, position=page.position, reason=reason)
                 )
             else:
-                queued.append(_enqueue_pose(session, storage, worker, book, page, page.action_prompt))
+                jobs.append(_pose_job(session, book, page, page.action_prompt))
+        queued = _enqueue_jobs(session, worker, owner, jobs)  # 整批一次預留，不夠就整批 429
         return BatchMaterialsOut(queued=queued, skipped=skipped)
 
 
-def _enqueue_pose(
-    session: Session, storage: Storage, worker: GenerationWorker, book: Book, page: Page, action: str
-) -> GenerationOut:
+def _pose_job(session: Session, book: Book, page: Page, action: str) -> _Job:
     """角色動作（Qwen）：以角色參考圖編輯出新動作；呼叫端負責確認有角色。"""
     char = session.get(Generation, book.character_generation_id)
     variation = pick_pose_variation(random.Random())
@@ -316,8 +320,7 @@ def _enqueue_pose(
         height=height,
         request_json="",
     )
-    return _enqueue(session, worker, gen, character_image=char.image_path, variation=variation,
-                    extra={"pose_mode": "precise"})
+    return _Job(gen, character_image=char.image_path, variation=variation, extra={"pose_mode": "precise"})
 
 
 @router.post("/pages/{page_id}/poses", status_code=202, response_model=GenerationOut)
@@ -340,7 +343,7 @@ def create_pose(
     )
     if char is None or not char.image_path:
         raise HTTPException(409, "請先設定角色")
-    return _enqueue_pose(session, storage, worker, book, page, body.action)
+    return _enqueue_jobs(session, worker, owner, [_pose_job(session, book, page, body.action)])[0]
 
 
 def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKind) -> PageOut:

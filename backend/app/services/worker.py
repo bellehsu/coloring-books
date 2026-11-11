@@ -21,6 +21,7 @@ from app.services.engine import (
 )
 from app.services.autoselect import autoselect
 from app.services.compose import largest_component
+from app.services.usage import refund_generations
 from app.storage import Storage, StorageNotFound
 
 log = logging.getLogger(__name__)
@@ -165,8 +166,9 @@ class GenerationWorker:
             return res.rowcount
 
     def cancel_retired(self) -> int:
-        """把 QUEUED 且需要已停用路線（舊整頁、SDXL 快速動作／細緻背景）的列標為 CANCELLED。"""
+        """把 QUEUED 且需要已停用路線（舊整頁、SDXL 快速動作／細緻背景）的列標為 CANCELLED（退回當天額度）。"""
         n = 0
+        cancelled: list[int] = []
         with self.sessions() as s:
             rows = s.exec(
                 select(Generation).where(col(Generation.status) == GenStatus.QUEUED)
@@ -181,7 +183,10 @@ class GenerationWorker:
                     gen.error = RETIRED
                     gen.finished_at = utcnow()
                     s.add(gen)
+                    cancelled.append(gen.id)
                     n += 1
+            s.flush()
+            refund_generations(s, cancelled)
             s.commit()
         return n
 
@@ -229,13 +234,16 @@ class GenerationWorker:
                     return s.get(Generation, gen_id)
 
     def _finish(self, gen_id: int, **values) -> None:
-        """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋）。"""
+        """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋）。
+        改成 FAILED 時在同一個交易退回當天額度（只有真的改到這一列才退）。"""
         with self.sessions() as s:
-            s.exec(
+            res = s.exec(
                 update(Generation)
                 .where(col(Generation.id) == gen_id, col(Generation.status) == GenStatus.RUNNING)
                 .values(**values)
             )
+            if res.rowcount == 1 and values.get("status") == GenStatus.FAILED:
+                refund_generations(s, [gen_id])
             s.commit()
 
     # ---- 執行 ----

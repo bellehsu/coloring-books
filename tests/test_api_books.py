@@ -120,14 +120,16 @@ def test_candidates_stored_fields_and_random_seed(client, app):
     gid = candidates(client, b["id"]).json()[0]["id"]
     with app.state.sessions() as s:
         g = s.get(Generation, gid)
-        v = json.loads(g.request_json)["variation"]
+        d = json.loads(g.request_json)
+        v = d["variation"]
         assert g.user_text == "一隻戴帽子的小熊"
         assert v in prompts.QWEN_CHARACTER_VARIATIONS
         assert g.prompt == qwen_character_prompt("一隻戴帽子的小熊", v)
         assert g.negative_prompt == ""
         assert g.request_json == encode_request(
             kind=GenKind.CHARACTER, prompt=g.prompt, negative_prompt="",
-            seed=g.seed, width=QWEN_CHARACTER_SIZE[0], height=QWEN_CHARACTER_SIZE[1], variation=v)
+            seed=g.seed, width=QWEN_CHARACTER_SIZE[0], height=QWEN_CHARACTER_SIZE[1], variation=v,
+            extra={"usage_day": d["usage_day"], "usage_owner": d["usage_owner"]})  # 每日上限的計數紀錄
         assert 0 <= g.seed <= 2**32 - 1
 
 

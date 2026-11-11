@@ -16,6 +16,7 @@ from app.api.schemas import GenerationOut
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
+from app.services.usage import refund_generations
 from app.services.worker import GenerationWorker, WorkerState
 from app.storage import Storage, StorageNotFound
 
@@ -192,6 +193,8 @@ def update_generation(
             else_=col(Generation.finished_at),
         )
     res = session.exec(update(Generation).where(guard).values(**values))
+    if body.discarded and res.rowcount:
+        refund_generations(session, [gen_id])  # 排隊中被取消的退回額度（已退過的不再退）
     session.commit()
     if res.rowcount == 0:
         raise HTTPException(409, "這筆生成紀錄正被頁面使用或作為角色，無法捨棄")
@@ -212,6 +215,8 @@ def cancel_generation(
         .where(col(Generation.id) == gen_id, col(Generation.status) == GenStatus.QUEUED)
         .values(status=GenStatus.CANCELLED, finished_at=utcnow())
     )
+    if res.rowcount:
+        refund_generations(session, [gen_id])
     session.commit()
     if res.rowcount == 0:
         raise HTTPException(409, "只有排隊中的任務可以取消")
