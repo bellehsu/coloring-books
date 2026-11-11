@@ -321,6 +321,68 @@
 - [ ] **Step 4:** Backend, vitest, lint, tsc and e2e all pass.
 - [ ] **Step 5:** Commit `feat: invite-aware frontend, e2e isolation, storage docs`.
 
+### Task 10: Sharing finished books (spec §4.9; added 2026-11-11 by user decision)
+
+**Files:**
+- Create:
+  - `backend/migrations/versions/0008_book_shared_at.py`
+  - `backend/app/api/shared.py`
+  - `backend/tests/test_sharing.py`
+  - `frontend/src/app/shared/[id]/page.tsx` (viewer)
+  - `frontend/e2e/sharing.spec.ts`
+- Modify:
+  - `backend/app/models.py` (`Book.shared_at`)
+  - `backend/app/api/books.py` (`PUT /books/{id}/share`)
+  - `backend/app/api/schemas.py` (`BookOut.shared_at`, `ShareIn`, `SharedBookOut`, `SharedBookDetailOut`)
+  - `backend/app/main.py` (router)
+  - `backend/app/api/export.py`: extract the "PDF of completed pages" and "composed page image" helpers so `shared.py` reuses them, and don't duplicate the code
+  - frontend home page (two sections), the export drawer (switch), generated API types, `tests/test_migrations.py`
+
+**Interfaces:**
+- Consumes:
+  - `current_owner`, `owned_book` (deps.py)
+  - `PageStatus.PASSED`
+  - the existing PDF and composed-page code in export.py
+  - `Owner.name`, `Owner.revoked_at`
+- Produces: the routes and shapes exactly as in spec §4.9.
+  - 404 detail: 「找不到這本分享的繪本」
+  - 409 detail: 「至少完成一頁才能分享」
+
+- [ ] **Step 1: Write failing backend tests (`test_sharing.py`).**
+  - Toggling the share:
+    - Owner A with 0 passed pages: `PUT share {shared:true}` → 409. After one page passes → 200 and `shared_at` is set.
+    - B toggling A's book → 404. Admin → 200.
+  - `GET /api/shared/books`:
+    - As B, it lists A's shared book with `author == A.name`, `page_count == passed pages`, `mine == false`.
+    - It excludes unshared books, books with 0 passed pages, books of revoked owners, and B's own shared book.
+  - Detail, image and PDF:
+    - The detail lists only passed pages, in position order.
+    - The image of a non-passed page → 404.
+    - `image.png` → 200 image/png, long edge ≤ 1600, `Cache-Control: private, max-age=300`.
+    - The PDF → 200 `%PDF`, containing exactly the passed pages (assert the page count).
+  - Turning sharing off, then B's detail, image and PDF → 404 on the next request. Revoking A → 404.
+  - Without a session (dev_owner off) → 401.
+  - B viewing and downloading doesn't change `usage` for anyone.
+  - Migration 0008 upgrades and downgrades.
+- [ ] **Step 2: Write failing frontend tests.**
+  - vitest:
+    - home renders 「大家的繪本」 items and the empty state;
+    - the 「已分享」 badge;
+    - the export drawer switch is disabled with 「至少完成一頁才能分享」 when 0 pages are passed, and calls `PUT share` when toggled;
+    - the viewer renders 「作者：…」, the pages and 「下載 PDF」;
+    - a viewer 404 shows 「這本繪本已經不再分享」.
+  - e2e `sharing.spec.ts`:
+    - A passes 1 of 2 pages and shares.
+    - B (a second invite through the fake backend's `/api/_test/invite`) sees the book under 大家的繪本, opens `/shared/{id}`, sees exactly 1 page image, and the PDF download is `%PDF`.
+    - A unshares, and B's reload shows 「這本繪本已經不再分享」.
+- [ ] **Step 3:** Run the tests and confirm they fail for the right reason.
+- [ ] **Step 4: Implement.**
+  - Keep the shared routes in their own router. Never loosen `owned_*`.
+  - Reuse the export helpers, don't copy them.
+  - Regenerate the frontend API types the way the repo already does.
+- [ ] **Step 5:** Backend pytest, vitest, lint, tsc and e2e all pass, and the viewer has 0 px horizontal overflow at 390 px.
+- [ ] **Step 6:** Commit `feat: share finished books with other invited users`.
+
 ### Task 9: Real-R2 acceptance (the controller runs this, and only after the user provides dev-bucket credentials)
 
 - [ ] Ask the user for confirmation that `coloring-books-dev` exists and that the credentials are in the worktree's `scripts/dev.env`. **Never read or print the secret**; check presence only.

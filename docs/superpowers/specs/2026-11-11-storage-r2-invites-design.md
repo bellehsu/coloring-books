@@ -178,6 +178,39 @@ class Storage(Protocol):
   - Writes go to a temporary file and are then renamed atomically.
   - Eviction removes the oldest files first. An open file is unaffected (POSIX).
 
+### 4.9 Sharing finished books (user decision, 2026-11-11, added to this phase)
+- **User decisions:**
+  - Each book has a share switch. When it is on, **every invited user** (any valid, non-revoked session) can see the book. Nothing is public on the internet, and there are no anonymous share links.
+  - Others can **view and download the PDF**. They cannot edit, and viewing never counts toward anyone's daily cap.
+  - Sharing can be turned on once **at least one page is completed** (`PageStatus.PASSED`). Others see **only completed pages**, and pages completed later appear automatically.
+- **Data:** `book.shared_at: datetime | None` (null means not shared), added by Alembic 0008.
+- **API:** a separate read-only `/api/shared/...` namespace. The `owned_*` guards stay exactly as they are; the edit routes never become readable by non-owners.
+  - `PUT /api/books/{id}/share` `{shared: bool}` → `BookOut`.
+    - Owner or admin only; anyone else gets 404.
+    - Turning it on with no completed page → 409 「至少完成一頁才能分享」.
+    - Turning it off takes effect on the next request.
+  - `GET /api/shared/books` → a list of shared books, newest `shared_at` first.
+    - Each item: `id`, `title`, `author` (the owner's name), `paper_size`, `page_count` (completed pages), `cover_page_id`, `shared_at`, `mine`.
+    - Books whose owner is revoked, or that have 0 completed pages, are hidden.
+  - `GET /api/shared/books/{id}` → `{id, title, author, paper_size, mine, pages: [{id, position}]}`, with completed pages only, in order.
+  - `GET /api/shared/pages/{page_id}/image.png` → the same composed page image the PDF uses for that page (line-art edits applied), downscaled so the long edge is ≤ 1600 px. It is streamed with `Cache-Control: private, max-age=300`.
+  - `GET /api/shared/books/{id}/export.pdf` → the PDF of completed pages only, built the same way as the owner's `include=passed` export.
+  - All of these require a valid session. If the book is not shared, its owner is revoked, or the page is not completed, the response is **404** 「找不到這本分享的繪本」. Nothing reveals whether it exists.
+- **Frontend:**
+  - Home has two sections: 「我的繪本」 (my books; shared ones carry a 「已分享」 badge) and 「大家的繪本」 (other people's shared books; a cover thumbnail, title, author and page count). It shows an empty-state line when there are none.
+  - The share switch lives in the editor's 匯出 PDF drawer: 「分享給其他使用者」, with a line saying others can view and download completed pages only.
+    - When no page is completed, it is disabled and the line says 「至少完成一頁才能分享」.
+  - Read-only viewer at `/shared/{id}`:
+    - title, 「作者：名字」, the completed pages as large images in order, and a 「下載 PDF」 button;
+    - no editing UI;
+    - RWD down to 390 px;
+    - a 404 shows 「這本繪本已經不再分享」 with a link home.
+- **Author's calls:**
+  - The author shown is the invite name the admin typed.
+  - Sharing is per book, not per page.
+  - Your own shared book does not appear in 「大家的繪本」; your list shows the badge instead. `mine` exists for the admin view and the viewer.
+  - Admins see the same shared list as everyone else. Their full access stays on the owner routes.
+
 ## 5. Success criteria
 - **Unit tests (mocked):**
   - both implementations satisfy the same contract tests: put / get / delete / exists / list / signed_url;
@@ -189,7 +222,8 @@ class Storage(Protocol):
   - cleanup deletes only expired discarded images and orphan objects;
   - cascade deletion;
   - 0006 migration upgrade and downgrade.
-- **e2e (fake backend + LocalStorage):** the full flow still passes; two different invites cannot see each other's books.
+  - sharing (§4.9): toggle rules, shared list/detail/image/PDF visibility, unshare and revoke take effect immediately, viewing is not counted.
+- **e2e (fake backend + LocalStorage):** the full flow still passes; two different invites cannot see each other's books; a shared book shows up for the other invite with completed pages only and stops showing once unshared.
 - **Real run (the user provides dev bucket credentials):** start the app locally with the R2 dev bucket, run one book's full flow, and confirm:
   - images are in the bucket;
   - the browser loads them through signed URLs;
