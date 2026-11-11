@@ -325,6 +325,18 @@ describe("ComposeWorkspace", () => {
     expect(within(expr).getByRole("button", { name: "大笑" })).toBeDisabled();
   });
 
+  it("表情：接近 300 字時，作用中的晶片仍可按下取消", async () => {
+    const base = "x".repeat(260);
+    setup({ page: mkPage({ action_prompt: `${base}, with a sad expression` }) });
+    const pose = card("角色動作");
+    const expr = within(pose).getByRole("group", { name: "表情" });
+    const sad = within(expr).getByRole("button", { name: "難過" });
+    expect(sad).toHaveAttribute("aria-pressed", "true");
+    expect(sad).toBeEnabled();
+    await userEvent.click(sad);
+    expect(within(pose).getByLabelText("動作描述")).toHaveValue(base);
+  });
+
   it("動作描述提示：地點寫在背景的場景描述，用 aria-describedby 連到動作欄位", () => {
     setup();
     const pose = card("角色動作");
