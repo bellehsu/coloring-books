@@ -8,15 +8,19 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
 
+from app.config import Settings
 from app.models import Owner, OwnerSession, utcnow
+from app.storage import load_or_create_key_file
 
 SESSION_LIFETIME = timedelta(days=90)
 # last_seen 只是參考資訊；每個請求都寫入會增加 SQLite 寫入競爭，所以至多每小時更新一次
@@ -30,20 +34,67 @@ def hash_token(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-def create_owner(session: Session, name: str, *, is_admin: bool = False, cap: int = 60) -> tuple[Owner, str]:
-    """建立邀請（owner），回傳 (owner, 原始 token)。原始 token 不寫進 DB。"""
+LINK_KEY_FILE = ".link_key"
+
+
+def link_key(settings: Settings) -> bytes:
+    """加密 owner.token_encrypted 的金鑰：env APP_AUTH__LINK_KEY，否則 <paths.storage_dir>/.link_key（0600，自動產生）。
+    與簽章金鑰（storage.signing_key）同樣的做法：每次呼叫都重讀，沒有行程內快取，重啟後自然是同一把。"""
+    configured = settings.auth.link_key
+    if configured is not None and configured.get_secret_value():
+        return configured.get_secret_value().encode()
+    return load_or_create_key_file(settings.paths.storage_dir, LINK_KEY_FILE, "連結金鑰")
+
+
+def _fernet(key: bytes) -> Fernet:
+    # 任意長度的秘密字串都可以當金鑰：取 sha256 轉成 Fernet 要的 32 bytes url-safe base64
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(key).digest()))
+
+
+def encrypt_token(token: str, key: bytes) -> str:
+    return _fernet(key).encrypt(token.encode("utf-8")).decode("ascii")
+
+
+def decrypt_token(encrypted: str | None, key: bytes) -> str | None:
+    """解不開（NULL、金鑰換了、資料壞掉）回 None，不丟例外。"""
+    if not encrypted:
+        return None
+    try:
+        return _fernet(key).decrypt(encrypted.encode("ascii")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        return None
+
+
+def reveal_link(owner: Owner, key: bytes, base_url: str) -> str | None:
+    """邀請連結 `<base_url>/i/<token>`；已撤銷、舊資料（沒有加密的 token）或金鑰不對時回 None。"""
+    if owner.revoked_at is not None:
+        return None
+    token = decrypt_token(owner.token_encrypted, key)
+    return None if token is None else f"{base_url.rstrip('/')}/i/{token}"
+
+
+def create_owner(
+    session: Session, name: str, *, is_admin: bool = False, cap: int = 60, link_key: bytes | None = None
+) -> tuple[Owner, str]:
+    """建立邀請（owner），回傳 (owner, 原始 token)。原始 token 不以明文寫進 DB：
+    DB 存 sha256（查詢用）；有給 link_key 時另存加密版（管理頁再顯示連結用），沒給就是 NULL。"""
     token = secrets.token_urlsafe(32)
-    owner = Owner(name=name, token_hash=hash_token(token), is_admin=is_admin, daily_generation_cap=cap)
+    owner = Owner(
+        name=name, token_hash=hash_token(token), is_admin=is_admin, daily_generation_cap=cap,
+        token_encrypted=encrypt_token(token, link_key) if link_key else None,
+    )
     session.add(owner)
     session.commit()
     session.refresh(owner)
     return owner, token
 
 
-def rotate_token(session: Session, owner: Owner) -> str:
-    """換發 owner 的邀請 token（舊連結立即失效）並刪掉它所有 session，回傳新的原始 token。不 commit。"""
+def rotate_token(session: Session, owner: Owner, link_key: bytes | None = None) -> str:
+    """換發 owner 的邀請 token（舊連結立即失效）並刪掉它所有 session，回傳新的原始 token。不 commit。
+    加密版跟著換（沒給 link_key 就清成 NULL：舊的加密 token 已經不是有效連結）。"""
     token = secrets.token_urlsafe(32)
     owner.token_hash = hash_token(token)
+    owner.token_encrypted = encrypt_token(token, link_key) if link_key else None
     session.add(owner)
     delete_sessions(session, owner.id)
     return token

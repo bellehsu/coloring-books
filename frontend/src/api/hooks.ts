@@ -14,6 +14,9 @@ import type {
   Edits,
   ExportSummary,
   Generation,
+  Invite,
+  InviteCreate,
+  Me,
   Page,
   QA,
   SharedBook,
@@ -38,6 +41,8 @@ export const qk = {
   exportSummary: (bookId: number) => ["exportSummary", bookId] as const,
   sharedBooks: () => ["sharedBooks"] as const,
   sharedBook: (id: number) => ["sharedBook", id] as const,
+  me: () => ["me"] as const,
+  invites: () => ["invites"] as const,
 };
 
 export interface GenFilter {
@@ -54,6 +59,24 @@ export const useBooks = () => useQuery({ queryKey: qk.books(), queryFn: () => ap
 
 export const useBook = (id: number) =>
   useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`) });
+
+/** 目前的使用者（名字與是否為管理者）；首頁用它決定要不要顯示「邀請管理」。 */
+export const useMe = () => useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me"), retry: false });
+
+/** 管理者的邀請列表；非管理者後端回 404（頁面顯示一般的 404）。 */
+export const useInvites = () =>
+  useQuery({ queryKey: qk.invites(), queryFn: () => api.get<Invite[]>("/admin/invites"), retry: false });
+
+export const useCreateInvite = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: InviteCreate) => api.post<Invite>("/admin/invites", body),
+    onSuccess: (row) => {
+      qc.setQueryData<Invite[]>(qk.invites(), (old) => [row, ...(old ?? []).filter((r) => r.id !== row.id)]);
+      void qc.invalidateQueries({ queryKey: qk.invites() });
+    },
+  });
+};
 
 /** 別人分享的書（唯讀）。 */
 export const useSharedBooks = () =>

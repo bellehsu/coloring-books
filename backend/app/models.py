@@ -81,6 +81,8 @@ class Owner(SQLModel, table=True):
     daily_generation_cap: int = 60
     created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
     revoked_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))
+    # 原始 token 以 Fernet 加密（金鑰見 services/auth.py）；管理頁用它再顯示連結。NULL＝舊資料／dev owner，無法再顯示
+    token_encrypted: str | None = None
 
 
 class OwnerSession(SQLModel, table=True):

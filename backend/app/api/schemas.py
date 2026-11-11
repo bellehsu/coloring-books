@@ -450,3 +450,32 @@ class BatchMaterialsIn(BaseModel):
 class BatchMaterialsOut(BaseModel):
     queued: list[GenerationOut]
     skipped: list[BatchSkip]
+
+
+InviteNameStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+
+
+class MeOut(BaseModel):
+    name: str
+    is_admin: bool
+
+
+class InviteCreate(BaseModel):
+    name: InviteNameStr
+    is_admin: bool = False
+    daily_generation_cap: int = Field(60, ge=1, le=1000)
+
+
+class InviteOut(BaseModel):
+    """管理頁的一筆邀請。link＝完整連結；舊資料、金鑰不對或已撤銷時為 null。"""
+
+    id: int
+    name: str
+    is_admin: bool
+    daily_generation_cap: int | None  # null＝不設上限（管理者）
+    today: int  # 今天（台北）已排入的生成數
+    book_count: int
+    last_seen: datetime | None
+    created_at: datetime
+    revoked: bool
+    link: str | None

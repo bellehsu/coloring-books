@@ -91,6 +91,9 @@ def shared_page_image(
     owner: Owner = Depends(current_owner),
 ) -> Response:
     """PDF 用的同一張合成頁（含修線），長邊縮到 1600 px 以內。"""
+    # 刻意不分擁有者載入：這裡只是先找出頁面所屬的書。真正的可見性檢查是下一行的 _visible_book
+    # （書要分享中、擁有者未撤銷）與其後的「這一頁在完成頁清單裡」；沒分享的書或未完成的頁一律同一個 404。
+    # （tests/test_sharing.py::test_shared_image_of_unshared_book_page_is_404）
     page = session.exec(select(Page).where(col(Page.id) == page_id)).first()
     if page is None:
         raise _gone()

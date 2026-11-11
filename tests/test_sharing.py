@@ -215,3 +215,15 @@ def test_shared_routes_do_not_open_owner_routes(world):
     for u in (f"/api/books/{b['id']}", f"/api/books/{b['id']}/pages", f"/api/books/{b['id']}/export.pdf",
               f"/api/pages/{pages[0]['id']}/print.png"):
         assert client.get(u).status_code == 404, u
+
+
+def test_shared_image_of_unshared_book_page_is_404(world):
+    """擁有者有兩本書：只分享其中一本。另一本（沒分享）已完成的頁面，不能經 /api/shared/pages/{id}/image.png 取得。"""
+    app, client, sids, ids = world
+    shared, shared_pages = a_book(client, app, sids["a"])
+    other, other_pages = a_book(client, app, sids["a"])  # 同一個擁有者的另一本，不分享
+    share(client, shared["id"])
+    as_(client, sids["b"])
+    assert client.get(f"/api/shared/pages/{shared_pages[0]['id']}/image.png").status_code == 200
+    r = client.get(f"/api/shared/pages/{other_pages[0]['id']}/image.png")
+    assert r.status_code == 404 and r.json()["detail"] == GONE

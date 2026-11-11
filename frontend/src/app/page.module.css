@@ -26,6 +26,22 @@
   font-size: 14px;
   color: var(--muted);
 }
+.adminLink {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 8px;
+  color: var(--accent-ink);
+  font-size: 14px;
+  text-decoration: none;
+}
+.adminLink:hover {
+  text-decoration: underline;
+}
+.adminLink + .create {
+  margin-left: 0;
+}
 .create {
   margin-left: auto;
 }

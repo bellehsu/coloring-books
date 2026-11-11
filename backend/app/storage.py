@@ -451,11 +451,16 @@ SIGNING_KEY_FILE = ".signing_key"
 
 
 def _load_or_create_signing_key(storage_dir: Path) -> bytes:
-    """讀取 <storage_dir>/.signing_key；不存在就產生一把（0600）。以 link 原子建立，兩個行程同時啟動也只會有一把。"""
-    path = Path(storage_dir) / SIGNING_KEY_FILE
+    return load_or_create_key_file(storage_dir, SIGNING_KEY_FILE, "簽章金鑰")
+
+
+def load_or_create_key_file(storage_dir: Path, filename: str, label: str) -> bytes:
+    """讀取 <storage_dir>/<filename>；不存在就產生一把（0600）。以 link 原子建立，兩個行程同時啟動也只會有一把。
+    簽章金鑰（.signing_key）與邀請連結金鑰（.link_key，services/auth.py）共用。"""
+    path = Path(storage_dir) / filename
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=_TMP_PREFIX + SIGNING_KEY_FILE + ".", suffix=".tmp")
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=_TMP_PREFIX + filename + ".", suffix=".tmp")
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="ascii") as f:
@@ -471,7 +476,7 @@ def _load_or_create_signing_key(storage_dir: Path) -> bytes:
         os.chmod(path, 0o600)
     key = path.read_bytes().strip()
     if len(key) < 32:
-        raise SettingsError([f"簽章金鑰檔內容不完整：{path}（刪除後重啟即可重新產生）"])
+        raise SettingsError([f"{label}檔內容不完整：{path}（刪除後重啟即可重新產生）"])
     return key
 
 

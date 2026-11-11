@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""管理邀請連結（一個連結＝一個 owner）。DB 只存 token 的 sha256：原始連結只在 create／rotate 時印一次。
+"""管理邀請連結（一個連結＝一個 owner）。DB 存 token 的 sha256（查詢用）與加密版（管理頁／--show-links 再顯示連結用，金鑰見 auth.link_key）。
 
 用法（在專案根目錄執行）：
   python scripts/invites.py [--settings PATH] create --name 名字 [--admin] [--cap 60] [--base-url URL]
-  python scripts/invites.py list
+  python scripts/invites.py list [--show-links] [--base-url URL]   --show-links 多一欄「連結」（解密後顯示；舊資料顯示 -）
   python scripts/invites.py rotate --id N [--base-url URL]    換發新連結（舊連結與已登入的瀏覽器都失效）
   python scripts/invites.py revoke --id N                     撤銷（連結失效，已登入的瀏覽器下一個請求就 401）
   python scripts/invites.py delete-data --id N [--yes] [--force-admin]
@@ -91,7 +91,9 @@ def cmd_create(args: argparse.Namespace, settings: Settings, sessions) -> int:
         raise CliError("--cap 不可小於 0")
     url = base_url(args, settings)
     with sessions() as s:
-        owner, token = auth.create_owner(s, name, is_admin=args.admin, cap=args.cap)
+        owner, token = auth.create_owner(
+            s, name, is_admin=args.admin, cap=args.cap, link_key=auth.link_key(settings)
+        )
     print_link(url, token, owner)
     return 0
 
@@ -102,7 +104,7 @@ def cmd_rotate(args: argparse.Namespace, settings: Settings, sessions) -> int:
         owner = get_owner(s, args.id)
         if owner.revoked_at is not None:
             raise CliError(f"owner {owner.id}「{owner.name}」已撤銷，不發新連結")
-        token = auth.rotate_token(s, owner)
+        token = auth.rotate_token(s, owner, auth.link_key(settings))
         s.commit()
     print_link(url, token, owner)
     print("舊連結與已登入的瀏覽器都已失效。")
@@ -137,14 +139,16 @@ def _table(rows: list[list[str]]) -> str:
 
 def cmd_list(args: argparse.Namespace, settings: Settings, sessions) -> int:
     today = taipei_day(clock())
+    prefix = base_url(args, settings) if args.show_links else ""
+    key = auth.link_key(settings) if args.show_links else b""
     with sessions() as s:
         owners = s.exec(select(Owner).order_by(col(Owner.id))).all()
         used = dict(s.exec(select(Usage.owner_id, Usage.generations).where(col(Usage.day) == today)).all())
         n_sessions = dict(
             s.exec(select(OwnerSession.owner_id, func.count()).group_by(col(OwnerSession.owner_id))).all()
         )
-    # 名稱裡的空白換成底線，一列永遠是 7 欄（方便 grep／awk）
-    rows = [["id", "name", "admin", "cap", "today", "revoked", "sessions"]]
+    # 名稱裡的空白換成底線，一列永遠是 7 欄（方便 grep／awk）；--show-links 才多第 8 欄「連結」
+    rows = [["id", "name", "admin", "cap", "today", "revoked", "sessions"] + (["連結"] if args.show_links else [])]
     for o in owners:
         rows.append([
             str(o.id),
@@ -154,7 +158,7 @@ def cmd_list(args: argparse.Namespace, settings: Settings, sessions) -> int:
             str(used.get(o.id, 0)),
             "yes" if o.revoked_at is not None else "no",
             str(n_sessions.get(o.id, 0)),
-        ])
+        ] + ([auth.reveal_link(o, key, prefix) or "-"] if args.show_links else []))
     print(_table(rows))
     print(f"（today＝台北 {today.isoformat()} 已排入的生成數）")
     return 0
@@ -299,7 +303,9 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--cap", type=int, default=60, help="每日生成上限（預設 60；admin 不受限）")
     c.add_argument("--base-url", help=f"連結前綴（預設 auth.invite_base_url 或 {DEFAULT_BASE_URL}）")
 
-    sub.add_parser("list", help="列出邀請（不顯示 token）")
+    ls = sub.add_parser("list", help="列出邀請（預設不顯示連結）")
+    ls.add_argument("--show-links", action="store_true", help="多一欄「連結」（需要金鑰；舊資料顯示 -）")
+    ls.add_argument("--base-url", help=f"連結前綴（預設 auth.invite_base_url 或 {DEFAULT_BASE_URL}）")
 
     r = sub.add_parser("rotate", help="換發新連結；舊連結與已登入的瀏覽器失效")
     r.add_argument("--id", type=int, required=True)

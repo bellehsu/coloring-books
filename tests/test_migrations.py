@@ -349,3 +349,21 @@ def test_0008_book_shared_at_roundtrip(tmp_path):
         assert c.exec_driver_sql("SELECT title FROM book").scalar() == "x"
         assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
     command.upgrade(alembic_config(eng), "head")
+
+
+def test_0009_owner_token_encrypted_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0008")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+    command.upgrade(alembic_config(eng), "0009")
+    with eng.connect() as c:
+        assert _cols(c, "owner")["token_encrypted"]["nullable"] is True
+        assert c.exec_driver_sql("SELECT token_encrypted FROM owner").scalar() is None  # 既有的邀請：無法再顯示連結
+    command.downgrade(alembic_config(eng), "0008")
+    with eng.connect() as c:
+        assert "token_encrypted" not in _cols(c, "owner")
+        assert c.exec_driver_sql("SELECT name FROM owner").scalar() == "o"
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")

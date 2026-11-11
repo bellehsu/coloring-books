@@ -745,6 +745,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_api_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Invites */
+        get: operations["list_invites_api_admin_invites_get"];
+        put?: never;
+        /** Create Invite */
+        post: operations["create_invite_api_admin_invites_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/preflight": {
         parameters: {
             query?: never;
@@ -1026,6 +1061,50 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** InviteCreate */
+        InviteCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Is Admin
+             * @default false
+             */
+            is_admin: boolean;
+            /**
+             * Daily Generation Cap
+             * @default 60
+             */
+            daily_generation_cap: number;
+        };
+        /**
+         * InviteOut
+         * @description 管理頁的一筆邀請。link＝完整連結；舊資料、金鑰不對或已撤銷時為 null。
+         */
+        InviteOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Is Admin */
+            is_admin: boolean;
+            /** Daily Generation Cap */
+            daily_generation_cap: number | null;
+            /** Today */
+            today: number;
+            /** Book Count */
+            book_count: number;
+            /** Last Seen */
+            last_seen: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Revoked */
+            revoked: boolean;
+            /** Link */
+            link: string | null;
+        };
         /** LayoutOut */
         LayoutOut: {
             /** Paper Mm */
@@ -1082,6 +1161,13 @@ export interface components {
          * @enum {string}
          */
         LineDetail: "simple" | "standard" | "detailed";
+        /** MeOut */
+        MeOut: {
+            /** Name */
+            name: string;
+            /** Is Admin */
+            is_admin: boolean;
+        };
         /** PageCreate */
         PageCreate: {
             /**
@@ -2850,6 +2936,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    me_api_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeOut"];
+                };
+            };
+        };
+    };
+    list_invites_api_admin_invites_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteOut"][];
+                };
+            };
+        };
+    };
+    create_invite_api_admin_invites_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteOut"];
                 };
             };
             /** @description Validation Error */

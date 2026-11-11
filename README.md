@@ -131,12 +131,12 @@ Phase 10 起本機也用 R2，資料庫與本機資料夾都換一組新的；�
 ### 管理邀請與清理儲存空間
 
 兩個腳本都在專案根目錄執行，設定與後端相同（`config/settings.yaml` 或 `APP_SETTINGS_FILE`，`APP_` 環境變數覆寫；
-R2 憑證只來自 `APP_STORAGE__R2__ACCESS_KEY`／`SECRET_KEY`）。DB 只存 token 的 hash，連結只在 create／rotate 時印一次。
+R2 憑證只來自 `APP_STORAGE__R2__ACCESS_KEY`／`SECRET_KEY`）。DB 存 token 的 hash（查詢用）與 Fernet 加密版（`owner.token_encrypted`；金鑰見下方「邀請管理頁」），所以管理頁與 `list --show-links` 能再顯示連結。
 
 ```bash
 PY=$VENV_ROOT/coloring-books/bin/python
 env -u PYTHONPATH $PY scripts/invites.py create --name 小明 [--cap 60] [--admin] [--base-url https://網站]
-env -u PYTHONPATH $PY scripts/invites.py list                # id、名稱、admin、每日上限、今天（台北）用量、撤銷、session 數；不顯示 token
+env -u PYTHONPATH $PY scripts/invites.py list                # id、名稱、admin、每日上限、今天（台北）用量、撤銷、session 數；預設不顯示連結（--show-links 多一欄「連結」）
 env -u PYTHONPATH $PY scripts/invites.py rotate --id 1       # 換發新連結（例如遷移時建立、沒人知道 token 的 admin）；舊連結與已登入的瀏覽器失效
 env -u PYTHONPATH $PY scripts/invites.py revoke --id 2       # 撤銷，並刪除它的 session（下一個請求就 401）
 env -u PYTHONPATH $PY scripts/invites.py delete-data --id 2  # 刪除它的書、頁面、生成紀錄、圖片、session、用量與 owner；要輸入名稱確認（--yes 略過）
@@ -147,6 +147,17 @@ env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance --adopt-bucket-id  #
 ```
 
 - 連結前綴：`--base-url`，其次 `auth.invite_base_url`，預設 `http://localhost:3000`。
+
+**邀請管理頁（管理者）：** 管理者的首頁有「邀請管理」連結 → `/admin/invites`：填名字（1–40 字，未撤銷的邀請不可重名）、管理者、每日上限（1–1000，預設 60）→
+「產生連結」，列表（新的在最上面）顯示身分、上限、今天、書數、最後使用、狀態與連結（可隨時再看、按「複製」）。
+換發、撤銷、改上限、刪資料仍用 `scripts/invites.py`。非管理者打開這頁與 `/api/admin/*` 都是 404。
+
+- 連結前綴：`auth.invite_base_url`，沒設就用瀏覽器開頁面的網址（尊重 Next proxy 轉發的 `X-Forwarded-Host`／`X-Forwarded-Proto`），
+  所以用區網 IP 開管理頁就會得到區網連結。
+- 連結金鑰：環境變數 `APP_AUTH__LINK_KEY`（只能放環境變數，不可寫進 settings.yaml），沒設就自動產生 `<paths.storage_dir>/.link_key`（0600）。
+  拿到資料庫或 Litestream 備份但沒有金鑰就看不到連結。**這把金鑰要跟資料庫一起保管**：弄丟或更換後，既有連結變成
+  「這個連結無法再顯示，請用指令換發」（`invites.py rotate --id N`），邀請本身與已登入的瀏覽器不受影響。
+  升級前建立的邀請、`dev_owner` 的 admin 也是同樣顯示（沒有加密的 token）。已撤銷的邀請不顯示連結。
 - 最後一個未撤銷的 admin 要加 `--force-admin` 才能 `delete-data`；還有圖片正在生成時 `delete-data` 會拒絕，稍後再試。
 - `storage_gc.py` 不升級資料庫結構：DB 不是最新版時請先啟動一次後端。與 DB 對不上的物件（書／頁／生成紀錄 id 超出 DB、
   或屬於另一本書）不刪。孤兒超過 20 個且超過「孤兒＋被參照物件」的 20%，或對不上的物件超過 20 個且超過列出物件的 20%，
@@ -286,6 +297,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `e2e/isolation.spec.ts`：邀請 A 建書；邀請 B（全新的瀏覽器 context 開 `/i/{token}`）書單是空的，開 A 的編輯器網址顯示錯誤（API 404）；
   圖片 API 302 到 `/api/files/...?exp&sig` 後取得 image/png。也確認 A 的 cookie 真的生效（不是沒有 cookie 而被當成 dev admin）：
   有 `cb_session`、preflight 403、書單只有自己的書（沒有 admin 剛建的書）。
+- `e2e/invites-admin.spec.ts`：管理者在 `/admin/invites` 產生「小美」→ 列表最上面出現、連結前綴是 3010（經 Next proxy）→ 「複製」→ 剪貼簿 → 全新的 context 開連結，
+  首頁沒有書、沒有「邀請管理」、管理頁是 404 → 回管理者重新整理，連結仍在、書 0；390 px 沒有橫向捲動。
 - `e2e/invite-links.spec.ts`：無效 token、截斷（`/i`、`/i/`）或多段（`/i/a/b`）的連結都到「連結已失效」頁；
   壞掉的 cookie 到 `/invalid-link?reason=missing`（「請用邀請連結開啟」）。
 - 全域錯誤處理（vitest `providers.test.tsx`）：API 回 401 就轉到 `/invalid-link`：detail「請用邀請連結開啟」（這個瀏覽器沒有 session）

@@ -26,6 +26,9 @@ NO_OWNED_ID = {
     ("POST", "/api/books"),
     ("GET", "/api/system/queue"),
     ("GET", "/api/system/preflight"),
+    ("GET", "/api/me"),  # 任何有效 session 看自己的名字與身分
+    ("GET", "/api/admin/invites"),  # 管理者專用（非管理者 404，見 tests/test_admin_invites.py）
+    ("POST", "/api/admin/invites"),
     ("GET", "/i/{token}"),  # 邀請連結本身就是憑證
     ("GET", "/api/files/{key:path}"),  # LocalStorage 的 HMAC 簽章就是憑證（短效）
 }
@@ -54,8 +57,14 @@ def _routes():
 
 
 ROUTES = _routes()
-# 分享的唯讀路由（/api/shared，Task 10）：不是擁有者路由，可見性規則與測試在 tests/test_sharing.py
-SHARED = {(m, p) for m, p, _ in ROUTES if p.startswith("/api/shared/")}
+# 分享的唯讀路由（/api/shared，Task 10）：不是擁有者路由，可見性規則與測試在 tests/test_sharing.py。
+# 明列而不是用前綴排除：/api/shared 底下新增的路由會落到 ID_ROUTES（被當成擁有者路由測 404）或
+# test_route_inventory_is_explicit（沒有 id 的路由），必須在這裡刻意分類。
+SHARED = {
+    ("GET", "/api/shared/books/{book_id}"),
+    ("GET", "/api/shared/pages/{page_id}/image.png"),
+    ("GET", "/api/shared/books/{book_id}/export.pdf"),
+}
 ID_ROUTES = [(m, p) for m, p, params in ROUTES if (m, p) not in NO_OWNED_ID | SHARED]
 
 
@@ -66,6 +75,7 @@ def test_route_inventory_is_explicit():
     for m, p, params in ROUTES:
         if (m, p) not in NO_OWNED_ID:
             assert params <= OWNED_PARAMS, (m, p, params)
+    assert SHARED <= {(m, p) for m, p, _ in ROUTES}  # 清單裡的路由都真的存在
     assert len(ID_ROUTES) >= 35  # 防呆：路由表讀錯會變成空的參數化
 
 

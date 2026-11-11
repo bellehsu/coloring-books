@@ -61,5 +61,7 @@ auth:
   cookie_secure: false
   # scripts/invites.py 印出的邀請連結前綴（網站對外網址）；null＝http://localhost:3000。可用 --base-url 覆寫
   invite_base_url: null
+  # 邀請連結加密存放（管理頁可再顯示連結）的金鑰：只能用環境變數 APP_AUTH__LINK_KEY（寫在這裡會報錯）；
+  # 沒設時自動產生並存在 <paths.storage_dir>/.link_key（權限 0600）。要和資料庫一起保管
   # 每日生成上限不是這裡的設定：每個邀請各自有「每日生成次數」（台北時間，預設 60；admin 邀請沒有每日上限，但用量仍會計入），
   # 用 scripts/invites.py create --cap N 設定；超過時 API 回 429「今天的生成次數已用完，明天再來」。

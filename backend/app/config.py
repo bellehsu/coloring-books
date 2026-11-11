@@ -92,6 +92,9 @@ class AuthSettings(BaseModel):
     cookie_secure: bool = False
     # scripts/invites.py 印出的連結前綴（網站對外網址，例如 https://books.example）；None＝http://localhost:3000
     invite_base_url: str | None = None
+    # 邀請連結加密存放（owner.token_encrypted）用的金鑰；只能來自環境變數 APP_AUTH__LINK_KEY，
+    # 沒設時自動產生並存在 <paths.storage_dir>/.link_key（0600）
+    link_key: SecretStr | None = None
 
     @field_validator("dev_owner")
     @classmethod
@@ -105,6 +108,7 @@ _ENV_ONLY_FIELDS = {
     ("storage", "r2", "access_key"): "APP_STORAGE__R2__ACCESS_KEY",
     ("storage", "r2", "secret_key"): "APP_STORAGE__R2__SECRET_KEY",
     ("storage", "signing_key"): "APP_STORAGE__SIGNING_KEY",
+    ("auth", "link_key"): "APP_AUTH__LINK_KEY",
 }
 
 

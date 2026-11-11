@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
-from .api import books, compose, export, files, generations, invites, lineart, pages, review, shared
+from .api import admin, books, compose, export, files, generations, invites, lineart, pages, review, shared
 from .api.deps import require_admin, require_owned_path
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
@@ -99,6 +99,9 @@ def create_app(
     app.include_router(shared.router)
     app.include_router(files.router)
     app.include_router(invites.router)
+    # 管理者的邀請管理與 /api/me：沒有 book／page／generation id，自己的相依性做登入與管理者檢查（404）
+    app.include_router(admin.me_router)
+    app.include_router(admin.router)
 
     def _check_storage_instance(app: FastAPI) -> None:
         """DB 與 storage 的身分標記：新部署（或既有部署第一次升級）建立；對不上或不能自動建立時只記警告、

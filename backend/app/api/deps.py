@@ -58,6 +58,13 @@ def require_admin(owner: Owner = Depends(current_owner)) -> Owner:
     return owner
 
 
+def require_admin_hidden(owner: Owner = Depends(current_owner)) -> Owner:
+    """管理頁專用：非管理者回 404（不透露這些路由存在）；沒登入照常 401。"""
+    if not owner.is_admin:
+        raise HTTPException(404, "Not Found")
+    return owner
+
+
 def owned_book(session: Session, owner: Owner, book_id: int) -> Book:
     """owner 的書（admin 可看全部）；別人的書與不存在一樣回 404，不透露它存在。"""
     book = session.get(Book, book_id)

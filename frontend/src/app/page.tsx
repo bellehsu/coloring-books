@@ -5,7 +5,8 @@ import { AppBar } from "@/components/shell/AppBar";
 import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { ApiError } from "@/api/client";
-import { useBooks, useSharedBooks } from "@/api/hooks";
+import Link from "next/link";
+import { useBooks, useMe, useSharedBooks } from "@/api/hooks";
 import { BookCard } from "@/features/books/BookCard";
 import { CreateBookDialog } from "@/features/books/CreateBookDialog";
 import { SharedBookCard } from "@/features/shared/SharedBookCard";
@@ -15,6 +16,7 @@ export default function Home() {
   const books = useBooks();
   const [creating, setCreating] = useState(false);
   const shared = useSharedBooks();
+  const me = useMe();
   const list = books.data;
   const others = shared.data;
 
@@ -27,6 +29,11 @@ export default function Home() {
             <h1 className={styles.h1}>我的繪本</h1>
             {list && <span className={styles.sub}>{list.length} 本</span>}
           </div>
+          {me.data?.is_admin && (
+            <Link href="/admin/invites" className={styles.adminLink}>
+              邀請管理
+            </Link>
+          )}
           <Button variant="primary" icon={<Icons.plus size={18} />} onClick={() => setCreating(true)} className={styles.create}>
             建立新繪本
           </Button>
