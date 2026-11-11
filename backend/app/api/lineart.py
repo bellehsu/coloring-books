@@ -35,10 +35,12 @@ from app.services.lineart_render import (
     apply_strokes,
 )
 from app.services.page_lineart import (
+    LineartSourceMissing,
     LineartUnavailable,
     PageLineart,
     ensure_page_lineart,
     load_strokes,
+    read_page_lineart,
     render_preview,
     save_strokes,
     strokes_to_json,
@@ -57,6 +59,7 @@ OVERLAY_TRIM_COLOR = (0, 0, 255)
 OVERLAY_SAFE_COLOR = (0, 160, 0)
 
 NO_SELECTION = "這一頁還沒有選定圖片"
+IMAGE_MISSING = "圖片檔案遺失"
 STALE_GENERATION = "這張圖已不是這一頁目前選定的圖片，請重新載入頁面"
 
 
@@ -64,6 +67,20 @@ def _ensure(session: Session, storage: Storage, page_id: int) -> PageLineart:
     _page_or_404(session, page_id)
     try:
         return ensure_page_lineart(session, storage, page_id)
+    except LineartUnavailable as e:
+        raise HTTPException(409, e.message) from e
+
+
+def _ensure_png(session: Session, storage: Storage, page_id: int, *, image_route: bool) -> tuple[PageLineart, bytes]:
+    """確保線稿並讀出 PNG（線稿物件不見了會重算）。選定圖片的物件遺失時：
+    圖片端點回 404「圖片檔案遺失」；JSON 端點與 _ensure 一樣回 409。"""
+    _page_or_404(session, page_id)
+    try:
+        return read_page_lineart(session, storage, page_id)
+    except LineartSourceMissing as e:
+        if image_route:
+            raise HTTPException(404, IMAGE_MISSING) from e
+        raise HTTPException(409, e.message) from e
     except LineartUnavailable as e:
         raise HTTPException(409, e.message) from e
 
@@ -112,8 +129,8 @@ def get_lineart(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
 ) -> Response:
-    lin = _ensure(session, storage, page_id)
-    return _png_response(storage.abs(lin.path).read_bytes())
+    _lin, data = _ensure_png(session, storage, page_id, image_route=True)
+    return _png_response(data)
 
 
 @router.get("/pages/{page_id}/qa", response_model=QAOut)
@@ -131,10 +148,10 @@ def get_qa_overlay(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
 ) -> Response:
-    lin = _ensure(session, storage, page_id)
+    lin, data = _ensure_png(session, storage, page_id, image_route=True)
     page = session.get(Page, page_id)
     book = session.get(Book, page.book_id)
-    with Image.open(io.BytesIO(storage.abs(lin.path).read_bytes())) as src:
+    with Image.open(io.BytesIO(data)) as src:
         im = src.convert("RGB")
     draw = ImageDraw.Draw(im)
     w, h = im.size
@@ -183,8 +200,8 @@ def put_edits(
     return _qa_out(session, page_id, _ensure(session, storage, page_id))
 
 
-def _read_ink(storage: Storage, rel: str) -> np.ndarray:
-    with Image.open(storage.abs(rel)) as im:
+def _read_ink(data: bytes) -> np.ndarray:
+    with Image.open(io.BytesIO(data)) as im:
         return np.asarray(im.convert("L")) < 128
 
 
@@ -209,7 +226,7 @@ def autofix(
     只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。
     """
     gid = _selected_or_409(_page_or_404(session, page_id), body.generation_id)
-    lin = _ensure(session, storage, page_id)
+    lin, data = _ensure_png(session, storage, page_id, image_route=False)
     if not lin.qa.bridges:
         return _qa_out(session, page_id, lin, AutofixOut, autofix_added=0)
 
@@ -220,7 +237,7 @@ def autofix(
     if len(existing) >= MAX_STROKES or points_left < 2:
         raise HTTPException(409, f"修改圖層已達上限（{MAX_STROKES} 筆／{MAX_TOTAL_POINTS} 點），無法自動補線")
 
-    ink = _read_ink(storage, lin.path)
+    ink = _read_ink(data)
     h, w = ink.shape
     added: list[Stroke] = []
     gap_count, bridges = lin.qa.gap_count, lin.qa.bridges
@@ -262,7 +279,7 @@ def lineart_preview(
     book = session.get(Book, gen.book_id)
     content_px = compute_layout(book.paper_size, book.print_mode).content_px
     try:
-        rel = render_preview(storage, gen, content_px, detail, line_width_px)
+        data = render_preview(storage, gen, content_px, detail, line_width_px)
     except LineartUnavailable as e:
-        raise HTTPException(404, "圖片檔案遺失") from e
-    return _png_response(storage.abs(rel).read_bytes())
+        raise HTTPException(404, IMAGE_MISSING) from e
+    return _png_response(data)

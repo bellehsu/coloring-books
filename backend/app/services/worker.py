@@ -21,7 +21,7 @@ from app.services.engine import (
 )
 from app.services.autoselect import autoselect
 from app.services.compose import largest_component
-from app.storage import Storage
+from app.storage import Storage, StorageNotFound
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def encode_request(
     variation: str | None = None,
     extra: dict | None = None,
 ) -> str:
-    """產生 Generation.request_json；character_image 為 storage 相對路徑，variation 一律寫入（可為 null）。
+    """產生 Generation.request_json；character_image 為 Storage 的物件 key（來源紀錄，不存 bytes），variation 一律寫入（可為 null）。
     extra 併入 JSON，只當來源紀錄（例如 pose_mode、background_style）；引擎不讀，不能蓋掉核心欄位。"""
     d = {
         "kind": GenKind(kind).value,
@@ -77,8 +77,12 @@ def _is_retired(d: dict) -> bool:
         or d.get("background_style") == "detailed"
 
 
+CHARACTER_MISSING = "角色參考圖檔案遺失，請重新選擇角色"
+
+
 def decode_request(text: str, storage: Storage) -> GenerationRequest:
-    """還原 GenerationRequest；相對路徑轉絕對路徑，超出 storage 根目錄會丟 ValueError。
+    """還原 GenerationRequest；character_image 的 key 從 Storage 讀成 bytes。
+    key 不合法丟 ValueError；物件不存在丟 StorageNotFound。
     需要已停用路線的請求丟 ValueError(RETIRED)。舊列多出的 structure_* 等欄位忽略。"""
     d = json.loads(text)
     if _is_retired(d):
@@ -91,7 +95,7 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
         seed=d["seed"],
         width=d["width"],
         height=d["height"],
-        character_image=None if rel is None else storage.abs(rel),
+        character_image=None if rel is None else storage.get(rel),
         variation=d.get("variation"),
     )
 
@@ -243,7 +247,11 @@ class GenerationWorker:
         self.state = WorkerState.RUNNING
         try:
             try:
-                req = decode_request(gen.request_json, self.storage)
+                # Storage 可能是遠端（R2）：讀寫放到 thread，不卡住 event loop
+                req = await asyncio.to_thread(decode_request, gen.request_json, self.storage)
+            except StorageNotFound:
+                self._fail(gen_id, CHARACTER_MISSING)
+                return True
             except ValueError as e:
                 if str(e) == RETIRED:  # 已停用的路線：只回報原因
                     self._fail(gen_id, RETIRED)
@@ -257,14 +265,14 @@ class GenerationWorker:
                 req, lambda value, maximum: self.progress.__setitem__(gen_id, (value, maximum))
             )
             rel = self.storage.generation_image(gen.book_id, gen_id)
-            self.storage.write(rel, result.image)
+            await asyncio.to_thread(self.storage.put, rel, result.image)
             mask_rel = None
             if result.extra_images.get("mask"):
                 mask_rel = self.storage.generation_mask(gen.book_id, gen_id)
                 mask_png = result.extra_images["mask"]
                 if req.kind == GenKind.POSE:
                     mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
-                self.storage.write(mask_rel, mask_png)
+                await asyncio.to_thread(self.storage.put, mask_rel, mask_png)
             self._finish(
                 gen_id,
                 mask_path=mask_rel,

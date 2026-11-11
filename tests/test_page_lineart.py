@@ -9,7 +9,7 @@ from app.services import page_lineart
 from app.services.layout import PaperSize, PrintMode
 from app.services.lineart_render import Stroke
 from app.services.qa import QAReport
-from app.storage import Storage
+from app.storage import LocalStorage
 
 
 def _color_png() -> bytes:
@@ -30,7 +30,7 @@ def env(tmp_path):
     engine = make_engine(tmp_path / "t.db")
     init_db(engine)
     make = session_factory(engine)
-    storage = Storage(tmp_path / "storage")
+    storage = LocalStorage(tmp_path / "storage", b"test-signing-key")
     with make() as s:
         book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME)
         s.add(book)
@@ -46,7 +46,7 @@ def env(tmp_path):
         s.add(gen)
         s.commit()
         gen.image_path = storage.generation_image(book.id, gen.id)
-        storage.write(gen.image_path, _color_png())
+        storage.put(gen.image_path, _color_png())
         page.selected_generation_id = gen.id
         s.add_all([gen, page])
         s.commit()
@@ -68,7 +68,7 @@ def test_cached_until_inputs_change(env, monkeypatch):
         r2 = page_lineart.ensure_page_lineart(s, storage, pid)
         assert len(calls) == 1
         assert r1.key == r2.key and r1.path == r2.path
-        assert storage.abs(r1.path).exists()
+        assert storage.exists(r1.path)
         page = s.get(Page, pid)
         assert page.lineart_key == r1.key and page.qa_json
         page.line_width_px = 9
@@ -83,7 +83,7 @@ def test_strokes_change_key_and_output(env):
     make, storage, pid, gid = env
     with make() as s:
         r1 = page_lineart.ensure_page_lineart(s, storage, pid)
-        before = storage.abs(r1.path).read_bytes()
+        before = storage.get(r1.path)
         page_lineart.save_strokes(
             s, pid, gid, [Stroke("draw", 12.0, ((0.1, 0.1), (0.9, 0.9)))]
         )
@@ -91,7 +91,7 @@ def test_strokes_change_key_and_output(env):
         assert len(page_lineart.load_strokes(s, gid)) == 1
         r2 = page_lineart.ensure_page_lineart(s, storage, pid)
         assert r2.key != r1.key
-        assert storage.abs(r2.path).read_bytes() != before
+        assert storage.get(r2.path) != before
 
 
 def _set_passed(make, pid):
@@ -144,19 +144,29 @@ def test_missing_image_raises(env):
     make, storage, pid, gid = env
     with make() as s:
         gen = s.get(Generation, gid)
-        storage.abs(gen.image_path).unlink()
+        storage.delete(gen.image_path)
         with pytest.raises(page_lineart.LineartUnavailable) as e:
             page_lineart.ensure_page_lineart(s, storage, pid)
         assert "檔案遺失" in e.value.message
 
 
-def test_render_preview_cached(env):
+def test_render_preview_cached(env, monkeypatch):
     make, storage, pid, gid = env
+    calls = []
+    orig = page_lineart.render_base
+    monkeypatch.setattr(page_lineart, "render_base",
+                        lambda *a, **k: (calls.append(1), orig(*a, **k))[1])
     with make() as s:
         gen = s.get(Generation, gid)
-        rel = page_lineart.render_preview(storage, gen, (300, 400), "standard", 11)
-        assert storage.abs(rel).exists()
-        assert page_lineart.render_preview(storage, gen, (300, 400), "standard", 11) == rel
+        data = page_lineart.render_preview(storage, gen, (300, 400), "standard", 11)
+        assert data.startswith(b"\x89PNG")
+        keys = list(storage.list(f"cache/previews/{gid}_"))
+        assert len(keys) == 1 and storage.get(keys[0]) == data
+        assert page_lineart.render_preview(storage, gen, (300, 400), "standard", 11) == data
+        assert len(calls) == 1  # 第二次直接讀快取的物件
+        storage.delete(keys[0])  # 物件不見了（GC 或手動刪除）→ 重算
+        assert page_lineart.render_preview(storage, gen, (300, 400), "standard", 11) == data
+        assert len(calls) == 2
 
 
 def test_qa_version_in_key_forces_rerender(env, monkeypatch):
@@ -184,7 +194,7 @@ def test_lineart_path_is_keyed_and_old_file_deleted(env):
         s.commit()
         r2 = page_lineart.ensure_page_lineart(s, storage, pid)
     assert r2.path != r1.path
-    assert storage.abs(r2.path).exists() and not storage.abs(r1.path).exists()
+    assert storage.exists(r2.path) and not storage.exists(r1.path)
 
 
 def test_lost_race_deletes_own_file(env, monkeypatch):
@@ -207,5 +217,35 @@ def test_lost_race_deletes_own_file(env, monkeypatch):
         r = page_lineart.ensure_page_lineart(s, storage, pid)
         pg = s.get(Page, pid)
         assert pg.lineart_path == r.path
-    files = list(storage.abs(r.path).parent.glob("lineart_*.png"))
-    assert files == [storage.abs(r.path)]
+    page_dir = r.path.rsplit("/", 1)[0] + "/"
+    files = [k for k in storage.list(page_dir) if k.rsplit("/", 1)[1].startswith("lineart_")]
+    assert files == [r.path]
+
+
+def test_read_page_lineart_rerenders_missing_object(env, monkeypatch):
+    """資料庫說有線稿、物件卻不見了：read_page_lineart 重算並寫回同一個 key。"""
+    make, storage, pid, gid = env
+    calls = []
+    orig = page_lineart.render_base
+    monkeypatch.setattr(page_lineart, "render_base",
+                        lambda *a, **k: (calls.append(1), orig(*a, **k))[1])
+    with make() as s:
+        lin, data = page_lineart.read_page_lineart(s, storage, pid)
+        assert data == storage.get(lin.path) and len(calls) == 1
+        lin2, data2 = page_lineart.read_page_lineart(s, storage, pid)
+        assert (lin2.path, data2) == (lin.path, data) and len(calls) == 1
+        storage.delete(lin.path)
+        lin3, data3 = page_lineart.read_page_lineart(s, storage, pid)
+        assert lin3.path == lin.path and data3 == data and len(calls) == 2
+        assert s.get(Page, pid).lineart_path == lin.path
+
+
+def test_read_page_lineart_source_missing(env):
+    make, storage, pid, gid = env
+    with make() as s:
+        lin, _ = page_lineart.read_page_lineart(s, storage, pid)
+        storage.delete(lin.path)
+        storage.delete(s.get(Generation, gid).image_path)
+        with pytest.raises(page_lineart.LineartSourceMissing) as e:
+            page_lineart.read_page_lineart(s, storage, pid)
+        assert "圖片檔案遺失" in e.value.message

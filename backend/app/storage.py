@@ -85,10 +85,8 @@ def _check_local_prefix(prefix: str) -> str:
     return prefix
 
 
-class StorageProtocol(Protocol):
-    """所有二進位檔案（生成圖、遮罩、線稿、預覽）的存取介面。key 是今天的相對路徑格式。
-
-    注意：Task 2 移除 `Storage = LocalStorage` 暫時別名後，本協定改名為 `Storage`。"""
+class Storage(Protocol):
+    """所有二進位檔案（生成圖、遮罩、線稿、預覽）的存取介面。key 是今天的相對路徑格式。"""
 
     def put(self, key: str, data: bytes, content_type: str = "image/png") -> None: ...
     def get(self, key: str) -> bytes: ...  # 不存在 → StorageNotFound
@@ -176,11 +174,12 @@ def _prune_empty_dirs(root: Path, prefix: str) -> None:
 class LocalStorage(_KeyBuilders):
     """以資料夾為後端。signed_url 指向後端 /api/files/{key}，以 HMAC 簽章（測試與假後端用）。"""
 
-    def __init__(self, root: Path, signing_key: bytes | None = None):
+    def __init__(self, root: Path, signing_key: bytes):
+        """signing_key 必填：同一個 storage 的每個實例（多個行程、重啟後）都要用同一把，簽出的網址才驗得過。"""
+        if not isinstance(signing_key, bytes) or not signing_key:
+            raise ValueError("LocalStorage 需要非空的 signing_key（bytes）")
         self.root = Path(root)
-        # signing_key 為 None 只給舊呼叫端 `Storage(root)` 用（暫時，Task 2 後一律由 make_storage 傳入）；
-        # 每個實例隨機一把，重啟後舊網址失效
-        self._signing_key = signing_key if signing_key is not None else secrets.token_bytes(32)
+        self._signing_key = signing_key
 
     def __repr__(self) -> str:
         return f"LocalStorage(root={str(self.root)!r})"
@@ -242,23 +241,6 @@ class LocalStorage(_KeyBuilders):
         if not isinstance(sig, str) or not sig.isascii():
             return False
         return hmac.compare_digest(self._sign(key, exp_i).encode(), sig.encode())
-
-    # --- 暫時保留（Task 2 把呼叫端改成 put/get 後移除） ---
-
-    def abs(self, rel: str) -> Path:
-        """暫時保留到 Task 2：相對路徑轉絕對路徑；跳出 root 時丟 ValueError。
-        沿用舊行為（只檢查解析後是否在 root 內，"." 也可以），不套用 _check_key。"""
-        root = self.root.resolve()
-        path = (root / rel).resolve()
-        if not path.is_relative_to(root):
-            raise ValueError(f"路徑超出儲存根目錄：{rel!r}")
-        return path
-
-    def write(self, rel: str, data: bytes) -> Path:
-        """暫時保留到 Task 2：先寫暫存檔再 rename，回傳絕對路徑。"""
-        path = self.abs(rel)
-        _atomic_write(path, data)
-        return path
 
 
 class R2Storage(_KeyBuilders):
@@ -360,7 +342,7 @@ class CachedStorage(_KeyBuilders):
 
     快取只是加速：整個資料夾隨時可刪；快取寫入失敗只記 log，不影響讀寫結果。"""
 
-    def __init__(self, inner: StorageProtocol, cache_dir: Path, max_bytes: int):
+    def __init__(self, inner: Storage, cache_dir: Path, max_bytes: int):
         self.inner = inner
         self.cache_dir = Path(cache_dir)
         self.max_bytes = int(max_bytes)
@@ -449,10 +431,6 @@ class CachedStorage(_KeyBuilders):
             path.unlink(missing_ok=True)
 
 
-# 暫時別名：舊呼叫端仍用 `Storage(root)` 與 `.abs()`；Task 2 遷移完畢後移除，並把 StorageProtocol 改名為 Storage
-Storage = LocalStorage
-
-
 SIGNING_KEY_FILE = ".signing_key"
 
 
@@ -481,7 +459,7 @@ def _load_or_create_signing_key(storage_dir: Path) -> bytes:
     return key
 
 
-def make_storage(settings: "Settings") -> StorageProtocol:
+def make_storage(settings: "Settings") -> Storage:
     """依 storage.backend 建立 Storage：local → LocalStorage；r2 → CachedStorage(R2Storage)。"""
     st = settings.storage
     if st.backend == "local":

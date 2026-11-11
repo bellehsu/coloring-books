@@ -14,7 +14,7 @@ from app.services.worker import (
     decode_request,
     encode_request,
 )
-from app.storage import Storage
+from app.storage import LocalStorage, StorageNotFound
 from tests.fake_engine import FakeEngine
 
 
@@ -26,7 +26,7 @@ def env(tmp_path):
     with sessions() as s:
         s.add(Book(title="b", paper_size=PaperSize.A4, print_mode=PrintMode.HOME))
         s.commit()
-    storage = Storage(tmp_path / "storage")
+    storage = LocalStorage(tmp_path / "storage", b"test-signing-key")
     engine = FakeEngine()
     worker = GenerationWorker(engine, sessions, storage, retry_backoff_s=0.05)
     return worker, engine, sessions, storage
@@ -51,22 +51,23 @@ def get(sessions, gid):
 
 
 def test_encode_decode_roundtrip(tmp_path):
-    storage = Storage(tmp_path)
+    storage = LocalStorage(tmp_path, b"test-signing-key")
     text = encode_request(kind=GenKind.POSE, prompt="中文", negative_prompt="", seed=3, width=10, height=20,
                           character_image="books/1/generations/1.png", variation="facing left")
     d = json.loads(text)
     assert d == {"kind": "pose", "prompt": "中文", "negative_prompt": "", "seed": 3, "width": 10, "height": 20,
                  "character_image": "books/1/generations/1.png", "variation": "facing left"}
     assert "中文" in text  # ensure_ascii=False
+    storage.put("books/1/generations/1.png", b"char-png")
     req = decode_request(text, storage)
     assert req.kind == GenKind.POSE and req.prompt == "中文" and req.negative_prompt == "" and req.seed == 3
     assert (req.width, req.height, req.variation) == (10, 20, "facing left")
-    assert req.character_image == (tmp_path / "books/1/generations/1.png").resolve()
+    assert req.character_image == b"char-png"  # 引擎收 bytes；request_json 仍記 key
 
 
 def test_encode_request_records_variation_and_extra(tmp_path):
     # 變化語永遠寫（可為 null）；extra 併入 JSON 當作來源紀錄（pose_mode、background_style…）
-    storage = Storage(tmp_path)
+    storage = LocalStorage(tmp_path, b"test-signing-key")
     d = json.loads(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1, width=8,
                                   height=8))
     assert "variation" in d and d["variation"] is None and d["character_image"] is None
@@ -91,7 +92,7 @@ def test_encode_request_records_variation_and_extra(tmp_path):
 
 def test_decode_ignores_old_sdxl_keys_on_qwen_rows(tmp_path):
     # 舊列（Phase 8）的簡潔背景／精準動作還帶 structure_* 與 background_style_requested：照常還原
-    storage = Storage(tmp_path)
+    storage = LocalStorage(tmp_path, b"test-signing-key")
     old = {"kind": "background", "prompt": "p", "negative_prompt": "", "seed": 1, "width": 8, "height": 8,
            "character_image": None, "structure_image": None, "structure_strength": 0.0,
            "background_style": "simple", "background_style_requested": "simple", "variation": "v"}
@@ -100,13 +101,14 @@ def test_decode_ignores_old_sdxl_keys_on_qwen_rows(tmp_path):
     old_pose = {"kind": "pose", "prompt": "p", "negative_prompt": "", "seed": 1, "width": 8, "height": 8,
                 "character_image": "books/1/c.png", "structure_image": None, "structure_strength": 0.0,
                 "pose_mode": "precise", "variation": None}
+    storage.put("books/1/c.png", b"old-char")
     req = decode_request(json.dumps(old_pose), storage)
-    assert req.kind == GenKind.POSE and req.character_image == (tmp_path / "books/1/c.png").resolve()
+    assert req.kind == GenKind.POSE and req.character_image == b"old-char"
 
 
 @pytest.mark.parametrize("retired", [{"pose_mode": "fast"}, {"background_style": "detailed"}, {"kind": "page"}])
 def test_decode_request_rejects_retired(tmp_path, retired):
-    storage = Storage(tmp_path)
+    storage = LocalStorage(tmp_path, b"test-signing-key")
     kind = {"pose_mode": GenKind.POSE, "background_style": GenKind.BACKGROUND}.get(next(iter(retired)),
                                                                                    GenKind.CHARACTER)
     d = json.loads(encode_request(kind=kind, prompt="p", negative_prompt="n", seed=1, width=8, height=8,
@@ -117,7 +119,7 @@ def test_decode_request_rejects_retired(tmp_path, retired):
 
 
 def test_decode_null_images_and_bad_input(tmp_path):
-    storage = Storage(tmp_path)
+    storage = LocalStorage(tmp_path, b"test-signing-key")
     req = decode_request(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1,
                                         width=1, height=1), storage)
     assert req.character_image is None
@@ -126,6 +128,10 @@ def test_decode_null_images_and_bad_input(tmp_path):
                                       height=1, character_image="../evil.png"), storage)
     with pytest.raises(ValueError):
         decode_request("not json", storage)
+    # key 合法但物件不存在：StorageNotFound（worker 回報「角色參考圖檔案遺失」）
+    with pytest.raises(StorageNotFound):
+        decode_request(encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=1,
+                                      height=1, character_image="books/1/missing.png"), storage)
 
 
 async def test_run_once_success_records_everything(env):
@@ -136,7 +142,7 @@ async def test_run_once_success_records_everything(env):
     g = get(sessions, gid)
     assert g.status == GenStatus.SUCCEEDED
     assert g.image_path == "books/1/generations/1.png"
-    assert storage.abs(g.image_path).read_bytes() == engine.image
+    assert storage.get(g.image_path) == engine.image
     assert (g.engine, g.workflow_name, g.workflow_version, g.workflow_hash) == (
         "fake", "fake_wf", "abc123", "abc123def456")
     assert json.loads(g.models_json) == ["m1.safetensors", "m2.gguf"]
@@ -459,7 +465,7 @@ async def test_pose_mask_saved_and_path_set(env):
     g = get(sessions, gid)
     assert g.status == GenStatus.SUCCEEDED
     assert g.mask_path == storage.generation_mask(1, gid)
-    assert storage.abs(g.mask_path).read_bytes().startswith(b"\x89PNG")
+    assert storage.get(g.mask_path).startswith(b"\x89PNG")
 
 
 async def test_non_pose_has_no_mask_path(env):
@@ -486,7 +492,7 @@ async def test_worker_stores_largest_component_mask_for_pose(env):
     gid = add_gen(sessions, request_json=rj)
     await worker.run_once()
     g = get(sessions, gid)
-    out = np.asarray(Image.open(storage.abs(g.mask_path)))
+    out = np.asarray(Image.open(io.BytesIO(storage.get(g.mask_path))))
     assert int((out > 0).sum()) == 30 * 30
 
 

@@ -1,5 +1,6 @@
 """匯出端點：書本 PDF、匯出摘要、單頁列印 PNG。同步 `def`（CPU 工作走 threadpool）。"""
 
+import io
 from typing import Literal
 from urllib.parse import quote
 
@@ -15,7 +16,7 @@ from app.api.pages import _page_or_404
 from app.models import Book, Page, PageStatus
 from app.services.export import build_pdf, compose_page, png_bytes
 from app.services.layout import compute_layout
-from app.services.page_lineart import LineartUnavailable, ensure_page_lineart
+from app.services.page_lineart import LineartUnavailable, ensure_page_lineart, read_page_lineart
 from app.storage import Storage
 
 router = APIRouter(prefix="/api", tags=["export"])
@@ -32,10 +33,10 @@ def _ordered_pages(session: Session, book_id: int) -> list[Page]:
 def _composed(session: Session, storage: Storage, book: Book, page: Page):
     layout = compute_layout(book.paper_size, book.print_mode)
     try:
-        lin = ensure_page_lineart(session, storage, page.id)
+        _lin, data = read_page_lineart(session, storage, page.id)
     except LineartUnavailable as e:
         raise HTTPException(409, f"第 {page.position + 1} 頁：{e.message}") from e
-    with Image.open(storage.abs(lin.path)) as im:
+    with Image.open(io.BytesIO(data)) as im:
         ink = np.asarray(im.convert("L")) < 128
     return compose_page(ink, layout)
 

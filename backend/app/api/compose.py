@@ -47,7 +47,7 @@ from app.services.prompts import (
 )
 from app.services.worker import GenerationWorker, encode_request
 from app.services.upload_bg import cover_crop
-from app.storage import UPLOAD_MAX_PIXELS, ImageRejected, Storage, TooManyPixels, load_rgb
+from app.storage import UPLOAD_MAX_PIXELS, ImageRejected, Storage, StorageNotFound, TooManyPixels, load_rgb
 
 router = APIRouter(prefix="/api", tags=["compose"])
 
@@ -450,7 +450,7 @@ def upload_background(
         session.add(gen)
         session.flush()
         rel = storage.generation_image(book.id, gen.id)
-        storage.write(rel, buf.getvalue())
+        storage.put(rel, buf.getvalue())
         written = rel
         gen.image_path = rel
         session.commit()
@@ -483,9 +483,14 @@ def save_placement(
 
 
 def _load_image(storage: Storage, rel: str | None) -> Image.Image:
+    """從 Storage 讀出圖片；key 是空的或物件不存在丟 FileNotFoundError。"""
     if not rel:
         raise FileNotFoundError(rel)
-    with Image.open(storage.abs(rel)) as im:
+    try:
+        data = storage.get(rel)
+    except StorageNotFound:
+        raise FileNotFoundError(rel) from None
+    with Image.open(io.BytesIO(data)) as im:
         im.load()
         return im.copy()
 
@@ -501,7 +506,8 @@ def _composite_params(bg_id: int, pose_id: int, placement: Placement) -> dict:
 def _find_composite(
     session: Session, storage: Storage, page_id: int, bg_id: int, pose_id: int, placement: Placement
 ) -> Generation | None:
-    """同背景＋角色動作＋位置（Placement.key()）、同合成版本且檔案還在的既有合成圖。"""
+    """同背景＋角色動作＋位置（Placement.key()）、同合成版本且物件還在的既有合成圖。
+    只對符合條件的候選呼叫 storage.exists()（合成是 POST，不在每次顯示時走）。"""
     rows = session.exec(
         select(Generation)
         .where(col(Generation.page_id) == page_id, col(Generation.kind) == GenKind.COMPOSITE,
@@ -511,7 +517,7 @@ def _find_composite(
     for g in rows:
         if composite_matches(g, bg_id, pose_id, placement) and g.image_path:
             try:
-                if storage.abs(g.image_path).is_file():
+                if storage.exists(g.image_path):
                     return g
             except ValueError:
                 continue
@@ -579,7 +585,7 @@ def confirm_compose(
             session.add(target)
             session.flush()
             rel = storage.generation_image(page.book_id, target.id)
-            storage.write(rel, buf.getvalue())
+            storage.put(rel, buf.getvalue())
             written = rel
             target.image_path = rel
             target.elapsed_s = time.monotonic() - t0

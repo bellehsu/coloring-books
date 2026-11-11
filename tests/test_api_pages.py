@@ -100,16 +100,16 @@ def test_delete_page_cascades_and_reorders(client, app):
     set_page(app, mid["id"], selected_generation_id=done)
     assert client.get(f"/api/pages/{mid['id']}/lineart").status_code == 200  # 產生線稿檔
     storage = app.state.storage
-    img = storage.abs(f"books/{b['id']}/generations/{done}.png")
-    pdir = storage.abs(f"books/{b['id']}/pages/{mid['id']}")
-    assert img.is_file() and pdir.is_dir()
+    img = f"books/{b['id']}/generations/{done}.png"
+    pdir = f"books/{b['id']}/pages/{mid['id']}/"
+    assert storage.exists(img) and list(storage.list(pdir))
 
     assert client.delete(f"/api/pages/{mid['id']}").status_code == 204
     assert client.delete(f"/api/pages/{mid['id']}").status_code == 404
     got = client.get(f"/api/books/{b['id']}/pages").json()
     assert [p["id"] for p in got] == [pages[0]["id"], pages[2]["id"]]
     assert [p["position"] for p in got] == [0, 1]
-    assert not img.exists() and not pdir.exists()
+    assert not storage.exists(img) and list(storage.list(pdir)) == []
     with app.state.sessions() as s:
         assert s.exec(select(Generation).where(Generation.page_id == mid["id"])).all() == []
         assert s.exec(select(LineartEdit).where(LineartEdit.page_id == mid["id"])).all() == []

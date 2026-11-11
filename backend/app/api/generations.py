@@ -4,7 +4,7 @@ import io
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy import case, literal
@@ -17,7 +17,7 @@ from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
 from app.services.worker import GenerationWorker, WorkerState
-from app.storage import Storage
+from app.storage import Storage, StorageNotFound
 
 router = APIRouter(prefix="/api", tags=["generations"])
 
@@ -76,14 +76,15 @@ def get_generation_image(
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
-) -> FileResponse:
+) -> Response:
     gen = _gen_or_404(session, gen_id)
     if gen.status != GenStatus.SUCCEEDED or not gen.image_path:
         raise HTTPException(404, "這筆生成紀錄還沒有圖片")
-    path = storage.abs(gen.image_path)
-    if not path.is_file():
-        raise HTTPException(404, "圖片檔案遺失")
-    return FileResponse(path, media_type="image/png")
+    try:
+        data = storage.get(gen.image_path)
+    except (StorageNotFound, ValueError):
+        raise HTTPException(404, "圖片檔案遺失") from None
+    return Response(content=data, media_type="image/png")
 
 
 @router.get("/generations/{gen_id}/mask")
@@ -91,14 +92,15 @@ def get_generation_mask(
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
-) -> FileResponse:
+) -> Response:
     gen = _gen_or_404(session, gen_id)
     if not gen.mask_path:
         raise HTTPException(404, "這筆生成紀錄沒有遮罩")
-    path = storage.abs(gen.mask_path)
-    if not path.is_file():
-        raise HTTPException(404, "遮罩檔案遺失")
-    return FileResponse(path, media_type="image/png")
+    try:
+        data = storage.get(gen.mask_path)
+    except (StorageNotFound, ValueError):
+        raise HTTPException(404, "遮罩檔案遺失") from None
+    return Response(content=data, media_type="image/png")
 
 
 @router.get("/generations/{gen_id}/cutout")
@@ -112,9 +114,10 @@ def get_generation_cutout(
     if gen.kind != GenKind.POSE or not gen.mask_path or not gen.image_path:
         raise HTTPException(404, "這筆生成紀錄沒有去背圖")
     try:
-        with Image.open(storage.abs(gen.image_path)) as pose, Image.open(storage.abs(gen.mask_path)) as mask:
+        pose_png, mask_png = storage.get(gen.image_path), storage.get(gen.mask_path)
+        with Image.open(io.BytesIO(pose_png)) as pose, Image.open(io.BytesIO(mask_png)) as mask:
             out = cutout(pose, mask)
-    except (OSError, ValueError):
+    except (StorageNotFound, OSError, ValueError):
         raise HTTPException(409, "圖片檔案遺失，請重新產生") from None
     buf = io.BytesIO()
     out.save(buf, format="PNG")

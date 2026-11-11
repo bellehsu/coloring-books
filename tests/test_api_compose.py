@@ -190,7 +190,7 @@ def with_sketch(app, book_id, page_id, *, file=True):
     """舊資料：頁面有構圖草圖（強度 0.4）；file=False 時草圖檔已遺失。"""
     rel = app.state.storage.sketch(book_id, page_id)
     if file:
-        app.state.storage.write(rel, make_png((128, 128)))
+        app.state.storage.put(rel, make_png((128, 128)))
     set_page(app, page_id, sketch_path=rel, controlnet_strength=0.4)
 
 
@@ -392,7 +392,7 @@ def test_generate_and_pick_pose(client, app):
     run_jobs(client, app)
     req = app.state.engine.requests[-1]
     assert req.kind == GenKind.POSE and (req.width, req.height) == POSE_SIZE
-    assert req.character_image == app.state.storage.abs(gen_row(app, char_gen).image_path)
+    assert req.character_image == app.state.storage.get(gen_row(app, char_gen).image_path)
     g = client.get(f"/api/generations/{g['id']}").json()
     assert g["mask_url"] == f"/api/generations/{g['id']}/mask"
     m = client.get(g["mask_url"])
@@ -532,10 +532,10 @@ def test_cutout_alpha_and_size(client, app):
     mask.paste(255, (10, 20, 30, 50))
     buf = io.BytesIO()
     mask.save(buf, format="PNG")
-    app.state.storage.write(row.mask_path, buf.getvalue())
+    app.state.storage.put(row.mask_path, buf.getvalue())
     pbuf = io.BytesIO()
     Image.new("RGB", (w, h), (200, 10, 10)).save(pbuf, format="PNG")
-    app.state.storage.write(row.image_path, pbuf.getvalue())
+    app.state.storage.put(row.image_path, pbuf.getvalue())
     r = client.get(g["cutout_url"])
     assert r.status_code == 200 and r.headers["content-type"] == "image/png"
     im = Image.open(io.BytesIO(r.content))
@@ -547,7 +547,7 @@ def test_cutout_alpha_and_size(client, app):
     mask2.paste(255, (10, 45, 30, 50))
     buf = io.BytesIO()
     mask2.save(buf, format="PNG")
-    app.state.storage.write(row.mask_path, buf.getvalue())
+    app.state.storage.put(row.mask_path, buf.getvalue())
     im = Image.open(io.BytesIO(client.get(g["cutout_url"]).content))
     assert im.size == (20, 30)
     assert im.getpixel((5, 12))[3] == 0 and im.getpixel((5, 2))[3] == 255
@@ -558,11 +558,11 @@ def test_cutout_404_and_409(client, app):
     assert client.get(f"/api/generations/{bg}/cutout").status_code == 404
     assert client.get("/api/generations/999/cutout").status_code == 404
     row = gen_row(app, pose)
-    mask_bytes = app.state.storage.abs(row.mask_path).read_bytes()
+    mask_bytes = app.state.storage.get(row.mask_path)
     app.state.storage.delete(row.mask_path)
     r = client.get(f"/api/generations/{pose}/cutout")
     assert r.status_code == 409 and r.json()["detail"] == "圖片檔案遺失，請重新產生"
-    app.state.storage.write(row.mask_path, mask_bytes)
+    app.state.storage.put(row.mask_path, mask_bytes)
     app.state.storage.delete(row.image_path)
     assert client.get(f"/api/generations/{pose}/cutout").status_code == 409
 
@@ -651,9 +651,9 @@ def test_compose_creates_composite(client, app):
         "background_generation_id": bg, "pose_generation_id": pose,
         "placement": DEFAULT_PLACEMENT.to_dict(),
     }
-    with Image.open(app.state.storage.abs(gen_row(app, bg).image_path)) as im:
+    with Image.open(io.BytesIO(app.state.storage.get(gen_row(app, bg).image_path))) as im:
         assert (g.width, g.height) == im.size
-    with Image.open(app.state.storage.abs(g.image_path)) as im:
+    with Image.open(io.BytesIO(app.state.storage.get(g.image_path))) as im:
         assert im.size == (g.width, g.height)
     assert client.get(f"/api/generations/{gid}/image").status_code == 200
     assert client.get(page["lineart_url"]).status_code == 200
@@ -762,25 +762,25 @@ def test_compose_requires_ready_inputs(client, app):
     picked(client, pid, "pose", queued)
     # 遮罩檔被刪
     mask = gen_row(app, queued).mask_path
-    mask_bytes = app.state.storage.abs(mask).read_bytes()
+    mask_bytes = app.state.storage.get(mask)
     app.state.storage.delete(mask)
     refused("圖片檔案遺失，請重新產生")
     # 背景檔被刪
-    app.state.storage.write(mask, mask_bytes)
+    app.state.storage.put(mask, mask_bytes)
     bg_path = gen_row(app, bg).image_path
-    bg_bytes = app.state.storage.abs(bg_path).read_bytes()
+    bg_bytes = app.state.storage.get(bg_path)
     app.state.storage.delete(bg_path)
     refused("圖片檔案遺失，請重新產生")
-    app.state.storage.write(bg_path, bg_bytes)
+    app.state.storage.put(bg_path, bg_bytes)
     # 遮罩全黑（去背失敗）→ 409，不產生半成品
     buf = io.BytesIO()
     Image.new("L", POSE_SIZE, 0).save(buf, "PNG")
-    app.state.storage.write(mask, buf.getvalue())
+    app.state.storage.put(mask, buf.getvalue())
     r = client.post(f"/api/pages/{pid}/compose")
     assert r.status_code == 409 and "角色動作" in r.json()["detail"]
     assert composites(app, pid) == []
     assert not list(app.state.storage.root.rglob("*.tmp"))
-    app.state.storage.write(mask, mask_bytes)
+    app.state.storage.put(mask, mask_bytes)
     assert confirm(client, pid)["selected_generation_id"] is not None
     assert client.post("/api/pages/999/compose").status_code == 404
 
@@ -838,11 +838,10 @@ def test_delete_page_removes_composite_files_and_masks(client, app):
     b, p, bg, pose = compose_ready(client, app)
     gid = confirm(client, p["id"])["selected_generation_id"]
     storage = app.state.storage
-    files = [storage.abs(gen_row(app, pose).mask_path), storage.abs(gen_row(app, gid).image_path),
-             storage.abs(gen_row(app, bg).image_path)]
-    assert all(f.is_file() for f in files)
+    keys = [gen_row(app, pose).mask_path, gen_row(app, gid).image_path, gen_row(app, bg).image_path]
+    assert all(storage.exists(k) for k in keys)
     assert client.delete(f"/api/pages/{p['id']}").status_code == 204
-    assert not any(f.exists() for f in files)
+    assert not any(storage.exists(k) for k in keys)
 
 
 # ---- 待合成（compose_pending） --------------------------------------------------------
@@ -924,8 +923,8 @@ def test_compose_does_not_reuse_old_version_composite(client, app):
 # ---- 確認合成時輸入被改（INPUTS_CHANGED） -------------------------------------------
 
 
-def _files(root):
-    return {f for f in root.rglob("*.png") if f.is_file()}
+def _files(storage):
+    return set(storage.list("books/")) | set(storage.list("cache/"))
 
 
 def test_compose_race_inputs_changed(client, app, monkeypatch):
@@ -948,7 +947,7 @@ def test_compose_race_inputs_changed(client, app, monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(compose_api, "compose", racing_compose)
-    root = app.state.storage.abs(".")
+    root = app.state.storage
     before_files = _files(root)
     before_rows = {g.id for g in composites(app, pid)}
     r = client.post(f"/api/pages/{pid}/compose")
@@ -1140,7 +1139,7 @@ def test_upload_background_creates_selected_generation(client, app):
     assert params["filename"] == "bg.png" and params["original_size"] == [2000, 900]
     assert len(params["crop_box"]) == 4
     assert json.loads(g.request_json)["source"] == "upload"
-    with Image.open(app.state.storage.abs(g.image_path)) as im:
+    with Image.open(io.BytesIO(app.state.storage.get(g.image_path))) as im:
         assert im.size == (g.width, g.height) == compute_layout(
             PaperSize(b["paper_size"]), PrintMode(b["print_mode"])).generation_size
     assert client.get(f"/api/generations/{gid}").json()["source"] == "upload"
@@ -1189,7 +1188,7 @@ def test_upload_large_jpeg_decodes_reduced_and_encodes_once(client, app, monkeyp
     assert params["original_size"] == list(big)
     l, t, rr, bb = params["crop_box"]
     assert (rr - l, bb - t) == (tw, th)
-    with Image.open(app.state.storage.abs(g.image_path)) as im:
+    with Image.open(io.BytesIO(app.state.storage.get(g.image_path))) as im:
         assert im.size == (tw, th)
         assert im.getpixel((tw // 2, th // 2))[0] > 200
 
@@ -1218,7 +1217,7 @@ def test_upload_16bit_grayscale_png_keeps_tones(client, app):
     src.save(buf, "PNG")
     r = upload_bg(client, p["id"], buf.getvalue())
     assert r.status_code == 201, r.text
-    with Image.open(app.state.storage.abs(gen_row(app, r.json()["background_generation_id"]).image_path)) as im:
+    with Image.open(io.BytesIO(app.state.storage.get(gen_row(app, r.json()["background_generation_id"]).image_path))) as im:
         out = im.convert("L")
         w, h = out.size
         mean = float(np.asarray(out, dtype=np.float64).mean())

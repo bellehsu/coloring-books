@@ -14,7 +14,8 @@ API 全是真的：上傳背景圖、故事頁的「產生全部素材」（mate
   python scripts/dev_fake_backend.py [--port 8000] [--host 127.0.0.1] [--storage <dir>]
 
 設定沿用 load_settings()（config/settings.yaml 或 APP_SETTINGS_FILE，可被 APP_ 環境變數覆寫），
-但 paths.storage_dir／paths.database 一律改到 --storage（預設：新的暫存資料夾），不會碰到正式資料。
+但 paths.storage_dir／paths.database 一律改到 --storage（預設：新的暫存資料夾），不會碰到正式資料；
+storage.backend 一律是 local（就算設定檔寫 r2），不連網路。
 啟動時不跑 ComfyUI preflight（快取維持 None），
 結果不受本機 ComfyUI 有沒有開、workflow 能不能跑影響（e2e 才穩定）。
 """
@@ -200,12 +201,14 @@ class DemoEngine:
 
 
 def demo_settings(storage: Path, base: Settings | None = None) -> Settings:
-    """load_settings() 的設定，但 storage_dir／database 改到 storage（會建立資料夾）。"""
+    """load_settings() 的設定，但 storage_dir／database 改到 storage（會建立資料夾），
+    且一律用 LocalStorage（storage.backend=local）：假後端與 e2e 不需要網路或 R2 憑證。"""
     s = base or load_settings(check_paths=False)
     storage = storage.expanduser().resolve()
     storage.mkdir(parents=True, exist_ok=True)
     return s.model_copy(update={
         "paths": s.paths.model_copy(update={"storage_dir": storage, "database": storage / "app.db"}),
+        "storage": s.storage.model_copy(update={"backend": "local", "cache_dir": None}),
     })
 
 

@@ -7,7 +7,7 @@ from PIL import Image
 from app.db import init_db, make_engine, session_factory
 from app.models import Book, GenKind, Generation, GenStatus, Page, PageStatus
 from app.services.layout import PaperSize, PrintMode
-from app.storage import ImageRejected, Storage, normalize_png
+from app.storage import ImageRejected, LocalStorage, normalize_png
 
 
 def _img_bytes(size, fmt):
@@ -60,15 +60,15 @@ def test_tables_roundtrip(tmp_path):
         assert (datetime.now(timezone.utc) - gen.finished_at).total_seconds() >= 0
 
 
-def test_storage_paths_and_write(tmp_path):
-    st = Storage(tmp_path)
+def test_storage_paths_and_put(tmp_path):
+    st = LocalStorage(tmp_path, b"test-signing-key")
     assert st.generation_image(3, 7) == "books/3/generations/7.png"
     assert st.sketch(3, 5) == "books/3/pages/5/sketch.png"
-    p = st.write(st.generation_image(3, 7), b"abc")
-    assert p == st.abs("books/3/generations/7.png")
-    assert p.read_bytes() == b"abc"
+    st.put(st.generation_image(3, 7), b"abc")
+    assert (tmp_path / "books/3/generations/7.png").read_bytes() == b"abc"
+    assert st.get("books/3/generations/7.png") == b"abc"
     st.delete("books/3/generations/7.png")
-    assert not p.exists()
+    assert not st.exists("books/3/generations/7.png")
     st.delete("books/3/generations/7.png")
 
 
@@ -173,12 +173,12 @@ def test_flatten_on_white_scales_high_bit_depth_modes(make, expected_mean):
 
 
 def test_storage_rejects_escape(tmp_path):
-    st = Storage(tmp_path / "root")
+    st = LocalStorage(tmp_path / "root", b"test-signing-key")
     for bad in ("../evil.png", "a/../../evil.png", "/etc/passwd"):
         with pytest.raises(ValueError):
-            st.abs(bad)
+            st.get(bad)
         with pytest.raises(ValueError):
-            st.write(bad, b"x")
+            st.put(bad, b"x")
         with pytest.raises(ValueError):
             st.delete(bad)
     assert not (tmp_path / "evil.png").exists()
@@ -236,7 +236,7 @@ def test_page_phase3_defaults_and_lineart_edit(tmp_path):
 
 
 def test_storage_lineart_and_preview_paths(tmp_path):
-    st = Storage(tmp_path)
+    st = LocalStorage(tmp_path, b"test-signing-key")
     assert st.lineart(3, 4, "abc") == "books/3/pages/4/lineart_abc.png"
     assert st.preview(9, "qa") == "cache/previews/9_qa.png"
 
@@ -266,7 +266,7 @@ def test_compose_kinds_and_fields_roundtrip(tmp_path):
 
 
 def test_generation_mask_path():
-    assert Storage("/x").generation_mask(3, 7) == "books/3/generations/7_mask.png"
+    assert LocalStorage("/x", b"test-signing-key").generation_mask(3, 7) == "books/3/generations/7_mask.png"
 
 
 def test_load_rgb_returns_image_and_drafts_jpeg():

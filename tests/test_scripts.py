@@ -465,6 +465,24 @@ def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch
     assert "/object_info" in seen
 
 
+def test_fake_backend_always_uses_local_storage(settings_file, tmp_path):
+    """設定檔寫 r2 時，假後端照樣用 LocalStorage（e2e 不需要網路或 R2 憑證）。"""
+    from fastapi.testclient import TestClient
+
+    from app.config import load_settings
+    from app.storage import LocalStorage
+
+    base = load_settings(settings_file)
+    base = base.model_copy(update={"storage": base.storage.model_copy(
+        update={"backend": "r2", "cache_dir": tmp_path / "r2cache"})})
+    s = fake_backend.demo_settings(tmp_path / "s", base)
+    assert s.storage.backend == "local" and s.storage.cache_dir is None
+    app = fake_backend.create_demo_app(tmp_path / "s", base, engine=fake_backend.DemoEngine(delay_s=0))
+    with TestClient(app):
+        assert isinstance(app.state.storage, LocalStorage)
+        assert app.state.storage.root == (tmp_path / "s").resolve()
+
+
 def test_fake_backend_cli_runs_uvicorn_on_port(settings_file, tmp_path, monkeypatch):
     import uvicorn
 
