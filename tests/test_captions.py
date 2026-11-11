@@ -20,7 +20,9 @@ from app.services import qa
 from app.services.captions import (
     CAPTION_FONT_MISSING,
     CaptionFontMissing,
+    OUTLINE_MAX_PX,
     band_box,
+    caption_line,
     check_caption_font,
     render_caption_page,
 )
@@ -222,6 +224,56 @@ def test_letters_are_hollow_and_counters_stay_white(layout):
     tx0, ty0, tx1, ty1 = bbox(text)
     glyph = text[ty0:ty1, tx0:tx1]
     assert glyph.mean() < 0.5  # 大部分是白的：外框，不是實心字
+
+
+def band_sizes(layout: Layout) -> tuple[int, int]:
+    """(中文字級, 英文字級)：帶高的 50%／30%。"""
+    _x0, y0, _x1, y1 = band_box(layout)
+    return round((y1 - y0) * 0.5), round((y1 - y0) * 0.3)
+
+
+def counter_area(solid: np.ndarray) -> int:
+    """實心字形裡被字形包住的白色（字腔）面積。"""
+    return int(sum(enclosed_white(solid, min_area=1)))
+
+
+@pytest.mark.parametrize("layout", [A4_HOME, A5_HOME], ids=["a4", "a5"])
+@pytest.mark.parametrize("ch", ["警", "機"])
+def test_outline_grows_inward_only_so_counters_stay_white(layout, ch):
+    zh_size, _ = band_sizes(layout)
+    outline, solid, s = caption_line(ch, zh_size, FONT)
+    assert 4 <= s <= OUTLINE_MAX_PX
+    assert not (outline & ~solid).any()  # 外框完全在字形內：字腔、字外一個像素都沒變黑
+    assert (solid & ~outline).sum() > 0.2 * solid.sum()  # 字身內部大量留白（空心）
+    # 實際印在頁面上：字的範圍內白色面積 ≥ 原字形的字腔面積
+    text = text_only(layout, ch, None)
+    tx0, ty0, tx1, ty1 = bbox(text)
+    white_in_box = int((~text[ty0:ty1, tx0:tx1]).sum())
+    assert white_in_box >= counter_area(solid) > 0
+    assert text[ty0:ty1, tx0:tx1].shape == solid.shape
+
+
+@pytest.mark.parametrize("layout", [A4_HOME, A5_HOME], ids=["a4", "a5"])
+def test_adjacent_english_letters_do_not_touch(layout):
+    _, en_size = band_sizes(layout)
+    outline, solid, _s = caption_line("Ambulance", en_size, FONT)
+    n_letters, letters = cv2.connectedComponents(solid.astype(np.uint8), connectivity=8)
+    assert n_letters - 1 == len("Ambulance")  # 字形本身每個字母各自獨立
+    n_parts, parts = cv2.connectedComponents(outline.astype(np.uint8), connectivity=8)
+    for i in range(1, n_parts):
+        owners = set(np.unique(letters[parts == i])) - {0}
+        assert len(owners) == 1  # 每一段外框只屬於一個字母
+
+
+def test_thin_strokes_stay_hollow_at_the_smallest_band():
+    """A5 帶的英文（約 101 px）：大部分筆畫中間仍留白，不會整筆塗黑。"""
+    from skimage.morphology import skeletonize as sk_
+
+    _, en_size = band_sizes(A5_HOME)
+    for text in ("Fire Engine", "Ambulance", "Helicopter"):
+        outline, solid, _s = caption_line(text, en_size, FONT)
+        skel = sk_(solid)
+        assert (~outline[skel]).mean() >= 0.8, text
 
 
 def test_output_is_one_bit_page():

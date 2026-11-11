@@ -7,7 +7,9 @@
 - 線稿等比例縮到文字帶上方的區域、水平置中（印刷廠模式的出血邊因此變成白色，著色頁是白紙，可接受）。
 - 兩行：中文中心在帶高 30%、字級約帶高 50%；英文中心在 78%、字級約 30%。
   只有一行時，置於帶的垂直中心，用中文的字級。任何一行寬過內容寬度 90% 時縮小字級直到放得下。
-- 字型 Noto Sans TC（可變字型）的 "Black"；白色字身、黑色外框（空心字），之後和線稿一樣轉成 1-bit。
+- 字型 Noto Sans TC（可變字型）的 "Black"；空心字＝實心字形的「內側」外框（字身內部白色），之後和線稿一樣轉成 1-bit。
+  外框只往字形內長，不往外長：字腔與字母間的空隙維持字型原本的大小（Pillow 的 stroke 是跨在邊上、往外也長，
+  會吃掉小字腔、讓相鄰字母黏在一起，所以不用）。
 """
 
 from __future__ import annotations
@@ -31,13 +33,18 @@ SINGLE_CENTER = 0.50  # 只有一行時（用中文字級）
 MAX_LINE_RATIO = 0.90  # 一行最寬占內容寬度的比例
 FONT_VARIATION = "Black"
 
-# 空心字外框（px，300 DPI）。spec 允許 7–11：
-# - Black 字重在帶高 50% 的字級下，筆畫密的中文字（警、機、車的「田」）字腔本來就很小，7–11 都會填黑；
-#   能留白的大字腔（「中」的「口」）在 A5 家用（最小的帶，中文約 168 px）用 11 時只剩約 10×10 px，用 9 約 14×14 px。
-# - 英文約 101–147 px，外框 11 時相鄰字母的外框幾乎黏在一起、e／a 的字腔全被填滿；9 還分得開。
-# - 7 比縮放後的線稿（10–12 px）明顯細，印出來外框看起來比圖淡。
-# 取 9：和線稿粗細接近，同時讓大字腔保持白色可塗（實際比較圖見 Phase 11 Task 2 報告）。
-CAPTION_STROKE_PX = 9
+# 空心字外框（px，300 DPI）：外框＝實心字形 AND NOT erode(實心字形, s)，只往內長。
+# s 每一行各自決定：從 OUTLINE_MAX_PX 往下找，取「字形骨架上至少 HOLLOW_MIN 比例的點在侵蝕後仍是白的」的最大值，
+# 也就是大部分筆畫中間都還留白可塗；最小 OUTLINE_MIN_PX。實測（10 個交通工具 + 「中」，骨架留白比例）：
+#   中文 245 px（A4 帶）：s=8 89%、9 85%、10 82%、11 79%  → 9
+#   中文 168 px（A5 帶）：s=7 82%、8 77%、9 66%、11 33%   → 7
+#   英文 147 px（A4 帶）：s=8 90%、9 82%、10 71%、11 52%  → 9
+#   英文 101 px（A5 帶）：s=6 85%、7 67%、8 44%、9 4%     → 6
+# 上限取 9：A4 的外框和縮放後的線稿（10–12 px）粗細接近。固定 8–11 在 A5 會讓英文（8 時只剩 44%）和中文細橫畫整筆塗黑，
+# 所以小字級往下調（縮字後的長句也一樣）。比較圖：Phase 11 Task 2 報告的 stroke_compare_crop.png。
+OUTLINE_MAX_PX = 9
+OUTLINE_MIN_PX = 4
+HOLLOW_MIN = 0.80
 
 MIN_ART_STROKE_PX = 10  # 線稿縮小後若線寬量起來小於這個值，膨脹 1 px
 
@@ -115,23 +122,47 @@ def _lines(zh: str | None, en: str | None) -> list[tuple[str, float, float]]:
     return [(zh or en or "", SINGLE_CENTER, ZH_SIZE)]
 
 
-def _render_line(text: str, size: int, max_w: float, font_path: Path) -> Image.Image:
-    """一行空心字（L：白底、白字身、黑外框），裁到實際墨跡範圍。寬過 max_w 時字級往下縮到放得下。"""
+def _disk(radius: int) -> np.ndarray:
+    return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
+
+
+def outline_px(solid: np.ndarray) -> int:
+    """這一行字的外框粗細：骨架上至少 HOLLOW_MIN 的點在 erode(s) 後仍在字形內（中間留白）的最大 s。"""
+    sk = skeletonize(solid)
+    if not sk.any():
+        return OUTLINE_MIN_PX
+    m = solid.astype(np.uint8)
+    for s in range(OUTLINE_MAX_PX, OUTLINE_MIN_PX, -1):
+        if cv2.erode(m, _disk(s), borderValue=0)[sk].mean() >= HOLLOW_MIN:
+            return s
+    return OUTLINE_MIN_PX
+
+
+def caption_line(text: str, size: int, font_path: Path | None) -> tuple[np.ndarray, np.ndarray, int]:
+    """一行字 → (外框, 實心字形, s)，都是 bool（True＝黑／字形內），裁到字形範圍。外框 ⊆ 實心字形。"""
+    font = _font(font_path, size)
+    l, t, r, b = font.getbbox(text)
+    pad = OUTLINE_MAX_PX + 2  # 留白邊，侵蝕時字形碰不到圖邊
+    tile = Image.new("L", (max(1, r - l) + 2 * pad, max(1, b - t) + 2 * pad), 0)
+    ImageDraw.Draw(tile).text((pad - l, pad - t), text, font=font, fill=255)
+    solid = np.asarray(tile) >= 128
+    if not solid.any():
+        empty = np.zeros((1, 1), bool)
+        return empty, empty, OUTLINE_MIN_PX
+    s = outline_px(solid)
+    outline = solid & ~cv2.erode(solid.astype(np.uint8), _disk(s), borderValue=0).astype(bool)
+    ys, xs = np.nonzero(solid)
+    box = (slice(int(ys.min()), int(ys.max()) + 1), slice(int(xs.min()), int(xs.max()) + 1))
+    return outline[box], solid[box], s
+
+
+def _render_line(text: str, size: int, max_w: float, font_path: Path | None) -> Image.Image:
+    """一行空心字（L：白底、黑外框、字身內部白），裁到字形範圍。寬過 max_w 時字級往下縮到放得下。"""
     while True:
-        font = _font(font_path, size)
-        l, t, r, b = font.getbbox(text, stroke_width=CAPTION_STROKE_PX)
-        pad = CAPTION_STROKE_PX + 4
-        tile = Image.new("L", (r - l + 2 * pad, b - t + 2 * pad), 255)
-        ImageDraw.Draw(tile).text((pad - l, pad - t), text, font=font, fill=255,
-                                  stroke_width=CAPTION_STROKE_PX, stroke_fill=0)
-        ink = np.asarray(tile) < 128
-        if not ink.any():
-            return Image.new("L", (1, 1), 255)
-        ys, xs = np.nonzero(ink)
-        tile = tile.crop((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
-        if tile.width <= max_w or size <= 8:
-            return tile
-        size = min(size - 1, int(size * max_w / tile.width))
+        outline, _solid, _s = caption_line(text, size, font_path)
+        if outline.shape[1] <= max_w or size <= 8:
+            return Image.fromarray(np.where(outline, 0, 255).astype(np.uint8), mode="L")
+        size = min(size - 1, int(size * max_w / outline.shape[1]))
 
 
 def render_caption_page(ink: np.ndarray, layout: Layout, zh: str | None, en: str | None,
