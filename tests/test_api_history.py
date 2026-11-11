@@ -434,3 +434,91 @@ def test_key_change_on_pipeline_page_enqueues_instead_of_demoting(client, app):
     assert queued(app, pid)
     drain(client, app)
     assert client.get(f"/api/pages/{pid}/qa").json()["gap_count"] == 0
+
+
+# ---- Fix round 1：等著重新合成（recompose_pending）、舊編輯器優先、還原的圖不被換掉 ------------------
+
+
+def test_recompose_pending_flag(client, app):
+    """拖完、復原（流程還沒跑）：PageOut.recompose_pending 讓 C 先停用畫筆；流程跑完就沒了。"""
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    assert page["recompose_pending"] is False
+    draw(client, page, SCRIBBLE)
+    drain(client, app)
+    r = client.put(f"/api/pages/{pid}/placement", params=C, json=MOVED)
+    assert r.json()["recompose_pending"] is True
+    out = undo(client, pid)  # 流程還沒跑：位置回到 c1 的，compose_pending 是 False，但筆畫還沒寫回
+    assert out["recompose_pending"] is True and out["compose_pending"] is False
+    drain(client, app)
+    assert page_json(client, pid)["recompose_pending"] is False
+
+
+def test_failed_recompose_says_retry_and_retry_reapplies_strokes(client, app, monkeypatch):
+    from app.services import page_compose, pipeline
+
+    b, page, bg, pose = ready(client, app)
+    pid, c1 = page["id"], page["selected_generation_id"]
+    draw(client, page, SCRIBBLE)
+    drain(client, app)
+    client.put(f"/api/pages/{pid}/placement", params=C, json=MOVED)
+    drain(client, app)
+    undo(client, pid)  # 等著把 SCRIBBLE 寫回 c1
+
+    def boom(*a, **k):
+        raise page_compose.ComposeError("圖片檔案遺失，請重新產生")
+
+    monkeypatch.setattr(pipeline, "compose_page", boom)
+    drain(client, app)
+    out = page_json(client, pid)
+    assert out["attention"] == "failed" and out["recompose_pending"] is True and not queued(app, pid)
+    r = client.put(f"/api/pages/{pid}/lineart/edits", params=C,
+                   json={"generation_id": out["selected_generation_id"], "strokes": ERASE})
+    assert r.status_code == 409 and r.json()["detail"] == "這一頁合成失敗，請先按「再試一次」"
+    # 再試一次（繼續做也會排這頁）：筆畫寫回、可以印
+    monkeypatch.undo()
+    r = client.post(f"/api/books/{b['id']}/produce")
+    assert r.status_code == 202 and pid in r.json()["pipeline_pages"]
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.selected_generation_id == c1 and user_layer(app, c1) == SCRIBBLE
+    assert pg.pending_user_strokes is None and pg.attention is None and pg.status == PageStatus.PASSED
+
+
+def test_old_editor_compose_and_draw_win_over_pending(client, app):
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    client.put(f"/api/pages/{pid}/placement", params=C, json=MOVED)  # 等著寫 "[]"
+    r = client.post(f"/api/pages/{pid}/compose")
+    assert r.status_code == 200 and r.json()["recompose_pending"] is False
+    gid = r.json()["selected_generation_id"]
+    r = client.put(f"/api/pages/{pid}/lineart/edits", json={"generation_id": gid, "strokes": SCRIBBLE})
+    assert r.status_code == 200
+    drain(client, app)
+    assert get_page(app, pid).selected_generation_id == gid and user_layer(app, gid) == SCRIBBLE
+
+
+def test_old_editor_strokes_clear_pending(client, app):
+    b, page, bg, pose = ready(client, app)
+    pid, c1 = page["id"], page["selected_generation_id"]
+    client.put(f"/api/pages/{pid}/placement", params=C, json=MOVED)
+    r = client.put(f"/api/pages/{pid}/lineart/edits", json={"generation_id": c1, "strokes": SCRIBBLE})
+    assert r.status_code == 200
+    assert get_page(app, pid).pending_user_strokes is None
+
+
+def test_restored_background_sticks_over_newer_ai_image(client, app):
+    """還原的背景不被流程換成更新的 AI 背景（舊編輯器再產生、使用者沒選的那張）。"""
+    b, page, bg1, pose = ready(client, app)
+    pid = page["id"]
+    upload_c(client, pid)
+    drain(client, app)
+    bg2 = gen_background(client, app, pid)  # 使用者選了上傳的：bg2 不換上去
+    drain(client, app)
+    assert get_page(app, pid).auto_background_generation_id == bg1
+    out = restore(client, pid, "background")
+    assert out["background_generation_id"] == bg1
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == bg1 and pg.auto_background_generation_id == bg1 and bg2
+    assert pg.status == PageStatus.PASSED

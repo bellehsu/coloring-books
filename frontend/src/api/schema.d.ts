@@ -1453,6 +1453,8 @@ export interface components {
             auto_pose_generation_id: number | null;
             /** Has User Strokes */
             has_user_strokes: boolean;
+            /** Recompose Pending */
+            recompose_pending: boolean;
             /** Can Undo */
             can_undo: boolean;
             /** Can Redo */

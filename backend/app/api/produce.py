@@ -92,7 +92,8 @@ def produce(
         busy_pages = {t.page_id for t in tasks if t.status in _TASK_ACTIVE}
         pipeline_pages = [
             p.id for p in state.pages
-            if p.status != PageStatus.PASSED and p.id not in busy_pages and state.has_both_images(p)
+            if (p.status != PageStatus.PASSED or p.pending_user_strokes is not None)  # 筆畫還沒寫回：再跑一次
+            and p.id not in busy_pages and state.has_both_images(p)
         ]
         if not needed and not pipeline_pages:
             return ProduceOut(queued=[], deferred_pages=[], pipeline_pages=[])

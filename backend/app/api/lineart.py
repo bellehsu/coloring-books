@@ -25,7 +25,7 @@ from app.api.schemas import (
 )
 from app.models import Generation, GenStatus, Owner, Page, StrokeLayer
 from app.services import history
-from app.services.pipeline import enqueue_page_task
+from app.services.pipeline import ATTENTION_FAILED, enqueue_page_task
 from app.services.worker import GenerationWorker
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix, read_ink
 from app.services.layout import compute_layout
@@ -211,7 +211,8 @@ def put_edits(
     page = owned_page(session, owner, page_id)
     gid = _selected_or_409(page, body.generation_id)
     if oneclick and page.pending_user_strokes is not None:
-        raise HTTPException(409, history.RECOMPOSE_PENDING)
+        failed = page.attention == ATTENTION_FAILED  # 流程失敗了：沒有東西在跑，要先「再試一次」
+        raise HTTPException(409, history.RECOMPOSE_FAILED if failed else history.RECOMPOSE_PENDING)
     strokes = [
         Stroke(s.op, float(s.width_px), tuple((float(x), float(y)) for x, y in s.points))
         for s in body.strokes
@@ -221,6 +222,8 @@ def put_edits(
         rerun = oneclick and on_pipeline(page, session.get(Generation, gid))
         if oneclick:
             history.push_snapshot(session, page)  # 與筆畫同一個交易（_commit_strokes 提交）
+        elif page.pending_user_strokes is not None:
+            history.set_pending_strokes(session, page_id, None)  # 舊編輯器的修線優先：不再寫回 C 的筆畫
         if rerun:
             enqueue_page_task(session, page_id)
         _commit_strokes(session, page_id, gid, strokes, layer=StrokeLayer.USER, demote=not rerun)

@@ -1,6 +1,6 @@
 """頁面流程（Phase 13「開始做這本書」）：worker 在生成之間執行，每頁
 
-  1. 選圖：背景／角色動作用最新一張成功的生成，除非使用者自己選了（使用者的選擇優先）；
+  1. 選圖：背景／角色動作是空的就用最新一張成功的生成（新圖產生好時 on_generation_succeeded 已換上，使用者的選擇優先）；
   2. 合成：用頁面存的位置，沒有就用預設位置（services/page_compose.compose_page，與確認合成共用）；
   3. 線稿；
   4. 自動補線：重算整層 auto 修線（覆寫，不附加；services/autofix.plan_autofix，與自動補線端點共用）；
@@ -241,8 +241,10 @@ def _auto_candidates():
     return or_(col(Generation.engine).is_(None), col(Generation.engine) != UPLOAD_ENGINE)
 
 
-def auto_select(session: Session, page_id: int) -> bool:
+def auto_select(session: Session, page_id: int, *, fill_only: bool = False) -> bool:
     """背景與角色動作：使用者選的不動；否則換成最新一張可用的生成（不含上傳的），並記到 auto_*。
+    fill_only（頁面流程的第 1 步）：只補空的欄位，已經有圖的不換。換成新圖只在新圖產生好的時候
+    （on_generation_succeeded）；所以「還原成自動畫的那張」與復原選回的圖，不會被流程換成更新的 AI 圖。
     換了圖而選定圖是合成圖時，清掉選定圖並退回草稿（同舊編輯器選圖）。條件式 UPDATE（以讀到的舊值為條件），
     與使用者同時選圖時使用者的選擇留下。commit；回傳有沒有換。"""
     page = session.get(Page, page_id)
@@ -252,8 +254,8 @@ def auto_select(session: Session, page_id: int) -> bool:
     changed = False
     for kind, (field, auto_field) in SLOTS.items():
         current, auto = getattr(page, field), getattr(page, auto_field)
-        if current is not None and current != auto:
-            continue  # 使用者選的
+        if current is not None and (current != auto or fill_only):
+            continue  # 使用者選的（或只補空的欄位）
         newest = session.exec(
             select(Generation.id)
             .where(col(Generation.page_id) == page_id, *usable_conditions(kind), _auto_candidates())
@@ -355,8 +357,8 @@ def _write_pending(session: Session, page_id: int, gid: int, pending: str) -> No
 def _attempt(session: Session, storage: Storage, page_id: int) -> str:
     if session.get(Page, page_id) is None:
         raise _PageGone()
-    # 1. 選圖
-    auto_select(session, page_id)
+    # 1. 選圖（只補空的欄位；新圖產生好時 on_generation_succeeded 已經換上去）
+    auto_select(session, page_id, fill_only=True)
     page = session.get(Page, page_id)
     if page is None:
         raise _PageGone()

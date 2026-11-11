@@ -342,6 +342,8 @@ class PageOut(BaseModel):
     auto_background_generation_id: int | None
     auto_pose_generation_id: int | None
     has_user_strokes: bool  # 有使用者自己畫／擦的線（C 的線條「還原成自動畫的那張」）
+    # 使用者筆畫等著頁面流程重新合成後寫回（C 這時停用畫筆；attention="failed" 時要先「再試一次」）
+    recompose_pending: bool
     can_undo: bool  # C 的「↶ 復原」／「↷ 重做」
     can_redo: bool
     created_at: datetime
@@ -393,6 +395,7 @@ class PageOut(BaseModel):
             auto_background_generation_id=page.auto_background_generation_id,
             auto_pose_generation_id=page.auto_pose_generation_id,
             has_user_strokes=has_user_strokes,
+            recompose_pending=page.pending_user_strokes is not None,
             can_undo=can_undo,
             can_redo=can_redo,
             created_at=page.created_at,

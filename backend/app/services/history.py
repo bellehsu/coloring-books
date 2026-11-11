@@ -39,6 +39,7 @@ NOTHING_TO_UNDO = "沒有可以復原的步驟"
 NOTHING_TO_REDO = "沒有可以重做的步驟"
 HISTORY_CHANGED = "這一頁剛被另一個畫面更動，請重新整理後再試"
 RECOMPOSE_PENDING = "這一頁正在重新合成，請稍候再畫"
+RECOMPOSE_FAILED = "這一頁合成失敗，請先按「再試一次」"
 NO_AUTO = {GenKind.BACKGROUND: "沒有自動畫的背景可以還原", GenKind.POSE: "沒有自動畫的角色動作可以還原"}
 
 SLOTS = {
@@ -229,7 +230,7 @@ def set_slot(session: Session, page_id: int, kind: GenKind, gen_id: int, *, auto
     return res.rowcount == 1
 
 
-def set_pending_strokes(session: Session, page_id: int, strokes_json: str) -> None:
+def set_pending_strokes(session: Session, page_id: int, strokes_json: str | None) -> None:
     session.exec(update(Page).where(col(Page.id) == page_id)
                  .values(pending_user_strokes=strokes_json, updated_at=utcnow()))
 

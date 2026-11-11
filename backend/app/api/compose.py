@@ -588,5 +588,9 @@ def confirm_compose(
         compose_page(session, storage, page_id)
     except ComposeError as e:
         raise HTTPException(409, e.message) from e
+    # 舊編輯器的確認合成優先：C 等著寫回新合成圖的筆畫作廢（否則流程會蓋掉這裡接著畫的線）
+    session.exec(update(Page).where(col(Page.id) == page_id, col(Page.pending_user_strokes).is_not(None))
+                 .values(pending_user_strokes=None))
+    session.commit()
     session.refresh(page)
     return page_out(session, page)

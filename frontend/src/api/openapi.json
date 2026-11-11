@@ -4225,6 +4225,10 @@
             "type": "boolean",
             "title": "Has User Strokes"
           },
+          "recompose_pending": {
+            "type": "boolean",
+            "title": "Recompose Pending"
+          },
           "can_undo": {
             "type": "boolean",
             "title": "Can Undo"
@@ -4270,6 +4274,7 @@
           "auto_background_generation_id",
           "auto_pose_generation_id",
           "has_user_strokes",
+          "recompose_pending",
           "can_undo",
           "can_redo",
           "created_at",
