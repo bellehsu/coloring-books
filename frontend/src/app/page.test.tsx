@@ -13,7 +13,8 @@ const book = (id: number, charId: number | null) => ({
   character_generation_id: charId,
   cover_url: null,
   layout: { content_px: [2244, 3272] },
-  stats: { pages: 4, passed: 1, needs_fix: 0, no_selection: 0 },
+  // 2 頁 PASSED，其中 1 頁「請看一下」（失敗後還是 PASSED）；needs_fix（線沒接起來）不影響書卡
+  stats: { pages: 4, passed: 2, needs_fix: 2, no_selection: 0, ready: 1, attention: 1, working: 0, todo: 2 },
 });
 
 function mockBooks(body: unknown, status = 200, shared: unknown = [], me: unknown = { name: "小明", is_admin: false, via_dev_owner: false }) {
@@ -52,7 +53,11 @@ describe("我的繪本", () => {
     expect(await screen.findByRole("link", { name: /書1/ })).toHaveAttribute("href", "/books/1");
     expect(screen.getByRole("link", { name: /書2/ })).toHaveAttribute("href", "/books/2");
     expect(screen.getByText("2 本")).toBeInTheDocument();
-    expect(screen.getAllByText("1 / 4 頁完成")).toHaveLength(2);
+    expect(screen.getAllByText("1 / 4 頁可以印")).toHaveLength(2);
+    // 書卡和 B 同一套說法：請看一下的頁不算做好；線沒接起來不是「需要修線」
+    expect(screen.getByRole("link", { name: /書1/ })).toHaveTextContent("下一步：先設定主角");
+    expect(screen.getByRole("link", { name: /書2/ })).toHaveTextContent("1 頁請你看一下");
+    expect(screen.queryByText(/需要修線|頁完成|可以匯出/)).not.toBeInTheDocument();
   });
   it("空狀態只有一個建立入口", async () => {
     mockBooks([]);

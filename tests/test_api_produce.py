@@ -341,11 +341,19 @@ def test_overview_attention_and_ready_from_page_fields(client, app):
     assert [p["state"] for p in ov["pages"]] == ["attention", "ready", "todo"]
     assert ov["pages"][0]["attention_detail"] == "圖片產生失敗，請重新產生"
     assert ov["pages"][1]["attention_detail"] is None
+    # 首頁書卡用的統計與 B 的狀態一致（線沒接起來不算「請看一下」）
+    stats = client.get(f"/api/books/{b['id']}").json()["stats"]
+    assert {k: stats[k] for k in ("ready", "attention", "working", "todo")} == \
+        {"ready": 1, "attention": 1, "working": 0, "todo": 1}
     # 有排隊中的工作時優先顯示製作中
     with app.state.sessions() as s:
         s.add(PageTask(page_id=p1["id"]))
         s.commit()
     assert states(client, b["id"])[0] == "working"
+    listed = {x["id"]: x for x in client.get("/api/books").json()}
+    stats = listed[b["id"]]["stats"]
+    assert {k: stats[k] for k in ("ready", "attention", "working", "todo")} == \
+        {"ready": 1, "attention": 0, "working": 1, "todo": 1}
 
 
 def test_overview_and_produce_on_a_legacy_book(client, app):

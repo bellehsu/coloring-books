@@ -6,12 +6,13 @@ import { PAPER_LABELS, PRINT_MODE_LABELS } from "@/lib/layout";
 import styles from "./BookCard.module.css";
 
 export function BookCard({ book }: { book: Book }) {
-  const { pages, passed } = book.stats;
+  // 進度＝B 的「可以印」頁數（請看一下的頁不算做好）
+  const { pages, ready } = book.stats;
   const step = nextStep(book);
   // 每本書都從 B 整本書進去（還沒開始的書在 B 會引導到「主角與故事」）
   const href = `/books/${book.id}`;
   const [cw, ch] = book.layout.content_px;
-  const pct = pages ? Math.round((passed / pages) * 100) : 0;
+  const pct = pages ? Math.round((ready / pages) * 100) : 0;
   return (
     <Link href={href} className={styles.card}>
       <div className={styles.stage}>
@@ -36,7 +37,7 @@ export function BookCard({ book }: { book: Book }) {
           <div className={styles.track} aria-hidden="true">
             <div className={styles.fill} style={{ width: `${pct}%` }} />
           </div>
-          <span className={styles.count}>{pages ? `${passed} / ${pages} 頁完成` : "尚無頁面"}</span>
+          <span className={styles.count}>{pages ? `${ready} / ${pages} 頁可以印` : "尚無頁面"}</span>
         </div>
         <Chip tone={step.tone}>{step.text}</Chip>
       </div>

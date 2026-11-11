@@ -16,6 +16,7 @@ book.produce_started_at 之後建立、已結束的生成與頁面流程。produ
 """
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, or_, select
@@ -31,7 +32,7 @@ from app.api.schemas import (
     RunProgress,
     lineart_url,
 )
-from app.models import Generation, GenKind, GenStatus, Owner, PageStatus, PageTask, PageTaskStatus, utcnow
+from app.models import Generation, GenKind, GenStatus, Owner, Page, PageStatus, PageTask, PageTaskStatus, utcnow
 from app.services import usage
 from app.services.pipeline import UPLOAD_ENGINE, enqueue_page_task
 from app.services.worker import GenerationWorker
@@ -47,6 +48,42 @@ _TASK_ACTIVE = (PageTaskStatus.QUEUED.value, PageTaskStatus.RUNNING.value)
 def _needed(session: Session, book, state: _BookState):
     """要排的 (頁面, 種類)，依頁面順序、每頁先背景再角色動作。"""
     return [(p, k) for p, k, reason in state.plan(has_character(session, book)) if reason is None]
+
+
+def busy_page_ids(session: Session, book_ids: list[int]) -> set[int]:
+    """這些書裡「製作中」的頁：有排隊中／執行中的生成（不含合成圖、上傳的背景），或頁面流程。
+    與 book_overview 的 working 一致（首頁書卡的統計用）。"""
+    if not book_ids:
+        return set()
+    busy = set(session.exec(
+        select(Generation.page_id).where(
+            col(Generation.book_id).in_(book_ids),
+            col(Generation.status).in_(_GEN_ACTIVE),
+            col(Generation.page_id).is_not(None),
+            col(Generation.kind) != GenKind.COMPOSITE,
+            or_(col(Generation.engine).is_(None), col(Generation.engine) != UPLOAD_ENGINE),
+        )
+    ).all())
+    busy.update(session.exec(
+        select(PageTask.page_id).join(Page, col(Page.id) == col(PageTask.page_id)).where(
+            col(Page.book_id).in_(book_ids), col(PageTask.status).in_(_TASK_ACTIVE),
+        )
+    ).all())
+    return busy
+
+
+PageState = Literal["ready", "attention", "working", "todo"]
+
+
+def page_state(page: Page, busy: set[int]) -> PageState:
+    """B 的每頁狀態：製作中＞請看一下＞可以印＞還沒做完。線沒接起來不算請看一下（只是提示）。"""
+    if page.id in busy:
+        return "working"
+    if page.attention:
+        return "attention"
+    if page.status == PageStatus.PASSED:
+        return "ready"
+    return "todo"
 
 
 def _tasks(session: Session, page_ids: list[int]) -> list[PageTask]:
@@ -168,14 +205,7 @@ def book_overview(
     needs = {p.id for p, _ in _needed(session, book, state)}
     out = []
     for page, po in zip(pages, page_outs(session, pages)):
-        if page.id in busy:
-            st = "working"
-        elif page.attention:
-            st = "attention"
-        elif page.status == PageStatus.PASSED:
-            st = "ready"
-        else:
-            st = "todo"
+        st = page_state(page, busy)
         gap_count = None
         fresh = page.lineart_key and po.lineart_url == lineart_url(page.id, page.lineart_key)
         if fresh and page.qa_json:

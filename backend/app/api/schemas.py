@@ -73,8 +73,13 @@ class LayoutOut(BaseModel):
 class BookStats(BaseModel):
     pages: int = 0
     passed: int = 0
-    needs_fix: int = 0  # 已選圖且目前 QA 有錯誤的頁數
+    needs_fix: int = 0  # 已選圖且目前 QA 有錯誤的頁數（進階編輯用；線沒接起來也算，首頁書卡不用）
     no_selection: int = 0
+    # B 的每頁狀態（GET /books/{id}/overview 的 state）各幾頁，首頁書卡用；加起來等於 pages
+    ready: int = 0
+    attention: int = 0
+    working: int = 0
+    todo: int = 0
 
 
 class ShareIn(BaseModel):

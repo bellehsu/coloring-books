@@ -47,6 +47,7 @@ MAX_SEED = 2**32 - 1
 def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
     """附上統計與封面；所有繪本的頁面一次查完，封面頁再交給 page_outs 算 lineart_url。"""
     from app.api.pages import page_outs  # 避免與 pages.py 循環匯入
+    from app.api.produce import busy_page_ids, page_state  # 同上（produce 匯入 pages）
 
     ids = [b.id for b in books]
     by_book: dict[int, list[Page]] = {i: [] for i in ids}
@@ -63,9 +64,11 @@ def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
     cover_urls = {
         p.book_id: o.lineart_url for p, o in zip(covers.values(), page_outs(session, list(covers.values())))
     }
+    busy = busy_page_ids(session, ids)
     out = []
     for b in books:
         pages = by_book[b.id]
+        states = [page_state(p, busy) for p in pages]
         stats = BookStats(
             pages=len(pages),
             passed=sum(p.status == PageStatus.PASSED for p in pages),
@@ -76,6 +79,10 @@ def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
                 for p in pages
             ),
             no_selection=sum(p.selected_generation_id is None for p in pages),
+            ready=states.count("ready"),
+            attention=states.count("attention"),
+            working=states.count("working"),
+            todo=states.count("todo"),
         )
         out.append(BookOut.from_book(b, stats, cover_urls.get(b.id)))
     return out

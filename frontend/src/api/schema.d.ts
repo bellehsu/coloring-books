@@ -847,6 +847,8 @@ export interface paths {
          * Retry
          * @description C 的「再試一次」，只處理這一頁（見模組說明）。重排失敗的圖：額度不夠 429、什麼都不排；
          *     沒有失敗的圖、也沒有背景＋角色動作 409。
+         *     與「繼續做」共用 _BATCH_LOCK：兩個分頁同時按，第二個在鎖裡重看時那一種已經在排隊、不再算失敗，
+         *     不會重複排、重複算額度。
          */
         post: operations["retry_api_pages__page_id__retry_post"];
         delete?: never;
@@ -1157,6 +1159,26 @@ export interface components {
              * @default 0
              */
             no_selection: number;
+            /**
+             * Ready
+             * @default 0
+             */
+            ready: number;
+            /**
+             * Attention
+             * @default 0
+             */
+            attention: number;
+            /**
+             * Working
+             * @default 0
+             */
+            working: number;
+            /**
+             * Todo
+             * @default 0
+             */
+            todo: number;
         };
         /** BookUpdate */
         BookUpdate: {

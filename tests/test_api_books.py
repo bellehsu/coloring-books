@@ -374,7 +374,8 @@ def test_book_stats_and_cover(client, app):
     from tests.test_api_pages import new_page
 
     b = new_book(client)
-    assert b["stats"] == {"pages": 0, "passed": 0, "needs_fix": 0, "no_selection": 0}
+    assert b["stats"] == {"pages": 0, "passed": 0, "needs_fix": 0, "no_selection": 0,
+                          "ready": 0, "attention": 0, "working": 0, "todo": 0}
     assert b["cover_url"] is None
 
     b, p1, _ = selected_page(client, app, gap=0)
@@ -383,7 +384,8 @@ def test_book_stats_and_cover(client, app):
     # p1 通過；p2 選圖但 QA 有缺口（直接寫入 qa_json）
     make_passed(app, p1["id"])
     got = client.get(f"/api/books/{b['id']}").json()
-    assert got["stats"] == {"pages": 3, "passed": 1, "needs_fix": 0, "no_selection": 2}
+    assert got["stats"] == {"pages": 3, "passed": 1, "needs_fix": 0, "no_selection": 2,
+                            "ready": 1, "attention": 0, "working": 0, "todo": 2}
     # 封面＝position 最小且有選圖的頁；網址與 PageOut.lineart_url 一致
     assert got["cover_url"] == p1["lineart_url"]
     assert got["cover_url"].startswith(f"/api/pages/{p1['id']}/lineart?v=")

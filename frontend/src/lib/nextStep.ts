@@ -5,11 +5,16 @@ export interface NextStep {
   tone: "ok" | "warn" | "draft" | "busy";
 }
 
+/**
+ * 首頁書卡的一句話，用 B 整本書的狀態（book.stats 的 ready／attention／working／todo，與 overview 同一套）：
+ * 製作中＞請看一下＞還沒做完＞整本做好了。線沒接起來只是提示（可以不管），不算要處理的事，所以不看 needs_fix。
+ */
 export function nextStep(book: Book): NextStep {
-  const { pages, passed, needs_fix } = book.stats;
-  if (book.character_generation_id == null) return { text: "下一步：設定角色", tone: "draft" };
-  if (pages === 0) return { text: "下一步：新增頁面", tone: "draft" };
-  if (needs_fix > 0) return { text: `下一步：${needs_fix} 頁需要修線`, tone: "warn" };
-  if (passed < pages) return { text: `下一步：${pages - passed} 頁待完成`, tone: "busy" };
-  return { text: "可以匯出", tone: "ok" };
+  const { pages, attention, working, todo } = book.stats;
+  if (book.character_generation_id == null) return { text: "下一步：先設定主角", tone: "draft" };
+  if (pages === 0) return { text: "還沒開始做", tone: "draft" };
+  if (working > 0) return { text: "製作中…", tone: "busy" };
+  if (attention > 0) return { text: `${attention} 頁請你看一下`, tone: "warn" };
+  if (todo > 0) return { text: `還有 ${todo} 頁還沒做完`, tone: "busy" };
+  return { text: "整本做好了，可以印", tone: "ok" };
 }
