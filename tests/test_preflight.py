@@ -154,3 +154,31 @@ async def test_preflight_lists_only_qwen():
         "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
         "birefnet.safetensors",
     }
+
+
+async def test_caption_font_is_a_separate_item(workflows_dir, object_info_subset, tmp_path):
+    fake = FakeComfy(object_info=tiny_object_info(object_info_subset))
+    font = REPO / "assets" / "fonts" / "NotoSansTC-VF.ttf"
+    async with fake.client() as c:
+        rep = await run_preflight(c, WorkflowRegistry(workflows_dir).load(), caption_font=font)
+    assert rep.ok and rep.caption_font.ok and rep.caption_font.path == str(font)
+    assert rep.caption_font.error is None
+
+    missing = tmp_path / "missing.ttf"
+    async with fake.client() as c:
+        rep = await run_preflight(c, WorkflowRegistry(workflows_dir).load(), caption_font=missing)
+    # 字型缺漏另外列出，不影響其他檢查（workflow 照樣通過、整體 ok 不變）
+    assert rep.ok and all(w.ok for w in rep.workflows)
+    assert rep.caption_font.ok is False and "missing.ttf" in rep.caption_font.error
+    assert rep.to_dict()["caption_font"]["ok"] is False
+    text = format_report(rep)
+    assert "頁面文字字型" in text and "missing.ttf" in text
+
+
+async def test_caption_font_reported_when_comfy_is_down(workflows_dir, tmp_path):
+    def boom(request):
+        raise httpx.ConnectError("refused")
+
+    async with ComfyClient("http://comfy.test", transport=httpx.MockTransport(boom)) as c:
+        rep = await run_preflight(c, WorkflowRegistry(workflows_dir).load(), caption_font=tmp_path / "x.ttf")
+    assert not rep.comfy_reachable and rep.caption_font.ok is False

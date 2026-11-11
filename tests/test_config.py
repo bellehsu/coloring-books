@@ -336,3 +336,20 @@ def test_create_app_uses_make_storage(settings_file: Path, clean_storage_env):
     with TestClient(app):
         assert isinstance(app.state.storage, LocalStorage)
         assert (s.paths.storage_dir / ".signing_key").is_file()
+
+
+def test_caption_font_default_env_override_and_not_fatal(settings_file: Path, monkeypatch, tmp_path: Path):
+    s = load_settings(settings_file)
+    assert s.paths.caption_font == PROJECT_ROOT / "assets" / "fonts" / "NotoSansTC-VF.ttf"
+    assert s.paths.caption_font.is_file()
+    monkeypatch.setenv("APP_PATHS__CAPTION_FONT", str(tmp_path / "missing.ttf"))
+    s = load_settings(settings_file)  # 字型不存在不是啟動錯誤（由 preflight 回報）
+    assert s.paths.caption_font == tmp_path / "missing.ttf"
+    monkeypatch.setenv("APP_PATHS__CAPTION_FONT", "assets/fonts/other.ttf")
+    assert load_settings(settings_file).paths.caption_font == PROJECT_ROOT / "assets" / "fonts" / "other.ttf"
+
+
+def test_example_settings_names_caption_font():
+    s = load_settings(PROJECT_ROOT / "config" / "settings.example.yaml", check_paths=False)
+    assert s.paths.caption_font == PROJECT_ROOT / "assets" / "fonts" / "NotoSansTC-VF.ttf"
+    assert "caption_font" in (PROJECT_ROOT / "config" / "settings.example.yaml").read_text(encoding="utf-8")

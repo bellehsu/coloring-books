@@ -1,6 +1,7 @@
 """匯出端點：書本 PDF、匯出摘要、單頁列印 PNG。同步 `def`（CPU 工作走 threadpool）。"""
 
 import io
+from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
@@ -10,8 +11,9 @@ from fastapi.responses import Response
 from PIL import Image
 from sqlmodel import Session, col, select
 
-from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_page
+from app.api.deps import current_owner, get_caption_font, get_session, get_storage, owned_book, owned_page
 from app.models import Book, Owner, Page, PageStatus
+from app.services.captions import CAPTION_FONT_MISSING, CaptionFontMissing
 from app.services.export import build_pdf, compose_page, png_bytes
 from app.services.layout import compute_layout
 from app.services.page_lineart import LineartUnavailable, ensure_page_lineart, read_page_lineart
@@ -28,7 +30,8 @@ def _ordered_pages(session: Session, book_id: int) -> list[Page]:
     ).all())
 
 
-def composed_page(session: Session, storage: Storage, book: Book, page: Page):
+def composed_page(session: Session, storage: Storage, book: Book, page: Page, font_path: Path | None):
+    """列印頁的唯一出口（擁有者 PDF、print.png、分享圖、分享 PDF）：線稿＋頁面文字。字型不能用 → 409。"""
     layout = compute_layout(book.paper_size, book.print_mode)
     try:
         _lin, data = read_page_lineart(session, storage, page.id)
@@ -36,10 +39,14 @@ def composed_page(session: Session, storage: Storage, book: Book, page: Page):
         raise HTTPException(409, f"第 {page.position + 1} 頁：{e.message}") from e
     with Image.open(io.BytesIO(data)) as im:
         ink = np.asarray(im.convert("L")) < 128
-    return compose_page(ink, layout)
+    try:
+        return compose_page(ink, layout, (page.caption_zh, page.caption_en), font_path)
+    except CaptionFontMissing as e:
+        raise HTTPException(409, CAPTION_FONT_MISSING) from e
 
 
-def book_pdf(session: Session, storage: Storage, book: Book, include: Literal["passed", "all"] = "passed") -> bytes:
+def book_pdf(session: Session, storage: Storage, book: Book, include: Literal["passed", "all"],
+             font_path: Path | None) -> bytes:
     """書的 PDF（擁有者匯出與分享下載共用）：include=passed 只含「現在」仍通過的頁面；沒有頁面 → 409。"""
     candidates = [
         p for p in _ordered_pages(session, book.id)
@@ -48,7 +55,7 @@ def book_pdf(session: Session, storage: Storage, book: Book, include: Literal["p
     ]
     images = []
     for p in candidates:
-        img = composed_page(session, storage, book, p)
+        img = composed_page(session, storage, book, p, font_path)
         # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍通過的頁面
         session.refresh(p)
         if include == "passed" and p.status != PageStatus.PASSED:
@@ -99,9 +106,10 @@ def export_pdf(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     owner: Owner = Depends(current_owner),
+    font_path: Path | None = Depends(get_caption_font),
 ) -> Response:
     book = owned_book(session, owner, book_id)
-    pdf = book_pdf(session, storage, book, include)
+    pdf = book_pdf(session, storage, book, include, font_path)
     return pdf_response(book, pdf)
 
 
@@ -111,10 +119,11 @@ def print_png(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     owner: Owner = Depends(current_owner),
+    font_path: Path | None = Depends(get_caption_font),
 ) -> Response:
     page = owned_page(session, owner, page_id)
     if page.selected_generation_id is None:
         raise HTTPException(409, "這一頁還沒有選定圖片")
     book = owned_book(session, owner, page.book_id)
-    return Response(content=png_bytes(composed_page(session, storage, book, page)),
+    return Response(content=png_bytes(composed_page(session, storage, book, page, font_path)),
                     media_type="image/png")

@@ -19,7 +19,9 @@ import { BookBar } from "@/components/shell/BookBar";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { ACTION_HINT } from "@/lib/actions";
+import type { ThemePack } from "@/lib/themePacks";
 import { ImportDialog } from "./ImportDialog";
+import { ThemePackDialog } from "./ThemePackDialog";
 import { slotView, StoryRow, type BgMode } from "./StoryRow";
 import styles from "./StoryPage.module.css";
 
@@ -48,6 +50,9 @@ export function StoryPage({ bookId }: { bookId: number }) {
   const [modes, setModes] = useState<Record<number, BgMode>>({});
   const [files, setFiles] = useState<Record<number, string>>({});
   const [importOpen, setImportOpen] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [packSeq, setPackSeq] = useState(0); // 只有選主題包才重建對話框（帶入預設文字）；一般開啟保留草稿
   const pendingSaves = useRef(new Set<Promise<unknown>>());
 
   const pages = useMemo(
@@ -86,7 +91,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
   }, 0);
   const busy = (gensQ.data ?? []).some((g) => (g.kind === "background" || g.kind === "pose") && isActive(g));
 
-  const save = (pageId: number, patch: { scene_prompt?: string; action_prompt?: string }) => {
+  const save = (pageId: number, patch: { scene_prompt?: string; action_prompt?: string; caption_zh?: string; caption_en?: string }) => {
     const p = updatePage.mutateAsync({ pageId, ...patch }).catch((e: unknown) => {
       toast.show(errMsg(e, "無法儲存，請再試一次"), "error");
       throw e;
@@ -121,6 +126,13 @@ export function StoryPage({ bookId }: { bookId: number }) {
       toast.show(errMsg(e, "無法產生素材"), "error");
     }
   }
+
+  const choosePack = (pack: ThemePack) => {
+    setPackOpen(false);
+    setImportText(pack.text);
+    setPackSeq((n) => n + 1);
+    setImportOpen(true);
+  };
 
   const b = book.data;
   if (book.isPending || !b) {
@@ -164,6 +176,9 @@ export function StoryPage({ bookId }: { bookId: number }) {
             <Button disabled={!pagesQ.isSuccess} onClick={() => setImportOpen(true)}>
               貼上整本故事
             </Button>
+            <Button disabled={!pagesQ.isSuccess} onClick={() => setPackOpen(true)}>
+              套用主題包
+            </Button>
             <Button disabled={createPage.isPending} onClick={() => createPage.mutate({ scene_prompt: "", action_prompt: "" }, { onError: (e) => toast.show(errMsg(e, "無法新增頁面"), "error") })}>
               ＋ 新增一頁
             </Button>
@@ -204,7 +219,12 @@ export function StoryPage({ bookId }: { bookId: number }) {
           />
         ))}
       </main>
-      {pagesQ.isSuccess && <ImportDialog bookId={bookId} open={importOpen} onClose={() => setImportOpen(false)} />}
+      {pagesQ.isSuccess && (
+        <>
+          <ThemePackDialog open={packOpen} onClose={() => setPackOpen(false)} onChoose={choosePack} />
+          <ImportDialog key={packSeq} bookId={bookId} open={importOpen} onClose={() => setImportOpen(false)} initialText={importText} />
+        </>
+      )}
     </>
   );
 }

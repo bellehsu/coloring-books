@@ -5,14 +5,18 @@
   missing_models  —— manifest 列出但 ComfyUI 看不到的模型檔
   input_errors    —— 必填輸入缺漏、下拉選單值不在選項內、enum 參數的 choices 不被節點接受
   input_warnings  —— workflow 有、但節點定義沒有的輸入欄位（ComfyUI 會忽略）
+另外（不靠 ComfyUI）：caption_font —— 頁面文字的字型檔能不能用。這是獨立的一項，不影響 ok：
+缺字型只會讓「有頁面文字」的頁面匯出失敗（409），其他功能照常。
 任何例外都轉成報告內容，不讓呼叫端當機。
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
+from .captions import check_caption_font
 from .comfy_client import ComfyClient, ComfyError
 from .workflow_registry import WorkflowEntry, WorkflowRegistry, is_link
 
@@ -46,6 +50,13 @@ class WorkflowReport:
 
 
 @dataclass
+class CaptionFontReport:
+    path: str | None
+    ok: bool
+    error: str | None = None
+
+
+@dataclass
 class PreflightReport:
     ok: bool
     comfy_url: str
@@ -54,6 +65,7 @@ class PreflightReport:
     comfy_version: str | None = None
     devices: list[dict] = field(default_factory=list)
     workflows: list[WorkflowReport] = field(default_factory=list)
+    caption_font: CaptionFontReport | None = None  # 獨立項目，不計入 ok
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -158,8 +170,18 @@ async def _check_models(entry: WorkflowEntry, object_info: dict, client: ComfyCl
                 m["id"], m["filename"], m["folder"], f"ComfyUI 的 {m['folder']} 清單中沒有此檔案", m.get("source")))
 
 
-async def run_preflight(client: ComfyClient, registry: WorkflowRegistry) -> PreflightReport:
+def check_font(path: Path | None) -> CaptionFontReport:
+    try:
+        error = check_caption_font(path)
+    except Exception as e:  # noqa: BLE001 - preflight 不可讓服務當機
+        error = f"{type(e).__name__}: {e}"
+    return CaptionFontReport(str(path) if path is not None else None, error is None, error)
+
+
+async def run_preflight(client: ComfyClient, registry: WorkflowRegistry,
+                        caption_font: Path | None = None) -> PreflightReport:
     report = PreflightReport(ok=False, comfy_url=client.base_url, comfy_reachable=False)
+    report.caption_font = check_font(caption_font)
     object_info: dict | None = None
     try:
         stats = await client.system_stats()
@@ -214,5 +236,10 @@ def format_report(report: PreflightReport) -> str:
             lines.append(f"  輸入警告：{e}")
         if not report.comfy_reachable and not w.load_errors:
             lines.append("  （ComfyUI 無法連線，未檢查節點與模型）")
+    f = report.caption_font
+    if f is not None:
+        lines.append(f"\n[{'OK' if f.ok else 'NG'}] 頁面文字字型：{f.path or '-'}")
+        if not f.ok:
+            lines.append(f"  {f.error}（有頁面文字的頁面無法匯出；其他功能不受影響）")
     lines.append("\n結果：" + ("全部通過" if report.ok else "有項目未通過"))
     return "\n".join(lines)

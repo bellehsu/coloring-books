@@ -342,7 +342,8 @@ describe("ComposeWorkspace", () => {
       expect(bgCard).toHaveTextContent("換一張・上傳");
       expect(bgCard.querySelector("img")).toHaveAttribute("src", "/img/3.png");
       expect(poseCard.querySelector("img")).toHaveAttribute("src", "/cut/4.png");
-      expect(screen.queryByRole("region")).not.toBeInTheDocument();
+      // 背景與角色動作的展開內容都沒有（圖下方的文字卡片手機也直接顯示）
+      expect(screen.queryByRole("region", { name: /^(背景|角色動作)$/ })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "換一張背景" })).not.toBeInTheDocument();
     });
 
@@ -369,6 +370,50 @@ describe("ComposeWorkspace", () => {
       setup();
       expect(screen.queryByRole("button", { expanded: false })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /^收合/ })).not.toBeInTheDocument();
+    });
+  });
+  describe("圖下方的文字卡片", () => {
+    it("有中文字、英文字兩個欄位與剩餘字數；離開欄位時 PATCH，清空送空字串", async () => {
+      setup({ page: mkPage({ caption_zh: "消防車", caption_en: null }) });
+      const cap = card("圖下方的文字");
+      const zh = within(cap).getByRole("textbox", { name: "中文字" });
+      const en = within(cap).getByRole("textbox", { name: "英文字" });
+      expect(zh).toHaveValue("消防車");
+      expect(within(cap).getByText("還可 9 字")).toBeInTheDocument();
+      expect(within(cap).getByText("還可 28 字元")).toBeInTheDocument();
+      await userEvent.type(en, "Fire Engine");
+      expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(0);
+      await userEvent.tab();
+      await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+      expect(calledWith("PATCH", "/api/pages/1")[0].body).toEqual({ caption_en: "Fire Engine" });
+      await userEvent.clear(zh);
+      await userEvent.tab();
+      await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(2));
+      expect(calledWith("PATCH", "/api/pages/1")[1].body).toEqual({ caption_zh: "" });
+    });
+
+    it("超過上限：顯示規格訊息、不送出；𠮷 12 個剛好可以", async () => {
+      setup();
+      const cap = card("圖下方的文字");
+      const zh = within(cap).getByRole("textbox", { name: "中文字" });
+      await userEvent.type(zh, "𠮷".repeat(12));
+      await userEvent.tab();
+      await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+      expect(within(cap).queryByText("中文字最多 12 個字")).not.toBeInTheDocument();
+      await userEvent.type(zh, "字");
+      await userEvent.tab();
+      expect(within(cap).getByText("中文字最多 12 個字")).toBeInTheDocument();
+      const en = within(cap).getByRole("textbox", { name: "英文字" });
+      await userEvent.type(en, "x".repeat(29));
+      await userEvent.tab();
+      expect(within(cap).getByText("英文字最多 28 個字元")).toBeInTheDocument();
+      await act(async () => {});
+      expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1);
+    });
+
+    it("手機（compact）也看得到，不用先展開", () => {
+      setup({ compact: true });
+      expect(within(card("圖下方的文字")).getByRole("textbox", { name: "中文字" })).toBeInTheDocument();
     });
   });
 });

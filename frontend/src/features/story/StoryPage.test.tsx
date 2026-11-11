@@ -325,4 +325,34 @@ describe("StoryPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "貼上整本故事" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
+
+  it("套用主題包 → choose the pack → import dialog prefilled with 10 pages, nothing written", async () => {
+    setup();
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(await screen.findByRole("button", { name: /交通工具/ }));
+    const dialog = await screen.findByRole("dialog", { name: "貼上整本故事" });
+    expect((within(dialog).getByRole("textbox", { name: "貼上故事" }) as HTMLTextAreaElement).value).toContain("消防車");
+    expect(within(dialog).getByText(/^10 段：/)).toBeInTheDocument();
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+  });
+
+  it("a pasted draft survives 取消 and reopening 貼上整本故事; choosing a pack replaces it", async () => {
+    setup();
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "貼上整本故事" }));
+    let dialog = await screen.findByRole("dialog", { name: "貼上整本故事" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "貼上故事" }), { target: { value: "第1頁\n場景：草稿" } });
+    await userEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await userEvent.click(screen.getByRole("button", { name: "貼上整本故事" }));
+    dialog = await screen.findByRole("dialog", { name: "貼上整本故事" });
+    expect((within(dialog).getByRole("textbox", { name: "貼上故事" }) as HTMLTextAreaElement).value).toBe("第1頁\n場景：草稿");
+    await userEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(await screen.findByRole("button", { name: /交通工具/ }));
+    dialog = await screen.findByRole("dialog", { name: "貼上整本故事" });
+    const v = (within(dialog).getByRole("textbox", { name: "貼上故事" }) as HTMLTextAreaElement).value;
+    expect(v).toContain("消防車");
+    expect(v).not.toContain("草稿");
+  });
 });

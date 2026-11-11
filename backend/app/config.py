@@ -62,6 +62,8 @@ class PathSettings(BaseModel):
     workflows_dir: Path
     storage_dir: Path
     database: Path
+    # 頁面文字（空心字）的字型。不在 validate_paths 裡：缺字型不擋啟動，由 preflight 回報，匯出有文字的頁面時 409
+    caption_font: Path = Path("assets/fonts/NotoSansTC-VF.ttf")
 
 
 class R2Settings(BaseModel):
@@ -156,6 +158,7 @@ class Settings(BaseSettings):
                         "workflows_dir": abs_(self.paths.workflows_dir),
                         "storage_dir": abs_(self.paths.storage_dir),
                         "database": abs_(self.paths.database),
+                        "caption_font": abs_(self.paths.caption_font),
                     }
                 ),
                 "storage": self.storage.model_copy(update={"cache_dir": abs_(self.storage.cache_dir)}),

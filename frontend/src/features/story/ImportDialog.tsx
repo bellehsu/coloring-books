@@ -14,24 +14,29 @@ export interface ImportDialogProps {
   bookId: number;
   open: boolean;
   onClose: () => void;
+  /** 開啟時文字框的預設內容（主題包）。 */
+  initialText?: string;
 }
 
 function resultText(r: ImportRow): string {
   if (r.create) return "新增這一頁";
-  if (r.fill.scene && r.fill.action) return "填入場景、動作";
-  if (r.fill.scene) return "填入場景";
-  if (r.fill.action) return "填入動作";
-  return "已有內容，略過";
+  const names = [
+    r.fill.scene && "場景",
+    r.fill.action && "動作",
+    r.fill.captionZh && "中文字",
+    r.fill.captionEn && "英文字",
+  ].filter(Boolean);
+  return names.length ? `填入${names.join("、")}` : "已有內容，略過";
 }
 
 /** 貼上整本故事：預覽後匯入。只填空欄位、補不足的頁數，從不刪除頁面。 */
-export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
+export function ImportDialog({ bookId, open, onClose, initialText = "" }: ImportDialogProps) {
   const toast = useToast();
   const qc = useQueryClient();
   const pagesQ = usePages(bookId);
   const createPage = useCreatePage(bookId);
   const updatePage = useUpdatePage(bookId);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const [busy, setBusy] = useState(false);
 
   const existing = useMemo(
@@ -44,10 +49,20 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
   const ok = rows.filter((r) => r.problems.length === 0);
   const maxCreateN = Math.max(existing.length, ...ok.filter((r) => r.create).map((r) => r.n));
   const createCount = maxCreateN - existing.length;
-  const fillCells = ok.reduce((s, r) => s + +r.fill.scene + +r.fill.action, 0);
+  const cells = (r: ImportRow) => +r.fill.scene + +r.fill.action + +r.fill.captionZh + +r.fill.captionEn;
+  const fillCells = ok.reduce((s, r) => s + cells(r), 0);
   const skipCells = ok
     .filter((r) => !r.create)
-    .reduce((s, r) => s + +(r.scene !== "" && !r.fill.scene) + +(r.action !== "" && !r.fill.action), 0);
+    .reduce(
+      (s, r) =>
+        s +
+        +(r.scene !== "" && !r.fill.scene) +
+        +(r.action !== "" && !r.fill.action) +
+        +(r.captionZh !== "" && !r.fill.captionZh) +
+        +(r.captionEn !== "" && !r.fill.captionEn),
+      0,
+    );
+  const hasCaptions = rows.some((r) => r.captionZh !== "" || r.captionEn !== "");
   const bad = parsed.errors.length + rows.length - ok.length;
   const total = parsed.pages.length + parsed.errors.length;
   const nothing = createCount === 0 && fillCells === 0;
@@ -68,15 +83,25 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
       const byN = new Map(ok.map((r) => [r.n, r]));
       for (let n = existing.length + 1; n <= maxCreateN; n++) {
         const r = byN.get(n);
-        await createPage.mutateAsync({ scene_prompt: r?.scene ?? "", action_prompt: r?.action ?? "" });
+        const made = await createPage.mutateAsync({ scene_prompt: r?.scene ?? "", action_prompt: r?.action ?? "" });
+        // 新增頁面的建立請求沒有文字欄位：建好之後再補
+        if (r && (r.fill.captionZh || r.fill.captionEn)) {
+          await updatePage.mutateAsync({
+            pageId: made.id,
+            ...(r.fill.captionZh ? { caption_zh: r.captionZh } : {}),
+            ...(r.fill.captionEn ? { caption_en: r.captionEn } : {}),
+          });
+        }
       }
       // 2. 只填空欄位
       for (const r of ok) {
-        if (r.create || (!r.fill.scene && !r.fill.action)) continue;
+        if (r.create || cells(r) === 0) continue;
         await updatePage.mutateAsync({
           pageId: existing[r.n - 1].id,
           ...(r.fill.scene ? { scene_prompt: r.scene } : {}),
           ...(r.fill.action ? { action_prompt: r.action } : {}),
+          ...(r.fill.captionZh ? { caption_zh: r.captionZh } : {}),
+          ...(r.fill.captionEn ? { caption_en: r.captionEn } : {}),
         });
       }
       await qc.invalidateQueries({ queryKey: qk.pages(bookId) });
@@ -96,7 +121,7 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
     <Dialog open={open} onClose={onClose} title="貼上整本故事" closeDisabled={busy}>
       <div className={styles.body}>
         <p className={styles.hint}>
-          把分鏡貼在下面（每頁寫「場景：」「動作：」，或從試算表貼兩欄）。已有內容的欄位不會被覆蓋，也不會刪除任何頁面。
+          把分鏡貼在下面（每頁寫「場景：」「動作：」，圖下方的文字用「中文：」「英文：」，或從試算表貼欄位）。已有內容的欄位不會被覆蓋，也不會刪除任何頁面。
         </p>
         <textarea
           className={styles.box}
@@ -121,6 +146,12 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
                     <th>頁</th>
                     <th>場景</th>
                     <th>動作</th>
+                    {hasCaptions && (
+                      <>
+                        <th>中文字</th>
+                        <th>英文字</th>
+                      </>
+                    )}
                     <th>結果</th>
                   </tr>
                 </thead>
@@ -134,6 +165,12 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
                           <td>{x.row.n}</td>
                           <td>{x.row.scene}</td>
                           <td>{x.row.action}</td>
+                          {hasCaptions && (
+                            <>
+                              <td>{x.row.captionZh}</td>
+                              <td>{x.row.captionEn}</td>
+                            </>
+                          )}
                           <td className={x.row.problems.length ? styles.bad : undefined}>
                             {x.row.problems.length ? x.row.problems.join("；") : resultText(x.row)}
                           </td>
@@ -141,7 +178,7 @@ export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
                       ) : (
                         <tr key={`e${x.err!.n ?? `-${i}`}`}>
                           <td>{x.err!.n ?? ""}</td>
-                          <td colSpan={2}>{x.err!.excerpt}</td>
+                          <td colSpan={hasCaptions ? 4 : 2}>{x.err!.excerpt}</td>
                           <td className={styles.bad}>{x.err!.reason}</td>
                         </tr>
                       ),

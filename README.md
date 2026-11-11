@@ -49,6 +49,7 @@ scripts/
   storage_gc.py                清理過期的捨棄圖與孤兒物件
   dev_fake_backend.py          不需要 GPU 的假生成後端（e2e 用；另有只在這裡才有的 POST /api/_test/invite）
 config/settings.example.yaml   設定範本（複製成 settings.yaml）
+assets/fonts/                  頁面文字字型 Noto Sans TC（SIL OFL 1.1，見 OFL.txt；路徑設定 paths.caption_font）
 storage/                       生成檔案與 SQLite
 tests/                         pytest（全部可在無 GPU、無 ComfyUI 下執行）
 ```

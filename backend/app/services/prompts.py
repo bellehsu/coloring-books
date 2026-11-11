@@ -44,13 +44,15 @@ def pick_character_variation(rng: random.Random, exclude: str | None = None) -> 
 
 # --- 角色動作（qwen_edit_pose_cutout）：指令式編輯參考圖 ---
 # 以 phase6_qwen_pose_calibration_20261110 的 V6 為底。phase9 Task 1：原本寫死的「scarf and ears」會替沒有圍巾的
-# 角色加上圍巾 → 改通用措辭；動作文字含地點時 Qwen 會畫出場景 → 加「即使動作提到地點也只畫角色」。
+# 角色加上圍巾 → 改通用措辭；動作文字含地點時 Qwen 會畫出場景 → 加「即使動作提到地點也只畫角色」。Phase 11 改 T3（experiments/results 的車輛系列 spike）：
+# 允許畫出動作提到的交通工具／物品（完整可見），不畫地面與場景，並加 no text, no letters（曾出現亂碼字）。
 # 加朝向等隨機變化會讓一致性下降 → 不採用（VARIATIONS 為空）。
 QWEN_POSE_TEMPLATE = (
-    "Make this exact character {action}. Draw only the character, even if the action mentions a place: no ground, "
-    "no floor, no scenery, no background objects. Keep the same character design, proportions, colors, clothing and "
-    "accessories unchanged. Full body, centered, plain pure white background, no shadow, no cast shadow, children's "
-    "picture book illustration, flat colors, thick clean black outlines."
+    "Make this exact character {action}. Draw only the character, plus the vehicle or object the action mentions, "
+    "completely visible; no ground, no floor, no road, no scenery, no room, no other background objects, no text, "
+    "no letters. Keep the same character design, proportions, colors, clothing and accessories unchanged. Full body, "
+    "centered, plain pure white background, no shadow, no cast shadow, children's picture book illustration, flat "
+    "colors, thick clean black outlines."
 )
 QWEN_POSE_VARIATIONS: tuple[str, ...] = ()
 POSE_SIZE = (832, 1216)  # 角色動作固定尺寸（直式、16 的倍數）

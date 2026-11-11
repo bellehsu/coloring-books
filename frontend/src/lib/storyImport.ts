@@ -1,6 +1,6 @@
 /** 貼上整本故事：把文字解析成 (場景, 動作) 的頁面清單，並規劃要怎麼套進現有頁面。純函式，無 I/O。 */
 
-import { MAX_ACTION, MAX_SCENE } from "./limits";
+import { countChars, MAX_ACTION, MAX_CAPTION_EN, MAX_CAPTION_ZH, MAX_SCENE, normalizeCaption } from "./limits";
 
 export const MAX_IMPORT_PAGES = 40;
 
@@ -8,6 +8,8 @@ export interface ParsedPage {
   n: number;
   scene: string;
   action: string;
+  captionZh?: string;
+  captionEn?: string;
 }
 export interface ParseError {
   n: number | null;
@@ -18,12 +20,16 @@ export interface ExistingPage {
   position: number;
   scene_prompt: string;
   action_prompt: string;
+  caption_zh?: string | null;
+  caption_en?: string | null;
 }
 export interface ImportRow {
   n: number;
   scene: string;
   action: string;
-  fill: { scene: boolean; action: boolean };
+  captionZh: string;
+  captionEn: string;
+  fill: { scene: boolean; action: boolean; captionZh: boolean; captionEn: boolean };
   create: boolean;
   problems: string[];
 }
@@ -36,10 +42,15 @@ const PAGE_HEADING = new RegExp(`^(?:第\\s*${NUM}\\s*頁|P\\s*\\d+|Page\\s*\\d+
 const NUM_HEADING = new RegExp(`^(${NUM})\\s*[.、．](?!\\d)\\s*(.*)$`);
 const SCENE_LABEL = /^(場景|背景)\**\s*[:：]\s*\**\s*(.*)$/;
 const ACTION_LABEL = /^(動作|角色)\**\s*[:：]\s*\**\s*(.*)$/;
+/** 圖下方的文字：只認「中文」「英文」「English」；「文字：」不算標籤。 */
+const ZH_LABEL = /^(中文)\**\s*[:：]\s*\**\s*(.*)$/;
+const EN_LABEL = /^(英文|English)\**\s*[:：]\s*\**\s*(.*)$/i;
 /** 試算表標題列的欄名。 */
 const SCENE_COLS = new Set(["場景", "背景"]);
 const ACTION_COLS = new Set(["動作", "角色"]);
 const PAGE_COLS = new Set(["頁", "頁數"]);
+const ZH_COLS = new Set(["中文"]);
+const EN_COLS = new Set(["英文", "english"]);
 
 const NO_LABEL = "找不到「場景：」或「動作：」";
 const TOO_MANY = `超過 ${MAX_IMPORT_PAGES} 頁，這次不匯入`;
@@ -67,7 +78,8 @@ function cleanLine(line: string): string {
   return line.replace(/^(?:[\s*#>•・]|-(?=\s))+/, "").replace(/[\s*]+$/, "");
 }
 
-const isLabel = (line: string) => SCENE_LABEL.test(line) || ACTION_LABEL.test(line);
+const isLabel = (line: string) =>
+  SCENE_LABEL.test(line) || ACTION_LABEL.test(line) || ZH_LABEL.test(line) || EN_LABEL.test(line);
 
 function excerptOf(s: string): string {
   const t = s.replace(/\s+/g, " ").trim();
@@ -113,12 +125,15 @@ function headingTexts(cleaned: string[]): (string | null)[] {
   return out;
 }
 
+type Field = "scene" | "action" | "zh" | "en";
 interface Block {
   scene: string | null;
   action: string | null;
+  zh: string | null;
+  en: string | null;
   raw: string[];
 }
-const newBlock = (): Block => ({ scene: null, action: null, raw: [] });
+const newBlock = (): Block => ({ scene: null, action: null, zh: null, en: null, raw: [] });
 
 function join(a: string | null, b: string): string {
   return a ? `${a}\n${b}` : b;
@@ -135,19 +150,25 @@ export function parseStory(text: string): { pages: ParsedPage[]; errors: ParseEr
 
   const blocks: Block[] = [];
   let cur: Block | null = null;
-  let field: "scene" | "action" | null = null;
+  let field: Field | null = null;
 
-  const feed = (line: string) => {
-    const s = SCENE_LABEL.exec(line);
-    const a = s ? null : ACTION_LABEL.exec(line);
-    const f = s ? "scene" : a ? "action" : null;
+  /** fromHeading：標題行上的文字只認場景／動作；圖下方的文字標籤一定要在標題之後的獨立一行。 */
+  const feed = (line: string, fromHeading = false) => {
+    const m: [Field, RegExpExecArray | null][] = [
+      ["scene", SCENE_LABEL.exec(line)],
+      ["action", ACTION_LABEL.exec(line)],
+      ...(fromHeading ? [] : ([["zh", ZH_LABEL.exec(line)], ["en", EN_LABEL.exec(line)]] as [Field, RegExpExecArray | null][])),
+    ];
+    const hit = m.find(([, r]) => r);
+    const f = hit ? hit[0] : null;
     // 沒有標題時，同一段又出現已填過的標籤 → 下一頁（中間沒空行也一樣）
     if (cur && f && !hasHeading && cur[f] !== null) cur = null;
     if (!cur) blocks.push((cur = newBlock()));
     cur.raw.push(line);
     if (f) {
-      field = f;
-      cur[field] = (s ?? a)![2].trim();
+      cur[f] = hit![1]![2].trim();
+      // 圖下方的文字只有一行，不接續下一行
+      field = f === "zh" || f === "en" ? null : f;
     } else if (field) {
       cur[field] = join(cur[field], line);
     }
@@ -165,7 +186,7 @@ export function parseStory(text: string): { pages: ParsedPage[]; errors: ParseEr
     if (h !== null) {
       blocks.push((cur = newBlock()));
       field = null;
-      if (h) feed(h);
+      if (h) feed(h, true);
       continue;
     }
     // 第一個標題之前的文字（AI 的開場白）不算任何一頁。
@@ -177,7 +198,9 @@ export function parseStory(text: string): { pages: ParsedPage[]; errors: ParseEr
     blocks.map((b) => ({
       scene: (b.scene ?? "").trim(),
       action: (b.action ?? "").trim(),
-      labelled: b.scene !== null || b.action !== null,
+      zh: normalizeCaption(b.zh ?? ""),
+      en: normalizeCaption(b.en ?? ""),
+      labelled: b.scene !== null || b.action !== null || b.zh !== null || b.en !== null,
       raw: b.raw.join(" "),
     })),
     // 沒有標題時，第一個有標籤的段落之前（開場白）與最後一個之後（結語）的段落不算頁
@@ -188,32 +211,48 @@ export function parseStory(text: string): { pages: ParsedPage[]; errors: ParseEr
 interface RawRow {
   scene: string;
   action: string;
+  zh: string;
+  en: string;
   labelled: boolean;
   raw: string;
 }
 
 /**
- * 試算表貼上的兩欄（或更多欄）。第一列有一格剛好是欄名（場景／背景／動作／角色／頁／頁數）才當標題列，
+ * 試算表貼上的兩欄（或更多欄）。第一列有一格剛好是欄名（場景／背景／動作／角色／中文／英文／English／頁／頁數）才當標題列，
  * 並依欄名決定哪一欄是場景、哪一欄是動作；沒有標題列時第 1 欄是場景、第 2 欄是動作。
  */
 function parseTsv(lines: string[]): RawRow[] {
   const rows = lines.filter((l) => l.trim() !== "");
   let sceneCol = 0;
   let actionCol = 1;
+  let zhCol = -1;
+  let enCol = -1;
   const head = rows.length ? rows[0].split("\t").map((c) => cleanLine(c.trim())) : [];
-  if (head.some((c) => SCENE_COLS.has(c) || ACTION_COLS.has(c) || PAGE_COLS.has(c))) {
+  const lower = head.map((c) => c.toLowerCase());
+  const isCap = (c: string) => ZH_COLS.has(c) || EN_COLS.has(c);
+  if (head.some((c, i) => SCENE_COLS.has(c) || ACTION_COLS.has(c) || PAGE_COLS.has(c) || isCap(lower[i]))) {
     rows.shift();
+    zhCol = lower.findIndex((c) => ZH_COLS.has(c));
+    enCol = lower.findIndex((c) => EN_COLS.has(c));
     const s = head.findIndex((c) => SCENE_COLS.has(c));
     const a = head.findIndex((c) => ACTION_COLS.has(c));
-    const free = head.map((_, i) => i).filter((i) => i !== s && i !== a && !PAGE_COLS.has(head[i]));
-    sceneCol = s >= 0 ? s : (free.shift() ?? 0);
-    actionCol = a >= 0 ? a : (free.find((i) => i !== sceneCol) ?? sceneCol + 1);
+    const free = head.map((_, i) => i).filter((i) => i !== s && i !== a && !PAGE_COLS.has(head[i]) && !isCap(lower[i]));
+    if (s < 0 && a < 0 && (zhCol >= 0 || enCol >= 0)) {
+      // 只有文字欄的標題列：沒有場景／動作欄，不要拿別的欄位當場景或動作
+      sceneCol = -1;
+      actionCol = -1;
+    } else {
+      sceneCol = s >= 0 ? s : (free.shift() ?? 0);
+      actionCol = a >= 0 ? a : (free.find((i) => i !== sceneCol) ?? sceneCol + 1);
+    }
   }
   return rows.map((l) => {
     const cells = l.split("\t");
-    const scene = (cells[sceneCol] ?? "").trim();
-    const action = (cells[actionCol] ?? "").trim();
-    return { scene, action, labelled: scene !== "" || action !== "", raw: l };
+    const scene = (sceneCol >= 0 ? (cells[sceneCol] ?? "") : "").trim();
+    const action = (actionCol >= 0 ? (cells[actionCol] ?? "") : "").trim();
+    const zh = zhCol >= 0 ? normalizeCaption(cells[zhCol] ?? "") : "";
+    const en = enCol >= 0 ? normalizeCaption(cells[enCol] ?? "") : "";
+    return { scene, action, zh, en, labelled: scene !== "" || action !== "" || zh !== "" || en !== "", raw: l };
   });
 }
 
@@ -232,7 +271,12 @@ function finish(rows: RawRow[], edgesAreNotPages = false): { pages: ParsedPage[]
     n++;
     if (n > MAX_IMPORT_PAGES) errors.push({ n, excerpt: excerptOf(r.raw), reason: TOO_MANY });
     else if (!r.labelled) errors.push({ n, excerpt: excerptOf(r.raw), reason: NO_LABEL });
-    else pages.push({ n, scene: r.scene, action: r.action });
+    else {
+      const page: ParsedPage = { n, scene: r.scene, action: r.action };
+      if (r.zh) page.captionZh = r.zh;
+      if (r.en) page.captionEn = r.en;
+      pages.push(page);
+    }
   });
   return { pages, errors };
 }
@@ -245,15 +289,23 @@ export function planImport(parsed: ParsedPage[], existing: ExistingPage[]): Impo
     const problems: string[] = [];
     if (p.scene.length > MAX_SCENE) problems.push(`場景超過 ${MAX_SCENE} 字`);
     if (p.action.length > MAX_ACTION) problems.push(`動作超過 ${MAX_ACTION} 字`);
+    const zh = p.captionZh ?? "";
+    const en = p.captionEn ?? "";
+    if (countChars(zh) > MAX_CAPTION_ZH) problems.push(`中文字最多 ${MAX_CAPTION_ZH} 個字`);
+    if (countChars(en) > MAX_CAPTION_EN) problems.push(`英文字最多 ${MAX_CAPTION_EN} 個字元`);
     return {
       n: p.n,
       scene: p.scene,
       action: p.action,
+      captionZh: zh,
+      captionEn: en,
       create: !ex,
       problems,
       fill: {
         scene: p.scene !== "" && (!ex || ex.scene_prompt.trim() === ""),
         action: p.action !== "" && (!ex || ex.action_prompt.trim() === ""),
+        captionZh: zh !== "" && (!ex || (ex.caption_zh ?? "").trim() === ""),
+        captionEn: en !== "" && (!ex || (ex.caption_en ?? "").trim() === ""),
       },
     };
   });

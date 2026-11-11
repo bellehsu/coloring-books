@@ -232,3 +232,54 @@ def test_legacy_page_redo_replaces_page_image(client, app):
         assert s.get(Generation, gid).kind == GenKind.COMPOSITE
         assert s.get(Generation, ids[0]) is not None  # 舊整頁圖留在歷史紀錄
     assert client.get(f"/api/pages/{pid}/lineart").status_code == 200
+
+
+def test_caption_patch_trim_clear_and_limits(client):
+    p = new_page(client, new_book(client)["id"])
+    assert p["caption_zh"] is None and p["caption_en"] is None
+    url = f"/api/pages/{p['id']}"
+    r = client.patch(url, json={"caption_zh": "  消防車 ", "caption_en": " Fire Engine"})
+    assert r.status_code == 200
+    assert (r.json()["caption_zh"], r.json()["caption_en"]) == ("消防車", "Fire Engine")
+    # 沒送的欄位不動
+    r = client.patch(url, json={"scene_prompt": "x"})
+    assert (r.json()["caption_zh"], r.json()["caption_en"]) == ("消防車", "Fire Engine")
+    r = client.patch(url, json={"caption_zh": ""})
+    assert r.json()["caption_zh"] is None and r.json()["caption_en"] == "Fire Engine"
+    r = client.patch(url, json={"caption_en": "   "})
+    assert r.json()["caption_en"] is None
+    client.patch(url, json={"caption_zh": "a", "caption_en": "b"})
+    r = client.patch(url, json={"caption_zh": None, "caption_en": None})
+    assert (r.json()["caption_zh"], r.json()["caption_en"]) == (None, None)
+    assert client.get(f"/api/books/{p['book_id']}/pages").json()[0]["caption_zh"] is None
+
+
+def test_caption_limits_count_code_points(client):
+    p = new_page(client, new_book(client)["id"])
+    url = f"/api/pages/{p['id']}"
+    r = client.patch(url, json={"caption_zh": "字" * 13})
+    assert r.status_code == 422 and r.json()["detail"][0]["msg"] == "中文字最多 12 個字"
+    ok = "𠮷" + "字" * 11  # 12 個 code point（UTF-16 是 13）
+    r = client.patch(url, json={"caption_zh": ok})
+    assert r.status_code == 200 and r.json()["caption_zh"] == ok
+    assert client.patch(url, json={"caption_zh": "𠮷" * 13}).status_code == 422
+    r = client.patch(url, json={"caption_en": "a" * 29})
+    assert r.status_code == 422 and r.json()["detail"][0]["msg"] == "英文字最多 28 個字元"
+    assert client.patch(url, json={"caption_en": "a" * 28}).status_code == 200
+    assert client.patch(url, json={"caption_en": "𠮷" * 28}).status_code == 200
+    assert client.patch(url, json={"caption_en": "𠮷" * 29}).status_code == 422
+    # 去頭尾空白後才計算
+    assert client.patch(url, json={"caption_zh": " " + "字" * 12 + " "}).status_code == 200
+
+
+def test_caption_change_keeps_passed_status_and_selection(client, app):
+    from app.models import PageStatus
+    from tests.test_api_lineart import get_page, make_passed, selected_page
+
+    _, p, ids = selected_page(client, app)
+    make_passed(app, p["id"])
+    r = client.patch(f"/api/pages/{p['id']}", json={"caption_zh": "消防車", "caption_en": "Fire Engine"})
+    assert r.status_code == 200 and r.json()["status"] == "passed"
+    page = get_page(app, p["id"])
+    assert page.status == PageStatus.PASSED and page.passed_at is not None
+    assert page.selected_generation_id == ids[0]

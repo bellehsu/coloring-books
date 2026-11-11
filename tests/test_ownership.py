@@ -278,3 +278,12 @@ def test_huge_path_ids_are_404_not_500_on_shared_routes(world, method, path):
     for huge in HUGE_IDS:
         r = _call(client, method, _url(path, {k: huge for k in OWNED_PARAMS}))
         assert r.status_code == 404, (path, huge, r.status_code, r.text)
+
+
+def test_caption_patch_by_other_owner_is_404(world):
+    app, client, sids, ids = world
+    as_(client, sids["b"])
+    r = client.patch(f"/api/pages/{ids['page_id']}", json={"caption_zh": "消防車"})
+    assert r.status_code == 404 and r.json()["detail"] in NOT_FOUND
+    as_(client, sids["a"])
+    assert client.get(f"/api/books/{ids['book_id']}/pages").json()[0]["caption_zh"] is None
