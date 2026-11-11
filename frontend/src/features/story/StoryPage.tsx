@@ -19,7 +19,9 @@ import { BookBar } from "@/components/shell/BookBar";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { ACTION_HINT } from "@/lib/actions";
+import type { ThemePack } from "@/lib/themePacks";
 import { ImportDialog } from "./ImportDialog";
+import { ThemePackDialog } from "./ThemePackDialog";
 import { slotView, StoryRow, type BgMode } from "./StoryRow";
 import styles from "./StoryPage.module.css";
 
@@ -48,6 +50,9 @@ export function StoryPage({ bookId }: { bookId: number }) {
   const [modes, setModes] = useState<Record<number, BgMode>>({});
   const [files, setFiles] = useState<Record<number, string>>({});
   const [importOpen, setImportOpen] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importSeq, setImportSeq] = useState(0); // 每次開啟都重建對話框，文字框才會帶入新的預設內容
   const pendingSaves = useRef(new Set<Promise<unknown>>());
 
   const pages = useMemo(
@@ -122,6 +127,16 @@ export function StoryPage({ bookId }: { bookId: number }) {
     }
   }
 
+  const openImport = (text: string) => {
+    setImportText(text);
+    setImportSeq((n) => n + 1);
+    setImportOpen(true);
+  };
+  const choosePack = (pack: ThemePack) => {
+    setPackOpen(false);
+    openImport(pack.text);
+  };
+
   const b = book.data;
   if (book.isPending || !b) {
     return (
@@ -161,8 +176,11 @@ export function StoryPage({ bookId }: { bookId: number }) {
             </span>
           </div>
           <div className={styles.actions}>
-            <Button disabled={!pagesQ.isSuccess} onClick={() => setImportOpen(true)}>
+            <Button disabled={!pagesQ.isSuccess} onClick={() => openImport("")}>
               貼上整本故事
+            </Button>
+            <Button disabled={!pagesQ.isSuccess} onClick={() => setPackOpen(true)}>
+              套用主題包
             </Button>
             <Button disabled={createPage.isPending} onClick={() => createPage.mutate({ scene_prompt: "", action_prompt: "" }, { onError: (e) => toast.show(errMsg(e, "無法新增頁面"), "error") })}>
               ＋ 新增一頁
@@ -204,7 +222,12 @@ export function StoryPage({ bookId }: { bookId: number }) {
           />
         ))}
       </main>
-      {pagesQ.isSuccess && <ImportDialog bookId={bookId} open={importOpen} onClose={() => setImportOpen(false)} />}
+      {pagesQ.isSuccess && (
+        <>
+          <ThemePackDialog open={packOpen} onClose={() => setPackOpen(false)} onChoose={choosePack} />
+          <ImportDialog key={importSeq} bookId={bookId} open={importOpen} onClose={() => setImportOpen(false)} initialText={importText} />
+        </>
+      )}
     </>
   );
 }

@@ -325,4 +325,15 @@ describe("StoryPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "貼上整本故事" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
+
+  it("套用主題包 → choose the pack → import dialog prefilled with 10 pages, nothing written", async () => {
+    setup();
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(await screen.findByRole("button", { name: /交通工具/ }));
+    const dialog = await screen.findByRole("dialog", { name: "貼上整本故事" });
+    expect((within(dialog).getByRole("textbox", { name: "貼上故事" }) as HTMLTextAreaElement).value).toContain("消防車");
+    expect(within(dialog).getByText(/^10 段：/)).toBeInTheDocument();
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+  });
 });

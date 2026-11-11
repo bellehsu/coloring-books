@@ -1,0 +1,51 @@
+import { describe, expect, it } from "vitest";
+import { countChars, MAX_ACTION, MAX_CAPTION_EN, MAX_CAPTION_ZH, MAX_SCENE } from "./limits";
+import { parseStory } from "./storyImport";
+import { THEME_PACKS } from "./themePacks";
+
+const CAPTIONS = [
+  ["消防車", "Fire Engine"],
+  ["救護車", "Ambulance"],
+  ["警車", "Police Car"],
+  ["公車", "Bus"],
+  ["計程車", "Taxi"],
+  ["火車", "Train"],
+  ["飛機", "Airplane"],
+  ["帆船", "Sailboat"],
+  ["腳踏車", "Bicycle"],
+  ["直升機", "Helicopter"],
+];
+
+describe("THEME_PACKS", () => {
+  const pack = THEME_PACKS.find((p) => p.id === "vehicles")!;
+  const parsed = parseStory(pack.text);
+
+  it("has the vehicles pack", () => {
+    expect(THEME_PACKS).toHaveLength(1);
+    expect(pack.title).toBe("交通工具");
+    expect(pack.description).not.toBe("");
+  });
+  it("parses to 10 pages in order with no problems", () => {
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.pages.map((p) => p.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+  it("every scene ends with the no-vehicle suffix", () => {
+    for (const p of parsed.pages) expect(p.scene.endsWith("，沒有任何車輛、船、飛機或火車")).toBe(true);
+  });
+  it("captions match the list", () => {
+    expect(parsed.pages.map((p) => [p.captionZh, p.captionEn])).toEqual(CAPTIONS);
+  });
+  it("is within limits", () => {
+    for (const p of parsed.pages) {
+      expect(countChars(p.scene)).toBeLessThanOrEqual(MAX_SCENE);
+      expect(p.action.length).toBeGreaterThan(0);
+      expect(countChars(p.action)).toBeLessThanOrEqual(MAX_ACTION);
+      expect(countChars(p.captionZh ?? "")).toBeLessThanOrEqual(MAX_CAPTION_ZH);
+      expect(countChars(p.captionEn ?? "")).toBeLessThanOrEqual(MAX_CAPTION_EN);
+    }
+  });
+  it("uses the spec wording", () => {
+    expect(parsed.pages[0].scene).toBe("消防局門口，車庫門關著，旁邊有消防栓，沒有任何車輛、船、飛機或火車");
+    expect(parsed.pages[9].action).toBe("坐在直升機裡，從窗戶揮手，畫出整台直升機的外觀");
+  });
+});

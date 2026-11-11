@@ -14,6 +14,8 @@ export interface ImportDialogProps {
   bookId: number;
   open: boolean;
   onClose: () => void;
+  /** 開啟時文字框的預設內容（主題包）。 */
+  initialText?: string;
 }
 
 function resultText(r: ImportRow): string {
@@ -28,13 +30,13 @@ function resultText(r: ImportRow): string {
 }
 
 /** 貼上整本故事：預覽後匯入。只填空欄位、補不足的頁數，從不刪除頁面。 */
-export function ImportDialog({ bookId, open, onClose }: ImportDialogProps) {
+export function ImportDialog({ bookId, open, onClose, initialText = "" }: ImportDialogProps) {
   const toast = useToast();
   const qc = useQueryClient();
   const pagesQ = usePages(bookId);
   const createPage = useCreatePage(bookId);
   const updatePage = useUpdatePage(bookId);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const [busy, setBusy] = useState(false);
 
   const existing = useMemo(
