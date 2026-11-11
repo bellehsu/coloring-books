@@ -1,9 +1,15 @@
 import { expect, test } from "@playwright/test";
-import { uniqueTitle } from "./seed";
+import { ok, uniqueTitle } from "./seed";
 
 /** 管理者在 /admin/invites 產生連結 → 複製 → 在全新的瀏覽器 context 開啟，以新的 owner 登入；之後列表與重新整理都還看得到連結。
  *  假後端以 --dev-owner admin 啟動：沒有 cookie 的 context 就是 admin；有連結 cookie 的 context 是一般使用者。 */
 test("管理者產生邀請連結、複製、新的瀏覽器用它登入；連結重新整理後還在", async ({ browser, baseURL }) => {
+  // 假後端是 dev_owner 模式：沒有 cookie 的 admin 不能用邀請管理（404），所以管理者要用「管理者邀請連結」登入
+  const boot = await browser.newContext({ baseURL });
+  const { token: adminToken } = await ok<{ token: string }>(
+    await boot.request.post("/api/_test/invite", { data: { name: uniqueTitle("e2e-管理者"), is_admin: true } }),
+  );
+  await boot.close();
   const admin = await browser.newContext({
     baseURL,
     locale: "zh-TW",
@@ -14,15 +20,28 @@ test("管理者產生邀請連結、複製、新的瀏覽器用它登入；連�
     const name = uniqueTitle("小美");
     const page = await admin.newPage();
 
-    // 首頁有「邀請管理」連結（只有管理者看得到）
-    await page.goto("/");
+    // 沒有 cookie（dev_owner 後備）的 context：首頁沒有「邀請管理」，API 是 404
+    const anon = await browser.newContext({ baseURL });
+    try {
+      const anonPage = await anon.newPage();
+      await anonPage.goto("/");
+      await expect(anonPage.getByRole("button", { name: "建立新繪本" }).first()).toBeVisible();
+      await expect(anonPage.getByRole("link", { name: "邀請管理" })).toHaveCount(0);
+      expect((await anon.request.get("/api/admin/invites")).status()).toBe(404);
+    } finally {
+      await anon.close();
+    }
+
+    // 管理者邀請連結登入後，首頁有「邀請管理」連結（只有 cookie 的管理者看得到）
+    await page.goto(`/i/${adminToken}`);
+    await expect(page).toHaveURL(/\/$/);
     await page.getByRole("link", { name: "邀請管理" }).click();
     await expect(page).toHaveURL(/\/admin\/invites$/);
 
     await page.getByLabel("名字").fill(name);
-    await page.getByLabel("管理者").check();
+    await page.getByRole("checkbox", { name: "管理者" }).check();
     await expect(page.getByLabel("每日上限")).toHaveCount(0); // 管理者不設上限
-    await page.getByLabel("管理者").uncheck();
+    await page.getByRole("checkbox", { name: "管理者" }).uncheck();
     await page.getByLabel("每日上限").fill("30");
     await page.getByRole("button", { name: "產生連結" }).click();
 

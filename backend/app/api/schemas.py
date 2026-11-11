@@ -458,6 +458,8 @@ InviteNameStr = Annotated[str, StringConstraints(strip_whitespace=True, min_leng
 class MeOut(BaseModel):
     name: str
     is_admin: bool
+    # 只靠 auth.dev_owner（沒有 cookie）當作這個 admin：邀請管理不開放（見 deps.require_admin_hidden）
+    via_dev_owner: bool = False
 
 
 class InviteCreate(BaseModel):

@@ -10,15 +10,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import case
+from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
 
-from app.config import Settings
+from app.config import Settings, SettingsError
 from app.models import Owner, OwnerSession, utcnow
 from app.storage import load_or_create_key_file
 
@@ -34,7 +35,14 @@ def hash_token(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+log = logging.getLogger("app.auth")
 LINK_KEY_FILE = ".link_key"
+DUPLICATE_NAME = "這個名字已經有邀請了"
+_warned_keys: set[str] = set()
+
+
+class DuplicateInviteName(ValueError):
+    """已經有同名而且未撤銷的邀請。"""
 
 
 def link_key(settings: Settings) -> bytes:
@@ -44,6 +52,18 @@ def link_key(settings: Settings) -> bytes:
     if configured is not None and configured.get_secret_value():
         return configured.get_secret_value().encode()
     return load_or_create_key_file(settings.paths.storage_dir, LINK_KEY_FILE, "連結金鑰")
+
+
+def safe_link_key(settings: Settings) -> bytes | None:
+    """link_key，但金鑰檔壞掉（不完整、讀不了）時回 None 並記一次警告：連結就只是「無法顯示」，不讓 API 500。"""
+    try:
+        return link_key(settings)
+    except (SettingsError, OSError, ValueError) as e:
+        msg = str(e)
+        if msg not in _warned_keys:
+            _warned_keys.add(msg)
+            log.warning("連結金鑰無法使用，邀請連結都會顯示為「無法再顯示」：%s", msg)
+        return None
 
 
 def _fernet(key: bytes) -> Fernet:
@@ -65,9 +85,9 @@ def decrypt_token(encrypted: str | None, key: bytes) -> str | None:
         return None
 
 
-def reveal_link(owner: Owner, key: bytes, base_url: str) -> str | None:
+def reveal_link(owner: Owner, key: bytes | None, base_url: str) -> str | None:
     """邀請連結 `<base_url>/i/<token>`；已撤銷、舊資料（沒有加密的 token）或金鑰不對時回 None。"""
-    if owner.revoked_at is not None:
+    if owner.revoked_at is not None or key is None:
         return None
     token = decrypt_token(owner.token_encrypted, key)
     return None if token is None else f"{base_url.rstrip('/')}/i/{token}"
@@ -84,6 +104,15 @@ def create_owner(
         token_encrypted=encrypt_token(token, link_key) if link_key else None,
     )
     session.add(owner)
+    # 同名檢查與寫入在同一個交易：INSERT 取得 SQLite 的寫入鎖後才數，同時建立同名邀請的另一方會等到這個交易
+    # 結束，再數時就看得到我們這一筆，所以只有一個會成功
+    session.flush()
+    active = session.exec(
+        select(func.count()).select_from(Owner).where(col(Owner.name) == name, col(Owner.revoked_at).is_(None))
+    ).one()
+    if active > 1:
+        session.rollback()
+        raise DuplicateInviteName(DUPLICATE_NAME)
     session.commit()
     session.refresh(owner)
     return owner, token

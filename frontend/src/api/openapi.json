@@ -3393,6 +3393,11 @@
           "is_admin": {
             "type": "boolean",
             "title": "Is Admin"
+          },
+          "via_dev_owner": {
+            "type": "boolean",
+            "title": "Via Dev Owner",
+            "default": false
           }
         },
         "type": "object",

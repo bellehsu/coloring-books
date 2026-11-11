@@ -8,27 +8,36 @@
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from app.api.deps import current_owner, get_session, require_admin_hidden
+from app.api.deps import current_owner, get_session, require_admin_hidden, via_dev_owner
 from app.api.schemas import InviteCreate, InviteOut, MeOut
 from app.models import Book, Owner, OwnerSession, Usage
 from app.services import auth
 from app.services.usage import clock, taipei_day
 
-me_router = APIRouter(prefix="/api", tags=["me"])
-router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin_hidden)])
 
-DUPLICATE_NAME = "這個名字已經有邀請了"
+
+def _no_store(response: Response) -> None:
+    """回應含可以直接登入的連結：不讓瀏覽器或中間的快取留著。"""
+    response.headers["Cache-Control"] = "no-store"
+
+
+me_router = APIRouter(prefix="/api", tags=["me"], dependencies=[Depends(_no_store)])
+router = APIRouter(
+    prefix="/api/admin", tags=["admin"], dependencies=[Depends(_no_store), Depends(require_admin_hidden)]
+)
+
+DUPLICATE_NAME = auth.DUPLICATE_NAME
 # 轉發過來的主機名稱：host 或 host:port（含 IPv6 的 [::1]:3000）；其他一律忽略，不讓怪字串進到連結裡
 _HOST = re.compile(r"^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$")
 
 
 @me_router.get("/me", response_model=MeOut)
-def me(owner: Owner = Depends(current_owner)) -> MeOut:
-    return MeOut(name=owner.name, is_admin=owner.is_admin)
+def me(request: Request, owner: Owner = Depends(current_owner)) -> MeOut:
+    return MeOut(name=owner.name, is_admin=owner.is_admin, via_dev_owner=via_dev_owner(request))
 
 
 def _first(value: str | None) -> str:
@@ -51,7 +60,7 @@ def link_prefix(request: Request) -> str:
     return f"{proto}://{host}"
 
 
-def _rows(session: Session, owners: list[Owner], key: bytes, prefix: str) -> list[InviteOut]:
+def _rows(session: Session, owners: list[Owner], key: bytes | None, prefix: str) -> list[InviteOut]:
     ids = [o.id for o in owners]
     today = taipei_day(clock())
     used = dict(session.exec(
@@ -81,7 +90,7 @@ def list_invites(request: Request, session: Session = Depends(get_session)) -> l
     owners = list(session.exec(select(Owner).order_by(col(Owner.created_at).desc(), col(Owner.id).desc())).all())
     if not owners:
         return []
-    return _rows(session, owners, auth.link_key(request.app.state.settings), link_prefix(request))
+    return _rows(session, owners, auth.safe_link_key(request.app.state.settings), link_prefix(request))
 
 
 @router.post("/invites", response_model=InviteOut, status_code=201)
@@ -91,8 +100,14 @@ def create_invite(body: InviteCreate, request: Request, session: Session = Depen
     ).first()
     if taken is not None:
         raise HTTPException(409, DUPLICATE_NAME)
-    key = auth.link_key(request.app.state.settings)
-    owner, _token = auth.create_owner(
-        session, body.name, is_admin=body.is_admin, cap=body.daily_generation_cap, link_key=key
-    )
-    return _rows(session, [owner], key, link_prefix(request))[0]
+    key = auth.safe_link_key(request.app.state.settings)  # 金鑰檔壞了：照常建立，只是之後不能再顯示
+    prefix = link_prefix(request)
+    try:
+        owner, token = auth.create_owner(
+            session, body.name, is_admin=body.is_admin, cap=body.daily_generation_cap, link_key=key
+        )
+    except auth.DuplicateInviteName:
+        raise HTTPException(409, DUPLICATE_NAME) from None
+    row = _rows(session, [owner], key, prefix)[0]
+    row.link = f"{prefix}/i/{token}"  # 剛產生的 token 就在手上：不依賴金鑰
+    return row

@@ -269,3 +269,12 @@ def test_huge_body_and_query_ids_are_422_not_500(world):
     # 範圍內的照常（邊界值本身合法，查不到是 404 不是 422）
     r = client.post(f"/api/pages/{p}/background", json={"generation_id": 2**63 - 1})
     assert r.status_code == 404
+
+
+@pytest.mark.parametrize("method,path", sorted(SHARED), ids=[f"{m} {p}" for m, p in sorted(SHARED)])
+def test_huge_path_ids_are_404_not_500_on_shared_routes(world, method, path):
+    app, client, sids, ids = world
+    as_(client, sids["b"])
+    for huge in HUGE_IDS:
+        r = _call(client, method, _url(path, {k: huge for k in OWNED_PARAMS}))
+        assert r.status_code == 404, (path, huge, r.status_code, r.text)

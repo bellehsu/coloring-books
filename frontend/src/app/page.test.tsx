@@ -16,7 +16,7 @@ const book = (id: number, charId: number | null) => ({
   stats: { pages: 4, passed: 1, needs_fix: 0, no_selection: 0 },
 });
 
-function mockBooks(body: unknown, status = 200, shared: unknown = [], me: unknown = { name: "小明", is_admin: false }) {
+function mockBooks(body: unknown, status = 200, shared: unknown = [], me: unknown = { name: "小明", is_admin: false, via_dev_owner: false }) {
   const json = (b: unknown, st: number) =>
     new Response(JSON.stringify(b), { status: st, headers: { "content-type": "application/json" } });
   vi.stubGlobal(
@@ -105,11 +105,18 @@ describe("大家的繪本", () => {
 
 describe("邀請管理連結", () => {
   it("管理者看得到，一般使用者看不到", async () => {
-    mockBooks([], 200, [], { name: "管理者", is_admin: true });
+    mockBooks([], 200, [], { name: "管理者", is_admin: true, via_dev_owner: false });
     const { unmount } = setup();
     expect(await screen.findByRole("link", { name: "邀請管理" })).toHaveAttribute("href", "/admin/invites");
     unmount();
-    mockBooks([], 200, [], { name: "小明", is_admin: false });
+    mockBooks([], 200, [], { name: "小明", is_admin: false, via_dev_owner: false });
+    setup();
+    await screen.findByText("還沒有繪本，建立第一本開始吧。");
+    expect(screen.queryByRole("link", { name: "邀請管理" })).not.toBeInTheDocument();
+  });
+
+  it("本機 dev_owner 後備的 admin（沒有 cookie）看不到：後端也不開放", async () => {
+    mockBooks([], 200, [], { name: "admin", is_admin: true, via_dev_owner: true });
     setup();
     await screen.findByText("還沒有繪本，建立第一本開始吧。");
     expect(screen.queryByRole("link", { name: "邀請管理" })).not.toBeInTheDocument();

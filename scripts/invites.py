@@ -14,7 +14,7 @@
 
 設定與 app 相同（config/settings.yaml 或 APP_SETTINGS_FILE，APP_ 環境變數覆寫；R2 憑證只來自環境變數）。
 連結前綴：--base-url，其次 auth.invite_base_url，都沒有就是 http://localhost:3000。
-結束碼：0 成功；1 操作失敗或取消；2 設定錯誤；4 DB 與 storage 不是一組；5 讀不到 storage 的身分標記。
+結束碼：0 成功；1 操作失敗或取消；2 設定錯誤（含舊版資料庫拒絕自動升級）；4 DB 與 storage 不是一組；5 讀不到 storage 的身分標記。
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from sqlalchemy import func  # noqa: E402
 from sqlmodel import Session, col, delete, select, update  # noqa: E402
 
 from app.config import Settings, SettingsError, load_settings  # noqa: E402
-from app.db import init_db, make_engine, session_factory  # noqa: E402
+from app.db import LegacyUpgradeRefused, init_db, make_engine, session_factory  # noqa: E402
 from app.models import (  # noqa: E402
     Book,
     Generation,
@@ -91,9 +91,12 @@ def cmd_create(args: argparse.Namespace, settings: Settings, sessions) -> int:
         raise CliError("--cap 不可小於 0")
     url = base_url(args, settings)
     with sessions() as s:
-        owner, token = auth.create_owner(
-            s, name, is_admin=args.admin, cap=args.cap, link_key=auth.link_key(settings)
-        )
+        try:
+            owner, token = auth.create_owner(
+                s, name, is_admin=args.admin, cap=args.cap, link_key=auth.link_key(settings)
+            )
+        except auth.DuplicateInviteName:
+            raise CliError(auth.DUPLICATE_NAME) from None
     print_link(url, token, owner)
     return 0
 
@@ -328,6 +331,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         sessions = open_db(settings)
         return COMMANDS[args.command](args, settings, sessions)
     except SettingsError as e:
+        print(e, file=sys.stderr)
+        return 2
+    except LegacyUpgradeRefused as e:
         print(e, file=sys.stderr)
         return 2
     except CliError as e:

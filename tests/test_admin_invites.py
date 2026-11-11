@@ -88,9 +88,51 @@ def test_no_session_is_401(world):
 def test_me(world):
     _, client, sids = world
     as_(client, sids["admin"])
-    assert client.get("/api/me").json() == {"name": "管理者", "is_admin": True}
+    assert client.get("/api/me").json() == {"name": "管理者", "is_admin": True, "via_dev_owner": False}
     as_(client, sids["user"])
-    assert client.get("/api/me").json() == {"name": "小明", "is_admin": False}
+    assert client.get("/api/me").json() == {"name": "小明", "is_admin": False, "via_dev_owner": False}
+
+
+def test_admin_and_me_responses_are_no_store(world):
+    _, client, sids = world
+    as_(client, sids["admin"])
+    for r in (client.get("/api/me"), client.get("/api/admin/invites"), create(client)):
+        assert r.status_code in (200, 201) and r.headers["cache-control"] == "no-store"
+
+
+# --- dev_owner：沒有 cookie 的 admin 不能用邀請管理（區網上任何人都是 dev admin） ---
+
+
+def test_dev_owner_fallback_cannot_use_admin_routes(settings_file):
+    app = make_app(settings_file, auth_kw={"dev_owner": "admin"})
+    with TestClient(app) as client:  # 沒有 cookie：以 dev_owner 身分當 admin
+        with app.state.sessions() as s:
+            auth.create_owner(s, "某人", link_key=auth.link_key(app.state.settings))
+        assert client.get("/api/books").status_code == 200  # 一般的資料存取不變
+        assert client.get("/api/me").json() == {"name": "admin", "is_admin": True, "via_dev_owner": True}
+        assert client.get("/api/admin/invites").status_code == 404
+        r = create(client)
+        assert r.status_code == 404
+        with app.state.sessions() as s:
+            assert {o.name for o in s.query(Owner).all()} == {"admin", "某人"}
+
+
+def test_cookie_admin_works_even_when_dev_owner_is_set(settings_file):
+    app = make_app(settings_file, auth_kw={"dev_owner": "admin"})
+    with TestClient(app) as client:
+        with app.state.sessions() as s:
+            tok = auth.create_owner(s, "真管理者", is_admin=True)[1]
+        client.get(f"/i/{tok}", follow_redirects=False)
+        assert client.get("/api/me").json() == {"name": "真管理者", "is_admin": True, "via_dev_owner": False}
+        assert client.get("/api/admin/invites").status_code == 200
+        assert create(client).status_code == 201
+
+
+def test_bad_cookie_does_not_fall_back_to_dev_owner_for_admin_routes(settings_file):
+    app = make_app(settings_file, auth_kw={"dev_owner": "admin"})
+    with TestClient(app) as client:
+        client.cookies.set(COOKIE, "garbage")
+        assert client.get("/api/admin/invites").status_code == 401
 
 
 # --- 建立與列表 ---
@@ -112,7 +154,7 @@ def test_create_returns_link_that_logs_in_as_new_owner(world):
         r = fresh.get(f"/i/{token}", follow_redirects=False)
         assert r.status_code == 303 and COOKIE in fresh.cookies
         assert fresh.get("/api/books").status_code == 200
-        assert fresh.get("/api/me").json() == {"name": "小美", "is_admin": False}
+        assert fresh.get("/api/me").json() == {"name": "小美", "is_admin": False, "via_dev_owner": False}
         assert fresh.get("/api/admin/invites").status_code == 404
 
 
@@ -368,3 +410,81 @@ def test_cli_rotate_updates_stored_link_and_list_show_links(world, settings_file
     assert cli.main(["--settings", str(settings_file), "list", "--show-links"]) == 0
     out = capsys.readouterr().out
     assert out.splitlines()[0].split()[-1] == "連結" and new_tok in out
+
+
+# --- 重複名字：原子（API 競爭）與 CLI ---
+
+
+def test_create_owner_rejects_active_duplicate_but_allows_revoked(world):
+    app, *_ = world
+    with app.state.sessions() as s:
+        auth.create_owner(s, "小美")
+        with pytest.raises(auth.DuplicateInviteName):
+            auth.create_owner(s, "小美")
+        assert s.query(Owner).filter(Owner.name == "小美").count() == 1
+        o = s.query(Owner).filter(Owner.name == "小美").one()
+        o.revoked_at = auth.utcnow()
+        s.add(o)
+        s.commit()
+        auth.create_owner(s, "小美")  # 舊的已撤銷：可以
+
+
+def test_concurrent_creates_with_same_name_only_one_wins(world):
+    app, *_ = world
+    import threading
+
+    barrier = threading.Barrier(4)
+    results = []
+
+    def run():
+        barrier.wait()
+        with app.state.sessions() as s:
+            try:
+                auth.create_owner(s, "同名")
+                results.append("ok")
+            except auth.DuplicateInviteName:
+                results.append("dup")
+
+    threads = [threading.Thread(target=run) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert sorted(results) == ["dup", "dup", "dup", "ok"]
+    with app.state.sessions() as s:
+        assert s.query(Owner).filter(Owner.name == "同名").count() == 1
+
+
+def test_cli_create_rejects_active_duplicate(world, settings_file, capsys):
+    cli = _cli()
+    args = ["--settings", str(settings_file), "create", "--name"]
+    assert cli.main(args + ["阿華"]) == 0
+    capsys.readouterr()
+    assert cli.main(args + [" 阿華 "]) == 1
+    assert DUP in capsys.readouterr().err
+    app, *_ = world
+    with app.state.sessions() as s:
+        assert s.query(Owner).filter(Owner.name == "阿華").count() == 1
+
+
+# --- 壞掉的金鑰檔不會 500 ---
+
+
+def test_corrupt_link_key_file_gives_null_links_and_one_warning(settings_file, caplog):
+    import logging
+
+    app = make_app(settings_file)
+    with TestClient(app) as client:
+        with app.state.sessions() as s:
+            tok = auth.create_owner(s, "管理者", is_admin=True)[1]
+            auth.create_owner(s, "舊的")
+        client.get(f"/i/{tok}", follow_redirects=False)
+        (app.state.settings.paths.storage_dir / ".link_key").write_text("short", encoding="ascii")
+        with caplog.at_level(logging.WARNING):
+            r = client.get("/api/admin/invites")
+            assert r.status_code == 200 and all(x["link"] is None for x in r.json())
+            r = create(client)  # 建立仍成功，回應的連結直接用剛產生的 token（加密不了就不存）
+            assert r.status_code == 201 and "/i/" in r.json()["link"]
+            assert client.get("/api/admin/invites").status_code == 200
+        warns = [x for x in caplog.records if ".link_key" in x.getMessage()]
+        assert len(warns) == 1
+        row = next(x for x in client.get("/api/admin/invites").json() if x["name"] == "小美")
+        assert row["link"] is None  # 沒加密存：之後只能換發

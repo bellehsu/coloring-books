@@ -1167,6 +1167,11 @@ export interface components {
             name: string;
             /** Is Admin */
             is_admin: boolean;
+            /**
+             * Via Dev Owner
+             * @default false
+             */
+            via_dev_owner: boolean;
         };
         /** PageCreate */
         PageCreate: {

@@ -34,7 +34,8 @@ def test_schema_matches_models(tmp_path):
     assert diff == []
 
 
-def test_legacy_db_is_stamped_and_upgraded(tmp_path):
+def test_legacy_db_is_stamped_and_upgraded(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ALLOW_LEGACY_UPGRADE", "1")  # 刻意就地升級有書的舊庫
     eng = make_engine(tmp_path / "a.db")
     command.upgrade(alembic_config(eng), BASELINE_REVISION)
     with eng.begin() as c:
@@ -102,7 +103,8 @@ def _dump(c) -> dict:
     }
 
 
-def test_upgrade_from_0002_rebuilds_with_autoincrement_and_keeps_rows(tmp_path):
+def test_upgrade_from_0002_rebuilds_with_autoincrement_and_keeps_rows(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ALLOW_LEGACY_UPGRADE", "1")  # 刻意就地升級有書的舊庫
     eng = make_engine(tmp_path / "a.db")
     _seed_0002(eng)
     with eng.connect() as c:
@@ -146,7 +148,8 @@ def test_upgrade_from_0002_rebuilds_with_autoincrement_and_keeps_rows(tmp_path):
     init_db(eng)  # 冪等
 
 
-def test_upgrade_to_head_keeps_generation_and_accepts_new_kinds(tmp_path):
+def test_upgrade_to_head_keeps_generation_and_accepts_new_kinds(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ALLOW_LEGACY_UPGRADE", "1")  # 刻意就地升級有書的舊庫
     eng = make_engine(tmp_path / "a.db")
     _seed_0002(eng)
     init_db(eng)

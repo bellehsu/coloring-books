@@ -29,7 +29,7 @@ export default function Home() {
             <h1 className={styles.h1}>我的繪本</h1>
             {list && <span className={styles.sub}>{list.length} 本</span>}
           </div>
-          {me.data?.is_admin && (
+          {me.data?.is_admin && !me.data.via_dev_owner && (
             <Link href="/admin/invites" className={styles.adminLink}>
               邀請管理
             </Link>

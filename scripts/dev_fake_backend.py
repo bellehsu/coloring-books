@@ -47,6 +47,7 @@ from app.services.prompts import POSE_SIZE  # noqa: E402
 
 class InviteIn(BaseModel):
     name: str = "e2e"
+    is_admin: bool = False  # 只有假後端：e2e 用管理者邀請登入（dev_owner 後備的 admin 不能用邀請管理）
 
 
 OUTLINE_PX = 6
@@ -237,7 +238,7 @@ def create_demo_app(storage: Path, base: Settings | None = None, engine: DemoEng
     def test_only_create_invite(body: InviteIn, request: Request) -> dict:
         """只有假後端有（真的 app 沒有）：建立另一個邀請，e2e 用它驗證 owner 隔離。回傳原始 token。"""
         with request.app.state.sessions() as s:
-            owner, token = auth.create_owner(s, body.name, link_key=auth.link_key(request.app.state.settings))
+            owner, token = auth.create_owner(s, body.name, is_admin=body.is_admin, link_key=auth.link_key(request.app.state.settings))
         return {"owner_id": owner.id, "token": token}
 
     return app

@@ -68,13 +68,17 @@ cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
 - 本機開發不想用連結時，設定 `auth.dev_owner: admin`（`config/settings.yaml`），或在 `scripts/dev.env`
   設 `APP_AUTH__DEV_OWNER=admin`（`dev.env.example` 已預設）：沒有 cookie 的請求就當作 admin。
   已有 admin（例如資料庫遷移時建立的）會直接沿用。
+- **邀請管理頁不接受 `dev_owner` 的後備 admin**：沒有 cookie 的請求即使被當作 admin，`/api/admin/*` 也是 404、首頁沒有「邀請管理」
+  （否則區網上任何裝置都能取得每個人的連結）。本機要用邀請管理：載入 dev.env 後執行一次
+  `( set -a; . scripts/dev.env; set +a; env -u PYTHONPATH $VENV_ROOT/coloring-books/bin/python scripts/invites.py create --name 自己 --admin )`，
+  用印出的管理者連結在瀏覽器開一次（之後有 cookie 就是真正的管理者）。
 - **對外部署一定不可設 `dev_owner`**（範本預設 `null`）；有設時後端啟動會印出警告。
 
 ### 從 Phase 9 升級（合併後第一次重啟 dev.sh 之前必做）
 
 Phase 10 起本機也用 R2，資料庫與本機資料夾都換一組新的；舊的 `storage/app.db` 與 `storage/books/` 留著當備份、**不再使用**。
 後端每次啟動都會把 `paths.database` 指到的資料庫升級到最新版。如果第一次重啟時設定還指著舊的 `storage/app.db`，
-它會被**遷移並改寫**：0005 → 0007 刪掉 `page.sketch_path`／`controlnet_strength` 欄位、新增 admin 並把所有書歸給它，
+它會被**遷移並改寫**：0005 → 0009 刪掉 `page.sketch_path`／`controlnet_strength` 欄位、新增 admin 並把所有書歸給它，
 還會在 `storage/books/` 寫入身分標記 `_instance.json`。這些改動無法完整還原，所以順序很重要：
 
 1. 先停掉 dev.sh，**備份整個 `storage/`**：`cp -a storage storage-backup-$(date +%Y%m%d)`。
@@ -125,7 +129,7 @@ Phase 10 起本機也用 R2，資料庫與本機資料夾都換一組新的；�
    （資料夾先建好；也可用 `APP_PATHS__DATABASE=storage-r2/app.db`、`APP_PATHS__STORAGE_DIR=storage-r2`）。
    R2 的本機快取預設放在 `<paths.storage_dir>/r2_cache/<bucket>`。local 模式的 `storage/` 與 R2 的資料是兩組，不要混用；
    從舊版升級時要在第一次啟動前設好（見上一節）。
-7. 第一次啟動後用 `scripts/invites.py create --name 你的名字 --admin` 建立自己的連結（`dev_owner` 只限本機）。
+7. 第一次啟動後，先載入 dev.env（`set -a; . scripts/dev.env; set +a`）再用 `scripts/invites.py create --name 你的名字 --admin` 建立自己的連結（`dev_owner` 只限本機）；要用「邀請管理」必須用這個管理者連結開一次。
 8. 正式環境的 DB 備份可用 `deploy/litestream.yml`（範本，預設不啟用）。
 
 ### 管理邀請與清理儲存空間
@@ -135,6 +139,7 @@ R2 憑證只來自 `APP_STORAGE__R2__ACCESS_KEY`／`SECRET_KEY`）。DB 存 toke
 
 ```bash
 PY=$VENV_ROOT/coloring-books/bin/python
+set -a; . scripts/dev.env; set +a   # 先載入 dev.env（資料庫、storage、R2 設定）：不載入的話腳本會用 settings.yaml 的路徑，也就是舊的 storage/app.db
 env -u PYTHONPATH $PY scripts/invites.py create --name 小明 [--cap 60] [--admin] [--base-url https://網站]
 env -u PYTHONPATH $PY scripts/invites.py list                # id、名稱、admin、每日上限、今天（台北）用量、撤銷、session 數；預設不顯示連結（--show-links 多一欄「連結」）
 env -u PYTHONPATH $PY scripts/invites.py rotate --id 1       # 換發新連結（例如遷移時建立、沒人知道 token 的 admin）；舊連結與已登入的瀏覽器失效
@@ -146,6 +151,8 @@ env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance  # 補上缺少的�
 env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance --adopt-bucket-id  # DB 沒有 id、storage 有標記時，把它寫進 DB
 ```
 
+- **舊資料庫保護：** 資料庫在 0006 之前（Phase 9）而且已經有書時，後端啟動與 `invites.py` 都會拒絕自動升級，印出提示並結束
+  （檔案完全不動）；確定要就地升級時才設 `APP_ALLOW_LEGACY_UPGRADE=1`。沒有書的舊庫照常升級。
 - 連結前綴：`--base-url`，其次 `auth.invite_base_url`，預設 `http://localhost:3000`。
 
 **邀請管理頁（管理者）：** 管理者的首頁有「邀請管理」連結 → `/admin/invites`：填名字（1–40 字，未撤銷的邀請不可重名）、管理者、每日上限（1–1000，預設 60）→

@@ -1,5 +1,6 @@
 """SQLite engine 與 session 輔助函式。"""
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -36,9 +37,41 @@ def alembic_config(engine: Engine) -> Config:
     return cfg
 
 
+class LegacyUpgradeRefused(RuntimeError):
+    """舊（0006 之前）而且已有書的資料庫：不默默升級（升級會改寫、無法完整還原）。"""
+
+
+ALLOW_LEGACY_ENV = "APP_ALLOW_LEGACY_UPGRADE"
+_FIRST_OWNER_REVISION = 6  # 0006 起才有 owner；更早的是 Phase 9 以前的資料庫
+
+
+def _refuse_legacy_upgrade(conn) -> None:
+    """資料庫低於 0006 且至少有一本書時拒絕升級，除非環境變數 APP_ALLOW_LEGACY_UPGRADE=1。
+    只讀；在任何寫入之前呼叫，所以拒絕時檔案完全不變。"""
+    if os.environ.get(ALLOW_LEGACY_ENV) == "1":
+        return
+    tables = set(inspect(conn).get_table_names())
+    if "book" not in tables:
+        return
+    current = MigrationContext.configure(conn).get_current_revision() if "alembic_version" in tables else BASELINE_REVISION
+    if current is None or not current.isdigit() or int(current) >= _FIRST_OWNER_REVISION:
+        return
+    if conn.exec_driver_sql("SELECT count(*) FROM book").scalar() == 0:
+        return
+    raise LegacyUpgradeRefused(
+        f"資料庫停在舊版本（{current}），而且已經有繪本；升級會改寫它而且無法完整還原，所以不自動升級。"
+        "如果這是 Phase 9 的舊資料庫，請看 README「從 Phase 9 升級」：先備份 storage/，並把 paths.database／paths.storage_dir "
+        "改指到新的位置（腳本也要載入 scripts/dev.env 的設定）。確定要就地升級這個資料庫時，"
+        f"設定環境變數 {ALLOW_LEGACY_ENV}=1 再執行。"
+    )
+
+
 def init_db(engine: Engine) -> None:
-    """以 Alembic 升級到最新；Phase 2 舊庫（有 book 表但無 alembic_version）先標記為 baseline。"""
+    """以 Alembic 升級到最新；Phase 2 舊庫（有 book 表但無 alembic_version）先標記為 baseline。
+    0006 之前而且已有書的舊庫會丟 LegacyUpgradeRefused（見 _refuse_legacy_upgrade）。"""
     cfg = alembic_config(engine)
+    with engine.connect() as conn:
+        _refuse_legacy_upgrade(conn)
     with engine.begin() as conn:
         cfg.attributes["connection"] = conn
         tables = set(inspect(conn).get_table_names())

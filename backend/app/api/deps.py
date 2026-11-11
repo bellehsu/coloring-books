@@ -45,6 +45,7 @@ def current_owner(request: Request, session: Session = Depends(get_session)) -> 
     else:
         dev = request.app.state.settings.auth.dev_owner
         owner = auth.resolve_dev_owner(session, dev) if dev else None
+        request.state.via_dev_owner = owner is not None
     if owner is None:
         raise HTTPException(401, NEED_INVITE)
     if owner.revoked_at is not None:
@@ -58,9 +59,16 @@ def require_admin(owner: Owner = Depends(current_owner)) -> Owner:
     return owner
 
 
-def require_admin_hidden(owner: Owner = Depends(current_owner)) -> Owner:
-    """管理頁專用：非管理者回 404（不透露這些路由存在）；沒登入照常 401。"""
-    if not owner.is_admin:
+def via_dev_owner(request: Request) -> bool:
+    """這個請求是不是只靠 auth.dev_owner 的後備身分（沒有 cookie）才通過 current_owner。"""
+    return bool(getattr(request.state, "via_dev_owner", False))
+
+
+def require_admin_hidden(request: Request, owner: Owner = Depends(current_owner)) -> Owner:
+    """管理頁專用：非管理者回 404（不透露這些路由存在）；沒登入照常 401。
+    只靠 dev_owner 後備的「admin」也是 404：區網上任何沒有 cookie 的裝置都是它，不能拿到每個人的邀請連結；
+    要用管理頁就開一次管理者的邀請連結（scripts/invites.py create --admin）。"""
+    if not owner.is_admin or via_dev_owner(request):
         raise HTTPException(404, "Not Found")
     return owner
 
