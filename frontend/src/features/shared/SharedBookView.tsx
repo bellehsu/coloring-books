@@ -50,7 +50,7 @@ export function SharedBookView({ bookId }: { bookId: number }) {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   key={p.id}
-                  src={`/api/shared/pages/${p.id}/image.png`}
+                  src={p.image_url}
                   alt={`第 ${i + 1} 頁`}
                   className={styles.page}
                   loading="lazy"

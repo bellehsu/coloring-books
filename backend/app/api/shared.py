@@ -6,6 +6,7 @@
 檢視與下載不計入每日生成上限（不會呼叫 usage.reserve）。
 """
 
+import hashlib
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,6 +17,7 @@ from sqlmodel import Session, col, select
 
 from app.api.deps import current_owner, get_caption_font, get_session, get_storage
 from app.api.export import book_pdf, composed_page, pdf_response
+from app.api.pages import page_outs
 from app.api.schemas import SharedBookDetailOut, SharedBookOut, SharedPageOut
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Owner, Page, PageStatus
 from app.services.export import png_bytes
@@ -42,6 +44,17 @@ router = APIRouter(prefix="/api/shared", tags=["shared"], dependencies=[Depends(
 SHARED_NOT_FOUND = "找不到這本分享的繪本"
 IMAGE_LONG_EDGE = 1600
 IMAGE_CACHE = "private, max-age=300"
+
+
+def _image_urls(session: Session, pages: list[Page]) -> dict[int, str]:
+    """分享圖網址帶 ?v=（圖有 5 分鐘私人快取）：目前線稿 key＋文字＋要印哪幾行，跟擁有者的 print.png 預覽同一組輸入。"""
+    urls = {}
+    for p, out in zip(pages, page_outs(session, pages)):
+        raw = "|".join((out.lineart_url or "", p.caption_zh or "", p.caption_en or "",
+                        f"{int(p.caption_show_zh)}{int(p.caption_show_en)}"))
+        v = hashlib.sha256(raw.encode()).hexdigest()[:16]
+        urls[p.id] = f"/api/shared/pages/{p.id}/image.png?v={v}"
+    return urls
 
 
 def _gone() -> HTTPException:
@@ -83,11 +96,13 @@ def list_shared_books(
     session: Session = Depends(get_session), owner: Owner = Depends(current_owner)
 ) -> list[SharedBookOut]:
     """別人分享的書（自己的不列，首頁用徽章標示），分享時間新到舊。"""
+    books = [(b, o, pages) for b, o, pages in _visible_books(session) if b.owner_id != owner.id]
+    covers = _image_urls(session, [pages[0] for _b, _o, pages in books])
     return [
         SharedBookOut(id=b.id, title=b.title, author=o.name, paper_size=b.paper_size, page_count=len(pages),
-                      cover_page_id=pages[0].id, shared_at=b.shared_at, mine=False)
-        for b, o, pages in _visible_books(session)
-        if b.owner_id != owner.id
+                      cover_page_id=pages[0].id, cover_image_url=covers[pages[0].id], shared_at=b.shared_at,
+                      mine=False)
+        for b, o, pages in books
     ]
 
 
@@ -96,9 +111,10 @@ def shared_book(
     book_id: int, session: Session = Depends(get_session), owner: Owner = Depends(current_owner)
 ) -> SharedBookDetailOut:
     b, o, pages = _visible_book(session, book_id)
+    urls = _image_urls(session, pages)
     return SharedBookDetailOut(
         id=b.id, title=b.title, author=o.name, paper_size=b.paper_size, mine=b.owner_id == owner.id,
-        pages=[SharedPageOut(id=p.id, position=p.position) for p in pages],
+        pages=[SharedPageOut(id=p.id, position=p.position, image_url=urls[p.id]) for p in pages],
     )
 
 

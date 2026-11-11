@@ -95,6 +95,7 @@ class SharedBookOut(BaseModel):
     paper_size: PaperSize
     page_count: int
     cover_page_id: int
+    cover_image_url: str  # 封面頁的分享圖（帶 ?v=）
     shared_at: datetime
     mine: bool
 
@@ -102,6 +103,7 @@ class SharedBookOut(BaseModel):
 class SharedPageOut(BaseModel):
     id: int
     position: int
+    image_url: str  # /api/shared/pages/{id}/image.png?v=…；印出來的樣子變了（線稿、文字、要印哪幾行）就換網址
 
 
 class SharedBookDetailOut(BaseModel):

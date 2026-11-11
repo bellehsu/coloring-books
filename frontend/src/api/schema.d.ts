@@ -1865,6 +1865,8 @@ export interface components {
             page_count: number;
             /** Cover Page Id */
             cover_page_id: number;
+            /** Cover Image Url */
+            cover_image_url: string;
             /**
              * Shared At
              * Format: date-time
@@ -1879,6 +1881,8 @@ export interface components {
             id: number;
             /** Position */
             position: number;
+            /** Image Url */
+            image_url: string;
         };
         /** StrokeIn */
         StrokeIn: {

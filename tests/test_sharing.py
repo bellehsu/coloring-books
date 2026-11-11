@@ -133,9 +133,10 @@ def test_detail_image_pdf(world):
     as_(client, sids["b"])
     d = client.get(f"/api/shared/books/{b['id']}").json()
     assert d["author"] == "小明" and d["mine"] is False
-    assert d["pages"] == [{"id": pages[2]["id"], "position": 0}, {"id": pages[0]["id"], "position": 1}]
+    assert [(p["id"], p["position"]) for p in d["pages"]] == [(pages[2]["id"], 0), (pages[0]["id"], 1)]
     for p in d["pages"]:
-        r = client.get(f"/api/shared/pages/{p['id']}/image.png")
+        assert p["image_url"].startswith(f"/api/shared/pages/{p['id']}/image.png?v=")
+        r = client.get(p["image_url"])
         assert r.status_code == 200 and r.headers["content-type"] == "image/png"
         assert r.headers["cache-control"] == "private, max-age=300"
         assert max(Image.open(io.BytesIO(r.content)).size) <= 1600
@@ -227,3 +228,31 @@ def test_shared_image_of_unshared_book_page_is_404(world):
     assert client.get(f"/api/shared/pages/{shared_pages[0]['id']}/image.png").status_code == 200
     r = client.get(f"/api/shared/pages/{other_pages[0]['id']}/image.png")
     assert r.status_code == 404 and r.json()["detail"] == GONE
+
+
+def test_shared_image_url_version_follows_what_prints(world):
+    """分享圖網址帶 ?v=：文字、要印哪幾行改了就換網址（瀏覽器不會拿 5 分鐘快取的舊圖）；沒改就不變。"""
+    app, client, sids, ids = world
+    b, pages = a_book(client, app, sids["a"], n=2, passed=(0, 1))
+    share(client, b["id"])
+    pid = pages[0]["id"]
+    as_(client, sids["b"])
+
+    def urls():
+        d = client.get(f"/api/shared/books/{b['id']}").json()
+        cover = next(i for i in client.get("/api/shared/books").json() if i["id"] == b["id"])
+        return {p["id"]: p["image_url"] for p in d["pages"]}, cover["cover_image_url"]
+
+    first, cover = urls()
+    assert cover == first[pid]
+    assert urls() == (first, cover)  # 沒改：同一個網址
+    seen = {first[pid]}
+    for change in ({"caption_zh": "消防車"}, {"caption_en": "Fire Engine"},
+                   {"caption_show_en": False}, {"caption_show_zh": False}):
+        set_page(app, pid, **change)
+        now, cover = urls()
+        assert now[pid] not in seen, change
+        assert cover == now[pid]
+        assert now[pages[1]["id"]] == first[pages[1]["id"]]  # 別頁不受影響
+        assert client.get(now[pid]).status_code == 200
+        seen.add(now[pid])
