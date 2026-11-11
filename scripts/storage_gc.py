@@ -5,7 +5,7 @@
    並清空 image_path／mask_path。頁面選用中（selected／background／pose）、書的角色、
    排隊中任務要用的角色圖，捨棄再久也不刪。
 2. 孤兒物件：books/ 底下沒有任何資料列指到的物件（生成圖、遮罩、頁面線稿 lineart_path），
-   以及 cache/previews/ 底下生成紀錄已不存在（或已沒有圖）的預覽。
+   以及 cache/previews/ 底下生成紀錄已不存在（或已捨棄且圖已清掉）的預覽。
    正在寫入的物件不算孤兒：生成紀錄排隊中／執行中，或 id 還沒 commit（大於 sqlite_sequence）。
    與 DB 對不上的物件也不刪：書號大於 DB 最大的書、頁／生成紀錄 id 超出 DB，或該 id 的列屬於另一本書。
 
@@ -78,7 +78,7 @@ class _State:
     seq: int  # 已 commit 的最大 generation id（AUTOINCREMENT，id 不重用）；更大的 id 是還沒 commit 的列
     max_book: int
     page_seq: int
-    gens: dict[int, tuple[GenStatus, str | None, int]]  # id → (status, image_path, book_id)
+    gens: dict[int, tuple[GenStatus, str | None, int, bool]]  # id → (status, image_path, book_id, discarded)
     pages: dict[int, int]  # id → book_id
     referenced: set[str]
     expired: dict[int, list[str]]  # 過期的捨棄生成紀錄 id → 它的物件 key（image／mask）
@@ -141,7 +141,7 @@ def _load_state(s: Session, now: datetime, days: int) -> _State:
         seq=seq,
         max_book=s.exec(select(func.max(Book.id))).one() or 0,
         page_seq=_seq(s, Page),
-        gens={g.id: (g.status, g.image_path, g.book_id) for g in gens},
+        gens={g.id: (g.status, g.image_path, g.book_id, g.discarded) for g in gens},
         pages={pid: bid for pid, bid in s.exec(select(Page.id, Page.book_id)).all()},
         referenced=referenced,
         expired=expired,
@@ -241,11 +241,12 @@ def _preview_gid(key: str) -> int | None:
 
 
 def _preview_is_orphan(state: _State, gid: int) -> bool:
-    """生成紀錄已不存在（id 不超過 sqlite_sequence），或已沒有圖且不在排隊／執行中（例如過期清掉後預覽刪失敗）。"""
+    """生成紀錄已不存在（id 不超過 sqlite_sequence），或是已被 GC 清掉圖的捨棄紀錄（例如清掉後預覽刪失敗）。
+    只認「捨棄＋沒有圖」：預覽 key 沒有書號，對不上的 DB 裡同 id、沒有圖的列不能讓活的預覽被刪。"""
     if gid > state.seq:
         return False
     gen = state.gens.get(gid)
-    return gen is None or (gen[1] is None and gen[0] not in _IN_FLIGHT)
+    return gen is None or (gen[3] and gen[1] is None and gen[0] not in _IN_FLIGHT)
 
 
 def _over(n: int, total: int) -> bool:

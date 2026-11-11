@@ -1350,17 +1350,43 @@ def test_gc_mismatched_guard_overridden_by_allow(storage_gc, settings_file):
     assert storage.exists(storage.generation_image(b, live))
 
 
-def test_gc_deletes_leftover_previews_of_imageless_generation(storage_gc, settings_file):
-    # 生成紀錄還在但已沒有圖（例如過期清掉後預覽刪失敗）：留下的預覽也清掉
-    from app.models import Generation
+def test_gc_deletes_leftover_previews_of_cleared_generation(storage_gc, settings_file):
+    # 捨棄、圖已被 GC 清掉的生成紀錄（例如清掉後預覽刪失敗）：留下的預覽也清掉；
+    # 沒捨棄、沒有圖的列（可能是對不上的 DB）不算，預覽 key 沒有書號無法核對
+    from app.models import Generation, utcnow
 
     _, sessions, storage = _env(settings_file)
     oid, _ = _owner(sessions, "a", is_admin=True)
     b = _book(sessions, oid)
     g = _gen(sessions, storage, b, preview=True)
     keep = _gen(sessions, storage, b, preview=True)
-    storage.delete(storage.generation_image(b, g))
-    _set(sessions, Generation, g, image_path=None)
+    not_discarded = _gen(sessions, storage, b, preview=True)
+    for gid, discarded in ((g, True), (not_discarded, False)):
+        storage.delete(storage.generation_image(b, gid))
+        _set(sessions, Generation, gid, image_path=None, discarded=discarded,
+             discarded_at=utcnow() if discarded else None)
     rep = storage_gc.run_gc(sessions, storage, days=30)
     assert rep.orphan_previews == 1
-    assert not storage.exists(storage.preview(g, "k")) and storage.exists(storage.preview(keep, "k"))
+    assert not storage.exists(storage.preview(g, "k"))
+    assert storage.exists(storage.preview(keep, "k")) and storage.exists(storage.preview(not_discarded, "k"))
+
+
+def test_gc_small_overlap_wrong_db_deletes_no_previews(storage_gc, settings_file, tmp_path):
+    """對不上的 DB（10 筆同 id、沒有圖、屬於另一本書的列）低於中止門檻：活的預覽與圖一個都不刪。"""
+    from app.db import init_db, make_engine, session_factory
+    from app.models import Page
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    p = _page(sessions, b)
+    live = [_gen(sessions, storage, b, p, preview=True) for _ in range(20)]
+    _set(sessions, Page, p, selected_generation_id=live[0])
+    eng = make_engine(tmp_path / "other.db")
+    init_db(eng)
+    other = session_factory(eng)
+    o2, _ = _owner(other, "x", is_admin=True)
+    _bulk_gens(other, _book(other, o2) + 100, 10)
+    before = _keys(storage)
+    rep = storage_gc.run_gc(other, storage, days=30)
+    assert not rep.aborted and _keys(storage) == before
