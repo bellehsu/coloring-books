@@ -11,9 +11,10 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
-from .api import books, compose, export, files, generations, lineart, pages, review
+from .api import books, compose, export, files, generations, invites, lineart, pages, review
+from .api.deps import require_admin, require_owned_path
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
 from .services.comfy_client import ComfyClient
@@ -75,14 +76,13 @@ def create_app(
             db.dispose()
 
     app = FastAPI(title="Coloring Books", lifespan=lifespan)
-    app.include_router(books.router)
-    app.include_router(pages.router)
-    app.include_router(compose.router)
-    app.include_router(generations.router)
-    app.include_router(lineart.router)
-    app.include_router(review.router)
-    app.include_router(export.router)
+    # 每個 API 路由先確認登入（current_owner），再確認路徑裡的 book／page／generation id 屬於這個 owner
+    # （別人的 → 404），都在 body 驗證與端點本身之前。例外：/api/files（HMAC 簽章就是憑證）與 /i/{token}。
+    owned = [Depends(require_owned_path)]
+    for r in (books, pages, compose, generations, lineart, review, export):
+        app.include_router(r.router, dependencies=owned)
     app.include_router(files.router)
+    app.include_router(invites.router)
 
     async def _preflight(app: FastAPI):
         """跑 preflight 並更新快取 app.state.preflight。"""
@@ -92,7 +92,7 @@ def create_app(
         app.state.preflight = report
         return report
 
-    @app.get("/api/system/preflight")
+    @app.get("/api/system/preflight", dependencies=[Depends(require_admin)])
     async def preflight(reload: bool = True) -> dict:
         if reload:
             app.state.registry = WorkflowRegistry(app.state.settings.paths.workflows_dir).load()

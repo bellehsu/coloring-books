@@ -11,10 +11,10 @@ from sqlalchemy import case, literal
 from sqlmodel import Session, col, func, select, update
 
 from app.api.books import _book_or_404
-from app.api.deps import get_session, get_storage, get_worker
+from app.api.deps import current_owner, get_session, get_storage, get_worker
 from app.api.files import signed_redirect
 from app.api.schemas import GenerationOut
-from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
+from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
 from app.services.worker import GenerationWorker, WorkerState
@@ -221,8 +221,12 @@ def cancel_generation(
 
 @router.get("/system/queue", response_model=QueueStatus)
 def queue_status(
-    session: Session = Depends(get_session), worker: GenerationWorker = Depends(get_worker)
+    session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> QueueStatus:
+    """全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。
+    非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。"""
     queued = session.exec(
         select(func.count()).select_from(Generation).where(col(Generation.status) == GenStatus.QUEUED)
     ).one()
@@ -253,11 +257,12 @@ def queue_status(
             .limit(_RECENT_PER_KIND)
         ).all()
         recent += [RecentJob(kind=kind.value, elapsed_s=e) for e in rows]
+    system_error = worker.state == WorkerState.ENGINE_UNAVAILABLE
     return QueueStatus(
         state=worker.state,
-        last_error=worker.last_error,
+        last_error=worker.last_error if owner.is_admin or system_error else None,
         queued=queued,
-        running_id=running_id,
+        running_id=running_id if owner.is_admin else None,
         pending=[PendingJob(kind=k.value) for k in pending],
         recent=recent,
     )

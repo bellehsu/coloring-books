@@ -11,7 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Books */
+        /**
+         * List Books
+         * @description 自己的書；admin 看全部。
+         */
         get: operations["list_books_api_books_get"];
         put?: never;
         /** Create Book */
@@ -401,7 +404,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Queue Status */
+        /**
+         * Queue Status
+         * @description 全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。
+         *     非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。
+         */
         get: operations["queue_status_api_system_queue_get"];
         put?: never;
         post?: never;

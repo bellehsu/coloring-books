@@ -85,6 +85,19 @@ class StorageSettings(BaseModel):
     signing_key: SecretStr | None = None
 
 
+class AuthSettings(BaseModel):
+    # 本機開發：沒有 cookie 的請求視為這個名字的 admin owner（沒有就建立）。雲端一定要留空（None）
+    dev_owner: str | None = None
+    # cb_session cookie 是否加 Secure（HTTPS 部署時開啟；本機 http 開發要關）
+    cookie_secure: bool = False
+
+    @field_validator("dev_owner")
+    @classmethod
+    def _blank_is_none(cls, v: str | None) -> str | None:
+        v = v.strip() if v is not None else None
+        return v or None
+
+
 # 只能用環境變數設定的欄位（設定檔裡出現就報錯，避免憑證進到檔案或版控）
 _ENV_ONLY_FIELDS = {
     ("storage", "r2", "access_key"): "APP_STORAGE__R2__ACCESS_KEY",
@@ -104,6 +117,7 @@ class Settings(BaseSettings):
     paths: PathSettings
     queue: QueueSettings = QueueSettings()
     storage: StorageSettings = StorageSettings()
+    auth: AuthSettings = AuthSettings()
 
     @classmethod
     def settings_customise_sources(

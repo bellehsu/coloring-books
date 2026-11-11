@@ -483,6 +483,21 @@ def test_fake_backend_always_uses_local_storage(settings_file, tmp_path):
         assert app.state.storage.root == (tmp_path / "s").resolve()
 
 
+def test_fake_backend_defaults_to_dev_owner_admin(settings_file, tmp_path):
+    """假後端（e2e）沒有 cookie 也能用：設定檔沒設 auth.dev_owner 時，仍預設 admin。"""
+    from fastapi.testclient import TestClient
+
+    from app.config import load_settings
+
+    base = load_settings(settings_file)
+    base = base.model_copy(update={"auth": base.auth.model_copy(update={"dev_owner": None})})
+    assert fake_backend.demo_settings(tmp_path / "s", base).auth.dev_owner == "admin"
+    assert fake_backend.demo_settings(tmp_path / "s", base, dev_owner=None).auth.dev_owner is None
+    app = fake_backend.create_demo_app(tmp_path / "s", base, engine=fake_backend.DemoEngine(delay_s=0))
+    with TestClient(app) as c:
+        assert c.get("/api/books").status_code == 200
+
+
 def test_fake_backend_cli_runs_uvicorn_on_port(settings_file, tmp_path, monkeypatch):
     import uvicorn
 

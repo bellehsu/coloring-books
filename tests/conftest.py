@@ -93,7 +93,14 @@ def workflows_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def settings_file(tmp_path: Path, workflows_dir: Path) -> Path:
+def dev_owner() -> str | None:
+    """settings_file 的 auth.dev_owner：預設 admin，舊的 API 測試不用邀請連結也能跑。
+    要測真正的邀請連結／隔離時，在該測試模組覆寫這個 fixture 回傳 None。"""
+    return "admin"
+
+
+@pytest.fixture
+def settings_file(tmp_path: Path, workflows_dir: Path, dev_owner: str | None) -> Path:
     models = tmp_path / "models"
     models.mkdir()
     storage = tmp_path / "storage"
@@ -103,5 +110,6 @@ def settings_file(tmp_path: Path, workflows_dir: Path) -> Path:
         "comfy": {"url": "http://comfy.test:8188", "models_root": str(models)},
         "paths": {"workflows_dir": str(workflows_dir), "storage_dir": str(storage),
                   "database": str(storage / "app.db")},
+        "auth": {"dev_owner": dev_owner},
     }), encoding="utf-8")
     return p

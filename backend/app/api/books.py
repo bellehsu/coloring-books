@@ -7,7 +7,7 @@ import random
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlmodel import Session, col, select, update
 
-from app.api.deps import get_session, get_worker, temporary_admin_owner
+from app.api.deps import current_owner, get_session, get_worker, owned_generation
 from app.api.schemas import (
     BookCreate,
     BookOut,
@@ -17,7 +17,7 @@ from app.api.schemas import (
     CharacterSelect,
     GenerationOut,
 )
-from app.models import Book, Generation, GenKind, GenStatus, Page, PageStatus, utcnow
+from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
 from app.services.layout import PaperSize, ratio_group
 from app.services.page_lineart import ensure_page_lineart
 from app.services.prompts import QWEN_CHARACTER_SIZE, pick_character_variation, qwen_character_prompt
@@ -31,6 +31,7 @@ MAX_SEED = 2**32 - 1
 
 
 def _book_or_404(session: Session, book_id: int) -> Book:
+    """路徑裡的 book_id 已由 require_owned_path（main.py 掛在 router 上）確認屬於目前的 owner。"""
     book = session.get(Book, book_id)
     if book is None:
         raise HTTPException(404, "找不到這本繪本")
@@ -79,8 +80,11 @@ def book_out(session: Session, book: Book) -> BookOut:
 
 
 @router.post("", status_code=201, response_model=BookOut)
-def create_book(body: BookCreate, session: Session = Depends(get_session)) -> BookOut:
-    owner = temporary_admin_owner(session)  # TEMPORARY：Task 5 改成 current_owner
+def create_book(
+    body: BookCreate,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> BookOut:
     book = Book(title=body.title, paper_size=body.paper_size, print_mode=body.print_mode, owner_id=owner.id)
     session.add(book)
     session.commit()
@@ -88,8 +92,14 @@ def create_book(body: BookCreate, session: Session = Depends(get_session)) -> Bo
 
 
 @router.get("", response_model=list[BookOut])
-def list_books(session: Session = Depends(get_session)) -> list[BookOut]:
-    books = session.exec(select(Book).order_by(col(Book.id).desc())).all()
+def list_books(
+    session: Session = Depends(get_session), owner: Owner = Depends(current_owner)
+) -> list[BookOut]:
+    """自己的書；admin 看全部。"""
+    stmt = select(Book)
+    if not owner.is_admin:
+        stmt = stmt.where(col(Book.owner_id) == owner.id)
+    books = session.exec(stmt.order_by(col(Book.id).desc())).all()
     return book_outs(session, list(books))
 
 
@@ -226,14 +236,15 @@ def create_character_candidates(
 
 @router.post("/{book_id}/character", response_model=BookOut)
 def set_character(
-    book_id: int, body: CharacterSelect, session: Session = Depends(get_session)
+    book_id: int,
+    body: CharacterSelect,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> BookOut:
     book = _book_or_404(session, book_id)
     if book.character_generation_id is not None:
         raise HTTPException(409, "這本繪本的角色已經設定")
-    gen = session.get(Generation, body.generation_id)
-    if gen is None:
-        raise HTTPException(404, "找不到這筆生成紀錄")
+    gen = owned_generation(session, owner, body.generation_id)  # 別人的與不存在一樣 404
     if gen.book_id != book_id:
         raise HTTPException(409, "這筆生成紀錄不屬於這本繪本")
     if gen.kind != GenKind.CHARACTER:

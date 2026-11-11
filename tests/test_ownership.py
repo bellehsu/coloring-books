@@ -1,0 +1,184 @@
+"""每條帶 book／page／generation id 的路由都要檢查擁有者（Phase 10 Task 5，Review Focus 1）。
+
+路由清單直接從 app.routes 讀：新增的路由自動納入。不帶 id 的路由只能是下面明列的 allow-list。
+"""
+
+import re
+import sqlite3
+
+import pytest
+from fastapi.routing import APIRoute, iter_route_contexts
+from fastapi.testclient import TestClient
+
+from app.config import load_settings
+from app.main import create_app
+from app.models import GenKind
+from app.services import auth
+from tests.fake_engine import FakeEngine
+from tests.test_api_lineart import seed_generation, selected_page
+
+COOKIE = "cb_session"
+OWNED_PARAMS = {"book_id", "page_id", "gen_id"}
+# 不帶擁有物 id 的路由（仍需登入，除了 /i 與 /api/files）。新增路由時，要嘛帶 id，要嘛明確加到這裡。
+NO_OWNED_ID = {
+    ("GET", "/api/books"),
+    ("POST", "/api/books"),
+    ("GET", "/api/system/queue"),
+    ("GET", "/api/system/preflight"),
+    ("GET", "/i/{token}"),  # 邀請連結本身就是憑證
+    ("GET", "/api/files/{key:path}"),  # LocalStorage 的 HMAC 簽章就是憑證（短效）
+}
+# FastAPI 內建的 API 文件（不含任何資料）
+FASTAPI_DOCS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+PUBLIC = {("GET", "/i/{token}"), ("GET", "/api/files/{key:path}")}
+# 擁有者檢查用的 404 訊息（別人的資源與不存在的資源一樣）
+NOT_FOUND = {"找不到這本繪本", "找不到這一頁", "找不到這筆生成紀錄"}
+
+
+def _routes():
+    """(method, path, path 參數)；含 include_router 進來的路由（FastAPI 0.14x 起 app.routes 不再攤平，
+    要用 iter_route_contexts 才看得到每一條實際生效的路由）。"""
+    app = create_app()  # 只讀路由表，不跑 lifespan
+    out = []
+    for rc in iter_route_contexts(app.routes):
+        route = rc.original_route
+        if rc.path in FASTAPI_DOCS:
+            continue
+        assert isinstance(route, APIRoute), rc.path  # 其他種類的路由（mount、websocket）要另外想權限
+        for m in sorted(route.methods - {"HEAD"}):
+            out.append((m, rc.path, frozenset(re.findall(r"{(\w+)", rc.path))))
+    return out
+
+
+ROUTES = _routes()
+ID_ROUTES = [(m, p) for m, p, params in ROUTES if (m, p) not in NO_OWNED_ID]
+
+
+def test_route_inventory_is_explicit():
+    """不帶 id 的路由必須剛好是 allow-list；帶參數的路由只能用 book_id／page_id／gen_id。"""
+    no_id = {(m, p) for m, p, params in ROUTES if not params & OWNED_PARAMS}
+    assert no_id == NO_OWNED_ID
+    for m, p, params in ROUTES:
+        if (m, p) not in NO_OWNED_ID:
+            assert params <= OWNED_PARAMS, (m, p, params)
+    assert len(ID_ROUTES) >= 35  # 防呆：路由表讀錯會變成空的參數化
+
+
+@pytest.fixture
+def dev_owner():
+    return None
+
+
+@pytest.fixture
+def world(settings_file):
+    """甲、乙兩個邀請連結＋一個 admin；甲有一本書（角色、一頁、選定圖、背景、角色動作）。"""
+    app = create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False,
+                     startup_preflight=False)
+    with TestClient(app) as client:
+        sids = {}
+        with app.state.sessions() as s:
+            tokens = {
+                "a": auth.create_owner(s, "甲")[1],
+                "b": auth.create_owner(s, "乙")[1],
+                "admin": auth.create_owner(s, "管理者", is_admin=True)[1],
+            }
+        for who, token in tokens.items():
+            client.cookies.clear()
+            r = client.get(f"/i/{token}", follow_redirects=False)
+            assert r.status_code == 303
+            sids[who] = client.cookies[COOKIE]
+        as_(client, sids["a"])
+        b, p, ids = selected_page(client, app)
+        from tests.test_api_lineart import color_png
+
+        bg = seed_generation(app, b["id"], p["id"], color_png(), GenKind.BACKGROUND)
+        ids = {"book_id": b["id"], "page_id": p["id"], "gen_id": ids[0], "bg": bg}
+        yield app, client, sids, ids
+
+
+def as_(client, sid):
+    client.cookies.clear()
+    if sid is not None:
+        client.cookies.set(COOKIE, sid)
+
+
+def _url(path, ids):
+    return path.format(**{k: ids[k] for k in re.findall(r"{(\w+)", path)})
+
+
+def _call(client, method, url):
+    if method in ("POST", "PUT", "PATCH"):
+        return client.request(method, url, json={}, follow_redirects=False)
+    return client.request(method, url, follow_redirects=False)
+
+
+def _snapshot(app) -> list[str]:
+    """整個 DB 的內容（不含 owner_session：最後使用時間不算資料）＋所有存放的物件。"""
+    con = sqlite3.connect(app.state.settings.paths.database)
+    try:
+        rows = [line for line in con.iterdump() if "owner_session" not in line]
+    finally:
+        con.close()
+    st = app.state.storage
+    return rows + sorted([*st.list("books/"), *st.list("cache/")])
+
+
+@pytest.mark.parametrize("method,path", ID_ROUTES, ids=[f"{m} {p}" for m, p in ID_ROUTES])
+def test_ownership_404_on_every_route(world, method, path):
+    app, client, sids, ids = world
+    url = _url(path, ids)
+    before = _snapshot(app)
+    as_(client, sids["b"])
+    r = _call(client, method, url)
+    assert r.status_code == 404, (url, r.status_code, r.text)
+    assert r.json()["detail"] in NOT_FOUND
+    assert "location" not in r.headers
+    assert _snapshot(app) == before  # 別人的請求不能改到任何東西
+
+    # 不存在的 id 也是同樣的 404（別人的資源看起來跟不存在一樣）
+    missing = _url(path, {k: 987654 for k in OWNED_PARAMS})
+    r2 = _call(client, method, missing)
+    assert r2.status_code == 404 and r2.json()["detail"] == r.json()["detail"]
+
+    # admin 看得到全部；擁有者本人當然也可以（DELETE 之後就沒了，只測 admin）
+    for who in ("admin",) if method == "DELETE" else ("admin", "a"):
+        as_(client, sids[who])
+        r = _call(client, method, url)
+        assert r.status_code not in (401, 403), (who, url, r.text)
+        if r.status_code == 404:
+            assert r.json()["detail"] not in NOT_FOUND, (who, url, r.text)
+
+
+@pytest.mark.parametrize("method,path", [(m, p) for m, p, _ in ROUTES if (m, p) not in PUBLIC])
+def test_every_route_requires_session(world, method, path):
+    app, client, sids, ids = world
+    as_(client, None)
+    r = _call(client, method, _url(path, ids))
+    assert r.status_code == 401 and r.json()["detail"] == "請用邀請連結開啟", (path, r.text)
+
+
+def test_admin_gets_200(world):
+    app, client, sids, ids = world
+    as_(client, sids["admin"])
+    b, p, g = ids["book_id"], ids["page_id"], ids["gen_id"]
+    for url in (f"/api/books/{b}", f"/api/books/{b}/pages", f"/api/books/{b}/generations",
+                f"/api/generations/{g}", f"/api/pages/{p}/qa", f"/api/books/{b}/export/summary"):
+        assert client.get(url).status_code == 200, url
+    for url in (f"/api/generations/{g}/image", f"/api/pages/{p}/lineart"):
+        r = client.get(url, follow_redirects=False)
+        assert r.status_code == 302, url
+        assert client.get(r.headers["location"]).status_code == 200
+    r = client.patch(f"/api/books/{b}", json={"title": "admin 改的"})
+    assert r.status_code == 200 and r.json()["title"] == "admin 改的"
+
+
+def test_body_generation_id_of_other_owner_is_404(world):
+    """body 裡指到別人的 generation：與不存在一樣回 404，不透露它存在。"""
+    app, client, sids, ids = world
+    as_(client, sids["b"])
+    mine = client.post("/api/books", json={"title": "乙", "paper_size": "a5", "print_mode": "home"}).json()
+    page = client.post(f"/api/books/{mine['id']}/pages", json={}).json()
+    r = client.post(f"/api/books/{mine['id']}/character", json={"generation_id": ids["gen_id"]})
+    assert r.status_code == 404 and r.json()["detail"] == "找不到這筆生成紀錄"
+    r = client.post(f"/api/pages/{page['id']}/background", json={"generation_id": ids["bg"]})
+    assert r.status_code == 404 and r.json()["detail"] == "找不到這筆生成紀錄"

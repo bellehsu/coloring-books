@@ -48,3 +48,11 @@ storage:
   cache_max_bytes: 2147483648
   # local 模式 /api/files 網址的 HMAC 金鑰：只能用環境變數 APP_STORAGE__SIGNING_KEY；
   # 沒設時自動產生並存在 <paths.storage_dir>/.signing_key（權限 0600）
+
+auth:
+  # 本機開發：沒有 cookie（沒開過邀請連結）的請求視為這個名字的 admin，不用連結就能用。
+  # 已有 admin（例如資料庫遷移時建立的）會直接沿用，不會重複建立。
+  # 對外部署（雲端）一定要設成 null：否則沒登入的人都是 admin。也可用環境變數 APP_AUTH__DEV_OWNER 覆寫。
+  dev_owner: admin
+  # cb_session cookie 加上 Secure（HTTPS 部署時設 true；本機 http 開發維持 false）
+  cookie_secure: false

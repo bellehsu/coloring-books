@@ -11,6 +11,7 @@
           "books"
         ],
         "summary": "List Books",
+        "description": "自己的書；admin 看全部。",
         "operationId": "list_books_api_books_get",
         "responses": {
           "200": {
@@ -1282,6 +1283,7 @@
           "generations"
         ],
         "summary": "Queue Status",
+        "description": "全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。\n非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。",
         "operationId": "queue_status_api_system_queue_get",
         "responses": {
           "200": {

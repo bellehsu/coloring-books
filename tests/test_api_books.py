@@ -57,7 +57,7 @@ def test_create_and_get_book_with_layout(client):
 
 
 def test_create_book_assigns_admin_owner(client, app):
-    """Task 5 之前的暫時做法：新書都歸給唯一的 admin owner（沒有就建立）。"""
+    """沒有 cookie 時是 auth.dev_owner（測試預設 admin）：新書都歸給那個 admin owner（沒有就建立一個）。"""
     from app.models import Book, Owner
 
     a, b = new_book(client, title="一"), new_book(client, title="二")

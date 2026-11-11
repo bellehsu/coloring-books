@@ -14,7 +14,11 @@ const nextConfig: NextConfig = {
   allowedDevOrigins,
   async rewrites() {
     const backend = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
-    return [{ source: "/api/:path*", destination: `${backend}/api/:path*` }];
+    // 邀請連結 /i/{token} 也走後端：後端設定 cb_session cookie 後轉回 `/`，與 /api 同源，cookie 才帶得到
+    return [
+      { source: "/api/:path*", destination: `${backend}/api/:path*` },
+      { source: "/i/:path*", destination: `${backend}/i/:path*` },
+    ];
   },
 };
 

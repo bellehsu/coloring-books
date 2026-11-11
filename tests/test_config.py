@@ -180,6 +180,24 @@ def test_example_settings_has_storage_section():
     assert "access_key" not in (st.get("r2") or {}) and "secret_key" not in (st.get("r2") or {})
 
 
+def test_auth_settings_defaults_and_env(settings_file: Path, monkeypatch):
+    s = load_settings(settings_file)
+    assert s.auth.dev_owner == "admin"  # conftest 的 dev_owner fixture
+    assert s.auth.cookie_secure is False
+    monkeypatch.setenv("APP_AUTH__DEV_OWNER", "  ")  # 空白＝不啟用
+    monkeypatch.setenv("APP_AUTH__COOKIE_SECURE", "true")
+    s = load_settings(settings_file)
+    assert s.auth.dev_owner is None and s.auth.cookie_secure is True
+    from app.config import AuthSettings
+
+    assert AuthSettings().dev_owner is None  # 程式預設不啟用（雲端安全）
+
+
+def test_example_settings_has_auth_section():
+    s = load_settings(PROJECT_ROOT / "config" / "settings.example.yaml", check_paths=False)
+    assert s.auth.dev_owner == "admin" and s.auth.cookie_secure is False
+
+
 # ---------- make_storage ----------
 
 

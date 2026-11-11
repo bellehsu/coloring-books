@@ -200,15 +200,18 @@ class DemoEngine:
         )
 
 
-def demo_settings(storage: Path, base: Settings | None = None) -> Settings:
+def demo_settings(storage: Path, base: Settings | None = None, *, dev_owner: str | None = "admin") -> Settings:
     """load_settings() 的設定，但 storage_dir／database 改到 storage（會建立資料夾），
-    且一律用 LocalStorage（storage.backend=local）：假後端與 e2e 不需要網路或 R2 憑證。"""
+    且一律用 LocalStorage（storage.backend=local）：假後端與 e2e 不需要網路或 R2 憑證。
+    auth.dev_owner 預設 admin：沒有 cookie 的請求就是 admin，e2e 不用邀請連結；
+    有 cookie（GET /i/{token}）時照常以那個 owner 身分。"""
     s = base or load_settings(check_paths=False)
     storage = storage.expanduser().resolve()
     storage.mkdir(parents=True, exist_ok=True)
     return s.model_copy(update={
         "paths": s.paths.model_copy(update={"storage_dir": storage, "database": storage / "app.db"}),
         "storage": s.storage.model_copy(update={"backend": "local", "cache_dir": None}),
+        "auth": s.auth.model_copy(update={"dev_owner": dev_owner}),
     })
 
 

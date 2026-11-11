@@ -16,7 +16,7 @@ from sqlalchemy import and_, case, null
 from sqlmodel import Session, col, select, update
 
 from app.api.books import MAX_SEED, _book_or_404
-from app.api.deps import get_session, get_storage, get_worker
+from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_generation
 from app.api.pages import _page_or_404, page_out, reset_review_when
 from app.api.schemas import (
     BackgroundCreate,
@@ -29,7 +29,7 @@ from app.api.schemas import (
     PoseCreate,
     SelectGeneration,
 )
-from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
+from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.compose import (
     COMPOSE_VERSION,
     Placement,
@@ -332,12 +332,10 @@ def create_pose(
     return _enqueue_pose(session, storage, worker, book, page, body.action)
 
 
-def _pick(session: Session, page_id: int, gen_id: int, kind: GenKind) -> PageOut:
+def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKind) -> PageOut:
     label = _LABEL[kind]
     page = _page_or_404(session, page_id)
-    gen = session.get(Generation, gen_id)
-    if gen is None:
-        raise HTTPException(404, "找不到這筆生成紀錄")
+    gen = owned_generation(session, owner, gen_id)  # 別人的與不存在一樣 404
     if gen.page_id != page_id:
         raise HTTPException(409, "這筆生成紀錄不屬於這一頁")
     if gen.kind != kind:
@@ -384,9 +382,12 @@ def _pick(session: Session, page_id: int, gen_id: int, kind: GenKind) -> PageOut
 
 @router.post("/pages/{page_id}/background", response_model=PageOut)
 def select_background(
-    page_id: int, body: SelectGeneration, session: Session = Depends(get_session)
+    page_id: int,
+    body: SelectGeneration,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    return _pick(session, page_id, body.generation_id, GenKind.BACKGROUND)
+    return _pick(session, owner, page_id, body.generation_id, GenKind.BACKGROUND)
 
 
 @router.post("/pages/{page_id}/backgrounds/upload", status_code=201, response_model=PageOut)
@@ -395,6 +396,7 @@ def upload_background(
     file: UploadFile,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
     """上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine="upload" 的背景並選用。"""
     page = _page_or_404(session, page_id)
@@ -454,7 +456,7 @@ def upload_background(
         written = rel
         gen.image_path = rel
         session.commit()
-        return _pick(session, page_id, gen.id, GenKind.BACKGROUND)
+        return _pick(session, owner, page_id, gen.id, GenKind.BACKGROUND)
     except Exception:
         session.rollback()
         if written:
@@ -464,9 +466,12 @@ def upload_background(
 
 @router.post("/pages/{page_id}/pose", response_model=PageOut)
 def select_pose(
-    page_id: int, body: SelectGeneration, session: Session = Depends(get_session)
+    page_id: int,
+    body: SelectGeneration,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    return _pick(session, page_id, body.generation_id, GenKind.POSE)
+    return _pick(session, owner, page_id, body.generation_id, GenKind.POSE)
 
 
 @router.put("/pages/{page_id}/placement", response_model=PageOut)
