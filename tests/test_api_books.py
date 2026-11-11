@@ -397,3 +397,42 @@ def test_book_stats_and_cover(client, app):
     assert listed[b["id"]]["stats"] == got["stats"]
     assert listed[b["id"]]["cover_url"] == got["cover_url"]
     assert p0["position"] == 1 and p2["position"] == 2
+
+
+def _clear_image(app, gen_id):
+    """storage_gc 清掉過期捨棄圖之後的樣子：成功、沒有圖。"""
+    with app.state.sessions() as s:
+        row = s.get(Generation, gen_id)
+        row.image_path = None
+        s.add(row)
+        s.commit()
+
+
+def test_set_character_rejects_cleared_image(client, app):
+    # 被 storage_gc 清掉圖的候選圖不能變成角色：之後每個角色動作任務都會拿不到角色圖
+    b = new_book(client)
+    gid = candidate_ids(client, b["id"], 1, seed=1)[0]
+    run_jobs(client, app)
+    _clear_image(app, gid)
+    r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gid})
+    assert r.status_code == 409
+    assert client.get(f"/api/books/{b['id']}").json()["character_generation_id"] is None
+
+
+def test_set_character_blocked_by_racing_gc_clear(client, app, monkeypatch):
+    from app.api import books as books_mod
+
+    b = new_book(client)
+    gid = candidate_ids(client, b["id"], 1, seed=1)[0]
+    run_jobs(client, app)
+    real = books_mod.utcnow
+
+    def racing():
+        _clear_image(app, gid)  # 驗證後、UPDATE 前，storage_gc 清掉了圖
+        return real()
+
+    monkeypatch.setattr(books_mod, "utcnow", racing)
+    r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gid})
+    assert r.status_code == 409
+    monkeypatch.undo()
+    assert client.get(f"/api/books/{b['id']}").json()["character_generation_id"] is None

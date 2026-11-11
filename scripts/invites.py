@@ -169,14 +169,16 @@ def _active_admins_except(s: Session, owner_id: int) -> int:
     ).one()
 
 
+def _check_last_admin(s: Session, owner: Owner, force: bool) -> None:
+    if owner.is_admin and _active_admins_except(s, owner.id) == 0 and not force:
+        raise CliError(f"owner {owner.id}「{owner.name}」是最後一個 admin；確定要刪就加 --force-admin")
+
+
 def cmd_delete_data(args: argparse.Namespace, settings: Settings, sessions) -> int:
     storage = make_storage(settings)
     with sessions() as s:
         owner = get_owner(s, args.id)
-        if owner.is_admin and _active_admins_except(s, owner.id) == 0 and not args.force_admin:
-            raise CliError(
-                f"owner {owner.id}「{owner.name}」是最後一個 admin；確定要刪就加 --force-admin"
-            )
+        _check_last_admin(s, owner, args.force_admin)
         book_ids = list(s.exec(select(Book.id).where(col(Book.owner_id) == owner.id)).all())
         n_pages = s.exec(select(func.count()).select_from(Page).where(col(Page.book_id).in_(book_ids))).one()
         n_gens = s.exec(
@@ -204,6 +206,12 @@ def cmd_delete_data(args: argparse.Namespace, settings: Settings, sessions) -> i
             .returning(Generation.id)
         ).scalars().all()
         refund_generations(s, cancelled)  # 替別人的書排隊的 admin 也拿回額度
+        # 確認期間可能有變（另一個 admin 被撤銷、owner 已被刪）：在持有寫入鎖的交易裡再檢查一次
+        try:
+            _check_last_admin(s, get_owner(s, args.id), args.force_admin)
+        except CliError:
+            s.rollback()
+            raise
         running = s.exec(
             select(func.count()).select_from(Generation).where(
                 col(Generation.book_id).in_(owned), col(Generation.status) == GenStatus.RUNNING

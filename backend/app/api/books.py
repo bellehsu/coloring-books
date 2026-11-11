@@ -259,6 +259,8 @@ def set_character(
         raise HTTPException(409, "這張候選圖尚未成功生成")
     if gen.discarded:
         raise HTTPException(409, "這張候選圖已被捨棄")
+    if gen.image_path is None:
+        raise HTTPException(409, "這張候選圖已被清理")
     # 同一條 UPDATE 再確認候選圖仍可用，避免與捨棄競爭而指向已捨棄的 generation
     still_valid = (
         select(Generation.id)
@@ -268,6 +270,7 @@ def set_character(
             col(Generation.kind) == GenKind.CHARACTER,
             col(Generation.status) == GenStatus.SUCCEEDED,
             col(Generation.discarded).is_(False),
+            col(Generation.image_path).is_not(None),  # storage_gc 清掉圖的不能當角色
         )
         .exists()
     )

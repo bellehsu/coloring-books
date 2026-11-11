@@ -22,6 +22,8 @@ from app.storage import Storage, StorageNotFound
 
 router = APIRouter(prefix="/api", tags=["generations"])
 
+IMAGE_CLEARED = "這張圖已被清理，無法還原"
+
 
 class GenerationUpdate(BaseModel):
     discarded: bool
@@ -178,6 +180,10 @@ def update_generation(
             | select(Book.id).where(col(Book.character_generation_id) == gen_id).exists()
         )
         guard = guard & ~in_use
+    else:
+        # storage_gc 已清掉圖（成功、沒有圖）的不能還原：還原後可能被選成角色，之後的任務都拿不到圖
+        cleared = (col(Generation.status) == GenStatus.SUCCEEDED) & col(Generation.image_path).is_(None)
+        guard = guard & ~cleared
     # 保留期限（storage_gc）從 discarded_at 起算：捨棄時記下（已捨棄的不重算，期限不往後延），還原時清掉
     discarded_at_type = Generation.__table__.c.discarded_at.type
     values: dict = {
@@ -206,6 +212,8 @@ def update_generation(
         refund_generations(session, [gen_id])  # 排隊中被取消的退回額度（已退過的不再退）
     session.commit()
     if res.rowcount == 0:
+        if not body.discarded:
+            raise HTTPException(409, IMAGE_CLEARED)
         raise HTTPException(409, "這筆生成紀錄正被頁面使用或作為角色，無法捨棄")
     session.refresh(gen)
     return _out(gen, worker)

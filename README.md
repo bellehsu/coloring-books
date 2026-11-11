@@ -86,7 +86,10 @@ env -u PYTHONPATH $PY scripts/storage_gc.py                  # 真的刪除（�
 
 - 連結前綴：`--base-url`，其次 `auth.invite_base_url`，預設 `http://localhost:3000`。
 - 最後一個未撤銷的 admin 要加 `--force-admin` 才能 `delete-data`；還有圖片正在生成時 `delete-data` 會拒絕，稍後再試。
-- `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試）、2 設定錯誤。
+- `storage_gc.py` 不升級資料庫結構：DB 不是最新版時請先啟動一次後端。與 DB 對不上的物件（書／頁／生成紀錄 id 超出 DB、
+  或屬於另一本書）不刪；孤兒超過 20 個且超過列出物件的 20% 時整個中止（多半是設定指錯 DB 或 bucket），
+  確認無誤才加 `--allow-mass-delete`。
+- `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試）、2 設定錯誤或 DB 不是最新版、3 孤兒太多而中止。
 
 ## 模型（只需要 Qwen）
 

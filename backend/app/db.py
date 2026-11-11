@@ -5,6 +5,8 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, inspect
 from sqlmodel import Session, create_engine
 
@@ -35,6 +37,14 @@ def init_db(engine: Engine) -> None:
         if "book" in tables and "alembic_version" not in tables:
             command.stamp(cfg, BASELINE_REVISION)
         command.upgrade(cfg, "head")
+
+
+def schema_revisions(engine: Engine) -> tuple[str | None, str | None]:
+    """(資料庫目前的 alembic revision, 最新的 head)；只讀，不升級。沒有 alembic_version 時目前是 None。"""
+    head = ScriptDirectory.from_config(alembic_config(engine)).get_current_head()
+    with engine.connect() as conn:
+        current = MigrationContext.configure(conn).get_current_revision()
+    return current, head
 
 
 def session_factory(engine: Engine) -> Callable[[], Session]:

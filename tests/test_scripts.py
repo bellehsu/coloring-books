@@ -1032,7 +1032,11 @@ def _gc_world(settings_file):
     storage.put(lin_old, b"l")
     sketch = f"books/{b}/pages/{p}/sketch.png"  # 舊版欄位（已移除）留下的檔案
     storage.put(sketch, b"s")
-    wrong_book = storage.generation_image(b + 50, ids["live"])
+    # DB 對不上的物件不刪（可能是別的 DB 的）：書 id 大於 DB 最大的書、生成紀錄屬於另一本書
+    other_book = _book(sessions, oid)
+    beyond = storage.generation_image(other_book + 50, ids["gone"])
+    storage.put(beyond, b"x")
+    wrong_book = storage.generation_image(other_book, ids["live"])
     storage.put(wrong_book, b"x")
     _set(sessions, Page, p, selected_generation_id=ids["sel"], background_generation_id=ids["bg"],
          pose_generation_id=ids["pose"], lineart_path=lin_cur, lineart_key="cur")
@@ -1041,9 +1045,10 @@ def _gc_world(settings_file):
     expired = {storage.generation_image(b, ids["old"]), storage.generation_mask(b, ids["old"]),
                storage.preview(ids["old"], "k")}
     orphans = {storage.generation_image(b, ids["gone"]), storage.generation_mask(b, ids["gone"]),
-               lin_old, sketch, wrong_book}
+               lin_old, sketch}
     orphan_previews = {storage.preview(ids["gone"], "k")}
-    return sessions, storage, ids, {"expired": expired, "orphans": orphans, "orphan_previews": orphan_previews}
+    return sessions, storage, ids, {"expired": expired, "orphans": orphans, "orphan_previews": orphan_previews,
+                                    "mismatched": {beyond, wrong_book}}
 
 
 def _paths(sessions) -> dict:
@@ -1064,7 +1069,8 @@ def test_gc_dry_run_deletes_nothing(storage_gc, settings_file, capsys):
     assert "dry-run" in out.lower()
     rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=True)
     assert (rep.expired_generations, rep.expired_objects) == (1, 3)
-    assert (rep.orphan_objects, rep.orphan_previews) == (5, 1)
+    assert (rep.orphan_objects, rep.orphan_previews) == (4, 1)
+    assert (rep.skipped_in_flight, rep.skipped_mismatched) == (3, 2) and not rep.aborted
     assert _keys(storage) == keys and _paths(sessions) == paths
 
 
@@ -1080,8 +1086,8 @@ def test_gc_deletes_only_expired_discarded_and_orphans(storage_gc, settings_file
     assert after[ids["old"]] == (None, None)  # 物件刪了，key 清掉
     for name in ("recent", "live", "sel", "bg", "pose", "char", "ref"):
         assert after[ids[name]] == paths[ids[name]], name  # 選用中的、角色、排隊任務要用的，捨棄再久也不刪
-    for n in ("1", "3", "5"):
-        assert n in out
+    assert "1 筆，已刪除物件 3 個" in out and "books/ 4 個、cache/previews/ 1 個" in out
+    assert "對不上）：2 個" in out
     # 再跑一次：沒有東西可刪
     rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=False)
     assert (rep.expired_generations, rep.expired_objects, rep.orphan_objects, rep.orphan_previews) == (0, 0, 0, 0)
@@ -1157,3 +1163,116 @@ def test_gc_on_r2_deletes_through_cached_storage(storage_gc, settings_file, tmp_
         assert not (cache / old).exists()
         assert not any(storage.inner.exists(k) for k in exp["orphans"] | exp["orphan_previews"])
         assert storage.inner.exists(storage.generation_image(1, ids["sel"]))
+
+
+@pytest.mark.parametrize("other_book_id", [101, 1], ids=["disjoint", "overlapping"])
+def test_gc_mismatched_db_deletes_nothing_live(storage_gc, settings_file, tmp_path, other_book_id):
+    """另一個不相干的 DB（例如開發用的）接到同一個 storage：什麼都不刪。
+    disjoint：對方的列屬於別本書 → 對不上，略過；overlapping：對方的列書號相同、沒有圖 → 孤兒太多，整個中止。"""
+    from app.db import init_db, make_engine, session_factory
+    from app.models import Page
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    p = _page(sessions, b)
+    live = [_gen(sessions, storage, b, p, preview=True) for _ in range(30)]
+    lin = storage.lineart(b, p, "cur")
+    storage.put(lin, b"l")
+    _set(sessions, Page, p, lineart_path=lin, selected_generation_id=live[0])
+
+    eng = make_engine(tmp_path / "other.db")
+    init_db(eng)
+    other = session_factory(eng)
+    o2, _ = _owner(other, "x", is_admin=True)
+    b2 = _book(other, o2)
+    assert b2 == b
+    if other_book_id == b:
+        _page(other, b2)
+    for _ in range(40):
+        _gen(other, storage, other_book_id, None, image=False)  # 列存在、沒有圖
+    before = _keys(storage)
+    rep = storage_gc.run_gc(other, storage, days=30)
+    assert _keys(storage) == before
+    assert rep.aborted is (other_book_id == b)
+    if rep.aborted:
+        assert "--allow-mass-delete" in storage_gc.format_report(rep)
+    else:
+        assert rep.skipped_mismatched > 0 and rep.orphan_objects == rep.orphan_previews == 0
+
+
+def _mass_orphans(settings_file, n=25):
+    """n 筆已刪除的生成紀錄留下的圖（真的孤兒），加上 3 筆還在的。"""
+    from app.models import Generation
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    gone = [_gen(sessions, storage, b) for _ in range(n)]
+    live = [_gen(sessions, storage, b) for _ in range(3)]
+    with sessions() as s:
+        for gid in gone:
+            s.delete(s.get(Generation, gid))
+        s.commit()
+    return sessions, storage, gone, live
+
+
+def test_gc_aborts_mass_delete_unless_allowed(storage_gc, settings_file, capsys):
+    sessions, storage, gone, live = _mass_orphans(settings_file)
+    before = _keys(storage)
+    args = ["--settings", str(settings_file)]
+    assert storage_gc.main(args + ["--dry-run"]) == 3
+    assert storage_gc.main(args) == 3
+    out = capsys.readouterr()
+    assert "--allow-mass-delete" in out.out + out.err
+    assert _keys(storage) == before
+    assert storage_gc.main(args + ["--allow-mass-delete"]) == 0
+    assert _keys(storage) == {storage.generation_image(1, g) for g in live}
+
+
+def test_gc_small_orphan_count_is_not_mass(storage_gc, settings_file):
+    # 比例超過 20% 但不超過 20 個：照常刪
+    sessions, storage, gone, live = _mass_orphans(settings_file, n=20)
+    rep = storage_gc.run_gc(sessions, storage, days=30)
+    assert not rep.aborted and rep.orphan_objects == 20
+
+
+def test_gc_refuses_db_not_at_head(storage_gc, settings_file, tmp_path, monkeypatch):
+    # GC 不跑 alembic 升級：空白或舊版的 DB 一律拒絕，請先啟動後端
+    from alembic import command
+
+    from app.db import alembic_config, make_engine
+
+    db = tmp_path / "empty.db"
+    db.touch()
+    monkeypatch.setenv("APP_PATHS__DATABASE", str(db))
+    assert storage_gc.main(["--settings", str(settings_file), "--dry-run"]) == 2
+    assert db.stat().st_size == 0  # 沒有建任何資料表
+
+    monkeypatch.delenv("APP_PATHS__DATABASE")
+    _env(settings_file)  # 升到最新
+    from app.config import load_settings
+
+    eng = make_engine(load_settings(settings_file).paths.database)
+    cfg = alembic_config(eng)
+    with eng.begin() as conn:
+        cfg.attributes["connection"] = conn
+        command.downgrade(cfg, "0005")
+    assert storage_gc.main(["--settings", str(settings_file), "--dry-run"]) == 2
+
+
+def test_delete_data_rechecks_last_admin_inside_transaction(invites, settings_file, monkeypatch):
+    # 確認期間另一個 admin 被撤銷：刪除的交易裡要再檢查一次
+    from app.models import Owner, utcnow
+
+    _, sessions, storage = _env(settings_file)
+    admin = _owner_with_data(sessions, storage, "管理員", is_admin=True)
+    other, _ = _owner(sessions, "另一個管理員", is_admin=True)
+
+    def answer(prompt=""):
+        _set(sessions, Owner, other, revoked_at=utcnow())
+        return "管理員"
+
+    monkeypatch.setattr("builtins.input", answer)
+    assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(admin["owner"])]) == 1
+    assert _counts(sessions, admin)["owner"] is True and _counts(sessions, admin)["books"] == 2

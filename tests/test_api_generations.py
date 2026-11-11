@@ -102,6 +102,26 @@ def test_discard_blocked_leaves_discarded_at_null(client, app):
     assert _discarded_at(app, char_id) is None
 
 
+def test_restore_refused_after_gc_cleared_image(client, app):
+    from app.models import Generation
+
+    b, _ = book_with_character(client, app)
+    page = new_page(client, b["id"])
+    c = seed_generation(app, b["id"], page["id"], color_png())
+    assert client.patch(f"/api/generations/{c}", json={"discarded": True}).status_code == 200
+    with app.state.sessions() as s:  # storage_gc 清掉了過期捨棄圖
+        g = s.get(Generation, c)
+        g.image_path = None
+        s.add(g)
+        s.commit()
+    r = client.patch(f"/api/generations/{c}", json={"discarded": False})
+    assert r.status_code == 409 and r.json()["detail"] == "這張圖已被清理，無法還原"
+    d = client.get(f"/api/generations/{c}").json()
+    assert d["discarded"] is True and _discarded_at(app, c) is not None
+    # 捨棄本身照常（冪等）
+    assert client.patch(f"/api/generations/{c}", json={"discarded": True}).status_code == 200
+
+
 def test_cancel_only_queued(client, app):
     b = new_book(client)
     (g1,) = candidates(client, b["id"], seed=1).json()  # 一次一張
