@@ -1,4 +1,8 @@
+import random
+
 import pytest
+
+from app.services import prompts
 
 
 def test_pose_size():
@@ -10,8 +14,7 @@ def test_pose_size():
 def test_qwen_pose_prompt():
     import random
 
-    from app.services import prompts
-    from app.services.prompts import pick_variation, qwen_pose_prompt
+    from app.services.prompts import qwen_pose_prompt
 
     p = qwen_pose_prompt("  waving one hand ")
     assert p.startswith("Make this exact character waving one hand.")
@@ -19,30 +22,68 @@ def test_qwen_pose_prompt():
     assert "{action}" not in p
     v = qwen_pose_prompt("running", "facing slightly to the left")
     assert "running, facing slightly to the left." in v
-    assert prompts.QWEN_POSE_VARIATIONS == ()
-    assert pick_variation(prompts.QWEN_POSE_VARIATIONS, random.Random(1)) is None
-    assert prompts.pick_pose_variation(random.Random(1)) is None
+    assert prompts.pick_pose_variation(random.Random(1)) in prompts.QWEN_POSE_VARIATIONS
     # 中文動作原樣放進英文樣板（不翻譯）
     assert qwen_pose_prompt("揮手").startswith("Make this exact character 揮手.")
 
 
-QWEN_POSE_T3 = (
-    "Make this exact character {action}. Draw only the character, plus the vehicle or object the action mentions, "
-    "completely visible; no ground, no floor, no road, no scenery, no room, no other background objects, no text, "
-    "no letters. Keep the same character design, proportions, colors, clothing and accessories unchanged. Full body, "
-    "centered, plain pure white background, no shadow, no cast shadow, children's picture book illustration, flat "
-    "colors, thick clean black outlines."
+QWEN_POSE_T4 = (
+    "Make this exact character {action}. Draw only the character. If the action names a vehicle or an object, also "
+    "draw that one thing, completely visible; if it names none, add nothing else; no ground, no floor, no road, no "
+    "scenery, no room, no other background objects, no text, no letters. Keep the same character design, "
+    "proportions, colors, clothing and accessories unchanged. Full body, centered, plain pure white background, no "
+    "shadow, no cast shadow, children's picture book illustration, flat colors, thick clean black outlines."
+)
+POSE_VARIATIONS = (
+    "seen in a three-quarter view turned slightly to the left",
+    "seen in a three-quarter view turned slightly to the right",
+    "with a bigger, more energetic motion",
+    "with a calmer, smaller motion",
 )
 
 
-def test_pose_template_is_t3():
+def test_pose_template_is_t4():
     from app.services.prompts import QWEN_POSE_TEMPLATE, qwen_pose_prompt
 
-    assert QWEN_POSE_TEMPLATE == QWEN_POSE_T3
+    assert QWEN_POSE_TEMPLATE == QWEN_POSE_T4
     assert "no text, no letters" in QWEN_POSE_TEMPLATE
-    assert "even if the action mentions a place" not in QWEN_POSE_TEMPLATE
     assert "scarf" not in QWEN_POSE_TEMPLATE.lower() and "ears" not in QWEN_POSE_TEMPLATE.lower()
     assert qwen_pose_prompt("騎著腳踏車").startswith("Make this exact character 騎著腳踏車.")
+
+
+def test_pose_variations_exact():
+    assert prompts.QWEN_POSE_VARIATIONS == POSE_VARIATIONS
+
+
+@pytest.mark.parametrize("v", POSE_VARIATIONS)
+def test_pick_pose_variation_excludes(v):
+    for seed in range(50):
+        assert prompts.pick_pose_variation(random.Random(seed), exclude=v) not in (v, None)
+
+
+@pytest.mark.parametrize("v", [None, *POSE_VARIATIONS])
+def test_pick_pose_variation_facing_only_3_and_4(v):
+    seen = set()
+    for seed in range(50):
+        got = prompts.pick_pose_variation(random.Random(seed), exclude=v, facing=True)
+        assert got in POSE_VARIATIONS[2:] and got != v
+        seen.add(got)
+    assert seen == set(POSE_VARIATIONS[2:]) - {v}
+
+
+@pytest.mark.parametrize("phrase", [
+    "facing toward the left side of the picture", "facing the viewer", "facing toward the right side of the picture",
+])
+def test_has_facing(phrase):
+    assert len(prompts.FACING_PHRASES) == 3
+    for text in (phrase, phrase.upper(), f"waving, {phrase.title()}"):
+        assert prompts.has_facing(text)
+
+
+def test_has_facing_false_cases():
+    assert not prompts.has_facing("揮手 朝左 正面")
+    assert not prompts.has_facing("waving hand")
+    assert not prompts.has_facing("")
 
 
 QA1_TAIL = ("Simple coloring book background, a few large simple objects, lots of empty space, children's "
@@ -63,7 +104,6 @@ def test_qwen_background_prompt():
 def test_pick_background_variation_empty_returns_none(monkeypatch):
     import random
 
-    from app.services import prompts
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ())
     assert prompts.pick_background_variation(random.Random(1)) is None
@@ -85,7 +125,6 @@ def test_background_variations_calibrated():
 def test_pick_background_variation_uses_list(monkeypatch):
     import random
 
-    from app.services import prompts
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b"))
     assert prompts.pick_background_variation(random.Random(1)) in ("a", "b")
@@ -95,7 +134,6 @@ def test_pick_background_variation_excludes_previous(monkeypatch):
     # 「再產生一張」：排除上一張的構圖變化語，避免連續兩張構圖幾乎一樣
     import random
 
-    from app.services import prompts
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b", "c"))
     for seed in range(50):
@@ -110,7 +148,6 @@ def test_pick_background_variation_excludes_previous(monkeypatch):
 def test_pick_background_variation_exclude_everything_falls_back(monkeypatch):
     import random
 
-    from app.services import prompts
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a",))
     assert prompts.pick_background_variation(random.Random(1), exclude="a") == "a"
@@ -128,7 +165,6 @@ QCHAR_T1 = (
 
 
 def test_qwen_character_constants_from_task1():
-    from app.services import prompts
 
     assert prompts.QWEN_CHARACTER_TEMPLATE == QCHAR_T1
     assert prompts.QWEN_CHARACTER_VARIATIONS == (
@@ -160,7 +196,6 @@ def test_qwen_character_prompt_inserts_description():
 def test_pick_character_variation(monkeypatch):
     import random
 
-    from app.services import prompts
 
     picks = {prompts.pick_character_variation(random.Random(s)) for s in range(80)}
     assert picks == set(prompts.QWEN_CHARACTER_VARIATIONS)

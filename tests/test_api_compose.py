@@ -411,7 +411,7 @@ def request_of(app, gen_id) -> dict:
 def test_pose_defaults_to_precise(client, app, monkeypatch):
     from app.api import compose as compose_api
 
-    monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng: None)
+    monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng, exclude=None, facing=False: None)
     b, _ = book_with_character(client, app)
     p = new_page(client, b["id"])
     r = client.post(f"/api/pages/{p['id']}/poses", json={"action": " waving hand "})
@@ -434,7 +434,7 @@ def test_pose_ignores_mode(client, app, monkeypatch, mode):
     """舊前端送的 mode 一律忽略：只有精準（Qwen）一種。"""
     from app.api import compose as compose_api
 
-    monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng: "facing left")
+    monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng, exclude=None, facing=False: "facing left")
     b, _ = book_with_character(client, app)
     p = new_page(client, b["id"])
     r = client.post(f"/api/pages/{p['id']}/poses", json={"action": "揮手", "mode": mode})
@@ -460,7 +460,7 @@ def test_pose_has_no_preflight_precheck(client, app):
 def test_pose_records_variation(client, app, monkeypatch):
     from app.api import compose as compose_api
 
-    monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng: "facing left")
+    monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng, exclude=None, facing=False: "facing left")
     b, _ = book_with_character(client, app)
     p = new_page(client, b["id"])
     g = client.post(f"/api/pages/{p['id']}/poses", json={"action": "waving hand"}).json()
@@ -469,6 +469,88 @@ def test_pose_records_variation(client, app, monkeypatch):
     assert request_of(app, g["id"])["variation"] == "facing left"
     run_jobs(client, app)
     assert app.state.engine.requests[-1].variation == "facing left"
+
+
+def _pose_post(client, page_id, action="waving hand"):
+    r = client.post(f"/api/pages/{page_id}/poses", json={"action": action})
+    assert r.status_code == 202, r.text
+    return r.json()
+
+
+def test_pose_regenerate_never_repeats_variation(client, app):
+    from app.services.prompts import QWEN_POSE_VARIATIONS
+
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    prev = None
+    for _ in range(12):
+        g = _pose_post(client, p["id"])
+        v = request_of(app, g["id"])["variation"]
+        assert v in QWEN_POSE_VARIATIONS and v != prev
+        assert g["prompt"] == qwen_pose_prompt("waving hand", v)
+        prev = v
+
+
+def test_pose_excludes_latest_pose_any_status(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    calls = []
+    real = compose_api.pick_pose_variation
+
+    def spy(rng, exclude=None, facing=False):
+        calls.append(exclude)
+        return real(rng, exclude=exclude, facing=facing)
+
+    monkeypatch.setattr(compose_api, "pick_pose_variation", spy)
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    other = new_page(client, b["id"])
+    first = _pose_post(client, p["id"])
+    assert calls == [None]
+    v1 = request_of(app, first["id"])["variation"]
+    _set_status(app, first["id"], GenStatus.FAILED, discarded=True)
+    second = _pose_post(client, p["id"])
+    assert calls[-1] == v1 and request_of(app, second["id"])["variation"] != v1
+    _pose_post(client, other["id"])  # 只看同一頁
+    assert calls[-1] is None
+
+
+def test_batch_pose_excludes_latest_pose_per_page(client, app, monkeypatch):
+    from app.api import compose as compose_api
+
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p1 = new_page(client, b["id"], scene_prompt="公園", action_prompt="揮手")
+    p2 = new_page(client, b["id"], scene_prompt="海邊", action_prompt="跑步")
+    prior = _pose_post(client, p1["id"])
+    prior_v = request_of(app, prior["id"])["variation"]
+    _set_status(app, prior["id"], GenStatus.FAILED)
+    calls = []
+    real = compose_api.pick_pose_variation
+
+    def spy(rng, exclude=None, facing=False):
+        calls.append(exclude)
+        return real(rng, exclude=exclude, facing=facing)
+
+    monkeypatch.setattr(compose_api, "pick_pose_variation", spy)
+    out = client.post(f"/api/books/{b['id']}/materials/batch")
+    assert out.status_code == 202, out.text
+    poses = [g for g in out.json()["queued"] if g["kind"] == "pose"]
+    assert [g["page_id"] for g in poses] == [p1["id"], p2["id"]]
+    assert calls == [prior_v, None]
+    assert request_of(app, poses[0]["id"])["variation"] != prior_v
+
+
+@pytest.mark.parametrize("phrase", [
+    "facing toward the left side of the picture", "FACING THE VIEWER", "Facing toward the right side of the picture",
+])
+def test_pose_with_facing_phrase_only_gets_energy_variations(client, app, phrase):
+    from app.services.prompts import QWEN_POSE_VARIATIONS
+
+    b, _ = book_with_character(client, app)
+    for _ in range(10):
+        p = new_page(client, b["id"])
+        v = request_of(app, _pose_post(client, p["id"], f"waving hand, {phrase}")["id"])["variation"]
+        assert v in QWEN_POSE_VARIATIONS[2:]
 
 
 def test_pose_mode_out_for_old_rows_and_other_kinds(client, app):
