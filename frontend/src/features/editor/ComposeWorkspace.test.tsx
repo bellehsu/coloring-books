@@ -322,6 +322,25 @@ describe("ComposeWorkspace", () => {
     );
   });
 
+  it("連續儲存依序送出：第一筆還沒回來，第二筆不送，最後落地的是新的文字", async () => {
+    setup();
+    let release!: () => void;
+    gate["PATCH /api/pages/1"] = new Promise<void>((r) => (release = r));
+    const pose = card("角色動作");
+    const box = within(pose).getByLabelText("動作描述");
+    await userEvent.clear(box);
+    await userEvent.type(box, "X");
+    await userEvent.click(within(pose).getByRole("button", { name: "揮手" })); // blur 送 "X"，點擊送 "X, waving one hand"
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1);
+    release();
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(2));
+    const bodies = calledWith("PATCH", "/api/pages/1").map((c) => c.body);
+    expect(bodies[0]).toEqual({ action_prompt: "X" });
+    expect(bodies[1]).toEqual({ action_prompt: "X, waving one hand" });
+  });
+
   it("表情與面向：單選、再按一次取消、超過長度停用、面向提示", async () => {
     setup();
     const pose = card("角色動作");

@@ -137,29 +137,29 @@ function usePageText(serverValue: string, send: (v: string) => Promise<unknown>)
   const sent = useRef<{ value: string; p: Promise<unknown> } | null>(null);
   const value = edited ?? serverValue;
 
-  const save = (): Promise<unknown> => {
-    if (edited === null) return Promise.resolve();
-    if (sent.current?.value === edited) return sent.current.p;
-    if (!sent.current && edited === serverValue) return Promise.resolve();
-    const p = send(edited);
-    const entry = { value: edited, p };
-    sent.current = entry;
-    p.catch(() => {
-      if (sent.current === entry) sent.current = null;
-    });
-    return p;
-  };
-  /** 設定值並立刻送出（晶片點擊用）；送的是 v，不是還沒更新的 edited。 */
-  const setNow = (v: string): Promise<unknown> => {
-    setEdited(v);
-    if (!sent.current && v === serverValue) return Promise.resolve();
-    const p = send(v);
+  // 送出一律串在前一筆之後（忽略前一筆的失敗），伺服器依點擊順序收到，最後落地的一定是最新的文字。
+  const enqueue = (v: string): Promise<unknown> => {
+    if (sent.current?.value === v) return sent.current.p;
+    const prev = sent.current?.p;
+    const p = (prev ? prev.catch(() => {}) : Promise.resolve()).then(() => send(v));
     const entry = { value: v, p };
     sent.current = entry;
     p.catch(() => {
       if (sent.current === entry) sent.current = null;
     });
     return p;
+  };
+
+  const save = (): Promise<unknown> => {
+    if (edited === null) return Promise.resolve();
+    if (sent.current?.value !== edited && !sent.current && edited === serverValue) return Promise.resolve();
+    return enqueue(edited);
+  };
+  /** 設定值並立刻送出（晶片點擊用）；送的是 v，不是還沒更新的 edited。 */
+  const setNow = (v: string): Promise<unknown> => {
+    setEdited(v);
+    if (!sent.current && v === serverValue) return Promise.resolve();
+    return enqueue(v);
   };
   return { value, setValue: setEdited, setNow, save };
 }
