@@ -21,7 +21,8 @@ comfy:
 paths:
   # workflow 資料夾（每個子資料夾含 workflow_api.json + manifest.yaml）
   workflows_dir: comfy_workflows
-  # 生成結果、上傳圖片等檔案
+  # 生成結果、上傳圖片等檔案（local）；storage.backend: r2 時圖片在 bucket，這裡放 R2 的本機快取（r2_cache/），
+  # 請改用另一個資料夾（例如 storage-r2，和下面的 database 同一組）
   storage_dir: storage
   # SQLite 資料庫檔案（父資料夾必須存在）
   # storage.backend: r2 時請改用另一個資料庫（例如 storage-r2/app.db，資料夾先建好）：

@@ -70,6 +70,39 @@ cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
   已有 admin（例如資料庫遷移時建立的）會直接沿用。
 - **對外部署一定不可設 `dev_owner`**（範本預設 `null`）；有設時後端啟動會印出警告。
 
+### 從 Phase 9 升級（合併後第一次重啟 dev.sh 之前必做）
+
+Phase 10 起本機也用 R2，資料庫與本機資料夾都換一組新的；舊的 `storage/app.db` 與 `storage/books/` 留著當備份、**不再使用**。
+後端每次啟動都會把 `paths.database` 指到的資料庫升級到最新版。如果第一次重啟時設定還指著舊的 `storage/app.db`，
+它會被**遷移並改寫**：0005 → 0007 刪掉 `page.sketch_path`／`controlnet_strength` 欄位、新增 admin 並把所有書歸給它，
+還會在 `storage/books/` 寫入身分標記 `_instance.json`。這些改動無法完整還原，所以順序很重要：
+
+1. 先停掉 dev.sh，**備份整個 `storage/`**：`cp -a storage storage-backup-$(date +%Y%m%d)`。
+2. 建立新資料夾：`mkdir storage-r2`（已在 `.gitignore`）。
+3. **在第一次重啟之前**，在 `scripts/dev.env` 加上（`dev.env.example` 有同樣的註解範本）：
+   ```
+   APP_STORAGE__BACKEND=r2
+   APP_PATHS__DATABASE=storage-r2/app.db
+   APP_PATHS__STORAGE_DIR=storage-r2
+   APP_AUTH__DEV_OWNER=admin
+   APP_STORAGE__R2__ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+   APP_STORAGE__R2__BUCKET=coloring-books-dev
+   APP_STORAGE__R2__ACCESS_KEY=...
+   APP_STORAGE__R2__SECRET_KEY=...
+   ```
+   - `APP_PATHS__STORAGE_DIR` 也要改：R2 模式下圖片在 bucket，但本機快取預設放在 `<paths.storage_dir>/r2_cache/<bucket>`；
+     不改的話快取會寫進舊的 `storage/`。相對路徑以專案根目錄為準。
+   - R2 帳號、bucket 與憑證的準備見下一節。
+4. 重啟前確認設定真的生效（只印路徑，不印憑證）：
+   ```bash
+   ( set -a; . scripts/dev.env; set +a; env -u PYTHONPATH $VENV_ROOT/coloring-books/bin/python -c \
+     'import sys; sys.path.insert(0, "backend"); from app.config import load_settings; s = load_settings(); print(s.storage.backend, s.paths.database, s.paths.storage_dir)' )
+   ```
+   要看到 `r2 …/storage-r2/app.db …/storage-r2`，才可以執行 `scripts/dev.sh`。
+5. 新資料庫是空的（舊的書不搬到 R2）。要再看舊資料，請**複製一份**備份，再用
+   `APP_STORAGE__BACKEND=local`、`APP_PATHS__DATABASE=<複製的資料夾>/app.db`、`APP_PATHS__STORAGE_DIR=<複製的資料夾>`
+   指過去；不要直接指向 `storage/`。
+
 ### R2 準備（Cloudflare R2 物件儲存；只有雲端或想在本機驗證 R2 時才需要）
 
 `storage.backend: local`（預設）不需要以下任何東西。要用 R2，你需要自己建立：
@@ -88,8 +121,10 @@ cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
    APP_STORAGE__R2__SECRET_KEY=...
    ```
    憑證只能用環境變數，寫進 `settings.yaml` 會報錯。`config/settings.example.yaml` 的 `storage` 與 `auth` 區塊有每個欄位的說明。
-6. **R2 用另一個資料庫：** 把 `paths.database` 改成例如 `storage-r2/app.db`（資料夾先建好，也可用
-   `APP_PATHS__DATABASE=storage-r2/app.db`）。local 模式的 `storage/app.db` 與 R2 的資料是兩組，不要混用。
+6. **R2 用另一個資料庫與資料夾：** 把 `paths.database` 改成例如 `storage-r2/app.db`、`paths.storage_dir` 改成 `storage-r2`
+   （資料夾先建好；也可用 `APP_PATHS__DATABASE=storage-r2/app.db`、`APP_PATHS__STORAGE_DIR=storage-r2`）。
+   R2 的本機快取預設放在 `<paths.storage_dir>/r2_cache/<bucket>`。local 模式的 `storage/` 與 R2 的資料是兩組，不要混用；
+   從舊版升級時要在第一次啟動前設好（見上一節）。
 7. 第一次啟動後用 `scripts/invites.py create --name 你的名字 --admin` 建立自己的連結（`dev_owner` 只限本機）。
 8. 正式環境的 DB 備份可用 `deploy/litestream.yml`（範本，預設不啟用）。
 
