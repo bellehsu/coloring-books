@@ -211,6 +211,39 @@ class Storage(Protocol):
   - Your own shared book does not appear in 「大家的繪本」; your list shows the badge instead. `mine` exists for the admin view and the viewer.
   - Admins see the same shared list as everyone else. Their full access stays on the owner routes.
 
+### 4.10 Invite management page (user decision, 2026-11-11, added to this phase after §4.9)
+- **User decisions:**
+  - An admin-only page can **create** an invite link and **list** all invites.
+  - The link can be **viewed again at any time**, not only once when it is created.
+  - Rotating, revoking, changing the cap and deleting data stay in the CLI, `scripts/invites.py`, for now.
+- **Storing the link (author's call, made to honor "view again" safely):**
+  - `owner.token_hash` stays the lookup key.
+  - A new column, `owner.token_encrypted: str | None` (Alembic 0009), holds the raw token **encrypted** with Fernet.
+  - The key comes from env `APP_AUTH__LINK_KEY`, or else from an auto-created `<paths.storage_dir>/.link_key` (0600), following the same pattern as the signing key.
+  - This means a leaked DB or Litestream backup alone does not expose usable links.
+  - `create` and `rotate`, in both the CLI and the API, write it.
+  - Rows created before this change, or a key that no longer decrypts, show 「這個連結無法再顯示，請用指令換發」 (`scripts/invites.py rotate --id N`).
+  - Add `cryptography` as an explicit dependency.
+- **API** (admin only; anyone else gets **404**, so the page's existence is not revealed):
+  - `GET /api/me` → `{name, is_admin}` for any valid session. The frontend uses it to show the admin link.
+  - `GET /api/admin/invites` → a list newest first. Each entry has:
+    - `id`, `name`, `is_admin`, `daily_generation_cap` (null = unlimited)
+    - `today` (generations queued today, Asia/Taipei)
+    - `book_count`, `last_seen` (latest session `last_seen`, or null), `created_at`, `revoked`
+    - `link` (the full URL, or null if it cannot be shown)
+  - `POST /api/admin/invites` `{name, is_admin=false, daily_generation_cap=60}` → the same shape, including `link`.
+    - The name is 1–40 characters after trimming and must be unique among non-revoked owners; a duplicate gets 409 「這個名字已經有邀請了」.
+    - The cap is 1–1000; admins are uncapped.
+  - The link prefix is `auth.invite_base_url`, or else the request's own origin (scheme + host as the browser sent it, honoring the `X-Forwarded-*` headers that the Next proxy forwards). Admins who open the page via the LAN IP therefore get a usable LAN link.
+- **Frontend:**
+  - Page `/admin/invites`, reached from a 「邀請管理」 link in the home header that only admins see.
+  - A form with 名字, 管理者 (checkbox) and 每日上限 (number, default 60, hidden when 管理者 is checked), and a submit button labelled 「產生連結」.
+  - The new row appears at the top of the list.
+  - The list is a table on desktop and cards at 390 px. Its columns are 名字, 身分 (管理者／使用者), 每日上限, 今天, 書, 最後使用, 狀態 (使用中／已撤銷) and 連結.
+  - 連結 shows the URL with a 「複製」 button, which shows 「已複製」 for 2 s, or the "cannot show" line.
+  - A footnote says rotating, revoking and deleting are done with `scripts/invites.py`.
+  - Non-admins who open `/admin/invites` see the normal 404 page.
+
 ## 5. Success criteria
 - **Unit tests (mocked):**
   - both implementations satisfy the same contract tests: put / get / delete / exists / list / signed_url;
@@ -222,6 +255,7 @@ class Storage(Protocol):
   - cleanup deletes only expired discarded images and orphan objects;
   - cascade deletion;
   - 0006 migration upgrade and downgrade.
+  - invite page (§4.10): admin-only (404 otherwise), create returns a working link, list shows stored links decrypted, legacy rows show null, the link key comes from env or file.
   - sharing (§4.9): toggle rules, shared list/detail/image/PDF visibility, unshare and revoke take effect immediately, viewing is not counted.
 - **e2e (fake backend + LocalStorage):** the full flow still passes; two different invites cannot see each other's books; a shared book shows up for the other invite with completed pages only and stops showing once unshared.
 - **Real run (the user provides dev bucket credentials):** start the app locally with the R2 dev bucket, run one book's full flow, and confirm:

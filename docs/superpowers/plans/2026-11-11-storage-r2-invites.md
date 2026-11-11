@@ -383,6 +383,68 @@
 - [ ] **Step 5:** Backend pytest, vitest, lint, tsc and e2e all pass, and the viewer has 0 px horizontal overflow at 390 px.
 - [ ] **Step 6:** Commit `feat: share finished books with other invited users`.
 
+### Task 11: Invite management page (spec §4.10; added 2026-11-11 by user decision)
+
+**Files:**
+- Create:
+  - `backend/migrations/versions/0009_owner_token_encrypted.py`
+  - `backend/app/api/admin.py`
+  - `backend/tests/test_admin_invites.py`
+  - `frontend/src/app/admin/invites/page.tsx` (with its feature components and tests)
+  - `frontend/e2e/invites-admin.spec.ts`
+- Modify:
+  - `backend/app/models.py` (`Owner.token_encrypted`)
+  - `backend/app/config.py` (`auth.link_key: SecretStr | None`, env `APP_AUTH__LINK_KEY`)
+  - `backend/app/services/auth.py`: `create_owner` and `rotate` store the encrypted token. Add `reveal_link(owner) -> str | None` and the link-key loader, mirroring the signing-key loader.
+  - `scripts/invites.py`: reuse the services; `list` gains a 「連結」 column only with `--show-links`.
+  - `backend/app/main.py`, schemas, generated frontend API types
+  - the home header (admin link)
+  - README (invite page, link key), `config/settings.example.yaml`, `scripts/dev.env.example`
+  - backend dependency list (`cryptography`), `tests/test_migrations.py`
+
+**Interfaces:**
+- Consumes: `current_owner`; `services/auth.create_owner`, `rotate`; `services/usage` for today's count (`taipei_day`); `auth.invite_base_url`.
+- Produces: the routes and shapes exactly as in spec §4.10.
+
+- [ ] **Step 1: Write the failing backend tests.**
+  - Access:
+    - A non-admin calling `GET /api/admin/invites` or `POST /api/admin/invites` → 404.
+    - No session → 401.
+    - `GET /api/me` → `{name, is_admin}`.
+  - Create and list:
+    - An admin POST returns a `link`. A fresh client that `GET`s that link's `/i/<token>` gets the cookie, and `/api/books` → 200 as the new owner.
+    - The list returns the same link again.
+    - A duplicate active name → 409 「這個名字已經有邀請了」. A blank or 41-character name, or cap 0 or 1001 → 422.
+    - `today` and `book_count` are correct. `last_seen` is set after the new owner makes a request.
+    - A revoked owner shows `revoked: true`.
+  - Stored token:
+    - The DB never holds the raw token in plain text: assert it doesn't appear in any column.
+    - A legacy row (token_encrypted NULL) → `link: null`. The wrong key → `link: null` and no 500.
+  - Link prefix:
+    - `invite_base_url` set → used.
+    - Unset → the request's origin, including the X-Forwarded-Host/Proto headers.
+  - Key source:
+    - The link key comes from env, or else from the 0600 file under storage_dir, and is stable across app restarts.
+  - Also:
+    - The CLI `create` then the API `list` shows the link.
+    - Migration 0009 upgrades and downgrades.
+- [ ] **Step 2: Write the failing frontend tests.**
+  - vitest:
+    - The admin link shows only when `is_admin`.
+    - The form hides 每日上限 when 管理者 is checked, and it posts.
+    - The new row appears first.
+    - 「複製」 → clipboard, then 「已複製」.
+    - A null link shows 「這個連結無法再顯示，請用指令換發」.
+    - A non-admin gets the 404 page.
+  - e2e `invites-admin.spec.ts`:
+    - The admin creates 「小美」, copies the link, and opens it in a fresh context.
+    - That context lands on home with no books.
+    - Back in the admin context, the list shows 小美 with 書 0, and the link is still visible after a reload.
+- [ ] **Step 3:** Run the tests and confirm they fail.
+- [ ] **Step 4:** Implement. Keep the admin routes in their own router, with an admin check that returns 404. Reuse the services and don't duplicate the CLI logic.
+- [ ] **Step 5:** pytest, vitest, lint, tsc and e2e all pass. 0 px horizontal overflow at 390 px.
+- [ ] **Step 6:** Commit `feat: admin invite page (create + list, links viewable again)`.
+
 ### Task 9: Real-R2 acceptance (the controller runs this, and only after the user provides dev-bucket credentials)
 
 - [ ] Ask the user for confirmation that `coloring-books-dev` exists and that the credentials are in the worktree's `scripts/dev.env`. **Never read or print the secret**; check presence only.
