@@ -173,15 +173,28 @@ def read_page_lineart(session: Session, storage: Storage, page_id: int) -> tuple
 
 def render_preview(storage: Storage, gen: Generation, content_px, detail, line_width_px) -> bytes:
     """沒有修改圖層的預覽 PNG，快取到 Storage.preview（物件不在就重算）。"""
+    rel, data = _preview(storage, gen, content_px, detail, line_width_px, want_bytes=True)
+    return data
+
+
+def ensure_preview(storage: Storage, gen: Generation, content_px, detail, line_width_px) -> str:
+    """確保預覽物件存在（不在就重算並寫入），回傳它的 key；物件已在時只做 exists，不下載。"""
+    return _preview(storage, gen, content_px, detail, line_width_px, want_bytes=False)[0]
+
+
+def _preview(storage, gen, content_px, detail, line_width_px, *, want_bytes: bool) -> tuple[str, bytes | None]:
     d = getattr(detail, "value", detail)
     key = _digest(RENDER_VERSION, gen.id, gen.image_path, str(d), line_width_px, list(content_px))
     rel = storage.preview(gen.id, key)
-    try:
-        return storage.get(rel)
-    except StorageNotFound:
-        pass
+    if want_bytes:
+        try:
+            return rel, storage.get(rel)
+        except StorageNotFound:
+            pass
+    elif storage.exists(rel):
+        return rel, None
     color = _load(storage, gen)
     ink, _ = render_base(color, tuple(content_px), detail, line_width_px)
     data = ink_to_png(ink)
     storage.put(rel, data)
-    return data
+    return rel, data

@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import books, compose, export, generations, lineart, pages, review
+from .api import books, compose, export, files, generations, lineart, pages, review
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
 from .services.comfy_client import ComfyClient
@@ -82,6 +82,7 @@ def create_app(
     app.include_router(lineart.router)
     app.include_router(review.router)
     app.include_router(export.router)
+    app.include_router(files.router)
 
     async def _preflight(app: FastAPI):
         """跑 preflight 並更新快取 app.state.preflight。"""

@@ -254,7 +254,12 @@ def test_r2_backend_full_flow(r2_app, settings_file):
                     f"/api/pages/{p['id']}/print.png", f"/api/generations/{gid}/image",
                     f"/api/generations/{pose}/mask", f"/api/generations/{pose}/cutout",
                     f"/api/generations/{bg}/lineart-preview"):
-            r = client.get(url)
+            r = client.get(url, follow_redirects=False)
+            if url.endswith(("/lineart", "/image", "/mask", "/lineart-preview")):  # 存放的物件：302 到 R2 簽章網址
+                assert r.status_code == 302, (url, r.text)
+                assert r.headers["location"].startswith("https://s3.amazonaws.com/cb-test/"), url
+                assert "Signature" in r.headers["location"] or "X-Amz-Signature" in r.headers["location"], url
+                continue
             assert r.status_code == 200, (url, r.text)
             assert r.content.startswith(b"\x89PNG"), url
         assert client.get(f"/api/pages/{p['id']}/qa").status_code == 200
@@ -265,7 +270,7 @@ def test_r2_backend_full_flow(r2_app, settings_file):
         assert r2.exists(lineart_key) and r2.exists(f"books/{b['id']}/generations/{gid}.png")
         # 線稿物件在 R2 被刪（例如 GC）：重算，不是 500
         app.state.storage.delete(lineart_key)
-        assert client.get(f"/api/pages/{p['id']}/lineart").status_code == 200
+        assert client.get(f"/api/pages/{p['id']}/lineart", follow_redirects=False).status_code == 302
         assert r2.exists(lineart_key)
 
         assert client.delete(f"/api/pages/{p['id']}").status_code == 204

@@ -3,7 +3,7 @@
 import io
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ from sqlmodel import Session, col, func, select, update
 
 from app.api.books import _book_or_404
 from app.api.deps import get_session, get_storage, get_worker
+from app.api.files import signed_redirect
 from app.api.schemas import GenerationOut
 from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
@@ -73,6 +74,7 @@ def get_generation(
 
 @router.get("/generations/{gen_id}/image")
 def get_generation_image(
+    request: Request,
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
@@ -81,14 +83,17 @@ def get_generation_image(
     if gen.status != GenStatus.SUCCEEDED or not gen.image_path:
         raise HTTPException(404, "這筆生成紀錄還沒有圖片")
     try:
-        data = storage.get(gen.image_path)
-    except (StorageNotFound, ValueError):
-        raise HTTPException(404, "圖片檔案遺失") from None
-    return Response(content=data, media_type="image/png")
+        found = storage.exists(gen.image_path)  # HEAD 就夠，不下載；不存在回 404 而不是轉到死網址
+    except ValueError:
+        found = False
+    if not found:
+        raise HTTPException(404, "圖片檔案遺失")
+    return signed_redirect(request, storage, gen.image_path)
 
 
 @router.get("/generations/{gen_id}/mask")
 def get_generation_mask(
+    request: Request,
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
@@ -97,10 +102,12 @@ def get_generation_mask(
     if not gen.mask_path:
         raise HTTPException(404, "這筆生成紀錄沒有遮罩")
     try:
-        data = storage.get(gen.mask_path)
-    except (StorageNotFound, ValueError):
-        raise HTTPException(404, "遮罩檔案遺失") from None
-    return Response(content=data, media_type="image/png")
+        found = storage.exists(gen.mask_path)
+    except ValueError:
+        found = False
+    if not found:
+        raise HTTPException(404, "遮罩檔案遺失")
+    return signed_redirect(request, storage, gen.mask_path)
 
 
 @router.get("/generations/{gen_id}/cutout")

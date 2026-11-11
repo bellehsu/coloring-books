@@ -6,13 +6,14 @@
 import io
 
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image, ImageDraw
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, update
 
 from app.api.deps import get_session, get_storage
+from app.api.files import signed_redirect
 from app.api.pages import _page_or_404
 from app.api.schemas import (
     MAX_STROKES,
@@ -39,9 +40,9 @@ from app.services.page_lineart import (
     LineartUnavailable,
     PageLineart,
     ensure_page_lineart,
+    ensure_preview,
     load_strokes,
     read_page_lineart,
-    render_preview,
     save_strokes,
     strokes_to_json,
 )
@@ -125,12 +126,22 @@ def _commit_strokes(session: Session, page_id: int, gen_id: int, strokes: list[S
 
 @router.get("/pages/{page_id}/lineart")
 def get_lineart(
+    request: Request,
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
 ) -> Response:
-    _lin, data = _ensure_png(session, storage, page_id, image_route=True)
-    return _png_response(data)
+    """線稿就是一個存放的物件：確認物件在（不在就重算，來源也不見則 404）後轉到簽章網址。"""
+    _page_or_404(session, page_id)
+    try:
+        lin = ensure_page_lineart(session, storage, page_id)
+        if not storage.exists(lin.path):  # 資料庫說有、物件卻不見了：重算一次
+            lin, _data = _ensure_png(session, storage, page_id, image_route=True)
+    except LineartSourceMissing as e:
+        raise HTTPException(404, IMAGE_MISSING) from e
+    except LineartUnavailable as e:
+        raise HTTPException(409, e.message) from e
+    return signed_redirect(request, storage, lin.path)
 
 
 @router.get("/pages/{page_id}/qa", response_model=QAOut)
@@ -264,6 +275,7 @@ def autofix(
 
 @router.get("/generations/{gen_id}/lineart-preview")
 def lineart_preview(
+    request: Request,
     gen_id: int,
     detail: LineDetail = LineDetail.STANDARD,
     line_width_px: int = Query(LINE_WIDTH_DEFAULT, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX),
@@ -279,7 +291,7 @@ def lineart_preview(
     book = session.get(Book, gen.book_id)
     content_px = compute_layout(book.paper_size, book.print_mode).content_px
     try:
-        data = render_preview(storage, gen, content_px, detail, line_width_px)
+        key = ensure_preview(storage, gen, content_px, detail, line_width_px)
     except LineartUnavailable as e:
         raise HTTPException(404, IMAGE_MISSING) from e
-    return _png_response(data)
+    return signed_redirect(request, storage, key)
