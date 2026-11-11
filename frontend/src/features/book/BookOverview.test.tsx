@@ -250,6 +250,24 @@ describe("B 整本書：輪詢", () => {
     expect(calls.filter((c) => c.url === "/api/books/1/overview").length).toBe(after);
   });
 
+  it("keeps polling in a hidden tab, so the ✓ 做好了 title appears while the user is elsewhere", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    overview = ov([pg(1, "working"), pg(2, "ready")], { progress: { queued: 0, running: 1, done: 1 } });
+    setup();
+    await screen.findByRole("region", { name: "正在做這本書…" });
+    const vis = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      const before = calls.filter((c) => c.url === "/api/books/1/overview").length;
+      overview = ov([pg(1, "ready"), pg(2, "ready")], { progress: { queued: 0, running: 0, done: 2 } });
+      await act(() => vi.advanceTimersByTimeAsync(3100));
+      expect(calls.filter((c) => c.url === "/api/books/1/overview").length).toBeGreaterThan(before);
+      await waitFor(() => expect(document.title).toContain("✓ 做好了"));
+    } finally {
+      vis.mockRestore();
+    }
+  });
+
   it("a run that finishes with deferred pages says so in the toast", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     overview = ov([pg(1, "working"), pg(2, "todo")], { progress: { queued: 1, running: 0, done: 0 } });
