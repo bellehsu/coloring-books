@@ -1,21 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { AI_PROMPT } from "@/features/story/aiPrompt";
 import { ThemePackDialog } from "@/features/story/ThemePackDialog";
+import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
-import type { PreviewEntry, StoryPreview } from "./storyPreview";
+import type { DraftPage, PreviewEntry, StoryPreview } from "./storyPreview";
 import styles from "./SetupPage.module.css";
 
 export interface StorySectionProps {
   preview: StoryPreview;
   text: string;
   onText: (t: string) => void;
-  /** 選了上傳背景的頁（第 n 頁 → 檔案）：按「開始做這本書」才上傳。 */
-  uploads: ReadonlyMap<number, File>;
-  onUpload: (n: number, file: File | null) => void;
+  /** 選了上傳背景的頁（PreviewEntry.key → 檔案）：按「開始做這本書」才上傳。 */
+  uploads: ReadonlyMap<string, File>;
+  onUpload: (key: string, file: File | null) => void;
+  /** 「＋ 加一頁」：在最後多一頁空白頁（開始時才建立）。 */
+  onAddPage: () => void;
+  onDraftChange: (key: number, patch: Partial<Pick<DraftPage, "scene" | "action">>) => void;
+  onDraftRemove: (key: number) => void;
   /** 這本書已經有幾頁。 */
   existing: number;
   disabled: boolean;
@@ -25,7 +30,18 @@ export interface StorySectionProps {
  * ③ 故事：貼上（或套用主題包）→ 即時預覽每一頁（頁碼、場景・動作、圖下方的字），每頁可以選
  * 「AI 畫背景／↑ 上傳背景」。現有的頁一起列出；貼上的故事只填空欄位、補不足的頁（同「貼上整本故事」）。
  */
-export function StorySection({ preview, text, onText, uploads, onUpload, existing, disabled }: StorySectionProps) {
+export function StorySection({
+  preview,
+  text,
+  onText,
+  uploads,
+  onUpload,
+  onAddPage,
+  onDraftChange,
+  onDraftRemove,
+  existing,
+  disabled,
+}: StorySectionProps) {
   const toast = useToast();
   const [packOpen, setPackOpen] = useState(false);
   const { entries, problems, pasted } = preview;
@@ -84,15 +100,22 @@ export function StorySection({ preview, text, onText, uploads, onUpload, existin
         <ol aria-label="每一頁" className={styles.rows}>
           {entries.map((e) => (
             <StoryPreviewRow
-              key={e.n}
+              key={e.key}
               entry={e}
-              file={uploads.get(e.n) ?? null}
+              file={uploads.get(e.key) ?? null}
               disabled={disabled}
-              onFile={(f) => onUpload(e.n, f)}
+              onFile={(f) => onUpload(e.key, f)}
+              onDraftChange={(patch) => e.draft != null && onDraftChange(e.draft, patch)}
+              onDraftRemove={() => e.draft != null && onDraftRemove(e.draft)}
             />
           ))}
         </ol>
       )}
+      <div>
+        <Button disabled={disabled} onClick={onAddPage}>
+          ＋ 加一頁
+        </Button>
+      </div>
       {entries.length > 0 && <p className={styles.hint}>上傳背景：{UPLOAD_HINT}</p>}
       {problems.length > 0 && (
         <div role="note" aria-label="不會匯入的段落" className={styles.problems}>
@@ -125,14 +148,20 @@ function StoryPreviewRow({
   file,
   disabled,
   onFile,
+  onDraftChange,
+  onDraftRemove,
 }: {
   entry: PreviewEntry;
   file: File | null;
   disabled: boolean;
   onFile: (f: File | null) => void;
+  onDraftChange: (patch: Partial<Pick<DraftPage, "scene" | "action">>) => void;
+  onDraftRemove: () => void;
 }) {
+  const input = useRef<HTMLInputElement>(null);
   const uploadedBefore = file == null && e.materials.backgroundUploaded;
   const uploadOn = file != null || uploadedBefore;
+  const draft = e.draft != null;
   const scene = file
     ? `（我上傳的 ${file.name}）`
     : uploadedBefore
@@ -145,9 +174,36 @@ function StoryPreviewRow({
         {e.n}
       </span>
       <div className={styles.rowBody}>
-        <span className={styles.rowText}>
-          {scene}・{action}
-        </span>
+        {draft ? (
+          // 「＋ 加一頁」的頁：直接在這裡寫場景和動作
+          <div className={styles.draft}>
+            <input
+              type="text"
+              className={`${styles.input} ${styles.draftInput}`}
+              aria-label={`第 ${e.n} 頁場景`}
+              placeholder="場景：地點和物品，不要寫人物"
+              maxLength={MAX_SCENE}
+              value={e.scene}
+              disabled={disabled}
+              onChange={(ev) => onDraftChange({ scene: ev.target.value })}
+            />
+            <input
+              type="text"
+              className={`${styles.input} ${styles.draftInput}`}
+              aria-label={`第 ${e.n} 頁動作`}
+              placeholder="動作：主角在做什麼"
+              maxLength={MAX_ACTION}
+              value={e.action}
+              disabled={disabled}
+              onChange={(ev) => onDraftChange({ action: ev.target.value })}
+            />
+            {file && <span className={styles.rowText}>（我上傳的 {file.name}）</span>}
+          </div>
+        ) : (
+          <span className={styles.rowText}>
+            {scene}・{action}
+          </span>
+        )}
         {(e.captionZh || e.captionEn || e.materials.hasPose || (e.materials.hasBackground && !uploadOn)) && (
           <span className={styles.chips}>
             {e.captionZh && <span className={styles.chip}>中文：{e.captionZh}</span>}
@@ -157,23 +213,34 @@ function StoryPreviewRow({
           </span>
         )}
       </div>
-      <div role="group" aria-label={`第 ${e.n} 頁的背景`} className={styles.toggle}>
-        <button
-          type="button"
-          className={styles.toggleItem}
-          aria-pressed={!uploadOn}
-          // 之前上傳的背景已經選用：這裡改不回 AI（到那一頁的「AI 再畫一張」）
-          disabled={disabled || uploadedBefore}
-          onClick={() => onFile(null)}
-        >
-          AI 畫背景
-        </button>
-        <label className={styles.toggleItem} data-on={uploadOn ? "true" : "false"} data-disabled={disabled}>
-          <span aria-hidden="true">↑</span> 上傳背景
+      <div className={styles.rowEnd}>
+        <div role="group" aria-label={`第 ${e.n} 頁的背景`} className={styles.toggle}>
+          <button
+            type="button"
+            className={styles.toggleItem}
+            aria-pressed={!uploadOn}
+            // 之前上傳的背景已經選用：這裡改不回 AI（到那一頁的「AI 再畫一張」）
+            disabled={disabled || uploadedBefore}
+            onClick={() => onFile(null)}
+          >
+            AI 畫背景
+          </button>
+          <button
+            type="button"
+            className={styles.toggleItem}
+            aria-pressed={uploadOn}
+            disabled={disabled}
+            onClick={() => input.current?.click()}
+          >
+            <span aria-hidden="true">↑</span> 上傳背景
+          </button>
+          {/* 鍵盤與報讀用上面的按鈕；檔案選擇本身不進 tab 順序 */}
           <input
+            ref={input}
             type="file"
             accept={UPLOAD_ACCEPT}
             aria-label={`第 ${e.n} 頁上傳背景`}
+            tabIndex={-1}
             className={styles.file}
             disabled={disabled}
             onChange={(ev) => {
@@ -182,7 +249,12 @@ function StoryPreviewRow({
               if (f) onFile(f);
             }}
           />
-        </label>
+        </div>
+        {draft && (
+          <button type="button" className={styles.remove} aria-label={`刪掉第 ${e.n} 頁`} disabled={disabled} onClick={onDraftRemove}>
+            ✕
+          </button>
+        )}
       </div>
     </li>
   );

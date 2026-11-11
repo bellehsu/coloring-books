@@ -21,9 +21,21 @@ export interface PageMaterials {
   hasPose: boolean;
 }
 
+/** 「＋ 加一頁」手動加的頁（還沒建立）：接在現有頁與貼上的頁後面。 */
+export interface DraftPage {
+  /** 不會變的編號：之後再貼故事、頁碼往後移，選好的上傳圖還是跟著這一頁。 */
+  key: number;
+  scene: string;
+  action: string;
+}
+
 export interface PreviewEntry {
   /** 第幾頁（1 起算）。 */
   n: number;
+  /** 選上傳圖用的鍵：已有或貼上的頁是 `p{n}`，手動加的頁是 `d{key}`。 */
+  key: string;
+  /** 手動加的頁的 DraftPage.key；其他頁為 null。 */
+  draft: number | null;
   /** 已有的頁；按「開始做這本書」才會建立的頁為 null。 */
   pageId: number | null;
   scene: string;
@@ -86,6 +98,7 @@ export function buildPreview(
   existing: readonly ExistingPage[],
   text: string,
   materials: ReadonlyMap<number, PageMaterials> = new Map(),
+  drafts: readonly DraftPage[] = [],
 ): StoryPreview {
   const pages = [...existing].sort((a, b) => a.position - b.position || a.id - b.id);
   const parsed = parseStory(text);
@@ -99,6 +112,8 @@ export function buildPreview(
     const r = ok.get(n);
     entries.push({
       n,
+      key: `p${n}`,
+      draft: null,
       pageId: e?.id ?? null,
       scene: r?.fill.scene ? r.scene : (e?.scene_prompt ?? ""),
       action: r?.fill.action ? r.action : (e?.action_prompt ?? ""),
@@ -108,6 +123,20 @@ export function buildPreview(
     });
   }
 
+  drafts.forEach((d, i) =>
+    entries.push({
+      n: last + i + 1,
+      key: `d${d.key}`,
+      draft: d.key,
+      pageId: null,
+      scene: d.scene,
+      action: d.action,
+      captionZh: "",
+      captionEn: "",
+      materials: NONE,
+    }),
+  );
+
   const problems: PreviewProblem[] = [
     ...rows.filter((r) => r.problems.length > 0).map((r) => ({ n: r.n, text: r.problems.join("；") })),
     ...parsed.errors.map((er) => ({ n: er.n, text: `${er.reason}：${er.excerpt}` })),
@@ -116,9 +145,9 @@ export function buildPreview(
   return { entries, rows, pasted: parsed.pages.length + parsed.errors.length, problems };
 }
 
-/** 這一頁按下開始後要不要畫背景（uploads：選了上傳圖片的頁碼）。 */
-export const needsBackground = (e: PreviewEntry, uploads: ReadonlySet<number>) =>
-  e.scene.trim() !== "" && !e.materials.hasBackground && !uploads.has(e.n);
+/** 這一頁按下開始後要不要畫背景（uploads：選了上傳圖片的頁的 key）。 */
+export const needsBackground = (e: PreviewEntry, uploads: ReadonlySet<string>) =>
+  e.scene.trim() !== "" && !e.materials.hasBackground && !uploads.has(e.key);
 export const needsPose = (e: PreviewEntry) => e.action.trim() !== "" && !e.materials.hasPose;
 
 export interface PlanCounts {
@@ -135,7 +164,7 @@ export interface PlanCounts {
 
 export function planCounts(
   entries: readonly PreviewEntry[],
-  uploads: ReadonlySet<number>,
+  uploads: ReadonlySet<string>,
   plan?: Pick<ProducePlan, "remaining" | "estimate_s" | "fits">,
 ): PlanCounts {
   const backgrounds = entries.filter((e) => needsBackground(e, uploads)).length;

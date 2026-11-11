@@ -352,6 +352,7 @@
   color: var(--ok-ink);
 }
 .toggle {
+  position: relative;
   flex: none;
   display: flex;
   border: var(--border-w) solid var(--ink);
@@ -378,21 +379,56 @@
 .toggleItem + .toggleItem {
   border-left: var(--border-w) solid var(--ink);
 }
-.toggleItem[aria-pressed="true"],
-.toggleItem[data-on="true"] {
+.toggleItem[aria-pressed="true"] {
   background: var(--ink);
   color: var(--surface);
 }
-.toggleItem:disabled,
-.toggleItem[data-disabled="true"] {
+.toggleItem:disabled {
   cursor: not-allowed;
 }
 .toggleItem:disabled:not([aria-pressed="true"]) {
   opacity: 0.5;
 }
-label.toggleItem:focus-within {
+.toggleItem:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: -3px;
+}
+.rowEnd {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.draft {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 8px;
+}
+.draftInput {
+  min-height: 44px;
+  padding: 8px 12px;
+}
+.draft .rowText {
+  grid-column: 1 / -1;
+}
+.remove {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 900;
+  cursor: pointer;
+}
+.remove:hover:not(:disabled) {
+  background: var(--warn-soft);
+}
+.remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .problems {
   padding: 10px 14px;
@@ -478,8 +514,14 @@ label.toggleItem:focus-within {
     flex-wrap: wrap;
     padding: 10px 12px;
   }
-  .toggle {
+  .rowEnd {
     width: 100%;
+  }
+  .toggle {
+    flex: 1;
+  }
+  .draft {
+    grid-template-columns: minmax(0, 1fr);
   }
   .toggleItem {
     flex: 1;

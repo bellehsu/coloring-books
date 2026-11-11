@@ -117,7 +117,15 @@ beforeEach(() => {
         book = { ...book, character_generation_id: 77 };
         return json(book, 201);
       }
-      if (/^\/api\/pages\/\d+\/backgrounds\/upload$/.test(url)) return json({}, 201);
+      const up = /^\/api\/pages\/(\d+)\/backgrounds\/upload$/.exec(url);
+      if (up) {
+        // 同後端：上傳圖片成為這頁選用的背景
+        const pid = Number(up[1]);
+        const gid = 900 + pid;
+        gens = [...gens, { ...charGen(gid), kind: "background", page_id: pid, source: "upload", user_text: "" }];
+        pages = pages.map((p) => (p.id === pid ? { ...p, background_generation_id: gid } : p));
+        return json(pages.find((p) => p.id === pid), 201);
+      }
       if (url === "/api/books/1/produce" && method === "POST") return json({ queued: [1], deferred_pages: [], pipeline_pages: [] }, 202);
       return json({ queued: 0, running: 0, comfy_ok: true });
     }),
@@ -379,7 +387,7 @@ describe("底部列", () => {
     setup();
     await screen.findByText("選好了 ✓");
     expect(startButton()).toBeDisabled();
-    expect(screen.getByText("先貼上故事，就可以開始。")).toBeInTheDocument();
+    expect(screen.getByText("先貼上故事或加一頁，就可以開始。")).toBeInTheDocument();
     paste(STORY);
     expect(startButton()).toBeEnabled();
   });
@@ -460,5 +468,122 @@ describe("底部列", () => {
     await userEvent.click(startButton());
     expect(await screen.findByText("伺服器忙線")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("fix round 1", () => {
+  beforeEach(() => {
+    book = bookOf({ character_generation_id: 5 });
+    gens = [charGen(5)];
+  });
+
+  it("上傳到一半失敗：已上傳好的頁照伺服器顯示（上傳的背景），張數不變", async () => {
+    respond = (method, url) =>
+      method === "POST" && url === "/api/pages/103/backgrounds/upload" ? json({ detail: "圖片太小" }, 422) : undefined;
+    setup();
+    await screen.findByText("選好了 ✓");
+    paste(STORY);
+    await userEvent.upload(screen.getByLabelText("第 2 頁上傳背景"), png("a.png"));
+    await userEvent.upload(screen.getByLabelText("第 3 頁上傳背景"), png("b.png"));
+    const bar = screen.getByRole("region", { name: /會畫/ });
+    expect(bar).toHaveTextContent("會畫 4 張圖（背景 1＋動作 3）");
+    await userEvent.click(startButton());
+    expect(await screen.findByText("第 3 頁的背景上傳失敗：圖片太小")).toBeInTheDocument();
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    // 第 2 頁：伺服器已經用上傳的圖，畫面也是；第 3 頁的檔案還留著
+    const row2 = screen.getByRole("listitem", { name: "第 2 頁" });
+    expect(row2).toHaveTextContent("（我上傳的圖片）");
+    expect(within(row2).getByRole("button", { name: "上傳背景" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("listitem", { name: "第 3 頁" })).toHaveTextContent("（我上傳的 b.png）");
+    expect(bar).toHaveTextContent("會畫 4 張圖（背景 1＋動作 3）");
+  });
+
+  it("開始之後離開這頁：伺服器照做，但不會把人拉回 B", async () => {
+    let release!: () => void;
+    respond = (method, url) =>
+      method === "POST" && /backgrounds\/upload$/.test(url)
+        ? new Promise<Response>((r) => (release = () => r(json({}, 201))))
+        : undefined;
+    const { unmount } = setup();
+    await screen.findByText("選好了 ✓");
+    paste(STORY);
+    await userEvent.upload(screen.getByLabelText("第 3 頁上傳背景"), png());
+    await userEvent.click(startButton());
+    await screen.findByRole("button", { name: "上傳背景 1/1…" });
+    unmount();
+    await act(async () => release());
+    await waitFor(() => expect(posts("/api/books/1/produce")).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("頁面還在重抓時不能開始（快速重按不會重複建立頁面）", async () => {
+    let release: (() => void) | null = null;
+    setup();
+    await screen.findByText("選好了 ✓");
+    paste(STORY);
+    expect(startButton()).toBeEnabled();
+    // /produce 失敗之後重抓頁面：抓回來之前不能再按
+    respond = (method, url) => {
+      if (method === "POST" && url === "/api/books/1/produce") return json({ detail: "伺服器忙線" }, 500);
+      if (method === "GET" && url === "/api/books/1/pages" && posts("/api/books/1/produce").length > 0)
+        return new Promise<undefined>((r) => (release = () => r(undefined)));
+      return undefined;
+    };
+    await userEvent.click(startButton());
+    expect(await screen.findByText("伺服器忙線")).toBeInTheDocument();
+    await waitFor(() => expect(release).not.toBeNull());
+    // 頁面抓回來之前：按鈕還在忙、不能按
+    expect(screen.getByRole("button", { name: "排進去中…" })).toBeDisabled();
+    await act(async () => release!());
+    await waitFor(() => expect(startButton()).toBeEnabled());
+  });
+
+  it("＋ 加一頁：多一頁空白頁可以填；接在貼上的頁後面，開始時建立", async () => {
+    setup();
+    await screen.findByText("選好了 ✓");
+    expect(startButton()).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "＋ 加一頁" }));
+    const row1 = screen.getByRole("listitem", { name: "第 1 頁" });
+    await userEvent.type(within(row1).getByRole("textbox", { name: "第 1 頁場景" }), "森林");
+    await userEvent.type(within(row1).getByRole("textbox", { name: "第 1 頁動作" }), "跑步");
+    expect(startButton()).toBeEnabled();
+    expect(screen.getByRole("region", { name: /會畫/ })).toHaveTextContent("會畫 2 張圖（背景 1＋動作 1）");
+    await userEvent.upload(within(row1).getByLabelText("第 1 頁上傳背景"), png("forest.png"));
+
+    // 之後再貼故事：手動加的頁接在後面（上傳的圖跟著它走）
+    paste(STORY);
+    const row4 = screen.getByRole("listitem", { name: "第 4 頁" });
+    expect(within(row4).getByRole("textbox", { name: "第 4 頁場景" })).toHaveValue("森林");
+    expect(within(row4).getByRole("button", { name: "上傳背景" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("listitem", { name: "第 1 頁" })).toHaveTextContent("消防局門口");
+
+    // 也可以刪掉再加回來
+    await userEvent.click(screen.getByRole("button", { name: "＋ 加一頁" }));
+    await userEvent.click(within(screen.getByRole("listitem", { name: "第 5 頁" })).getByRole("button", { name: "刪掉第 5 頁" }));
+    expect(screen.queryByRole("listitem", { name: "第 5 頁" })).not.toBeInTheDocument();
+
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    expect(posts("/api/books/1/pages").map((c) => c.body)).toEqual([
+      { scene_prompt: "消防局門口", action_prompt: "開著消防車揮手" },
+      { scene_prompt: "醫院門口", action_prompt: "站在救護車旁邊" },
+      { scene_prompt: "公園", action_prompt: "開心地跳起來" },
+      { scene_prompt: "森林", action_prompt: "跑步" },
+    ]);
+    expect(posts(/backgrounds\/upload$/).map((c) => c.url)).toEqual(["/api/pages/104/backgrounds/upload"]);
+  });
+
+  it("每頁的背景切換兩半都有 aria-pressed；底部列的張數會唸出來", async () => {
+    setup();
+    await screen.findByText("選好了 ✓");
+    paste(STORY);
+    const group = screen.getByRole("group", { name: "第 1 頁的背景" });
+    const upload = within(group).getByRole("button", { name: "上傳背景" });
+    expect(upload).toHaveAttribute("aria-pressed", "false");
+    await userEvent.upload(within(group).getByLabelText("第 1 頁上傳背景"), png());
+    expect(upload).toHaveAttribute("aria-pressed", "true");
+    expect(within(group).getByRole("button", { name: "AI 畫背景" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText(/^準備好了！會畫/).closest("[aria-live]")).toHaveAttribute("aria-live", "polite");
   });
 });

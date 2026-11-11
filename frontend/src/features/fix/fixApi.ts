@@ -91,9 +91,9 @@ export const useRetryPage = (bookId: number, pageId: number) =>
 export const useSavePlacementC = (bookId: number, pageId: number) =>
   usePageMutation<Placement>(bookId, pageId, (p) => api.put<Page>(`/pages/${pageId}/placement${C}`, p));
 
-/** 改動作文字、改字（PATCH ?oneclick=true：內容變了先存快照）。 */
+/** 改場景、改動作文字、改字（PATCH ?oneclick=true：動作或字變了先存快照；場景只給之後的「AI 再畫一張」用）。 */
 export const usePatchPageC = (bookId: number, pageId: number) =>
-  usePageMutation<Pick<S["PageUpdate"], "action_prompt" | "caption_zh" | "caption_en">>(bookId, pageId, (body) =>
+  usePageMutation<Pick<S["PageUpdate"], "scene_prompt" | "action_prompt" | "caption_zh" | "caption_en">>(bookId, pageId, (body) =>
     api.patch<Page>(`/pages/${pageId}${C}`, body),
   );
 

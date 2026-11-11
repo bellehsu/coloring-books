@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,7 +13,7 @@ import { PAPER_LABELS, PAPER_SIZES, PRINT_MODE_LABELS, ratioGroup, type PaperSiz
 import { applyImport } from "./applyImport";
 import { CharacterSection } from "./CharacterSection";
 import { StorySection } from "./StorySection";
-import { buildPreview, pageMaterials, planCounts, planText } from "./storyPreview";
+import { buildPreview, pageMaterials, planCounts, planText, type DraftPage } from "./storyPreview";
 import styles from "./SetupPage.module.css";
 
 const MAX_TITLE = 100;
@@ -52,7 +52,9 @@ export function SetupPage({ bookId: initialId }: { bookId: number | null }) {
   const [paperDraft, setPaperDraft] = useState<{ size: PaperSize; mode: PrintMode } | null>(null);
   // ③ 故事
   const [text, setText] = useState("");
-  const [uploads, setUploads] = useState<ReadonlyMap<number, File>>(new Map());
+  /** 選了上傳背景的頁（PreviewEntry.key → 檔案）：按「開始做這本書」才上傳。 */
+  const [uploads, setUploads] = useState<ReadonlyMap<string, File>>(new Map());
+  const [drafts, setDrafts] = useState<DraftPage[]>([]);
   const [phase, setPhase] = useState<Phase | null>(null);
 
   const b = book.data;
@@ -136,59 +138,105 @@ export function SetupPage({ bookId: initialId }: { bookId: number | null }) {
     [pagesQ.data],
   );
   const materials = useMemo(() => pageMaterials(pages, gensQ.data ?? []), [pages, gensQ.data]);
-  const preview = useMemo(() => buildPreview(pages, text, materials), [pages, text, materials]);
-  const uploadNs = useMemo(() => new Set(uploads.keys()), [uploads]);
+  const preview = useMemo(() => buildPreview(pages, text, materials, drafts), [pages, text, materials, drafts]);
+  const uploadKeys = useMemo(() => new Set(uploads.keys()), [uploads]);
   const hasCharacter = b?.character_generation_id != null;
   const hasPages = preview.entries.length > 0;
-  const canStart = hasCharacter && hasPages && (!has || pagesQ.isSuccess);
-  const counts = planCounts(preview.entries, uploadNs, plan.data);
+  // 頁面重抓中也不能開始：不然照舊的頁面清單匯入，會重複建立頁面
+  const canStart = hasCharacter && hasPages && (!has || (pagesQ.isSuccess && !pagesQ.isFetching));
+  const counts = planCounts(preview.entries, uploadKeys, plan.data);
   const bar = planText(counts, canStart);
-  const blockedHint = !hasCharacter ? "先選好主角" : !hasPages ? "先貼上故事" : null;
+  const blockedHint = !hasCharacter ? "先選好主角" : !hasPages ? "先貼上故事或加一頁" : null;
 
-  const setUpload = (n: number, file: File | null) =>
+  const setUpload = (key: string, file: File | null) =>
     setUploads((m) => {
       const next = new Map(m);
-      if (file) next.set(n, file);
-      else next.delete(n);
+      if (file) next.set(key, file);
+      else next.delete(key);
       return next;
     });
+
+  const draftKey = useRef(0);
+  const addDraft = () => setDrafts((d) => [...d, { key: ++draftKey.current, scene: "", action: "" }]);
+  const changeDraft = (key: number, patch: Partial<Pick<DraftPage, "scene" | "action">>) =>
+    setDrafts((d) => d.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+  const removeDraft = (key: number) => {
+    setDrafts((d) => d.filter((x) => x.key !== key));
+    setUpload(`d${key}`, null);
+  };
+
+  // 開始之後離開這頁（例如按「← 我的書櫃」）：伺服器的工作照做，但不要再把人拉到 B
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  /** 頁面與生成紀錄跟伺服器對齊（上傳好的頁才會顯示「我上傳的圖片」、張數才對）。 */
+  const refresh = (id: number) =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: qk.pages(id) }),
+      qc.invalidateQueries({ queryKey: qk.generationsOf(id) }),
+    ]).catch(() => {});
 
   // ---------- 開始做這本書 ----------
   async function start() {
     if (!canStart || bookId == null || phase) return;
     setPhase({ step: "import" });
+    const { entries, rows } = preview;
     try {
-      const ids = await applyImport(preview.rows, pages, {
+      const ids = await applyImport(rows, pages, {
         createPage: (body) => api.post<Page>(`/books/${bookId}/pages`, body),
         updatePage: ({ pageId, ...body }) => api.patch<Page>(`/pages/${pageId}`, body),
       });
-      void qc.invalidateQueries({ queryKey: qk.pages(bookId) });
-      const chosen = [...uploads].filter(([n]) => ids[n - 1] != null).sort(([a], [c]) => a - c);
-      for (const [i, [n, file]] of chosen.entries()) {
+      // 「＋ 加一頁」的頁接在後面；建好就變成現有的頁（選好的上傳圖改用頁碼記）
+      for (const e of entries) {
+        if (e.draft == null) continue;
+        const made = await api.post<Page>(`/books/${bookId}/pages`, { scene_prompt: e.scene, action_prompt: e.action });
+        ids[e.n - 1] = made.id;
+        const key = e.draft;
+        setDrafts((d) => d.filter((x) => x.key !== key));
+        setUploads((m) => {
+          const file = m.get(e.key);
+          if (!file) return m;
+          const next = new Map(m);
+          next.delete(e.key);
+          next.set(`p${e.n}`, file);
+          return next;
+        });
+      }
+      await refresh(bookId);
+      const chosen = entries.filter((e) => uploads.has(e.key) && ids[e.n - 1] != null);
+      for (const [i, e] of chosen.entries()) {
         setPhase({ step: "upload", done: i + 1, of: chosen.length });
         try {
-          await api.upload<Page>(`/pages/${ids[n - 1]}/backgrounds/upload`, file);
-        } catch (e) {
+          await api.upload<Page>(`/pages/${ids[e.n - 1]}/backgrounds/upload`, uploads.get(e.key)!);
+        } catch (err) {
           // 不排 /produce：不然這頁會被 AI 畫背景。改好再按一次（頁面已建立，不會重複）
-          toast.show(`第 ${n} 頁的背景上傳失敗：${errMsg(e, "請換一張圖片再試")}`, "error");
+          toast.show(`第 ${e.n} 頁的背景上傳失敗：${errMsg(err, "請換一張圖片再試")}`, "error");
+          await refresh(bookId);
           setPhase(null);
           return;
         }
-        setUpload(n, null); // 上傳好了：再按一次不會重傳
+        await refresh(bookId); // 先讓畫面看到伺服器已經用這張圖，再拿掉選好的檔案（不會閃回「AI 畫背景」）
+        setUpload(e.key, null); // 上傳好了：再按一次不會重傳
+        setUpload(`p${e.n}`, null);
       }
       setPhase({ step: "produce" });
       try {
         await produce.mutateAsync();
-      } catch (e) {
-        if (!(e instanceof ApiError && e.status === 429)) throw e;
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 429)) throw err;
         // 今天的次數用完：頁面都建好了，照樣到 B（B 顯示「今天的生成次數已用完」與「繼續做」）
-        toast.show(e.message, "info");
+        toast.show(err.message, "info");
       }
       void qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) });
-      router.push(`/books/${bookId}`);
-    } catch (e) {
-      void qc.invalidateQueries({ queryKey: qk.pages(bookId) });
-      toast.show(errMsg(e, "沒辦法開始做，請稍後再試"), "error");
+      if (mounted.current) router.push(`/books/${bookId}`);
+    } catch (err) {
+      toast.show(errMsg(err, "沒辦法開始做，請稍後再試"), "error");
+      await refresh(bookId);
       setPhase(null);
     }
   }
@@ -294,12 +342,15 @@ export function SetupPage({ bookId: initialId }: { bookId: number | null }) {
         onText={setText}
         uploads={uploads}
         onUpload={setUpload}
+        onAddPage={addDraft}
+        onDraftChange={changeDraft}
+        onDraftRemove={removeDraft}
         existing={pages.length}
         disabled={phase != null}
       />
 
       <section aria-labelledby="setup-bar" className={styles.bar}>
-        <div className={styles.barText}>
+        <div className={styles.barText} aria-live="polite">
           <h2 id="setup-bar" className={styles.barHeading}>
             {bar.heading}
           </h2>

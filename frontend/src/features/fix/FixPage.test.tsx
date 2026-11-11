@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -422,5 +422,90 @@ describe("C 處理一頁：預覽", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "復原" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "復原" }));
     await waitFor(() => expect(order).toEqual(["placement", "undo"]));
+  });
+});
+
+describe("C 處理一頁：圖下方的字（原本在故事頁的規則）", () => {
+  const patches = () => posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH").map((c) => c.body);
+  async function openCaptions() {
+    setup();
+    await userEvent.click(within(await findRow("圖下方的字")).getByRole("button", { name: "改字" }));
+    return { zh: screen.getByRole("textbox", { name: "中文字" }), en: screen.getByRole("textbox", { name: "英文字" }) };
+  }
+
+  it("離開欄位就存，存的是正規化後的值（換行、零寬字元）", async () => {
+    const { zh, en } = await openCaptions();
+    expect(zh).toHaveValue("消防車");
+    fireEvent.change(zh, { target: { value: "消 ​防" } });
+    fireEvent.blur(zh);
+    await waitFor(() => expect(patches()).toEqual([{ caption_zh: "消 防" }]));
+    fireEvent.change(en, { target: { value: "​\n" } });
+    fireEvent.blur(en);
+    await waitFor(() => expect(patches()).toEqual([{ caption_zh: "消 防" }, { caption_en: "" }]));
+  });
+
+  it("清空會存空字串", async () => {
+    const { zh } = await openCaptions();
+    await userEvent.clear(zh);
+    await userEvent.tab();
+    await waitFor(() => expect(patches()).toEqual([{ caption_zh: "" }]));
+  });
+
+  it("超過上限：顯示訊息、不存；𠮷 以 code point 計，12 個剛好可以", async () => {
+    const { zh, en } = await openCaptions();
+    fireEvent.change(zh, { target: { value: "𠮷".repeat(12) } });
+    fireEvent.blur(zh);
+    await waitFor(() => expect(patches()).toEqual([{ caption_zh: "𠮷".repeat(12) }]));
+    expect(screen.queryByText("中文字最多 12 個字")).not.toBeInTheDocument();
+
+    fireEvent.change(zh, { target: { value: "𠮷".repeat(13) } });
+    fireEvent.blur(zh);
+    expect(screen.getByText("中文字最多 12 個字")).toBeInTheDocument();
+    fireEvent.change(en, { target: { value: "x".repeat(29) } });
+    fireEvent.blur(en);
+    expect(screen.getByText("英文字最多 28 個字元")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(patches()).toHaveLength(1);
+  });
+});
+
+describe("C 處理一頁：改場景", () => {
+  it("改場景：離開欄位就存（oneclick PATCH scene_prompt）", async () => {
+    setup();
+    const bg = await findRow("背景");
+    expect(bg).toHaveTextContent("場景：消防局前面");
+    await userEvent.click(within(bg).getByRole("button", { name: "改場景" }));
+    const box = screen.getByRole("textbox", { name: "場景描述" });
+    expect(box).toHaveValue("消防局前面");
+    await userEvent.clear(box);
+    await userEvent.type(box, "下雪的消防局");
+    await userEvent.tab();
+    await waitFor(() => expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")).toHaveLength(1));
+    expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")[0].body).toEqual({ scene_prompt: "下雪的消防局" });
+  });
+
+  it("改好場景直接按 AI 再畫一張：先存場景，再排新的背景（用新的場景）", async () => {
+    setup();
+    const bg = await findRow("背景");
+    await userEvent.click(within(bg).getByRole("button", { name: "改場景" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "場景描述" }), { target: { value: "夜晚的消防局" } });
+    fireEvent.click(within(bg).getByRole("button", { name: "AI 再畫一張" }));
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/backgrounds/)).toHaveLength(1));
+    const iPatch = calls.findIndex((c) => c.method === "PATCH" && c.url === "/api/pages/5?oneclick=true");
+    const iBg = calls.findIndex((c) => c.method === "POST" && c.url.startsWith("/api/pages/5/backgrounds"));
+    expect(iPatch).toBeGreaterThanOrEqual(0);
+    expect(calls[iPatch].body).toEqual({ scene_prompt: "夜晚的消防局" });
+    expect(iPatch).toBeLessThan(iBg);
+  });
+
+  it("場景存不了：不排新的背景", async () => {
+    respond["PATCH /api/pages/5?oneclick=true"] = () => json({ detail: "場景太長" }, 422);
+    setup();
+    const bg = await findRow("背景");
+    await userEvent.click(within(bg).getByRole("button", { name: "改場景" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "場景描述" }), { target: { value: "夜晚" } });
+    fireEvent.click(within(bg).getByRole("button", { name: "AI 再畫一張" }));
+    expect(await screen.findByText("場景太長")).toBeInTheDocument();
+    expect(posted(/\/api\/pages\/5\/backgrounds/)).toHaveLength(0);
   });
 });

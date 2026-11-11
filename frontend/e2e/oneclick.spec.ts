@@ -181,6 +181,13 @@ test("已經有的書：主角與故事列出現有頁，貼上的故事（CRLF�
   await expect(rows.nth(2)).toContainText("下雨的城市街道・撐著雨傘走路");
   await expect(page.getByRole("region", { name: /會畫/ })).toContainText("會畫 6 張圖（背景 3＋動作 3）");
 
+  // ＋ 加一頁：在最後多一頁自己寫
+  await page.getByRole("button", { name: "＋ 加一頁" }).click();
+  await expect(rows).toHaveCount(4);
+  await page.getByRole("textbox", { name: "第 4 頁場景" }).fill("山上的小木屋");
+  await page.getByRole("textbox", { name: "第 4 頁動作" }).fill("看星星");
+  await expect(page.getByRole("region", { name: /會畫/ })).toContainText("會畫 8 張圖（背景 4＋動作 4）");
+
   await page.getByRole("button", { name: "開始做這本書" }).click();
   await expect(page).toHaveURL(new RegExp(`/books/${book.id}$`));
   const pages = await pagesOf(page, book.id);
@@ -188,6 +195,40 @@ test("已經有的書：主角與故事列出現有頁，貼上的故事（CRLF�
     ["森林裡的小木屋，門前有花", "開心地揮手"],
     ["安靜的海邊，有貝殼", "坐著看書"],
     ["下雨的城市街道", "撐著雨傘走路"],
+    ["山上的小木屋", "看星星"],
   ]);
   await expect(page.getByRole("region", { name: /整本做好了！|正在做這本書/ })).toBeVisible();
+});
+
+test("C：改字重新整理還在；改場景後 AI 再畫一張用新的場景", async ({ page, request }) => {
+  const book = await createBook(request, uniqueTitle("e2e 改字改場景"));
+  await setCharacter(request, book.id);
+  const p = await createPage(request, book.id, "陽光公園", "揮手");
+  expect((await request.post(`/api/books/${book.id}/produce`)).status()).toBe(202);
+  await expect.poll(async () => (await pagesOf(page, book.id))[0].status, { timeout: 20_000 }).toBe("passed");
+
+  await page.goto(`/books/${book.id}/page/${p.id}`);
+  const caption = page.getByRole("listitem", { name: "圖下方的字" });
+  await caption.getByRole("button", { name: "改字" }).click();
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && r.url().includes(`/api/pages/${p.id}`) && (r.request().postData() ?? "").includes("caption_zh"),
+  );
+  await page.getByRole("textbox", { name: "中文字" }).fill("公園");
+  await page.getByRole("textbox", { name: "英文字" }).focus(); // 離開中文欄位 → 存
+  expect((await saved).status()).toBe(200);
+  await page.reload();
+  await page.getByRole("listitem", { name: "圖下方的字" }).getByRole("button", { name: "改字" }).click();
+  await expect(page.getByRole("textbox", { name: "中文字" })).toHaveValue("公園");
+
+  // 改場景 → 直接按 AI 再畫一張：先存場景，新的背景用新的場景
+  const bg = page.getByRole("listitem", { name: "背景" });
+  await bg.getByRole("button", { name: "改場景" }).click();
+  await page.getByRole("textbox", { name: "場景描述" }).fill("下雪的公園");
+  const queued = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/api/pages/${p.id}/backgrounds`));
+  await bg.getByRole("button", { name: "AI 再畫一張" }).click();
+  expect((await queued).status()).toBe(202);
+  const gens = await getGenerations(request, book.id, "background");
+  expect(gens.map((g) => g.user_text).sort()).toEqual(["下雪的公園", "陽光公園"].sort());
+  expect((await pagesOf(page, book.id))[0].scene_prompt).toBe("下雪的公園");
+  await expect(bg).toContainText("場景：下雪的公園");
 });

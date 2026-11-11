@@ -25,7 +25,7 @@ import { peekEditsQueue } from "@/features/editor/editsQueue";
 import { errMsg } from "@/features/editor/errMsg";
 import { LineFixStage } from "@/features/editor/LineFixStage";
 import { ACTION_HINT, EXPRESSIONS, FACING_HINT, FACINGS } from "@/lib/actions";
-import { MAX_ACTION, normalizeCaption } from "@/lib/limits";
+import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
 import type { StrokeOp } from "@/lib/strokes";
 import { UPLOAD_ACCEPT } from "@/lib/upload";
 import {
@@ -588,7 +588,7 @@ function Row({
 function useSavePage(bookId: number, pageId: number) {
   const toast = useToast();
   const patch = usePatchPageC(bookId, pageId);
-  return (body: { action_prompt?: string; caption_zh?: string; caption_en?: string }) =>
+  return (body: { scene_prompt?: string; action_prompt?: string; caption_zh?: string; caption_en?: string }) =>
     patch.mutateAsync(body).catch((e: unknown) => {
       toast.show(errMsg(e, "無法儲存"), "error");
       throw e;
@@ -704,12 +704,22 @@ function BackgroundRow({
   restore: (() => void) | null;
   busy: boolean;
 }) {
+  const id = useId();
   const toast = useToast();
   const regen = useRegenerate(bookId, page.id);
   const upload = useUploadBackgroundC(bookId, page.id);
   const [uploading, setUploading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const savePage = useSavePage(bookId, page.id);
+  const scene = usePageText(page.scene_prompt, (v) => savePage({ scene_prompt: v }));
+  const sceneText = scene.value.trim();
 
   const again = async () => {
+    try {
+      await scene.save(); // 剛改的場景先存好，新的背景才會用它
+    } catch {
+      return; // 存檔失敗已提示；不要用舊的場景畫
+    }
     await flushEdits();
     await regen.mutateAsync({ kind: "background" }).catch((e: unknown) => toast.show(errMsg(e, "無法再畫一張背景"), "error"));
   };
@@ -730,7 +740,7 @@ function BackgroundRow({
     })();
   };
 
-  const sub = active
+  const source = active
     ? "正在畫新的一張…"
     : uploading
       ? "上傳中…"
@@ -741,6 +751,8 @@ function BackgroundRow({
           : showRestore(page, "background")
             ? "你換過"
             : "AI 畫的";
+  const uploaded = !active && !uploading && bgGen?.source === "upload";
+  const sub = sceneText && !uploaded ? `${source}・場景：${sceneText}` : source;
   const uploadOff = uploading || busy;
   return (
     <Row
@@ -757,9 +769,30 @@ function BackgroundRow({
             <span aria-hidden="true">↑</span> 上傳圖片
             <input type="file" accept={UPLOAD_ACCEPT} className={styles.file} disabled={uploadOff} onChange={onFile} />
           </label>
+          <Button aria-expanded={open} aria-controls={`${id}-panel`} onClick={() => setOpen(!open)}>
+            改場景
+          </Button>
         </>
       }
-    />
+    >
+      {open && (
+        <div id={`${id}-panel`} className={styles.panel}>
+          <label htmlFor={`${id}-scene`} className={styles.panelLabel}>
+            場景描述
+          </label>
+          <textarea
+            id={`${id}-scene`}
+            rows={3}
+            maxLength={MAX_SCENE}
+            className={styles.textarea}
+            value={scene.value}
+            onChange={(e) => scene.setValue(e.target.value)}
+            onBlur={() => quiet(scene.save())}
+          />
+          <p className={styles.rowNote}>只寫地點和物品，不要寫人物或動物。改好場景後按「AI 再畫一張」。</p>
+        </div>
+      )}
+    </Row>
   );
 }
 

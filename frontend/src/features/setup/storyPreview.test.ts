@@ -55,6 +55,17 @@ describe("buildPreview", () => {
   });
 });
 
+describe("buildPreview：手動加的頁", () => {
+  it("接在現有與貼上的頁後面，key 跟著 draft 不跟頁碼", () => {
+    const drafts = [{ key: 7, scene: "森林", action: "" }];
+    const alone = buildPreview([], "", new Map(), drafts).entries;
+    expect(alone.map((e) => [e.n, e.key, e.draft, e.scene])).toEqual([[1, "d7", 7, "森林"]]);
+    const after = buildPreview([page(11, 0, "舊", "")], STORY, new Map(), drafts).entries;
+    expect(after.map((e) => [e.n, e.key])).toEqual([[1, "p1"], [2, "p2"], [3, "p3"], [4, "d7"]]);
+    expect(planCounts(after, new Set(["d7"]))).toMatchObject({ backgrounds: 3, poses: 3 }); // 第 4 頁（d7）上傳
+  });
+});
+
 describe("pageMaterials", () => {
   it("已選、成功、排隊中都算有；捨棄、失敗不算；上傳的背景另外標出", () => {
     const pages = [
@@ -84,7 +95,7 @@ describe("planCounts／planText", () => {
   const entries = buildPreview([], STORY).entries;
 
   it("背景＝沒上傳的頁、動作＝有動作的頁；今天放得下", () => {
-    const c = planCounts(entries, new Set([3]), { remaining: 60, estimate_s: 0, fits: 0 });
+    const c = planCounts(entries, new Set(["p3"]), { remaining: 60, estimate_s: 0, fits: 0 });
     expect(c).toMatchObject({ backgrounds: 2, poses: 3, total: 5, fits: 5, remaining: 60, minutes: 2 });
     expect(planText(c, true)).toEqual({
       heading: "準備好了！會畫 5 張圖（背景 2＋動作 3）",
