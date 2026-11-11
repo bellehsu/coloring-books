@@ -611,3 +611,47 @@ def test_0013_page_history_cursor_roundtrip(tmp_path):
         assert "AUTOINCREMENT" in sql
         assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
     command.upgrade(alembic_config(eng), "head")
+
+
+def test_0014_page_caption_show_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0013")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, action_prompt, caption_zh, status, line_detail, "
+            "line_width_px, qa_note, created_at, updated_at) VALUES (1, 0, 's', 'a', '火車', 'DRAFT', 'STANDARD', 11, "
+            "'', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "0014")
+    with eng.connect() as c:
+        cols = _cols(c, "page")
+        assert cols["caption_show_zh"]["nullable"] is False and cols["caption_show_en"]["nullable"] is False
+        # 既有的頁面：兩行都印（和以前一樣）
+        assert tuple(c.exec_driver_sql("SELECT caption_show_zh, caption_show_en FROM page").one()) == (1, 1)
+        sql = c.exec_driver_sql("SELECT sql FROM sqlite_master WHERE name = 'page'").scalar()
+        assert "AUTOINCREMENT" in sql
+    with eng.begin() as c:  # 新的列沒給值也是兩行都印
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, action_prompt, status, line_detail, "
+            "line_width_px, qa_note, created_at, updated_at) VALUES (1, 1, '', '', 'DRAFT', 'STANDARD', 11, "
+            "'', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        assert tuple(c.exec_driver_sql(
+            "SELECT caption_show_zh, caption_show_en FROM page WHERE position = 1").one()) == (1, 1)
+        with pytest.raises(IntegrityError):
+            with c.begin_nested():
+                c.exec_driver_sql("UPDATE page SET caption_show_zh = NULL")
+    command.downgrade(alembic_config(eng), "0013")
+    with eng.connect() as c:
+        assert "caption_show_zh" not in _cols(c, "page") and "caption_show_en" not in _cols(c, "page")
+        assert c.exec_driver_sql("SELECT caption_zh FROM page WHERE position = 0").scalar() == "火車"
+        sql = c.exec_driver_sql("SELECT sql FROM sqlite_master WHERE name = 'page'").scalar()
+        assert "AUTOINCREMENT" in sql
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")

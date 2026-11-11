@@ -1,6 +1,7 @@
 """頁面文字：把中英文字以空心字印在線稿下方的文字帶（Phase 11 spec §4.2、§4.6）。
 
-只在頁面至少有一行文字時使用；沒有文字的頁面由 export.compose_page 照舊處理（一個像素都不變）。
+只在頁面至少有一行要印的文字，或兩行都選了不印（留空白帶給小朋友自己寫，Phase 13b）時使用；
+其他頁面由 export.compose_page 照舊處理（一個像素都不變）。兩行都是 None 時帶照留、整條空白，不需要字型。
 
 版面（內容座標）：
 - 文字帶＝內容高度的 15%，貼齊內容區底部；印刷廠模式則貼齊安全區底部、左右也在安全區內。
@@ -120,9 +121,11 @@ def scale_art(ink: np.ndarray, size: tuple[int, int]) -> np.ndarray:
 
 
 def _lines(zh: str | None, en: str | None) -> list[tuple[str, float, float]]:
-    """(文字, 中心位置, 字級)，都是帶高的比例。"""
+    """(文字, 中心位置, 字級)，都是帶高的比例。兩行都沒有＝空白帶（沒有任何一行）。"""
     if zh and en:
         return [(zh, ZH_CENTER, ZH_SIZE), (en, EN_CENTER, EN_SIZE)]
+    if not zh and not en:
+        return []
     return [(zh or en or "", SINGLE_CENTER, ZH_SIZE)]
 
 
@@ -171,7 +174,8 @@ def _render_line(text: str, size: int, max_w: float, font_path: Path | None) -> 
 
 def render_caption_page(ink: np.ndarray, layout: Layout, zh: str | None, en: str | None,
                         font_path: Path | None) -> Image.Image:
-    """線稿（True＝黑）＋頁面文字 → 版面大小的 1-bit 白底圖（和 compose_page 一樣貼在 content_offset_px）。"""
+    """線稿（True＝黑）＋頁面文字 → 版面大小的 1-bit 白底圖（和 compose_page 一樣貼在 content_offset_px）。
+    zh、en 都沒有 → 文字帶留白（線稿一樣縮到帶上方）。"""
     zh = normalize_caption(zh)  # 舊資料也可能有換行、零寬字元：先正規化再排版
     en = normalize_caption(en)
     w, h = layout.content_px

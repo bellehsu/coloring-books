@@ -7,7 +7,7 @@
 from datetime import date, datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Column, DateTime, UniqueConstraint
+from sqlalchemy import Column, DateTime, UniqueConstraint, true
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, SQLModel
 
@@ -149,6 +149,9 @@ class Page(SQLModel, table=True):
     action_prompt: str = Field(default="", sa_column_kwargs={"server_default": ""})
     caption_zh: str | None = None  # 印在頁面下方的中文／英文短字（Phase 11；空＝None）
     caption_en: str | None = None
+    # 要印哪幾行（Phase 13b）：兩個都關＝圖下方留空白文字帶讓小朋友自己寫；開著但沒字的那行不印
+    caption_show_zh: bool = Field(default=True, sa_column_kwargs={"server_default": true()})
+    caption_show_en: bool = Field(default=True, sa_column_kwargs={"server_default": true()})
     selected_generation_id: int | None = None
     background_generation_id: int | None = None
     pose_generation_id: int | None = None

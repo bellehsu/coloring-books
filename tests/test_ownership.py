@@ -80,6 +80,8 @@ PHASE13_ROUTES = {
     ("POST", "/api/pages/{page_id}/accept"),
     # Task 7 fix round 1：C 的「再試一次」（只處理這一頁）
     ("POST", "/api/pages/{page_id}/retry"),
+    # Phase 13b：C 的「把這個選擇套用到整本書」（圖下方的字要印哪幾行）
+    ("POST", "/api/books/{book_id}/caption-display"),
 }
 
 

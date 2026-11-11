@@ -218,6 +218,8 @@ def book_overview(
             gap_count=gap_count,
             caption_zh=page.caption_zh,
             caption_en=page.caption_en,
+            caption_show_zh=page.caption_show_zh,
+            caption_show_en=page.caption_show_en,
             thumb_url=f"/api/generations/{sel}/image" if sel is not None else None,
             lineart_url=po.lineart_url,
             attention_detail=page.attention_detail if page.attention else None,

@@ -1,6 +1,7 @@
 """C 處理一頁的復原／重做（Phase 13 §4.4）與「還原成自動畫的那張」。
 
-快照（page_history.snapshot_json）：背景、角色動作、位置、動作文字、圖下方的字，以及使用者筆畫（user 層）本身。
+快照（page_history.snapshot_json）：背景、角色動作、位置、動作文字、圖下方的字與要印哪幾行，
+以及使用者筆畫（user 層）本身。Phase 13b 之前的快照沒有「要印哪幾行」：套用時當成兩行都印。
 
 **紀錄與游標。** 每頁的快照依 seq 排成一列，page.history_cursor 是「目前狀態」對應的 seq：
 - None＝在最新狀態（目前狀態還沒存成快照），沒有可重做的；
@@ -82,6 +83,8 @@ def snapshot_of(session: Session, page: Page) -> dict:
         "action_prompt": page.action_prompt,
         "caption_zh": page.caption_zh,
         "caption_en": page.caption_en,
+        "caption_show_zh": page.caption_show_zh,
+        "caption_show_en": page.caption_show_en,
         "user_strokes": json.loads(user_strokes_json(session, page)),
     }
 
@@ -256,6 +259,8 @@ def apply_snapshot(session: Session, page: Page, snap: dict) -> bool:
         action_prompt=snap.get("action_prompt") or "",
         caption_zh=snap.get("caption_zh"),
         caption_en=snap.get("caption_en"),
+        caption_show_zh=bool(snap.get("caption_show_zh", True)),
+        caption_show_en=bool(snap.get("caption_show_en", True)),
         updated_at=utcnow(),
     ))
     want_strokes = strokes_to_json(strokes_from_json(json.dumps(snap.get("user_strokes") or [])))

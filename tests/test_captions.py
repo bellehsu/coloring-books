@@ -421,9 +421,9 @@ def test_book_pdf_and_shared_views_carry_captions(client, app, monkeypatch):
     seen = []
     real = export_api.compose_page
 
-    def spy(ink, layout, captions=(None, None), font_path=None):
+    def spy(ink, layout, captions=(None, None), font_path=None, show=(True, True)):
         seen.append((captions, font_path))
-        return real(ink, layout, captions, font_path)
+        return real(ink, layout, captions, font_path, show=show)
 
     monkeypatch.setattr(export_api, "compose_page", spy)
     owner_png = page_png(client, p)

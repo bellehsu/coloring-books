@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, col, delete, func, select, update
 
 from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_page
-from app.api.schemas import PageCreate, PageOrder, PageOut, PageUpdate
+from app.api.schemas import CaptionDisplay, PageCreate, PageOrder, PageOut, PageUpdate
 from app.models import (
     Book, Generation, GenStatus, LineartEdit, Owner, Page, PageHistory, PageStatus, PageTask, PageTaskStatus,
     StrokeLayer, utcnow,
@@ -140,6 +140,27 @@ def reorder_pages(
     return page_outs(session, [pages[pid] for pid in body.page_ids])
 
 
+@router.post("/books/{book_id}/caption-display", response_model=list[PageOut])
+def set_caption_display(
+    book_id: int,
+    body: CaptionDisplay,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> list[PageOut]:
+    """C 的「把這個選擇套用到整本書」：每一頁的要印哪幾行都設成一樣。不存復原快照（不是這一頁的修改）、
+    不動線稿、QA 與頁面狀態。回傳整本書的頁面（依頁序）。"""
+    owned_book(session, owner, book_id)
+    session.exec(
+        update(Page).where(col(Page.book_id) == book_id)
+        .values(caption_show_zh=body.show_zh, caption_show_en=body.show_en, updated_at=utcnow())
+    )
+    session.commit()
+    pages = session.exec(
+        select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
+    ).all()
+    return page_outs(session, list(pages))
+
+
 @router.patch("/pages/{page_id}", response_model=PageOut)
 def update_page(
     page_id: int,
@@ -149,7 +170,7 @@ def update_page(
     worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    """oneclick（C 的改動作文字、改字）：動作文字或圖下方的字變了就先存復原快照；
+    """oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；
     線條設定變了，流程做的頁排流程重跑（不退回草稿）。"""
     page = owned_page(session, owner, page_id)
     fields = body.model_fields_set
@@ -157,6 +178,8 @@ def update_page(
         (body.action_prompt is not None and body.action_prompt != page.action_prompt)
         or ("caption_zh" in fields and body.caption_zh != page.caption_zh)
         or ("caption_en" in fields and body.caption_en != page.caption_en)
+        or (body.caption_show_zh is not None and body.caption_show_zh != page.caption_show_zh)
+        or (body.caption_show_en is not None and body.caption_show_en != page.caption_show_en)
     ):
         history.push_snapshot(session, page)
         session.refresh(page)
@@ -169,6 +192,11 @@ def update_page(
         page.caption_zh = body.caption_zh
     if "caption_en" in body.model_fields_set:
         page.caption_en = body.caption_en
+    # 要印哪幾行：只影響列印頁（composed_page），線稿與 QA 不變
+    if body.caption_show_zh is not None:
+        page.caption_show_zh = body.caption_show_zh
+    if body.caption_show_en is not None:
+        page.caption_show_en = body.caption_show_en
     # body.controlnet_strength：構圖草圖已停用，舊前端送的值忽略
     lines_changed = False
     if body.line_detail is not None and body.line_detail != page.line_detail:
