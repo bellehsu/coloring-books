@@ -349,6 +349,40 @@
 .restore:hover {
   background: var(--sky);
 }
+.captionShow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+/* 中文／英文開關：觸控至少 44 px（同 .panel 的晶片） */
+.captionShow button {
+  min-height: 44px;
+  min-width: 64px;
+}
+/* 「把這個選擇套用到整本書」：連結樣式的按鈕（同「還原成自動畫的那張」） */
+.applyAll {
+  min-height: 44px;
+  padding: 0 12px;
+  margin-left: -12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--focus);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-align: left;
+  cursor: pointer;
+}
+.applyAll:hover:not(:disabled) {
+  background: var(--sky);
+}
+.applyAll:disabled {
+  color: var(--muted-3);
+  cursor: not-allowed;
+}
 .upload {
   position: relative;
   display: inline-flex;

@@ -66,15 +66,44 @@ export function pageState(page: Page, ov: OverviewPage | undefined): PageState {
   return page.status === "passed" ? "ready" : "todo";
 }
 
-/** 圖下方的字（一行摘要）：「消防車・Fire Engine」。 */
-export function captionSummary(page: Pick<Page, "caption_zh" | "caption_en">): string {
-  const parts = [normalizeCaption(page.caption_zh ?? ""), normalizeCaption(page.caption_en ?? "")].filter(Boolean);
+type CaptionFields = "caption_zh" | "caption_en" | "caption_show_zh" | "caption_show_en";
+
+export const CAPTION_BLANK = "不印字・圖下方留白";
+
+/** 要印這一行嗎（沒有這個欄位的舊資料＝印，和後端的預設一樣）。 */
+const shows = (v: boolean | undefined) => v !== false;
+
+/** 真的會印出來的字（開著而且有字的行）；兩個都關是 "blank"（圖下方留一條空白給小朋友寫）。 */
+export function printedCaptions(page: Pick<Page, CaptionFields>): { zh: string; en: string } | "blank" {
+  const zhOn = shows(page.caption_show_zh);
+  const enOn = shows(page.caption_show_en);
+  if (!zhOn && !enOn) return "blank";
+  return {
+    zh: zhOn ? normalizeCaption(page.caption_zh ?? "") : "",
+    en: enOn ? normalizeCaption(page.caption_en ?? "") : "",
+  };
+}
+
+/** 圖下方的字（一行摘要，只列會印的行）：「消防車・Fire Engine」；兩個都關：「不印字・圖下方留白」。 */
+export function captionSummary(page: Pick<Page, CaptionFields>): string {
+  const printed = printedCaptions(page);
+  if (printed === "blank") return CAPTION_BLANK;
+  const parts = [printed.zh, printed.en].filter(Boolean);
   return parts.length ? parts.join("・") : "沒有字";
 }
 
-/** 列印頁預覽網址：線稿 key（lineart_url 的 ?v=）加上文字，任何一個改了就重新載入。 */
-export function printUrl(page: Pick<Page, "id" | "lineart_url" | "caption_zh" | "caption_en">): string {
+/** 「套用到整本書」成功時的說法。 */
+export function captionChoiceLabel(showZh: boolean, showEn: boolean): string {
+  if (showZh && showEn) return "中文和英文都印";
+  if (showZh) return "只印中文";
+  if (showEn) return "只印英文";
+  return "圖下方留白";
+}
+
+/** 列印頁預覽網址：線稿 key（lineart_url 的 ?v=）加上文字與要印哪幾行，任何一個改了就重新載入。 */
+export function printUrl(page: Pick<Page, "id" | "lineart_url" | CaptionFields>): string {
   const key = page.lineart_url?.split("?v=")[1] ?? "";
-  const v = `${key}|${page.caption_zh ?? ""}|${page.caption_en ?? ""}`;
+  const show = `${shows(page.caption_show_zh) ? 1 : 0}${shows(page.caption_show_en) ? 1 : 0}`;
+  const v = `${key}|${page.caption_zh ?? ""}|${page.caption_en ?? ""}|${show}`;
   return `/api/pages/${page.id}/print.png?v=${encodeURIComponent(v)}`;
 }

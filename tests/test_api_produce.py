@@ -288,7 +288,8 @@ def test_overview_new_book_through_a_full_run(client, app):
     assert ov["deferred_count"] == 2  # 還沒排的頁數（還沒開始做也一樣）
     first = ov["pages"][0]
     assert first == {"id": p1["id"], "position": p1["position"], "state": "todo", "gap_count": None,
-                     "caption_zh": "公園", "caption_en": "park", "thumb_url": None,
+                     "caption_zh": "公園", "caption_en": "park", "caption_show_zh": True, "caption_show_en": True,
+                     "thumb_url": None,
                      "lineart_url": None, "attention_detail": None}
 
     produce(client, b["id"])

@@ -15,14 +15,19 @@ from app.services.layout import Layout
 
 def compose_page(ink: np.ndarray, layout: Layout,
                  captions: tuple[str | None, str | None] = (None, None),
-                 font_path: Path | None = None) -> Image.Image:
+                 font_path: Path | None = None,
+                 show: tuple[bool, bool] = (True, True)) -> Image.Image:
     """ink（True＝黑）→ 版面大小的 1-bit 白底圖，內容貼在 content_offset_px。
 
-    captions＝(中文, 英文)：至少一行有字時，線稿縮到上方、文字以空心字印在底部的文字帶
-    （captions.render_caption_page；字型不能用 → CaptionFontMissing）。都沒有字時和以前一模一樣。
+    captions＝(中文, 英文)，show＝(印中文, 印英文)（page.caption_show_zh／_en）：
+    - 至少一行「開著而且有字」：線稿縮到上方、那幾行以空心字印在底部的文字帶
+      （captions.render_caption_page；字型不能用 → CaptionFontMissing）；
+    - 兩個都關：文字帶照留、整條空白（給小朋友自己寫），線稿一樣縮到上方；不需要字型；
+    - 其他（開著的行都沒字）：和以前一模一樣（沒有文字帶）。
     """
-    zh, en = (normalize_caption(c) for c in captions)
-    if zh or en:
+    show_zh, show_en = show
+    zh, en = (normalize_caption(c) if on else None for c, on in zip(captions, (show_zh, show_en)))
+    if zh or en or not (show_zh or show_en):
         return render_caption_page(ink, layout, zh, en, font_path)
     content = Image.fromarray(np.where(ink, 0, 255).astype(np.uint8), mode="L").convert(
         "1", dither=Image.Dither.NONE

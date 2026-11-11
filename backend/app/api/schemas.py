@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 from pydantic_core import PydanticCustomError
 
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
@@ -275,9 +275,19 @@ class PageUpdate(BaseModel):
     action_prompt: ActionPromptStr | None = None
     caption_zh: CaptionZhStr = None  # 未送＝不動（見 model_fields_set）；""、空白、null＝清除
     caption_en: CaptionEnStr = None
+    # 要印哪幾行（未送＝不動；只收 true／false，null 也是 422）
+    caption_show_zh: StrictBool = None  # type: ignore[assignment]
+    caption_show_en: StrictBool = None  # type: ignore[assignment]
     controlnet_strength: float | None = None  # 構圖草圖已停用（0006 已移除欄位）：舊前端會送，照收但忽略
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
+
+
+class CaptionDisplay(BaseModel):
+    """整本書套用同一個「要印哪幾行」：兩個都 false＝每頁圖下方留白給小朋友寫。"""
+
+    show_zh: StrictBool
+    show_en: StrictBool
 
 
 class PageOrder(BaseModel):
@@ -327,6 +337,8 @@ class PageOut(BaseModel):
     action_prompt: str
     caption_zh: str | None
     caption_en: str | None
+    caption_show_zh: bool  # 要印中文這行（開著但沒字＝不印）
+    caption_show_en: bool  # 要印英文這行；兩個都 false＝圖下方留空白文字帶
     selected_generation_id: int | None
     background_generation_id: int | None
     pose_generation_id: int | None
@@ -383,6 +395,8 @@ class PageOut(BaseModel):
             action_prompt=page.action_prompt,
             caption_zh=page.caption_zh,
             caption_en=page.caption_en,
+            caption_show_zh=page.caption_show_zh,
+            caption_show_en=page.caption_show_en,
             selected_generation_id=page.selected_generation_id,
             background_generation_id=page.background_generation_id,
             pose_generation_id=page.pose_generation_id,
@@ -545,6 +559,8 @@ class OverviewPageOut(BaseModel):
     gap_count: int | None  # 快取的 QA 是目前線稿的才有（GET 不算線稿）
     caption_zh: str | None
     caption_en: str | None
+    caption_show_zh: bool
+    caption_show_en: bool
     thumb_url: str | None  # 選定圖（合成圖；舊書是整頁圖）
     lineart_url: str | None  # 目前線稿（?v= 為目前的 key）；沒選定圖為 None
     attention_detail: str | None

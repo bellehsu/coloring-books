@@ -164,6 +164,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/books/{book_id}/caption-display": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Caption Display
+         * @description C 的「把這個選擇套用到整本書」：每一頁的要印哪幾行都設成一樣。不存復原快照（不是這一頁的修改）、
+         *     不動線稿、QA 與頁面狀態。回傳整本書的頁面（依頁序）。
+         */
+        post: operations["set_caption_display_api_books__book_id__caption_display_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pages/{page_id}": {
         parameters: {
             query?: never;
@@ -180,7 +201,7 @@ export interface paths {
         head?: never;
         /**
          * Update Page
-         * @description oneclick（C 的改動作文字、改字）：動作文字或圖下方的字變了就先存復原快照；
+         * @description oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；
          *     線條設定變了，流程做的頁排流程重跑（不退回草稿）。
          */
         patch: operations["update_page_api_pages__page_id__patch"];
@@ -1187,6 +1208,16 @@ export interface components {
             paper_size?: components["schemas"]["PaperSize"] | null;
             print_mode?: components["schemas"]["PrintMode"] | null;
         };
+        /**
+         * CaptionDisplay
+         * @description 整本書套用同一個「要印哪幾行」：兩個都 false＝每頁圖下方留白給小朋友寫。
+         */
+        CaptionDisplay: {
+            /** Show Zh */
+            show_zh: boolean;
+            /** Show En */
+            show_en: boolean;
+        };
         /** CharacterCandidatesCreate */
         CharacterCandidatesCreate: {
             /** Description */
@@ -1447,6 +1478,10 @@ export interface components {
             caption_zh: string | null;
             /** Caption En */
             caption_en: string | null;
+            /** Caption Show Zh */
+            caption_show_zh: boolean;
+            /** Caption Show En */
+            caption_show_en: boolean;
             /** Thumb Url */
             thumb_url: string | null;
             /** Lineart Url */
@@ -1488,6 +1523,10 @@ export interface components {
             caption_zh: string | null;
             /** Caption En */
             caption_en: string | null;
+            /** Caption Show Zh */
+            caption_show_zh: boolean;
+            /** Caption Show En */
+            caption_show_en: boolean;
             /** Selected Generation Id */
             selected_generation_id: number | null;
             /** Background Generation Id */
@@ -1567,6 +1606,10 @@ export interface components {
             caption_zh?: string | null;
             /** Caption En */
             caption_en?: string | null;
+            /** Caption Show Zh */
+            caption_show_zh?: boolean;
+            /** Caption Show En */
+            caption_show_en?: boolean;
             /** Controlnet Strength */
             controlnet_strength?: number | null;
             line_detail?: components["schemas"]["LineDetail"] | null;
@@ -1718,6 +1761,10 @@ export interface components {
             caption_zh: string | null;
             /** Caption En */
             caption_en: string | null;
+            /** Caption Show Zh */
+            caption_show_zh: boolean;
+            /** Caption Show En */
+            caption_show_en: boolean;
             /** Selected Generation Id */
             selected_generation_id: number | null;
             /** Background Generation Id */
@@ -2227,6 +2274,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PageOrder"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_caption_display_api_books__book_id__caption_display_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaptionDisplay"];
             };
         };
         responses: {

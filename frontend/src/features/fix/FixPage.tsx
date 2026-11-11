@@ -21,6 +21,7 @@ import { useToast } from "@/components/ui/Toast";
 import { STATE_LABEL } from "@/features/book/overviewState";
 import { ComposeStage } from "@/features/editor/ComposeStage";
 import { ExclusiveChips, usePageText } from "@/features/editor/ComposeWorkspace";
+import chip from "@/features/editor/Inspector.module.css";
 import { peekEditsQueue } from "@/features/editor/editsQueue";
 import { errMsg } from "@/features/editor/errMsg";
 import { LineFixStage } from "@/features/editor/LineFixStage";
@@ -30,6 +31,7 @@ import type { StrokeOp } from "@/lib/strokes";
 import { UPLOAD_ACCEPT } from "@/lib/upload";
 import {
   useAcceptPage,
+  useCaptionDisplay,
   useFixPages,
   usePatchPageC,
   useRedoPage,
@@ -42,6 +44,7 @@ import {
   refreshFix,
 } from "./fixApi";
 import {
+  captionChoiceLabel,
   captionSummary,
   fixHref,
   neighbours,
@@ -327,7 +330,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               restore={showRestore(page, "lines") ? () => void restore("lines") : null}
               busy={busy}
             />
-            <CaptionRow bookId={bookId} page={page} textKey={historyEpoch} />
+            <CaptionRow bookId={bookId} page={page} textKey={historyEpoch} busy={busy || page.recompose_pending} />
           </ul>
           {hasArt && qa && qa.gap_count > 0 && (
             <p className={styles.note}>線沒接起來也可以印；想讓顏色不漏出去，再按「自動補線」或用畫筆接起來。</p>
@@ -592,7 +595,14 @@ function Row({
 function useSavePage(bookId: number, pageId: number) {
   const toast = useToast();
   const patch = usePatchPageC(bookId, pageId);
-  return (body: { scene_prompt?: string; action_prompt?: string; caption_zh?: string; caption_en?: string }) =>
+  return (body: {
+    scene_prompt?: string;
+    action_prompt?: string;
+    caption_zh?: string;
+    caption_en?: string;
+    caption_show_zh?: boolean;
+    caption_show_en?: boolean;
+  }) =>
     patch.mutateAsync(body).catch((e: unknown) => {
       toast.show(errMsg(e, "無法儲存"), "error");
       throw e;
@@ -887,10 +897,18 @@ function LinesRow({
   );
 }
 
-function CaptionRow({ bookId, page, textKey }: { bookId: number; page: Page; textKey: number }) {
+/**
+ * 圖下方的字：「改字」打開中文／英文欄位；兩個開關（中文、英文，多選）決定這一頁印哪幾行，兩個都不選＝
+ * 圖下方留一條空白讓小朋友自己寫；「把這個選擇套用到整本書」把這頁的開關套到每一頁。
+ * busy（復原中、位置還在存、等著重新合成）時開關與套用停用；存的時候也停用，免得連按蓋來蓋去。
+ */
+function CaptionRow({ bookId, page, textKey, busy }: { bookId: number; page: Page; textKey: number; busy: boolean }) {
   const id = useId();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const savePage = useSavePage(bookId, page.id);
+  const applyAll = useCaptionDisplay(bookId, page.id);
+  const [toggling, setToggling] = useState(false);
   const zh = usePageText(page.caption_zh ?? "", (v) =>
     captionError("zh", v) ? Promise.resolve() : savePage({ caption_zh: normalizeCaption(v) }),
     textKey,
@@ -899,6 +917,26 @@ function CaptionRow({ bookId, page, textKey }: { bookId: number; page: Page; tex
     captionError("en", v) ? Promise.resolve() : savePage({ caption_en: normalizeCaption(v) }),
     textKey,
   );
+  const off = busy || toggling || applyAll.isPending;
+
+  const toggle = (field: "caption_show_zh" | "caption_show_en") => {
+    if (off) return;
+    setToggling(true);
+    void quiet(savePage({ [field]: !page[field] })).finally(() => setToggling(false));
+  };
+  const applyToBook = () => {
+    if (off) return;
+    const choice = { show_zh: page.caption_show_zh, show_en: page.caption_show_en };
+    applyAll.mutate(choice, {
+      onSuccess: () => toast.show(`整本書都改成「${captionChoiceLabel(choice.show_zh, choice.show_en)}」了`, "success"),
+      onError: (e) => toast.show(errMsg(e, "沒辦法套用到整本書"), "error"),
+    });
+  };
+
+  const toggles: { field: "caption_show_zh" | "caption_show_en"; label: string }[] = [
+    { field: "caption_show_zh", label: "中文" },
+    { field: "caption_show_en", label: "英文" },
+  ];
   return (
     <Row
       title="圖下方的字"
@@ -911,6 +949,33 @@ function CaptionRow({ bookId, page, textKey }: { bookId: number; page: Page; tex
         </Button>
       }
     >
+      <div className={styles.captionShow}>
+        <div className={chip.presets} role="group" aria-label="要印哪幾行" aria-describedby={`${id}-show-hint`}>
+          {toggles.map(({ field, label }) => {
+            const on = page[field];
+            return (
+              <button
+                key={field}
+                type="button"
+                className={chip.preset}
+                data-added={on}
+                aria-pressed={on}
+                disabled={off}
+                onClick={() => toggle(field)}
+              >
+                {on ? <span aria-hidden="true">✓ </span> : null}
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <p id={`${id}-show-hint`} className={styles.rowNote}>
+          兩個都不選＝圖下方留白，讓小朋友自己寫
+        </p>
+        <button type="button" className={styles.applyAll} disabled={off} onClick={applyToBook}>
+          把這個選擇套用到整本書
+        </button>
+      </div>
       {open && (
         <div id={`${id}-panel`} className={styles.panel}>
           <CaptionField kind="zh" value={zh.value} onChange={zh.setValue} onBlur={() => quiet(zh.save())} />

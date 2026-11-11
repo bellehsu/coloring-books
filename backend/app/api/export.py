@@ -40,7 +40,8 @@ def composed_page(session: Session, storage: Storage, book: Book, page: Page, fo
     with Image.open(io.BytesIO(data)) as im:
         ink = np.asarray(im.convert("L")) < 128
     try:
-        return compose_page(ink, layout, (page.caption_zh, page.caption_en), font_path)
+        return compose_page(ink, layout, (page.caption_zh, page.caption_en), font_path,
+                            show=(page.caption_show_zh, page.caption_show_en))
     except CaptionFontMissing as e:
         raise HTTPException(409, CAPTION_FONT_MISSING) from e
 

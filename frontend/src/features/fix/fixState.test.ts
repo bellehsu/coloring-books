@@ -91,6 +91,16 @@ describe("small helpers", () => {
     expect(captionSummary(mkPage({ caption_zh: "", caption_en: null }))).toBe("沒有字");
   });
 
+  it("captionSummary shows only the lines that print; both off says the space is left blank", () => {
+    expect(captionSummary(mkPage({ caption_show_en: false }))).toBe("消防車");
+    expect(captionSummary(mkPage({ caption_show_zh: false }))).toBe("Fire Engine");
+    expect(captionSummary(mkPage({ caption_show_zh: false, caption_en: null }))).toBe("沒有字");
+    expect(captionSummary(mkPage({ caption_show_zh: false, caption_show_en: false }))).toBe("不印字・圖下方留白");
+    expect(captionSummary(mkPage({ caption_zh: null, caption_en: null, caption_show_zh: false, caption_show_en: false }))).toBe(
+      "不印字・圖下方留白",
+    );
+  });
+
   it("pageState prefers the overview", () => {
     expect(pageState(mkPage(), ovPage(5, 1, "working"))).toBe("working");
     expect(pageState(mkPage(), undefined)).toBe("ready");
@@ -103,5 +113,15 @@ describe("small helpers", () => {
     expect(a.startsWith("/api/pages/5/print.png?v=")).toBe(true);
     expect(printUrl(mkPage({ lineart_url: "/api/pages/5/lineart?v=k2" }))).not.toBe(a);
     expect(printUrl(mkPage({ caption_en: "Truck" }))).not.toBe(a);
+  });
+
+  it("printUrl changes with each caption toggle", () => {
+    const urls = [
+      printUrl(mkPage()),
+      printUrl(mkPage({ caption_show_zh: false })),
+      printUrl(mkPage({ caption_show_en: false })),
+      printUrl(mkPage({ caption_show_zh: false, caption_show_en: false })),
+    ];
+    expect(new Set(urls).size).toBe(4);
   });
 });
