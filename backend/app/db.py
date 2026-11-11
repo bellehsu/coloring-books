@@ -13,9 +13,17 @@ from sqlmodel import Session, create_engine
 from app import models  # noqa: F401  確保資料表已註冊到 metadata
 
 
+# 其他連線持有寫入鎖時最多等幾秒（pysqlite 預設 5 秒）。寫入交易都很短（storage I/O 一律在交易外），
+# 這只是保險：同時有幾個寫入者排隊時不要立刻 database is locked
+SQLITE_BUSY_TIMEOUT_S = 30
+
+
 def make_engine(database: Path) -> Engine:
     # worker 執行緒與 API 執行緒共用同一個 engine，所以關閉 check_same_thread
-    return create_engine(f"sqlite:///{database}", connect_args={"check_same_thread": False})
+    return create_engine(
+        f"sqlite:///{database}",
+        connect_args={"check_same_thread": False, "timeout": SQLITE_BUSY_TIMEOUT_S},
+    )
 
 
 BASELINE_REVISION = "0001"  # Phase 2 以 create_all 建立的結構

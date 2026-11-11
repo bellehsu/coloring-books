@@ -17,7 +17,7 @@ from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
 from app.services.usage import refund_generations
-from app.services.worker import GenerationWorker, WorkerState
+from app.services.worker import GenerationWorker, WorkerState, worker_job
 from app.storage import Storage, StorageNotFound
 
 router = APIRouter(prefix="/api", tags=["generations"])
@@ -253,13 +253,14 @@ def queue_status(
         select(func.count()).select_from(Generation).where(col(Generation.status) == GenStatus.QUEUED)
     ).one()
     running_id = session.exec(
-        select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING).limit(1)
+        select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job()).limit(1)
     ).first()
     pending = session.exec(
         select(Generation.kind)
         .where(
             col(Generation.status).in_([GenStatus.QUEUED, GenStatus.RUNNING]),
             col(Generation.kind).in_(_ETA_KINDS),
+            worker_job(),  # 寫到一半的上傳背景不是 GPU 任務
         )
         .order_by(col(Generation.created_at), col(Generation.id))
     ).all()

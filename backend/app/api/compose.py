@@ -6,6 +6,7 @@
 
 import io
 import json
+import logging
 import random
 import threading
 import time
@@ -13,7 +14,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy import and_, case, null
-from sqlmodel import Session, col, select, update
+from sqlmodel import Session, col, delete, select, update
 
 from app.api.books import MAX_SEED
 from app.api.deps import (
@@ -59,6 +60,7 @@ from app.services.upload_bg import cover_crop
 from app.storage import UPLOAD_MAX_PIXELS, ImageRejected, Storage, StorageNotFound, TooManyPixels, load_rgb
 
 router = APIRouter(prefix="/api", tags=["compose"])
+log = logging.getLogger(__name__)
 
 NEED_BACKGROUND = "請先選好背景"
 NEED_POSE = "請先選好角色動作"
@@ -440,42 +442,92 @@ def upload_background(
     )
     params = {"filename": file.filename, "original_size": list(original_size),
               "crop_box": list(crop_box)}
-    now = utcnow()
-    written: str | None = None
+    gen = Generation(
+        book_id=book.id,
+        page_id=page.id,
+        kind=GenKind.BACKGROUND,
+        user_text="",
+        prompt="",
+        negative_prompt="",
+        seed=0,
+        width=width,
+        height=height,
+        request_json=request_json,
+        engine="upload",
+        workflow_name=None,
+        models_json="[]",
+        params_json=json.dumps(params, ensure_ascii=False, sort_keys=True),
+        started_at=utcnow(),
+        elapsed_s=elapsed_s,
+    )
+    gen_id, rel = _store_outside_tx(session, storage, gen, buf.getvalue())
+    _mark_stored(session, storage, gen, rel, "上傳的背景剛被移除，請重新上傳")
+    # 背景已經是一筆有圖的成功紀錄：之後選用失敗（例如剛被捨棄）也不刪它的物件
+    return _pick(session, owner, page_id, gen_id, GenKind.BACKGROUND)
+
+
+def _store_outside_tx(session: Session, storage: Storage, gen: Generation, data: bytes) -> tuple[int, str]:
+    """把後端自己產生的圖（上傳背景、合成圖）寫進 storage，寫入期間不持有 SQLite 寫入鎖。
+
+    R2 的 put 是網路請求（可能很慢）；在寫入交易裡做會讓其他寫入者等到 database is locked。所以：
+    先以 RUNNING、沒有圖提交這一列（拿到 id 才有 key；storage_gc 把 RUNNING 當成寫入中，不刪它的物件），
+    交易外寫物件，再由呼叫端以 _mark_stored／條件式 UPDATE 標成 SUCCEEDED 並記上 key。
+    寫入失敗就刪掉暫存列再丟出原本的例外：列永遠不會指到不存在的物件（留下的物件由 storage_gc 清）。
+    回傳 (id, key)。"""
+    # 呼叫端在這之前只能有讀取（沒有未提交的寫入），這裡的 commit 只提交這一列
+    gen.status = GenStatus.RUNNING
+    gen.image_path = None
+    session.add(gen)
+    session.commit()
+    rel = storage.generation_image(gen.book_id, gen.id)
     try:
-        gen = Generation(
-            book_id=book.id,
-            page_id=page.id,
-            kind=GenKind.BACKGROUND,
-            status=GenStatus.SUCCEEDED,
-            user_text="",
-            prompt="",
-            negative_prompt="",
-            seed=0,
-            width=width,
-            height=height,
-            request_json=request_json,
-            engine="upload",
-            workflow_name=None,
-            models_json="[]",
-            params_json=json.dumps(params, ensure_ascii=False, sort_keys=True),
-            started_at=now,
-            finished_at=now,
-            elapsed_s=elapsed_s,
-        )
-        session.add(gen)
-        session.flush()
-        rel = storage.generation_image(book.id, gen.id)
-        storage.put(rel, buf.getvalue())
-        written = rel
-        gen.image_path = rel
-        session.commit()
-        return _pick(session, owner, page_id, gen.id, GenKind.BACKGROUND)
+        storage.put(rel, data)
     except Exception:
-        session.rollback()
-        if written:
-            storage.delete(written)
+        _abandon(session, storage, gen.id, rel)
         raise
+    return gen.id, rel
+
+
+def _abandon(session: Session, storage: Storage, gen_id: int, rel: str) -> None:
+    """刪掉還沒有圖的暫存列（只刪仍是 RUNNING、沒有 image_path 的），再盡力刪物件；失敗只記 log。"""
+    session.rollback()
+    try:
+        session.exec(
+            delete(Generation).where(col(Generation.id) == gen_id, col(Generation.status) == GenStatus.RUNNING,
+                                     col(Generation.image_path).is_(None))
+        )
+        session.commit()
+    except Exception:  # noqa: BLE001  刪不掉：列沒有圖，重啟時 requeue_interrupted 會把它標成失敗
+        session.rollback()
+        log.warning("刪除暫存的生成紀錄 %s 失敗", gen_id, exc_info=True)
+    try:
+        storage.delete(rel)
+    except Exception:  # noqa: BLE001  留下的物件由 storage_gc 清
+        log.warning("刪除物件 %s 失敗", rel, exc_info=True)
+
+
+def _finish_stored(session: Session, gen_id: int, rel: str, **values):
+    """條件式 UPDATE：暫存列（RUNNING、沒有圖）→ SUCCEEDED 並記上 key；不 commit，回傳結果（看 rowcount）。"""
+    return session.exec(
+        update(Generation)
+        .where(col(Generation.id) == gen_id, col(Generation.status) == GenStatus.RUNNING,
+               col(Generation.image_path).is_(None))
+        .values(status=GenStatus.SUCCEEDED, image_path=rel, finished_at=utcnow(), **values)
+    )
+
+
+def _mark_stored(session: Session, storage: Storage, gen: Generation, rel: str, gone: str) -> None:
+    """_finish_stored 並提交；暫存列已經不在（極少見）就刪物件、回 409。"""
+    try:
+        res = _finish_stored(session, gen.id, rel)
+        session.commit()
+    except Exception:
+        _abandon(session, storage, gen.id, rel)
+        raise
+    if res.rowcount == 0:
+        _abandon(session, storage, gen.id, rel)
+        raise HTTPException(409, gone)
+    session.refresh(gen)
 
 
 @router.post("/pages/{page_id}/pose", response_model=PageOut)
@@ -567,54 +619,49 @@ def confirm_compose(
     placement = page_placement(page.placement_json)
     placement_json = page.placement_json
 
-    written: str | None = None
+    target = _find_composite(session, storage, page_id, bg.id, pose.id, placement)
+    written: str | None = None  # 這次新寫的合成圖（列還是暫存的 RUNNING）
+    if target is None:
+        started_at, t0 = utcnow(), time.monotonic()
+        try:
+            bg_img = _load_image(storage, bg.image_path)
+            pose_img = _load_image(storage, pose.image_path)
+            mask_img = _load_image(storage, pose.mask_path)
+        except (OSError, ValueError) as e:  # 檔案不在、壞掉或路徑不合法
+            raise HTTPException(409, FILE_MISSING) from e
+        try:
+            out = compose(bg_img, pose_img, mask_img, placement)
+        except ValueError as e:  # 遮罩是空的、與角色圖尺寸不同
+            raise HTTPException(409, f"無法合成：{e}，請重新產生角色動作") from e
+        buf = io.BytesIO()
+        out.save(buf, "PNG")
+        params = json.dumps(_composite_params(bg.id, pose.id, placement), ensure_ascii=False,
+                            sort_keys=True)
+        target = Generation(
+            book_id=page.book_id,
+            page_id=page.id,
+            kind=GenKind.COMPOSITE,
+            user_text="",
+            prompt="",
+            negative_prompt="",
+            seed=0,
+            width=out.width,
+            height=out.height,
+            request_json=params,
+            engine="compose",
+            workflow_name="compose",
+            workflow_version=COMPOSE_VERSION,
+            models_json="[]",
+            params_json=params,
+            started_at=started_at,
+        )
+        _, written = _store_outside_tx(session, storage, target, buf.getvalue())
+        elapsed_s = time.monotonic() - t0
+    target_id = target.id
     try:
-        target = _find_composite(session, storage, page_id, bg.id, pose.id, placement)
-        if target is None:
-            started_at, t0 = utcnow(), time.monotonic()
-            try:
-                bg_img = _load_image(storage, bg.image_path)
-                pose_img = _load_image(storage, pose.image_path)
-                mask_img = _load_image(storage, pose.mask_path)
-            except (OSError, ValueError) as e:  # 檔案不在、壞掉或路徑不合法
-                raise HTTPException(409, FILE_MISSING) from e
-            try:
-                out = compose(bg_img, pose_img, mask_img, placement)
-            except ValueError as e:  # 遮罩是空的、與角色圖尺寸不同
-                raise HTTPException(409, f"無法合成：{e}，請重新產生角色動作") from e
-            buf = io.BytesIO()
-            out.save(buf, "PNG")
-            params = json.dumps(_composite_params(bg.id, pose.id, placement), ensure_ascii=False,
-                                sort_keys=True)
-            target = Generation(
-                book_id=page.book_id,
-                page_id=page.id,
-                kind=GenKind.COMPOSITE,
-                status=GenStatus.SUCCEEDED,
-                user_text="",
-                prompt="",
-                negative_prompt="",
-                seed=0,
-                width=out.width,
-                height=out.height,
-                request_json=params,
-                engine="compose",
-                workflow_name="compose",
-                workflow_version=COMPOSE_VERSION,
-                models_json="[]",
-                params_json=params,
-                started_at=started_at,
-            )
-            session.add(target)
-            session.flush()
-            rel = storage.generation_image(page.book_id, target.id)
-            storage.put(rel, buf.getvalue())
-            written = rel
-            target.image_path = rel
-            target.elapsed_s = time.monotonic() - t0
-            target.finished_at = utcnow()
-            session.flush()
-        target_id = target.id
+        # 新合成圖標成成功與選用它在同一個交易：選不到（輸入被改）就整個回滾、刪掉暫存列與物件
+        if written is not None and _finish_stored(session, target_id, written, elapsed_s=elapsed_s).rowcount == 0:
+            raise HTTPException(409, INPUTS_CHANGED)
         target_valid = (
             select(Generation.id)
             .where(col(Generation.id) == target_id, col(Generation.page_id) == page_id,
@@ -642,8 +689,8 @@ def confirm_compose(
         session.commit()
     except Exception:
         session.rollback()
-        if written:
-            storage.delete(written)
+        if written is not None:
+            _abandon(session, storage, target_id, written)
         raise
     session.refresh(page)
     return page_out(session, page)

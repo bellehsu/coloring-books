@@ -9,6 +9,7 @@ import logging
 from collections.abc import Callable
 from enum import Enum
 
+from sqlalchemy import or_
 from sqlmodel import Session, col, select, update
 
 from app.models import Generation, GenKind, GenStatus, utcnow
@@ -32,6 +33,18 @@ class WorkerState(str, Enum):
     RUNNING = "running"
     ENGINE_UNAVAILABLE = "engine_unavailable"
     STOPPED = "stopped"
+
+
+# 後端在請求裡自己產生的生成紀錄（上傳背景、確認合成）。寫物件期間這一列以 RUNNING、沒有圖暫存
+# （api/compose.py：storage I/O 不在寫入交易裡做），它不是 worker 的 GPU 任務：佇列狀態與排隊位置不算它，
+# 重啟時也不可放回佇列
+LOCAL_ENGINES = ("upload", "compose")
+LOCAL_INTERRUPTED = "處理中斷（伺服器重新啟動），請重新上傳或合成"
+
+
+def worker_job():
+    """SQL 條件：這一列是 worker 的任務（engine 還沒寫入，或不是後端自己產生的）。"""
+    return or_(col(Generation.engine).is_(None), col(Generation.engine).not_in(LOCAL_ENGINES))
 
 
 # request_json 的核心欄位（extra 不能蓋掉）
@@ -156,10 +169,17 @@ class GenerationWorker:
 
     # ---- 資料庫操作（同步，每次新 session）----
     def requeue_interrupted(self) -> int:
+        """上次執行到一半的 GPU 任務放回佇列；寫到一半的上傳／合成（沒有圖）標成失敗。回傳放回佇列的數量。"""
+        running = col(Generation.status) == GenStatus.RUNNING
         with self.sessions() as s:
+            s.exec(
+                update(Generation)
+                .where(running, ~worker_job())
+                .values(status=GenStatus.FAILED, error=LOCAL_INTERRUPTED, finished_at=utcnow())
+            )
             res = s.exec(
                 update(Generation)
-                .where(col(Generation.status) == GenStatus.RUNNING)
+                .where(running, worker_job())
                 .values(status=GenStatus.QUEUED, started_at=None)
             )
             s.commit()
@@ -202,7 +222,9 @@ class GenerationWorker:
             order = self._plan(s)
             if gen_id not in order:  # 讀取之間狀態剛好改變
                 return None
-            running = s.exec(select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING)).first()
+            running = s.exec(
+                select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job())
+            ).first()
             return order.index(gen_id) + (1 if running is not None else 0)
 
     def _plan(self, s: Session) -> list[int]:
