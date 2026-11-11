@@ -399,3 +399,125 @@ def test_0010_page_captions_roundtrip(tmp_path):
         assert c.exec_driver_sql("SELECT scene_prompt FROM page").scalar() == "s"
         assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
     command.upgrade(alembic_config(eng), "head")
+
+
+def _seed_0010(eng) -> None:
+    """停在 0010：一頁、兩張合成圖（30 有修線、31 沒有）。"""
+    command.upgrade(alembic_config(eng), "0010")
+    ts = "'2026-11-11 00:00:00'"
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          f"VALUES ('o', 'h', 0, 60, {ts})")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            f"VALUES (1, 'x', 'A4', 'HOME', {ts}, {ts})"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO page (id, book_id, position, scene_prompt, action_prompt, status, line_detail, line_width_px, "
+            f"qa_note, selected_generation_id, created_at, updated_at) VALUES (3, 1, 0, 's', 'a', 'PASSED', 'STANDARD', 11, "
+            f"'', 30, {ts}, {ts})"
+        )
+        for gid in (30, 31):
+            c.exec_driver_sql(
+                "INSERT INTO generation (id, book_id, page_id, kind, status, discarded, user_text, prompt, "
+                "negative_prompt, seed, width, height, request_json, created_at) "
+                f"VALUES ({gid}, 1, 3, 'COMPOSITE', 'SUCCEEDED', 0, 'u', 'p', 'n', 1, 8, 8, '{{}}', {ts})"
+            )
+        c.exec_driver_sql(
+            f"INSERT INTO lineartedit (generation_id, page_id, strokes_json, updated_at) VALUES (30, 3, '[1]', {ts})"
+        )
+
+
+def test_0011_oneclick_upgrade(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    _seed_0010(eng)
+    command.upgrade(alembic_config(eng), "0011")
+    with eng.connect() as c:
+        cols = _cols(c, "page")
+        for name in ("attention", "attention_detail", "auto_background_generation_id", "auto_pose_generation_id"):
+            assert cols[name]["nullable"] is True, name
+        assert c.exec_driver_sql(
+            "SELECT attention, attention_detail, auto_background_generation_id, auto_pose_generation_id FROM page"
+        ).one() == (None, None, None, None)
+        # 既有的修線都是使用者畫的：layer＝USER，其餘不變
+        assert c.exec_driver_sql(
+            "SELECT generation_id, layer, page_id, strokes_json, updated_at FROM lineartedit").all() == [
+            (30, "USER", 3, "[1]", "2026-11-11 00:00:00")]
+        insp = inspect(c)
+        assert insp.get_pk_constraint("lineartedit")["constrained_columns"] == ["generation_id", "layer"]
+        assert {i["name"] for i in insp.get_indexes("lineartedit")} == {"ix_lineartedit_page_id"}
+        fk = lambda t: {(tuple(f["constrained_columns"]), f["referred_table"]) for f in insp.get_foreign_keys(t)}  # noqa: E731
+        assert fk("lineartedit") == {(("generation_id",), "generation"), (("page_id",), "page")}
+        assert fk("page_task") == {(("page_id",), "page")}
+        assert fk("page_history") == {(("page_id",), "page")}
+        assert set(_cols(c, "page_task")) == {"id", "page_id", "kind", "status", "error", "created_at", "updated_at"}
+        assert set(_cols(c, "page_history")) == {"id", "page_id", "seq", "snapshot_json", "created_at"}
+        assert _cols(c, "page_task")["error"]["nullable"] is True
+        assert {i["name"] for i in insp.get_indexes("page_task")} == {"ix_page_task_page_id", "ix_page_task_status"}
+        for t in AUTOINCREMENT_TABLES:
+            assert "AUTOINCREMENT" in table_sql(c, t), t
+        assert c.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    ts = "'2026-11-11 00:00:01'"
+    with eng.begin() as c:
+        # 同一張圖可以同時有 auto 與 user 兩層，但每層只有一列
+        c.exec_driver_sql(
+            f"INSERT INTO lineartedit (generation_id, layer, page_id, strokes_json, updated_at) VALUES (30, 'AUTO', 3, '[2]', {ts})")
+        c.exec_driver_sql(
+            "INSERT INTO page_task (page_id, kind, status, created_at, updated_at) "
+            f"VALUES (3, 'pipeline', 'queued', {ts}, {ts})")
+        c.exec_driver_sql(
+            f"INSERT INTO page_history (page_id, seq, snapshot_json, created_at) VALUES (3, 1, '{{}}', {ts})")
+    with pytest.raises(IntegrityError):
+        with eng.begin() as c:
+            c.exec_driver_sql(
+                f"INSERT INTO lineartedit (generation_id, layer, page_id, strokes_json, updated_at) VALUES (30, 'AUTO', 3, '[]', {ts})")
+    with pytest.raises(IntegrityError):  # 同一頁的 seq 不重複
+        with eng.begin() as c:
+            c.exec_driver_sql(
+                f"INSERT INTO page_history (page_id, seq, snapshot_json, created_at) VALUES (3, 1, '{{}}', {ts})")
+    init_db(eng)  # 已在 head：冪等
+
+
+def test_0011_oneclick_downgrade_merges_auto_strokes(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    _seed_0010(eng)
+    command.upgrade(alembic_config(eng), "0011")
+    ts = "'2026-11-11 00:00:01'"
+    with eng.begin() as c:
+        c.exec_driver_sql(
+            "UPDATE page SET attention = 'failed', attention_detail = '背景生成失敗', auto_background_generation_id = 31")
+        c.exec_driver_sql("UPDATE lineartedit SET strokes_json = '[{\"u\":1}]'")
+        # 30：auto＋user；31：只有 auto
+        for gid, strokes in ((30, '[{\"a\":1},{\"a\":2}]'), (31, '[{\"a\":3}]')):
+            c.exec_driver_sql(
+                "INSERT INTO lineartedit (generation_id, layer, page_id, strokes_json, updated_at) "
+                f"VALUES ({gid}, 'AUTO', 3, '{strokes}', {ts})")
+        c.exec_driver_sql(
+            "INSERT INTO page_task (page_id, kind, status, created_at, updated_at) "
+            f"VALUES (3, 'pipeline', 'queued', {ts}, {ts})")
+    command.downgrade(alembic_config(eng), "0010")
+    with eng.connect() as c:
+        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0010"
+        tables = set(inspect(c).get_table_names())
+        assert not ({"page_task", "page_history"} & tables)
+        cols = _cols(c, "page")
+        assert not ({"attention", "attention_detail", "auto_background_generation_id", "auto_pose_generation_id"}
+                    & set(cols))
+        assert c.exec_driver_sql("SELECT scene_prompt, selected_generation_id FROM page").one() == ("s", 30)
+        # 只剩一層：auto 在前、user 在後（與渲染順序相同），印出來的線稿不變
+        assert "layer" not in _cols(c, "lineartedit")
+        rows = c.exec_driver_sql("SELECT generation_id, page_id, strokes_json FROM lineartedit ORDER BY 1").all()
+        assert [(g, p) for g, p, _ in rows] == [(30, 3), (31, 3)]
+        import json
+        assert json.loads(rows[0][2]) == [{"a": 1}, {"a": 2}, {"u": 1}]
+        assert json.loads(rows[1][2]) == [{"a": 3}]
+        insp = inspect(c)
+        assert insp.get_pk_constraint("lineartedit")["constrained_columns"] == ["generation_id"]
+        assert {i["name"] for i in insp.get_indexes("lineartedit")} == {"ix_lineartedit_page_id"}
+        for t in AUTOINCREMENT_TABLES:
+            assert "AUTOINCREMENT" in table_sql(c, t), t
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")
+    with eng.connect() as c:
+        assert c.exec_driver_sql("SELECT DISTINCT layer FROM lineartedit").all() == [("USER",)]

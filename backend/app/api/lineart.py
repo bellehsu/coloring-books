@@ -24,7 +24,7 @@ from app.api.schemas import (
     QAOut,
     StrokeOut,
 )
-from app.models import GenStatus, Owner, Page, PageStatus, utcnow
+from app.models import GenStatus, Owner, Page, PageStatus, StrokeLayer, utcnow
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
     LINE_WIDTH_DEFAULT,
@@ -106,10 +106,12 @@ def _selected_or_409(page: Page, generation_id: int | None = None) -> int:
     return gid
 
 
-def _commit_strokes(session: Session, page_id: int, gen_id: int, strokes: list[Stroke]) -> None:
-    """修改圖層與「頁面仍選定這張圖」的條件式 UPDATE 在同一個交易；修線後 passed 退回 draft。"""
+def _commit_strokes(
+    session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer
+) -> None:
+    """一層修改圖層與「頁面仍選定這張圖」的條件式 UPDATE 在同一個交易；修線後 passed 退回 draft。"""
     try:
-        save_strokes(session, page_id, gen_id, strokes)
+        save_strokes(session, page_id, gen_id, strokes, layer=layer)
         session.flush()
         res = session.exec(
             update(Page)
@@ -198,7 +200,7 @@ def get_edits(
     owner: Owner = Depends(current_owner),
 ) -> EditsOut:
     gid = _selected_or_409(owned_page(session, owner, page_id))
-    return _edits_out(gid, load_strokes(session, gid))
+    return _edits_out(gid, load_strokes(session, gid, layer=StrokeLayer.USER))
 
 
 @router.put("/pages/{page_id}/lineart/edits", response_model=QAOut)
@@ -215,8 +217,8 @@ def put_edits(
         for s in body.strokes
     ]
     # 內容沒變（例如前端自動存檔）就不寫入、也不退回 passed
-    if strokes_to_json(strokes) != strokes_to_json(load_strokes(session, gid)):
-        _commit_strokes(session, page_id, gid, strokes)
+    if strokes_to_json(strokes) != strokes_to_json(load_strokes(session, gid, layer=StrokeLayer.USER)):
+        _commit_strokes(session, page_id, gid, strokes, layer=StrokeLayer.USER)
     return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id))
 
 
@@ -242,9 +244,10 @@ def autofix(
     storage: Storage = Depends(get_storage),
     owner: Owner = Depends(current_owner),
 ) -> AutofixOut:
-    """對目前 QA 的每個缺口補一筆 draw（加在修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。
+    """對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。
 
     只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。
+    使用者的修線（user 層）不動；筆數上限各層分開算。
     """
     gid = _selected_or_409(owned_page(session, owner, page_id), body.generation_id)
     lin, data = _ensure_png(session, storage, owner, page_id, image_route=False)
@@ -253,7 +256,7 @@ def autofix(
 
     page = owned_page(session, owner, page_id)
     width = page.line_width_px
-    existing = load_strokes(session, gid)
+    existing = load_strokes(session, gid, layer=StrokeLayer.AUTO)
     points_left = MAX_TOTAL_POINTS - sum(len(s.points) for s in existing)
     if len(existing) >= MAX_STROKES or points_left < 2:
         raise HTTPException(409, f"修改圖層已達上限（{MAX_STROKES} 筆／{MAX_TOTAL_POINTS} 點），無法自動補線")
@@ -278,7 +281,7 @@ def autofix(
 
     if not added:
         return _qa_out(session, owner, page_id, lin, AutofixOut, autofix_added=0)
-    _commit_strokes(session, page_id, gid, existing + added)
+    _commit_strokes(session, page_id, gid, existing + added, layer=StrokeLayer.AUTO)
     return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id), AutofixOut,
                    autofix_added=len(added))
 

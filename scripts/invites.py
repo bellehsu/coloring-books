@@ -40,6 +40,8 @@ from app.models import (  # noqa: E402
     Owner,
     OwnerSession,
     Page,
+    PageHistory,
+    PageTask,
     Usage,
     utcnow,
 )
@@ -238,6 +240,8 @@ def cmd_delete_data(args: argparse.Namespace, settings: Settings, sessions) -> i
         s.exec(delete(LineartEdit).where(
             col(LineartEdit.page_id).in_(page_ids) | col(LineartEdit.generation_id).in_(list(gen_ids))
         ))
+        s.exec(delete(PageTask).where(col(PageTask.page_id).in_(page_ids)))
+        s.exec(delete(PageHistory).where(col(PageHistory.page_id).in_(page_ids)))
         s.exec(delete(Generation).where(col(Generation.book_id).in_(book_ids)))
         s.exec(delete(Page).where(col(Page.book_id).in_(book_ids)))
         s.exec(delete(Book).where(col(Book.id).in_(book_ids)))

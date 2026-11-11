@@ -1575,7 +1575,7 @@
           "lineart"
         ],
         "summary": "Autofix",
-        "description": "對目前 QA 的每個缺口補一筆 draw（加在修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。",
+        "description": "對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。\n使用者的修線（user 層）不動；筆數上限各層分開算。",
         "operationId": "autofix_api_pages__page_id__lineart_autofix_post",
         "parameters": [
           {

@@ -1,4 +1,4 @@
-"""頁面線稿服務：依選定圖片 + 線稿設定 + 修線圖層算出線稿與 QA，並快取。"""
+"""頁面線稿服務：依選定圖片 + 線稿設定 + 修線圖層（auto 再 user）算出線稿與 QA，並快取。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from sqlalchemy import update
 from sqlmodel import Session, col, select
 
-from app.models import Book, Generation, LineartEdit, Page, PageStatus, utcnow
+from app.models import Book, Generation, LineartEdit, Page, PageStatus, StrokeLayer, utcnow
 from app.services import lineart_post
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
@@ -65,21 +65,48 @@ def strokes_from_json(text: str) -> list[Stroke]:
     ]
 
 
-def _strokes_json(session: Session, gen_id: int) -> str:
-    edit = session.get(LineartEdit, gen_id)
+def _layer_json(session: Session, gen_id: int, layer: StrokeLayer) -> str:
+    edit = session.get(LineartEdit, (gen_id, layer))
     return edit.strokes_json if edit else "[]"
 
 
-def load_strokes(session: Session, gen_id: int) -> list[Stroke]:
-    return strokes_from_json(_strokes_json(session, gen_id))
+def combine_layers_json(auto_text: str | None, user_text: str | None) -> str:
+    """渲染用的完整筆畫：auto 層在前、user 層在後（使用者的橡皮擦擦得掉補線）。
+    只有一層有筆畫時原樣沿用那一層的文字，所以只有 user 層的既有頁面 lineart_key 不變。"""
+    auto, user = json.loads(auto_text or "[]"), json.loads(user_text or "[]")
+    if not auto:
+        return user_text or "[]"
+    if not user:
+        return auto_text
+    return _dumps(auto + user)
 
 
-def save_strokes(session: Session, page_id: int, gen_id: int, strokes: list[Stroke]) -> None:
-    """寫入修線圖層（不 commit）。"""
+def combined_strokes_json(session: Session, gen_id: int) -> str:
+    return combine_layers_json(_layer_json(session, gen_id, StrokeLayer.AUTO),
+                               _layer_json(session, gen_id, StrokeLayer.USER))
+
+
+def strokes_json_by_generation(session: Session, gen_ids) -> dict[int, str]:
+    """多張圖一次查：{generation_id: 合併後的筆畫 JSON}，沒有修線的圖不在結果裡。"""
+    ids = list(gen_ids)
+    if not ids:
+        return {}
+    layers: dict[int, dict[StrokeLayer, str]] = {}
+    for e in session.exec(select(LineartEdit).where(col(LineartEdit.generation_id).in_(ids))).all():
+        layers.setdefault(e.generation_id, {})[StrokeLayer(e.layer)] = e.strokes_json
+    return {g: combine_layers_json(d.get(StrokeLayer.AUTO), d.get(StrokeLayer.USER)) for g, d in layers.items()}
+
+
+def load_strokes(session: Session, gen_id: int, *, layer: StrokeLayer) -> list[Stroke]:
+    return strokes_from_json(_layer_json(session, gen_id, layer))
+
+
+def save_strokes(session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer) -> None:
+    """整份覆寫一層修線（不 commit）；另一層不動。"""
     text = strokes_to_json(strokes)
-    edit = session.get(LineartEdit, gen_id)
+    edit = session.get(LineartEdit, (gen_id, layer))
     if edit is None:
-        session.add(LineartEdit(generation_id=gen_id, page_id=page_id, strokes_json=text))
+        session.add(LineartEdit(generation_id=gen_id, layer=layer, page_id=page_id, strokes_json=text))
     else:
         edit.strokes_json = text
         edit.updated_at = utcnow()
@@ -118,7 +145,7 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int, *, rer
             raise LineartUnavailable("這一頁還沒有選定圖片")
         book = session.get(Book, page.book_id)
         content_px = compute_layout(book.paper_size, book.print_mode).content_px
-        sj = _strokes_json(session, gen.id)
+        sj = combined_strokes_json(session, gen.id)
         key = lineart_key(gen, page, content_px, sj)
         rel = storage.lineart(page.book_id, page.id, key)
         if not rerender and page.lineart_key == key and page.lineart_path == rel and page.qa_json:

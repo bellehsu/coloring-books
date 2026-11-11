@@ -12,10 +12,12 @@ from sqlmodel import Session, col, delete, func, select, update
 
 from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_page
 from app.api.schemas import PageCreate, PageOrder, PageOut, PageUpdate
-from app.models import Book, Generation, GenStatus, LineartEdit, Owner, Page, PageStatus, utcnow
+from app.models import (
+    Book, Generation, GenStatus, LineartEdit, Owner, Page, PageHistory, PageStatus, PageTask, utcnow,
+)
 from app.services.compose import composite_matches, page_placement
 from app.services.layout import compute_layout
-from app.services.page_lineart import lineart_key
+from app.services.page_lineart import lineart_key, strokes_json_by_generation
 from app.services.usage import refund_generations
 from app.storage import Storage
 
@@ -63,16 +65,7 @@ def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
         if gen_ids
         else {}
     )
-    edits = (
-        {
-            e.generation_id: e.strokes_json
-            for e in session.exec(
-                select(LineartEdit).where(col(LineartEdit.generation_id).in_(gen_ids))
-            ).all()
-        }
-        if gen_ids
-        else {}
-    )
+    edits = strokes_json_by_generation(session, gen_ids)
     layouts = {bid: compute_layout(b.paper_size, b.print_mode) for bid, b in books.items()}
     out = []
     for page in pages:
@@ -212,6 +205,8 @@ def delete_page(
     gen_ids = [g.id for g in gens]
     image_paths = [p for g in gens for p in (g.image_path, g.mask_path) if p]
     session.exec(delete(LineartEdit).where(col(LineartEdit.page_id) == page_id))
+    session.exec(delete(PageTask).where(col(PageTask.page_id) == page_id))
+    session.exec(delete(PageHistory).where(col(PageHistory.page_id) == page_id))
     session.exec(delete(Generation).where(col(Generation.page_id) == page_id))
     session.exec(delete(Page).where(col(Page.id) == page_id))
     rest = session.exec(

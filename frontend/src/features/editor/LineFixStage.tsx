@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, type Edits, type QA } from "@/api/client";
+import type { QA } from "@/api/client";
 import { qk, useAutofix, useEdits } from "@/api/hooks";
 import { useToast } from "@/components/ui/Toast";
 import type { Stroke } from "@/lib/strokes";
@@ -26,7 +26,8 @@ export interface LineFixStageProps {
 
 /**
  * 修線舞台：載入修改圖層後掛上 LineFixCanvas（QA 找到的缺口畫成橘色圈，位置用 qa.gaps）。
- * 自動補線的按鈕在右欄（FinishPanel），經 entry.autofix 呼叫這裡的補線，補上的線併進畫面上的筆畫。
+ * 自動補線的按鈕在右欄（FinishPanel），經 entry.autofix 呼叫這裡的補線。補上的線存在伺服器的 auto 圖層，
+ * 只出現在重新渲染的線稿圖上，不併進畫面上（可撤銷、會被 PUT 整份覆蓋）的使用者筆畫。
  * 寫入走 editsQueueFor（每頁＋選圖一個、跨重新掛載共用）；佇列忙碌或上次寫入失敗時用本機最新筆畫，
  * 不從伺服器（可能還沒追上的）edits 重設。
  */
@@ -104,18 +105,19 @@ function LineFixEditor({
   function onChange(next: Stroke[]) {
     latest.current = next;
     setStrokes(next);
-    // 自動補線進行中先不寫入（伺服器正在改同一個圖層），結束後合併再送。
+    // 自動補線進行中先不寫入（補線依送出當下的線稿找缺口），結束後再送。
     if (fixing.current) changedWhileFixing.current = true;
     else entry.push(next);
   }
 
-  /** 重送畫面上的完整筆畫（＝佇列最新的筆畫，再加上自動補線併入的）。補線中就等補線結束再一起送。 */
+  /** 重送畫面上的完整筆畫（＝佇列最新的筆畫）。補線中就等補線結束再一起送。 */
   function retrySave() {
     if (fixing.current) changedWhileFixing.current = true;
     else entry.push(latest.current);
   }
 
-  /** 自動補線（由右欄的「自動補線」經 entry.autofix 呼叫）：補上的線併進畫面，回傳補了幾條；失敗提示後回傳 null。 */
+  /** 自動補線（由右欄的「自動補線」經 entry.autofix 呼叫）：回傳補了幾條；失敗提示後回傳 null。
+   * 補上的線在伺服器的 auto 圖層（新的 qa.lineart_url 已含），使用者的筆畫不變。 */
   async function runAutofix(): Promise<number | null> {
     if (fixing.current) return null;
     fixing.current = true;
@@ -123,7 +125,7 @@ function LineFixEditor({
     changedWhileFixing.current = false;
     try {
       try {
-        await entry.flush(); // 先讓伺服器等於畫面，補線才會接在正確的圖層後面
+        await entry.flush(); // 先讓伺服器等於畫面，補線才會依使用者目前的修線找缺口
       } catch (e) {
         toast.show(`${errMsg(e, "修線尚未儲存")}，請再畫一筆後再試`, "error");
         return null;
@@ -131,19 +133,6 @@ function LineFixEditor({
       const res = await autofix.mutateAsync({ pageId, generationId: genId });
       const { autofix_added: added, ...rest } = res;
       qc.setQueryData<QA>(qk.qa(pageId), rest as QA);
-      if (added > 0) {
-        // 伺服器＝base＋補線（加在最後面）；補線期間使用者的修改接在後面一起送出
-        const ed = await qc.fetchQuery({
-          queryKey: qk.edits(pageId),
-          queryFn: () => api.get<Edits>(`/pages/${pageId}/lineart/edits`),
-          staleTime: 0,
-        });
-        if (ed.generation_id === genId) {
-          const fixed = (ed.strokes as Stroke[]).slice(ed.strokes.length - added);
-          latest.current = [...latest.current, ...fixed];
-          setStrokes(latest.current);
-        }
-      }
       return added;
     } catch (e) {
       toast.show(errMsg(e, "自動補線失敗"), "error");
@@ -151,7 +140,7 @@ function LineFixEditor({
     } finally {
       fixing.current = false;
       setFixBusy(false);
-      // 補線期間有修改 → 送出畫面上的完整筆畫（含補線）；沒有的話伺服器已經等於畫面
+      // 補線期間有修改 → 送出畫面上的完整筆畫；沒有的話伺服器已經等於畫面
       if (changedWhileFixing.current) entry.push(latest.current);
       changedWhileFixing.current = false;
     }

@@ -1,4 +1,4 @@
-"""資料表：Owner / OwnerSession / Usage / Book / Page / Generation。
+"""資料表：Owner / OwnerSession / Usage / Book / Page / Generation / LineartEdit / PageTask / PageHistory。
 
 頁面與生成紀錄分離：Page 只存 selected_generation_id，重新生成只新增 Generation。
 時間一律為 UTC。注意：此檔不可使用 `from __future__ import annotations`（SQLModel 需要實際型別）。
@@ -7,7 +7,7 @@
 from datetime import date, datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Column, DateTime
+from sqlalchemy import Column, DateTime, UniqueConstraint
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, SQLModel
 
@@ -69,6 +69,24 @@ class PageStatus(str, Enum):
 class CharacterCheck(str, Enum):
     CONSISTENT = "consistent"
     INCONSISTENT = "inconsistent"
+
+
+class StrokeLayer(str, Enum):
+    """修線圖層（Phase 13）：AUTO＝自動補線寫的，USER＝使用者的畫筆與橡皮擦。渲染先套 AUTO 再套 USER。"""
+
+    AUTO = "auto"
+    USER = "user"
+
+
+class PageTaskKind(str, Enum):
+    PIPELINE = "pipeline"  # 選圖 → 合成 → 線稿 → 自動補線 → 可以印
+
+
+class PageTaskStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
 
 
 class Owner(SQLModel, table=True):
@@ -143,6 +161,12 @@ class Page(SQLModel, table=True):
     lineart_key: str | None = None
     lineart_path: str | None = None
     qa_json: str | None = None
+    # Phase 13：需要使用者看一下（目前只有 "failed"）與它的中文說明；None＝不需要
+    attention: str | None = None
+    attention_detail: str | None = None
+    # 頁面流程自動選的背景／角色動作（「還原成自動畫的那張」用）；使用者自己選的仍在 background／pose_generation_id
+    auto_background_generation_id: int | None = None
+    auto_pose_generation_id: int | None = None
     created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
 
@@ -180,12 +204,45 @@ class Generation(SQLModel, table=True):
 
 
 class LineartEdit(SQLModel, table=True):
-    """修線圖層跟著生成圖走：換回舊候選圖時，它的修線也回來。"""
+    """修線圖層跟著生成圖走：換回舊候選圖時，它的修線也回來。
+
+    每張圖最多兩列：layer AUTO（自動補線）與 USER（畫筆／橡皮擦；0011 之前的修線都是 USER）。"""
 
     generation_id: int = Field(primary_key=True, foreign_key="generation.id")
+    layer: StrokeLayer = Field(
+        default=StrokeLayer.USER, primary_key=True, sa_column_kwargs={"server_default": "USER"}
+    )
     page_id: int = Field(foreign_key="page.id", index=True)
     strokes_json: str = "[]"
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+
+
+class PageTask(SQLModel, table=True):
+    """頁面流程的工作（Phase 13）：worker 在排隊的生成之後依序執行；重啟時 RUNNING 重新排隊。
+    kind／status 存字串（值見 PageTaskKind／PageTaskStatus）。"""
+
+    __tablename__ = "page_task"
+
+    id: int | None = Field(default=None, primary_key=True)
+    page_id: int = Field(foreign_key="page.id", index=True)
+    kind: str = PageTaskKind.PIPELINE.value
+    status: str = Field(default=PageTaskStatus.QUEUED.value, index=True)
+    error: str | None = None
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+    updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+
+
+class PageHistory(SQLModel, table=True):
+    """C 頁的復原紀錄（Phase 13）：每次使用者修改前存一份快照；seq 在同一頁內遞增、不重複。"""
+
+    __tablename__ = "page_history"
+    __table_args__ = (UniqueConstraint("page_id", "seq", name="uq_page_history_page_seq"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    page_id: int = Field(foreign_key="page.id")
+    seq: int
+    snapshot_json: str
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
 
 
 class AppMeta(SQLModel, table=True):

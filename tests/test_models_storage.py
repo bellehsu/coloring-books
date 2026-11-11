@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 from PIL import Image
+from sqlmodel import select
 
 from app.db import init_db, make_engine, session_factory
 from app.models import Book, GenKind, Generation, GenStatus, Owner, Page, PageStatus
@@ -203,7 +204,7 @@ def test_normalize_png_composites_alpha_on_white():
 
 
 def test_page_phase3_defaults_and_lineart_edit(tmp_path):
-    from app.models import CharacterCheck, LineartEdit
+    from app.models import CharacterCheck, LineartEdit, StrokeLayer
     from app.services.lineart_render import LineDetail
 
     engine = make_engine(tmp_path / "t.db")
@@ -235,9 +236,59 @@ def test_page_phase3_defaults_and_lineart_edit(tmp_path):
         assert page.forced_pass_reason is None and page.lineart_path is None
         assert page.character_check is CharacterCheck.CONSISTENT
         assert page.passed_at.tzinfo is not None
-        edit = s.get(LineartEdit, gid)
+        edit = s.get(LineartEdit, (gid, StrokeLayer.USER))
         assert edit.strokes_json == '[{"a":1}]' and edit.updated_at.tzinfo is not None
+        assert edit.layer is StrokeLayer.USER  # 沒指定圖層＝使用者的修線
         assert LineartEdit(generation_id=1, page_id=1).strokes_json == "[]"
+
+
+def test_oneclick_page_fields_tasks_history_and_layers(tmp_path):
+    from app.models import LineartEdit, PageHistory, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer
+
+    engine = make_engine(tmp_path / "t.db")
+    init_db(engine)
+    make = session_factory(engine)
+    with make() as s:
+        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME, owner_id=_owner(s))
+        s.add(book)
+        s.commit()
+        page = Page(book_id=book.id, position=1)
+        gen = Generation(
+            book_id=book.id, kind=GenKind.COMPOSITE, user_text="u", prompt="p",
+            negative_prompt="n", seed=1, width=64, height=64, request_json="{}",
+        )
+        s.add_all([page, gen])
+        s.commit()
+        pid, gid = page.id, gen.id
+        fresh = s.get(Page, pid)
+        assert (fresh.attention, fresh.attention_detail) == (None, None)
+        assert (fresh.auto_background_generation_id, fresh.auto_pose_generation_id) == (None, None)
+        fresh.attention = "failed"
+        fresh.attention_detail = "背景生成失敗"
+        fresh.auto_background_generation_id = 7
+        fresh.auto_pose_generation_id = 8
+        s.add(fresh)
+        s.add(PageTask(page_id=pid))
+        s.add(PageHistory(page_id=pid, seq=1, snapshot_json='{"caption_zh":"小貓"}'))
+        s.add(LineartEdit(generation_id=gid, page_id=pid, layer=StrokeLayer.AUTO, strokes_json="[1]"))
+        s.add(LineartEdit(generation_id=gid, page_id=pid, layer=StrokeLayer.USER, strokes_json="[2]"))
+        s.commit()
+    with make() as s:
+        page = s.get(Page, pid)
+        assert (page.attention, page.attention_detail) == ("failed", "背景生成失敗")
+        assert (page.auto_background_generation_id, page.auto_pose_generation_id) == (7, 8)
+        task = s.exec(select(PageTask)).one()
+        assert task.page_id == pid and task.error is None
+        assert task.kind == PageTaskKind.PIPELINE == "pipeline"
+        assert task.status == PageTaskStatus.QUEUED == "queued"
+        assert task.created_at.tzinfo is not None and task.updated_at.tzinfo is not None
+        hist = s.exec(select(PageHistory)).one()
+        assert (hist.page_id, hist.seq, hist.snapshot_json) == (pid, 1, '{"caption_zh":"小貓"}')
+        assert hist.created_at.tzinfo is not None
+        assert s.get(LineartEdit, (gid, StrokeLayer.AUTO)).strokes_json == "[1]"
+        assert s.get(LineartEdit, (gid, StrokeLayer.USER)).strokes_json == "[2]"
+        assert [v.value for v in PageTaskStatus] == ["queued", "running", "succeeded", "failed"]
+        assert [v.value for v in StrokeLayer] == ["auto", "user"]
 
 
 def test_storage_lineart_and_preview_paths(tmp_path):

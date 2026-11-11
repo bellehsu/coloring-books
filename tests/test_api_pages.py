@@ -88,7 +88,7 @@ def queue_backgrounds(client, page_id, n):
 
 
 def test_delete_page_cascades_and_reorders(client, app):
-    from app.models import LineartEdit
+    from app.models import LineartEdit, PageHistory, PageTask
     from tests.test_api_lineart import color_png, seed_generation, set_page
 
     app.state.engine.image = color_png()
@@ -103,6 +103,11 @@ def test_delete_page_cascades_and_reorders(client, app):
     img = f"books/{b['id']}/generations/{done}.png"
     pdir = f"books/{b['id']}/pages/{mid['id']}/"
     assert storage.exists(img) and list(storage.list(pdir))
+    with app.state.sessions() as s:  # 頁面的工作與復原紀錄（Phase 13）也跟著刪
+        s.add(PageTask(page_id=mid["id"]))
+        s.add(PageHistory(page_id=mid["id"], seq=1, snapshot_json="{}"))
+        s.add(PageHistory(page_id=pages[0]["id"], seq=1, snapshot_json="{}"))
+        s.commit()
 
     assert client.delete(f"/api/pages/{mid['id']}").status_code == 204
     assert client.delete(f"/api/pages/{mid['id']}").status_code == 404
@@ -113,6 +118,8 @@ def test_delete_page_cascades_and_reorders(client, app):
     with app.state.sessions() as s:
         assert s.exec(select(Generation).where(Generation.page_id == mid["id"])).all() == []
         assert s.exec(select(LineartEdit).where(LineartEdit.page_id == mid["id"])).all() == []
+        assert s.exec(select(PageTask)).all() == []
+        assert [h.page_id for h in s.exec(select(PageHistory)).all()] == [pages[0]["id"]]
         # 被取消而非執行：已不存在，worker 也沒東西可跑
         assert all(s.get(Generation, g["id"]) is None for g in queued)
     assert client.portal.call(app.state.worker.run_once) is False

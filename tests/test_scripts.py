@@ -916,7 +916,7 @@ def test_invites_rotate_issues_new_link_and_drops_sessions(invites, settings_fil
 
 def _owner_with_data(sessions, storage, name, **kw) -> dict:
     """一個 owner：兩本書（一本有頁面、生成紀錄、修線、線稿、預覽），一個 session，兩天的用量。"""
-    from app.models import LineartEdit, Owner, Page, Usage
+    from app.models import LineartEdit, Owner, Page, PageHistory, PageTask, StrokeLayer, Usage
     from app.services import auth
     from app.services.usage import taipei_day
 
@@ -932,6 +932,9 @@ def _owner_with_data(sessions, storage, name, **kw) -> dict:
          selected_generation_id=g)
     with sessions() as s:
         s.add(LineartEdit(generation_id=g, page_id=p, strokes_json="[]"))
+        s.add(LineartEdit(generation_id=g, page_id=p, layer=StrokeLayer.AUTO, strokes_json="[]"))
+        s.add(PageTask(page_id=p))
+        s.add(PageHistory(page_id=p, seq=1, snapshot_json="{}"))
         owner = s.get(Owner, oid)
         auth.start_session(s, owner)
         s.add(Usage(owner_id=oid, day=taipei_day(auth.utcnow()), generations=3))
@@ -942,7 +945,7 @@ def _owner_with_data(sessions, storage, name, **kw) -> dict:
 def _counts(sessions, d) -> dict:
     from sqlmodel import col, select
 
-    from app.models import Book, Generation, LineartEdit, Owner, OwnerSession, Page, Usage
+    from app.models import Book, Generation, LineartEdit, Owner, OwnerSession, Page, PageHistory, PageTask, Usage
 
     with sessions() as s:
         return {
@@ -951,6 +954,8 @@ def _counts(sessions, d) -> dict:
             "pages": len(s.exec(select(Page).where(col(Page.book_id).in_(d["books"]))).all()),
             "gens": len(s.exec(select(Generation).where(col(Generation.book_id).in_(d["books"]))).all()),
             "edits": len(s.exec(select(LineartEdit).where(LineartEdit.page_id == d["page"])).all()),
+            "tasks": len(s.exec(select(PageTask).where(PageTask.page_id == d["page"])).all()),
+            "history": len(s.exec(select(PageHistory).where(PageHistory.page_id == d["page"])).all()),
             "sessions": len(s.exec(select(OwnerSession).where(OwnerSession.owner_id == d["owner"])).all()),
             "usage": len(s.exec(select(Usage).where(Usage.owner_id == d["owner"])).all()),
         }
@@ -971,8 +976,9 @@ def test_delete_data_removes_rows_and_objects_only_for_that_owner(invites, setti
     assert len(_owned_keys(storage, a)) == 4 and len(keys_b) == 4
 
     assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]) == 0
+    assert before_b["edits"] == 2 and before_b["tasks"] == 1 and before_b["history"] == 1
     assert _counts(sessions, a) == {"owner": False, "books": 0, "pages": 0, "gens": 0, "edits": 0,
-                                    "sessions": 0, "usage": 0}
+                                    "tasks": 0, "history": 0, "sessions": 0, "usage": 0}
     assert _owned_keys(storage, a) == set()
     assert _counts(sessions, b) == before_b and _owned_keys(storage, b) == keys_b
     assert "小明" in capsys.readouterr().out
