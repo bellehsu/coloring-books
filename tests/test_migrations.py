@@ -397,6 +397,7 @@ def test_0010_page_captions_roundtrip(tmp_path):
         cols = _cols(c, "page")
         assert "caption_zh" not in cols and "caption_en" not in cols
         assert c.exec_driver_sql("SELECT scene_prompt FROM page").scalar() == "s"
+        assert "AUTOINCREMENT" in table_sql(c, "page")  # downgrade 重建 page 時保留（刪掉的 id 不沿用）
         assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
     command.upgrade(alembic_config(eng), "head")
 
