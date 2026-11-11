@@ -509,3 +509,72 @@ describe("C 處理一頁：改場景", () => {
     expect(posted(/\/api\/pages\/5\/backgrounds/)).toHaveLength(0);
   });
 });
+
+describe("C 處理一頁：復原／重做／還原之後文字欄位跟著伺服器", () => {
+  /** PATCH 套用到 page（伺服器存了文字）；undo 把 page 換回 before。 */
+  function serverWithUndo(before: Partial<Page>) {
+    page = mkPage({ can_undo: true });
+    respond["PATCH /api/pages/5?oneclick=true"] = () => {
+      page = { ...page, ...(calls[calls.length - 1].body as Partial<Page>), can_undo: true };
+      return json(page);
+    };
+    respond["POST /api/pages/5/undo"] = () => {
+      page = { ...page, ...before, can_redo: true };
+      return json(page);
+    };
+  }
+
+  it("改動作 → 復原：欄位顯示復原後的動作，換一張用它畫", async () => {
+    serverWithUndo({ action_prompt: "開著消防車揮手" });
+    const user = userEvent.setup();
+    setup();
+    await user.click(within(await findRow("角色動作")).getByRole("button", { name: "改動作" }));
+    const box = screen.getByRole("textbox", { name: "動作描述" });
+    fireEvent.change(box, { target: { value: "開著消防車去郵局" } });
+    fireEvent.blur(box);
+    await waitFor(() => expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")).toHaveLength(1));
+    await waitFor(() => expect(row("角色動作")).toHaveTextContent("動作：開著消防車去郵局"));
+
+    await user.click(screen.getByRole("button", { name: "復原" }));
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/undo$/)).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "動作描述" })).toHaveValue("開著消防車揮手"));
+    expect(row("角色動作")).toHaveTextContent("動作：開著消防車揮手");
+
+    await user.click(within(row("角色動作")).getByRole("button", { name: "換一張" }));
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/poses/)).toHaveLength(1));
+    expect(posted(/\/poses/)[0].body).toEqual({ action: "開著消防車揮手" });
+    // 復原的文字沒有被重新存回去
+    expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")).toHaveLength(1);
+  });
+
+  it("復原之後再打一次同樣的文字，會重新存", async () => {
+    serverWithUndo({ action_prompt: "開著消防車揮手" });
+    const user = userEvent.setup();
+    setup();
+    await user.click(within(await findRow("角色動作")).getByRole("button", { name: "改動作" }));
+    const box = screen.getByRole("textbox", { name: "動作描述" });
+    fireEvent.change(box, { target: { value: "開著消防車去郵局" } });
+    fireEvent.blur(box);
+    await waitFor(() => expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: "復原" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "動作描述" })).toHaveValue("開著消防車揮手"));
+    const again = screen.getByRole("textbox", { name: "動作描述" });
+    fireEvent.change(again, { target: { value: "開著消防車去郵局" } });
+    fireEvent.blur(again);
+    await waitFor(() => expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")).toHaveLength(2));
+  });
+
+  it("改字 → 復原：中文字欄位顯示復原後的字", async () => {
+    serverWithUndo({ caption_zh: "消防車" });
+    const user = userEvent.setup();
+    setup();
+    await user.click(within(await findRow("圖下方的字")).getByRole("button", { name: "改字" }));
+    const zh = screen.getByRole("textbox", { name: "中文字" });
+    fireEvent.change(zh, { target: { value: "郵局" } });
+    fireEvent.blur(zh);
+    await waitFor(() => expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: "復原" }));
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/undo$/)).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "中文字" })).toHaveValue("消防車"));
+  });
+});

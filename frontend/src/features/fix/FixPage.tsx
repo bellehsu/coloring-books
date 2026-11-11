@@ -145,6 +145,8 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   const [drawTool, setDrawTool] = useState<StrokeOp | null>(null);
   const [acting, setActing] = useState(false);
   const actingRef = useRef(false);
+  // 復原／重做／還原成功一次就加 1：文字欄位（動作、場景、圖下方的字）丟掉改過的值、改顯示伺服器的
+  const [historyEpoch, setHistoryEpoch] = useState(0);
 
   const blocked = penBlocked(page);
   const drawing = drawTool !== null && blocked === null && hasArt;
@@ -183,7 +185,8 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
       await placement.idle();
       await flushEdits();
       setDrawTool(null);
-      await fn();
+      await fn(); // 回傳的頁面已寫進快取（putPage），欄位重設後顯示的就是復原後的文字
+      setHistoryEpoch((e) => e + 1);
     }, fallback);
 
   const undo = () => runHistory(() => undoM.mutateAsync(), "沒辦法復原");
@@ -300,6 +303,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               flushEdits={flushEdits}
               restore={showRestore(page, "pose") ? () => void restore("pose") : null}
               busy={busy}
+              textKey={historyEpoch}
             />
             <BackgroundRow
               bookId={bookId}
@@ -309,6 +313,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               flushEdits={flushEdits}
               restore={showRestore(page, "background") ? () => void restore("background") : null}
               busy={busy}
+              textKey={historyEpoch}
             />
             <LinesRow
               bookId={bookId}
@@ -323,7 +328,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               restore={showRestore(page, "lines") ? () => void restore("lines") : null}
               busy={busy}
             />
-            <CaptionRow bookId={bookId} page={page} />
+            <CaptionRow bookId={bookId} page={page} textKey={historyEpoch} />
           </ul>
           {hasArt && qa && qa.gap_count > 0 && (
             <p className={styles.note}>線沒接起來也可以印；想讓顏色不漏出去，再按「自動補線」或用畫筆接起來。</p>
@@ -603,6 +608,7 @@ function PoseRow({
   flushEdits,
   restore,
   busy,
+  textKey,
 }: {
   bookId: number;
   page: Page;
@@ -611,12 +617,13 @@ function PoseRow({
   flushEdits: () => Promise<void>;
   restore: (() => void) | null;
   busy: boolean;
+  textKey: number;
 }) {
   const id = useId();
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const savePage = useSavePage(bookId, page.id);
-  const action = usePageText(page.action_prompt, (v) => savePage({ action_prompt: v }));
+  const action = usePageText(page.action_prompt, (v) => savePage({ action_prompt: v }), textKey);
   const regen = useRegenerate(bookId, page.id);
   const trimmed = action.value.trim();
 
@@ -695,6 +702,7 @@ function BackgroundRow({
   flushEdits,
   restore,
   busy,
+  textKey,
 }: {
   bookId: number;
   page: Page;
@@ -703,6 +711,7 @@ function BackgroundRow({
   flushEdits: () => Promise<void>;
   restore: (() => void) | null;
   busy: boolean;
+  textKey: number;
 }) {
   const id = useId();
   const toast = useToast();
@@ -711,7 +720,7 @@ function BackgroundRow({
   const [uploading, setUploading] = useState(false);
   const [open, setOpen] = useState(false);
   const savePage = useSavePage(bookId, page.id);
-  const scene = usePageText(page.scene_prompt, (v) => savePage({ scene_prompt: v }));
+  const scene = usePageText(page.scene_prompt, (v) => savePage({ scene_prompt: v }), textKey);
   const sceneText = scene.value.trim();
 
   const again = async () => {
@@ -879,15 +888,17 @@ function LinesRow({
   );
 }
 
-function CaptionRow({ bookId, page }: { bookId: number; page: Page }) {
+function CaptionRow({ bookId, page, textKey }: { bookId: number; page: Page; textKey: number }) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const savePage = useSavePage(bookId, page.id);
   const zh = usePageText(page.caption_zh ?? "", (v) =>
     captionError("zh", v) ? Promise.resolve() : savePage({ caption_zh: normalizeCaption(v) }),
+    textKey,
   );
   const en = usePageText(page.caption_en ?? "", (v) =>
     captionError("en", v) ? Promise.resolve() : savePage({ caption_en: normalizeCaption(v) }),
+    textKey,
   );
   return (
     <Row
