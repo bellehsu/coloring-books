@@ -36,3 +36,21 @@ test("套用主題包「交通工具」：預覽 10 頁 → 匯入 → 每頁有
   }
   await expect(page.getByRole("article")).toHaveCount(10);
 });
+
+test("390 px：故事頁（含「套用主題包」）與主題包對話框沒有橫向捲動", async ({ page, request }) => {
+  const book = await createBook(request, uniqueTitle("e2e 主題包 RWD"));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/books/${book.id}/story`);
+  const noOverflow = async () => {
+    const { scrollWidth, innerWidth } = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+    }));
+    expect(scrollWidth).toBeLessThanOrEqual(innerWidth);
+  };
+  await expect(page.getByRole("button", { name: "套用主題包" })).toBeVisible();
+  await noOverflow();
+  await page.getByRole("button", { name: "套用主題包" }).click();
+  await expect(page.getByRole("dialog", { name: "套用主題包" })).toBeVisible();
+  await noOverflow();
+});

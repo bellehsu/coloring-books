@@ -52,7 +52,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
   const [importOpen, setImportOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
   const [importText, setImportText] = useState("");
-  const [importSeq, setImportSeq] = useState(0); // 每次開啟都重建對話框，文字框才會帶入新的預設內容
+  const [packSeq, setPackSeq] = useState(0); // 只有選主題包才重建對話框（帶入預設文字）；一般開啟保留草稿
   const pendingSaves = useRef(new Set<Promise<unknown>>());
 
   const pages = useMemo(
@@ -127,14 +127,11 @@ export function StoryPage({ bookId }: { bookId: number }) {
     }
   }
 
-  const openImport = (text: string) => {
-    setImportText(text);
-    setImportSeq((n) => n + 1);
-    setImportOpen(true);
-  };
   const choosePack = (pack: ThemePack) => {
     setPackOpen(false);
-    openImport(pack.text);
+    setImportText(pack.text);
+    setPackSeq((n) => n + 1);
+    setImportOpen(true);
   };
 
   const b = book.data;
@@ -176,7 +173,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
             </span>
           </div>
           <div className={styles.actions}>
-            <Button disabled={!pagesQ.isSuccess} onClick={() => openImport("")}>
+            <Button disabled={!pagesQ.isSuccess} onClick={() => setImportOpen(true)}>
               貼上整本故事
             </Button>
             <Button disabled={!pagesQ.isSuccess} onClick={() => setPackOpen(true)}>
@@ -225,7 +222,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
       {pagesQ.isSuccess && (
         <>
           <ThemePackDialog open={packOpen} onClose={() => setPackOpen(false)} onChoose={choosePack} />
-          <ImportDialog key={importSeq} bookId={bookId} open={importOpen} onClose={() => setImportOpen(false)} initialText={importText} />
+          <ImportDialog key={packSeq} bookId={bookId} open={importOpen} onClose={() => setImportOpen(false)} initialText={importText} />
         </>
       )}
     </>
