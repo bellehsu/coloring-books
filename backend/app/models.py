@@ -15,6 +15,11 @@ from app.services.layout import PaperSize, PrintMode
 from app.services.lineart_render import LineDetail
 
 
+# SQLite INTEGER（64 位元有號）的範圍：超出的 id 傳進查詢會丟 OverflowError（API 要先擋成 404／422）
+SQLITE_INT_MIN = -(2**63)
+SQLITE_INT_MAX = 2**63 - 1
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 

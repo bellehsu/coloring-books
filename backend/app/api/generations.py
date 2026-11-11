@@ -1,9 +1,9 @@
 """generation 查詢、圖片、捨棄、取消與佇列狀態端點。"""
 
 import io
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
@@ -13,7 +13,7 @@ from sqlmodel import Session, col, func, select, update
 from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
 from app.api.files import signed_redirect
 from app.api.schemas import GenerationOut
-from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
+from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
 from app.services.usage import refund_generations
@@ -142,7 +142,7 @@ def get_generation_cutout(
 def list_generations(
     book_id: int,
     kind: GenKind | None = None,
-    page_id: int | None = None,
+    page_id: Annotated[int | None, Query(ge=SQLITE_INT_MIN, le=SQLITE_INT_MAX)] = None,
     include_discarded: bool = False,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),

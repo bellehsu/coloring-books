@@ -12,6 +12,7 @@ import hmac
 import io
 import logging
 import os
+import re
 import secrets
 import tempfile
 import time
@@ -474,6 +475,10 @@ def _load_or_create_signing_key(storage_dir: Path) -> bytes:
     return key
 
 
+# S3／R2 的 bucket 命名規則（同時保證它是一段安全的路徑：沒有 /、反斜線、..，也不是 . 或 ..）
+_BUCKET_NAME = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+
+
 def make_storage(settings: "Settings") -> Storage:
     """依 storage.backend 建立 Storage：local → LocalStorage；r2 → CachedStorage(R2Storage)，快取在 <cache_dir>/<bucket>。"""
     st = settings.storage
@@ -489,6 +494,9 @@ def make_storage(settings: "Settings") -> Storage:
         problems.append("storage.r2.endpoint 未設定")
     if not st.r2.bucket:
         problems.append("storage.r2.bucket 未設定")
+    elif not _BUCKET_NAME.fullmatch(st.r2.bucket) or ".." in st.r2.bucket:
+        # bucket 名稱也是本機快取的資料夾名稱（<cache_dir>/<bucket>），只能是一段安全的路徑
+        problems.append(f"storage.r2.bucket 名稱不合法：{st.r2.bucket!r}（3–63 個小寫英數字、. 或 -，頭尾是英數字）")
     if st.r2.access_key is None or not st.r2.access_key.get_secret_value():
         problems.append("R2 access key 未設定（環境變數 APP_STORAGE__R2__ACCESS_KEY）")
     if st.r2.secret_key is None or not st.r2.secret_key.get_secret_value():

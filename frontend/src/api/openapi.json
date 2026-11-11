@@ -1187,7 +1187,9 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "integer"
+                  "type": "integer",
+                  "maximum": 9223372036854775807,
+                  "minimum": -9223372036854775808
                 },
                 {
                   "type": "null"
@@ -2022,6 +2024,8 @@
         "properties": {
           "generation_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
           }
         },
@@ -2157,7 +2161,9 @@
         "properties": {
           "upload_page_ids": {
             "items": {
-              "type": "integer"
+              "type": "integer",
+              "maximum": 9.223372036854776e+18,
+              "minimum": -9.223372036854776e+18
             },
             "type": "array",
             "maxItems": 500,
@@ -2477,6 +2483,8 @@
         "properties": {
           "generation_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
           }
         },
@@ -2490,6 +2498,8 @@
         "properties": {
           "generation_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
           },
           "strokes": {
@@ -2988,7 +2998,9 @@
         "properties": {
           "page_ids": {
             "items": {
-              "type": "integer"
+              "type": "integer",
+              "maximum": 9.223372036854776e+18,
+              "minimum": -9.223372036854776e+18
             },
             "type": "array",
             "title": "Page Ids"
@@ -3540,6 +3552,8 @@
         "properties": {
           "generation_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
           }
         },

@@ -6,11 +6,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from app.models import Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
+from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
 from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
 from app.services.qa import QA_MESSAGES, QAReport
+
+# 請求裡的資料列 id：超出 SQLite INTEGER 的回 422（不然查詢時 OverflowError → 500）
+DbId = Annotated[int, Field(ge=SQLITE_INT_MIN, le=SQLITE_INT_MAX)]
 
 
 # 去除前後空白後再檢查長度，避免純空白字串通過
@@ -104,7 +107,7 @@ class CharacterCandidatesCreate(BaseModel):
 
 
 class CharacterSelect(BaseModel):
-    generation_id: int
+    generation_id: DbId
 
 
 # 角色動作模式與背景風格：新列一律 precise／simple（Qwen）；fast／detailed 只出現在 Phase 9 以前的 SDXL 舊列，
@@ -209,11 +212,11 @@ class PageUpdate(BaseModel):
 
 
 class PageOrder(BaseModel):
-    page_ids: list[int]
+    page_ids: list[DbId]
 
 
 class SelectGeneration(BaseModel):
-    generation_id: int
+    generation_id: DbId
 
 
 class PoseCreate(BaseModel):
@@ -328,7 +331,7 @@ class StrokeIn(BaseModel):
 
 
 class EditsIn(BaseModel):
-    generation_id: int
+    generation_id: DbId
     strokes: list[StrokeIn] = Field(max_length=MAX_STROKES)
 
     @model_validator(mode="after")
@@ -351,7 +354,7 @@ class EditsOut(BaseModel):
 
 
 class AutofixIn(BaseModel):
-    generation_id: int
+    generation_id: DbId
 
 
 class QAMessage(BaseModel):
@@ -408,7 +411,7 @@ class BatchSkip(BaseModel):
 
 
 class BatchMaterialsIn(BaseModel):
-    upload_page_ids: list[int] = Field(default_factory=list, max_length=500)  # 這些頁改用上傳圖片：不排背景
+    upload_page_ids: list[DbId] = Field(default_factory=list, max_length=500)  # 這些頁改用上傳圖片：不排背景
 
 
 class BatchMaterialsOut(BaseModel):

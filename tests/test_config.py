@@ -286,6 +286,44 @@ def test_make_storage_r2_missing_settings_listed(settings_file: Path, clean_stor
     assert "SK-hidden" not in text
 
 
+@pytest.mark.parametrize("bucket", ["..", ".", "../x", "a/b", "Books", "ab", "-abc", "abc-", "a..b",
+                                    "a_b", "a b", "/abs", "a" * 64, "abc\\x"])
+def test_make_storage_r2_rejects_unsafe_bucket_name(settings_file: Path, clean_storage_env, monkeypatch,
+                                                     tmp_path, bucket):
+    """bucket 名稱也是本機快取的資料夾名稱（<cache_dir>/<bucket>）：只能是一段安全的路徑（S3 命名規則）。"""
+    from app.storage import make_storage
+
+    monkeypatch.setenv("APP_STORAGE__BACKEND", "r2")
+    monkeypatch.setenv("APP_STORAGE__R2__ENDPOINT", "https://s3.amazonaws.com")
+    monkeypatch.setenv("APP_STORAGE__R2__BUCKET", bucket)
+    monkeypatch.setenv("APP_STORAGE__R2__ACCESS_KEY", "AK")
+    monkeypatch.setenv("APP_STORAGE__R2__SECRET_KEY", "SK")
+    monkeypatch.setenv("APP_STORAGE__CACHE_DIR", str(tmp_path / "objcache"))
+    with pytest.raises(SettingsError) as ei:
+        make_storage(load_settings(settings_file))
+    assert "storage.r2.bucket" in str(ei.value)
+    assert not (tmp_path / "objcache").exists()
+
+
+@pytest.mark.parametrize("bucket", ["abc", "coloring-books-dev", "a.b-c9", "0" * 63])
+def test_make_storage_r2_accepts_valid_bucket_names(settings_file: Path, clean_storage_env, monkeypatch,
+                                                    tmp_path, bucket):
+    pytest.importorskip("moto")
+    from moto import mock_aws
+
+    from app.storage import make_storage
+
+    monkeypatch.setenv("APP_STORAGE__BACKEND", "r2")
+    monkeypatch.setenv("APP_STORAGE__R2__ENDPOINT", "https://s3.amazonaws.com")
+    monkeypatch.setenv("APP_STORAGE__R2__BUCKET", bucket)
+    monkeypatch.setenv("APP_STORAGE__R2__ACCESS_KEY", "AK")
+    monkeypatch.setenv("APP_STORAGE__R2__SECRET_KEY", "SK")
+    monkeypatch.setenv("APP_STORAGE__CACHE_DIR", str(tmp_path / "objcache"))
+    with mock_aws():
+        st = make_storage(load_settings(settings_file))
+    assert st.cache_dir == tmp_path / "objcache" / bucket
+
+
 def test_create_app_uses_make_storage(settings_file: Path, clean_storage_env):
     from fastapi.testclient import TestClient
 

@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, Request
 from pydantic import TypeAdapter, ValidationError
 from sqlmodel import Session, select
 
-from app.models import Book, Generation, Owner, Page
+from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Generation, Owner, Page
 from app.services import auth
 from app.services.worker import GenerationWorker
 from app.storage import Storage
@@ -107,7 +107,7 @@ def require_owned_path(
 
     掛在每個 API router 上（main.py），在 body 驗證與端點本身之前執行：別人的 id 一律 404，
     什麼都不會被讀或改；新加的路由只要沿用這些參數名稱就自動受保護（tests/test_ownership.py 會檢查）。
-    fail closed：id 轉不成整數也回 404（不交給後面處理）。端點本身也再以 owned_* 載入（縱深防禦）。
+    fail closed：id 轉不成整數、或超出 SQLite INTEGER 範圍也回 404（不交給後面處理）。端點本身也再以 owned_* 載入（縱深防禦）。
     """
     for name, check, not_found in _PATH_CHECKS:
         if name not in request.path_params:
@@ -116,5 +116,7 @@ def require_owned_path(
             value = _INT.validate_python(request.path_params[name])
         except ValidationError:
             raise HTTPException(404, not_found) from None
+        if not SQLITE_INT_MIN <= value <= SQLITE_INT_MAX:  # 存不進 SQLite 的 id 不可能存在（查詢會丟 OverflowError）
+            raise HTTPException(404, not_found)
         check(session, owner, value)
     return owner

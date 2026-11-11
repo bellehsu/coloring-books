@@ -217,3 +217,42 @@ def test_body_generation_id_of_other_owner_is_404(world):
     assert r.status_code == 404 and r.json()["detail"] == "找不到這筆生成紀錄"
     r = client.post(f"/api/pages/{page['id']}/background", json={"generation_id": ids["bg"]})
     assert r.status_code == 404 and r.json()["detail"] == "找不到這筆生成紀錄"
+
+
+# 超出 SQLite INTEGER（64 位元有號）的 id：以前 session.get 丟 OverflowError → 500（final review M1）
+HUGE_IDS = (2**63, 2**64, 10**23, -(2**63) - 1)
+
+
+@pytest.mark.parametrize("method,path", ID_ROUTES, ids=[f"{m} {p}" for m, p in ID_ROUTES])
+def test_huge_path_ids_are_404_not_500(world, method, path):
+    app, client, sids, ids = world
+    as_(client, sids["admin"])  # admin 通過擁有權檢查，會一路走到查 DB
+    before = _snapshot(app)
+    for huge in HUGE_IDS:
+        r = _call(client, method, _url(path, {k: huge for k in OWNED_PARAMS}))
+        assert r.status_code == 404, (path, huge, r.status_code, r.text)
+        assert r.json()["detail"] in NOT_FOUND
+    assert _snapshot(app) == before
+
+
+def test_huge_body_and_query_ids_are_422_not_500(world):
+    app, client, sids, ids = world
+    as_(client, sids["admin"])
+    b, p = ids["book_id"], ids["page_id"]
+    for huge in (2**63, -(2**63) - 1):
+        cases = [
+            ("POST", f"/api/books/{b}/character", {"generation_id": huge}),
+            ("POST", f"/api/pages/{p}/background", {"generation_id": huge}),
+            ("POST", f"/api/pages/{p}/pose", {"generation_id": huge}),
+            ("POST", f"/api/books/{b}/pages/order", {"page_ids": [p, huge]}),
+            ("POST", f"/api/books/{b}/materials/batch", {"upload_page_ids": [huge]}),
+            ("PUT", f"/api/pages/{p}/lineart/edits", {"generation_id": huge, "strokes": []}),
+            ("POST", f"/api/pages/{p}/lineart/autofix", {"generation_id": huge}),
+            ("GET", f"/api/books/{b}/generations?page_id={huge}", None),
+        ]
+        for method, url, body in cases:
+            r = client.request(method, url, json=body)
+            assert r.status_code == 422, (method, url, huge, r.status_code, r.text)
+    # 範圍內的照常（邊界值本身合法，查不到是 404 不是 422）
+    r = client.post(f"/api/pages/{p}/background", json={"generation_id": 2**63 - 1})
+    assert r.status_code == 404
