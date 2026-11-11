@@ -551,14 +551,13 @@ export function useCompose(bookId: number) {
 
 /**
  * 開始做這本書／繼續做：補排缺的素材與頁面流程（放得下多少做多少）。0 次可用時後端回 429。
- * 成功或失敗 → overview, producePlan, queue, generations, pages, book, books
+ * → overview, producePlan, queue, generations, pages, book, books（失敗時只重抓 producePlan）
  */
 export function useProduce(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post<ProduceResult>(`/books/${bookId}/produce`),
-    // 失敗（429）也重抓：剩餘次數變了，「繼續做」與「今天的生成次數已用完」要跟著變
-    onSettled: () =>
+    onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: qk.overview(bookId) }),
         qc.invalidateQueries({ queryKey: qk.producePlan(bookId) }),
@@ -567,5 +566,9 @@ export function useProduce(bookId: number) {
         qc.invalidateQueries({ queryKey: qk.books() }),
         invalidateJobs(qc, bookId),
       ]),
+    // 失敗（429）也重抓剩餘次數：「繼續做」與「今天的生成次數已用完」才會跟著變。不 await：錯誤訊息不用等它
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: qk.producePlan(bookId) });
+    },
   });
 }
