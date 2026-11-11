@@ -127,6 +127,8 @@ class Page(SQLModel, table=True):
     position: int
     scene_prompt: str = ""
     action_prompt: str = Field(default="", sa_column_kwargs={"server_default": ""})
+    caption_zh: str | None = None  # 印在頁面下方的中文／英文短字（Phase 11；空＝None）
+    caption_en: str | None = None
     selected_generation_id: int | None = None
     background_generation_id: int | None = None
     pose_generation_id: int | None = None

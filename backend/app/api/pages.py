@@ -158,6 +158,11 @@ def update_page(
         page.scene_prompt = body.scene_prompt
     if body.action_prompt is not None:
         page.action_prompt = body.action_prompt
+    # 頁面文字：用 model_fields_set 區分「沒送」與「送 null／空字串＝清除」；不動生成紀錄、線稿與 QA 狀態
+    if "caption_zh" in body.model_fields_set:
+        page.caption_zh = body.caption_zh
+    if "caption_en" in body.model_fields_set:
+        page.caption_en = body.caption_en
     # body.controlnet_strength：構圖草圖已停用，舊前端送的值忽略
     lines_changed = False
     if body.line_detail is not None and body.line_detail != page.line_detail:

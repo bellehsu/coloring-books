@@ -4,7 +4,8 @@ import json
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
 from app.services.compose import Placement
@@ -21,6 +22,24 @@ TitleStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1,
 DescriptionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=800)]
 ScenePromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=800)]
 ActionPromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]
+
+
+def _caption_validator(limit: int, message: str):
+    """頁面文字：去頭尾空白，空字串變 None，超過 limit 個 code point（Python len）→ 422 帶 message。"""
+    def check(v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > limit:
+            raise PydanticCustomError("caption_too_long", message)
+        return v
+    return check
+
+
+CaptionZhStr = Annotated[str | None, AfterValidator(_caption_validator(12, "中文字最多 12 個字"))]
+CaptionEnStr = Annotated[str | None, AfterValidator(_caption_validator(28, "英文字最多 28 個字元"))]
 ActionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 
 
@@ -239,6 +258,8 @@ class PageCreate(BaseModel):
 class PageUpdate(BaseModel):
     scene_prompt: ScenePromptStr | None = None
     action_prompt: ActionPromptStr | None = None
+    caption_zh: CaptionZhStr = None  # 未送＝不動（見 model_fields_set）；""、空白、null＝清除
+    caption_en: CaptionEnStr = None
     controlnet_strength: float | None = None  # 構圖草圖已停用（0006 已移除欄位）：舊前端會送，照收但忽略
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
@@ -289,6 +310,8 @@ class PageOut(BaseModel):
     position: int
     scene_prompt: str
     action_prompt: str
+    caption_zh: str | None
+    caption_en: str | None
     selected_generation_id: int | None
     background_generation_id: int | None
     pose_generation_id: int | None
@@ -329,6 +352,8 @@ class PageOut(BaseModel):
             position=page.position,
             scene_prompt=page.scene_prompt,
             action_prompt=page.action_prompt,
+            caption_zh=page.caption_zh,
+            caption_en=page.caption_en,
             selected_generation_id=page.selected_generation_id,
             background_generation_id=page.background_generation_id,
             pose_generation_id=page.pose_generation_id,

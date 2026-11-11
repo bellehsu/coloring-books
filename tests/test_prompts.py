@@ -26,21 +26,23 @@ def test_qwen_pose_prompt():
     assert qwen_pose_prompt("揮手").startswith("Make this exact character 揮手.")
 
 
-QWEN_POSE_T1 = (
-    "Make this exact character {action}. Draw only the character, even if the action mentions a place: no ground, "
-    "no floor, no scenery, no background objects. Keep the same character design, proportions, colors, clothing and "
-    "accessories unchanged. Full body, centered, plain pure white background, no shadow, no cast shadow, children's "
-    "picture book illustration, flat colors, thick clean black outlines."
+QWEN_POSE_T3 = (
+    "Make this exact character {action}. Draw only the character, plus the vehicle or object the action mentions, "
+    "completely visible; no ground, no floor, no road, no scenery, no room, no other background objects, no text, "
+    "no letters. Keep the same character design, proportions, colors, clothing and accessories unchanged. Full body, "
+    "centered, plain pure white background, no shadow, no cast shadow, children's picture book illustration, flat "
+    "colors, thick clean black outlines."
 )
 
 
-def test_pose_template_is_task1_generic_wording():
-    # phase9 Task 1：拿掉兔子專用的「scarf and ears」，並在動作提到地點時也只畫角色
-    from app.services.prompts import QWEN_POSE_TEMPLATE
+def test_pose_template_is_t3():
+    from app.services.prompts import QWEN_POSE_TEMPLATE, qwen_pose_prompt
 
-    assert QWEN_POSE_TEMPLATE == QWEN_POSE_T1
-    t = QWEN_POSE_TEMPLATE.lower()
-    assert "scarf" not in t and "ears" not in t
+    assert QWEN_POSE_TEMPLATE == QWEN_POSE_T3
+    assert "no text, no letters" in QWEN_POSE_TEMPLATE
+    assert "even if the action mentions a place" not in QWEN_POSE_TEMPLATE
+    assert "scarf" not in QWEN_POSE_TEMPLATE.lower() and "ears" not in QWEN_POSE_TEMPLATE.lower()
+    assert qwen_pose_prompt("騎著腳踏車").startswith("Make this exact character 騎著腳踏車.")
 
 
 QA1_TAIL = ("Simple coloring book background, a few large simple objects, lots of empty space, children's "

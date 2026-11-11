@@ -370,3 +370,32 @@ def test_0009_owner_token_encrypted_roundtrip(tmp_path):
         assert c.exec_driver_sql("SELECT name FROM owner").scalar() == "o"
         assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
     command.upgrade(alembic_config(eng), "head")
+
+
+def test_0010_page_captions_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0009")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, action_prompt, status, line_detail, line_width_px, "
+            "qa_note, created_at, updated_at) VALUES (1, 0, 's', 'a', 'DRAFT', 'STANDARD', 11, '', "
+            "'2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "0010")
+    with eng.connect() as c:
+        cols = _cols(c, "page")
+        assert cols["caption_zh"]["nullable"] is True and cols["caption_en"]["nullable"] is True
+        assert c.exec_driver_sql("SELECT caption_zh, caption_en FROM page").one() == (None, None)
+    command.downgrade(alembic_config(eng), "0009")
+    with eng.connect() as c:
+        cols = _cols(c, "page")
+        assert "caption_zh" not in cols and "caption_en" not in cols
+        assert c.exec_driver_sql("SELECT scene_prompt FROM page").scalar() == "s"
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")

@@ -1203,6 +1203,10 @@ export interface components {
             scene_prompt: string;
             /** Action Prompt */
             action_prompt: string;
+            /** Caption Zh */
+            caption_zh: string | null;
+            /** Caption En */
+            caption_en: string | null;
             /** Selected Generation Id */
             selected_generation_id: number | null;
             /** Background Generation Id */
@@ -1262,6 +1266,10 @@ export interface components {
             scene_prompt?: string | null;
             /** Action Prompt */
             action_prompt?: string | null;
+            /** Caption Zh */
+            caption_zh?: string | null;
+            /** Caption En */
+            caption_en?: string | null;
             /** Controlnet Strength */
             controlnet_strength?: number | null;
             line_detail?: components["schemas"]["LineDetail"] | null;

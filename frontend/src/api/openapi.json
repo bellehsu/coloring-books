@@ -3465,6 +3465,28 @@
             "type": "string",
             "title": "Action Prompt"
           },
+          "caption_zh": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption Zh"
+          },
+          "caption_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption En"
+          },
           "selected_generation_id": {
             "anyOf": [
               {
@@ -3576,6 +3598,8 @@
           "position",
           "scene_prompt",
           "action_prompt",
+          "caption_zh",
+          "caption_en",
           "selected_generation_id",
           "background_generation_id",
           "pose_generation_id",
@@ -3661,6 +3685,28 @@
               }
             ],
             "title": "Action Prompt"
+          },
+          "caption_zh": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption Zh"
+          },
+          "caption_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption En"
           },
           "controlnet_strength": {
             "anyOf": [
