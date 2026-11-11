@@ -35,7 +35,7 @@ The spike `experiments/results/phase12_pose_spike_20261111/` found the following
   2. "seen in a three-quarter view turned slightly to the right"
   3. "with a bigger, more energetic motion"
   4. "with a calmer, smaller motion"
-- Every pose job picks a variation at random. It excludes the variation used by **this page's most recent pose** generation, found by id regardless of status, as `_last_simple_variation` already does for backgrounds. This applies to single requests and batch requests alike.
+- Every pose job picks a variation at random. It excludes the variations used by **this page's two most recent pose** generations (only the most recent when a facing phrase leaves 2 candidates), found by id regardless of status, as `_last_simple_variation` already does for backgrounds. This applies to single requests and batch requests alike.
 - When the action text contains a facing phrase from §3.3, only variations 3 and 4 may be used, so the turn variations can't fight the chosen facing.
 - The chosen variation is already stored in `request_json.variation`, and the prompt is stored too.
 
@@ -77,7 +77,7 @@ The spike `experiments/results/phase12_pose_spike_20261111/` found the following
 
   A hint below the group: 「臉會轉向，身體可能仍偏正面；不夠時可在構圖用左右翻轉」.
 - All three groups respect MAX_ACTION (300). A button that would push the text over the limit is disabled, as action buttons are today.
-- The groups appear wherever the action presets appear today: the editor's pose card. The 故事 rows have no preset buttons, so nothing is added there.
+- The groups appear wherever the action presets appear today: the editor's pose card. 故事頁每列維持原有的常用動作鈕；表情、面向與新動作只在編輯器的動作卡片（故事頁的整批流程改在下一個 Phase 重新設計）。
 - The backend detects facing phrases with the exact English phrases above, matched case-insensitively. Typed Chinese like 「朝左」 is not detected, which only means all four variations stay allowed.
 
 ## 4. Success criteria

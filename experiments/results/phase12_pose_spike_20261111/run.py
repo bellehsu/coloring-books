@@ -19,7 +19,15 @@ spec.loader.exec_module(p9)
 p9.OUT, p9.SHEETS = HERE / "processed", HERE / "sheets"
 p9.MPATH = p9.OUT / "metrics.json"
 
-from app.services.prompts import QWEN_POSE_TEMPLATE as T3  # noqa: E402
+# T3 = the production pose template when this spike ran (master c1ad6b0, Phase 11 spec §4.4); frozen here so the
+# spike keeps reproducing what it ran even though production moved on to T4.
+T3 = (
+    "Make this exact character {action}. Draw only the character, plus the vehicle or object the action mentions, "
+    "completely visible; no ground, no floor, no road, no scenery, no room, no other background objects, no text, "
+    "no letters. Keep the same character design, proportions, colors, clothing and accessories unchanged. Full body, "
+    "centered, plain pure white background, no shadow, no cast shadow, children's picture book illustration, flat "
+    "colors, thick clean black outlines."
+)
 
 ANAT = ("Correct anatomy: exactly two arms, two hands and two legs, or only the limbs this character's design has; "
         "no extra arms, hands, legs or tails. ")
