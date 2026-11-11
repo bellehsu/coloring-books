@@ -115,3 +115,20 @@ def test_files_route_rejects_escape(client, app):
         assert r.status_code in (403, 404), path
     # 即使簽章對（簽了不合法的 key 是不可能的），簽章函式本身也拒絕
     assert st.verify("../x.png", exp, "0" * 64) is False
+
+
+def test_files_route_never_serves_root_files(client, app):
+    """app.db、.signing_key 等 root 下、books/ cache/ 之外的檔案：即使簽章對也不能讀。"""
+    st = app.state.storage
+    root = st.root
+    (root / ".signing_key").write_bytes(b"SECRETKEY")
+    (root / "app.db").write_bytes(b"SQLITEDATA")
+    exp = int(time.time()) + 60
+    for key in ("app.db", ".signing_key"):
+        sig = st._sign(key, exp)  # 直接簽（signed_url 本身也會拒絕）
+        r = client.get(f"/api/files/{key}?exp={exp}&sig={sig}")
+        assert r.status_code in (403, 404), key
+        assert b"SECRET" not in r.content and b"SQLITE" not in r.content
+        with pytest.raises(ValueError):
+            st.signed_url(key, 60)
+        assert st.verify(key, exp, sig) is False

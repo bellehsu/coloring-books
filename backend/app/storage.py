@@ -85,6 +85,14 @@ def _check_local_prefix(prefix: str) -> str:
     return prefix
 
 
+def _check_local_key(key: str) -> str:
+    """LocalStorage 的每個讀、寫、簽章都只能碰 books/ 或 cache/ 底下（root 還有 app.db 與 .signing_key）。"""
+    _check_key(key)
+    if not key.startswith(_LOCAL_PREFIX_ROOTS):
+        raise ValueError(f"LocalStorage 只能存取 books/ 或 cache/ 底下：{key!r}")
+    return key
+
+
 class Storage(Protocol):
     """所有二進位檔案（生成圖、遮罩、線稿、預覽）的存取介面。key 是今天的相對路徑格式。"""
 
@@ -185,7 +193,7 @@ class LocalStorage(_KeyBuilders):
         return f"LocalStorage(root={str(self.root)!r})"
 
     def _path(self, key: str) -> Path:
-        _check_key(key)
+        _check_local_key(key)
         root = self.root.resolve()
         path = (root / key).resolve()
         if not path.is_relative_to(root) or path == root:
@@ -224,14 +232,14 @@ class LocalStorage(_KeyBuilders):
         return hmac.new(self._signing_key, f"{key}\n{exp}".encode(), hashlib.sha256).hexdigest()
 
     def signed_url(self, key: str, ttl_s: int, *, now: float | None = None) -> str:
-        _check_key(key)
+        _check_local_key(key)
         exp = int(time.time() if now is None else now) + int(ttl_s)
         return f"/api/files/{quote(key, safe='/')}?exp={exp}&sig={self._sign(key, exp)}"
 
     def verify(self, key: str, exp: int | str, sig: str, now: float | None = None) -> bool:
         """檢查 /api/files 的簽章：key 合法、未過期、HMAC 相符。任何不合格都回 False。"""
         try:
-            _check_key(key)
+            _check_local_key(key)
             exp_i = int(exp)
         except (ValueError, TypeError):
             return False

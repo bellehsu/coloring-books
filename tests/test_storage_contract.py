@@ -419,3 +419,20 @@ def test_local_put_is_atomic(tmp_path, monkeypatch):
     assert seen and seen[0].endswith(".tmp")
     assert st.get("books/1/a.png") == b"old"
     assert sorted(st.list("books/")) == ["books/1/a.png"]
+
+
+def test_local_storage_rejects_keys_outside_books_and_cache(tmp_path):
+    from app.storage import LocalStorage
+
+    st = LocalStorage(tmp_path, b"k")
+    (tmp_path / "app.db").write_bytes(b"db")
+    for key in ("app.db", ".signing_key", "other/x.png"):
+        for call in (lambda: st.get(key), lambda: st.put(key, b"x"), lambda: st.exists(key),
+                     lambda: st.delete(key), lambda: st.signed_url(key, 60)):
+            with pytest.raises(ValueError):
+                call()
+        assert st.verify(key, 9999999999, "0" * 64) is False
+    assert (tmp_path / "app.db").read_bytes() == b"db"
+    st.put("books/1/a.png", b"x")
+    st.put("cache/previews/a.png", b"x")
+    assert st.exists("books/1/a.png") and st.exists("cache/previews/a.png")

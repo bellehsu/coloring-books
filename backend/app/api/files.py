@@ -41,4 +41,4 @@ def get_file(
         raise HTTPException(404, "圖片檔案遺失") from None
     media_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
     return Response(content=data, media_type=media_type,
-                    headers={"Cache-Control": "private, max-age=60"})
+                    headers={"Cache-Control": REDIRECT_CACHE_CONTROL})
