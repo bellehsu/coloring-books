@@ -46,7 +46,7 @@
   padding: 0 6px;
   border-radius: 999px;
   background: var(--danger);
-  color: var(--on-accent);
+  color: var(--on-danger);
   font-size: 12px;
   font-weight: 500;
   display: inline-grid;
