@@ -183,6 +183,20 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int, *, rer
     raise LineartUnavailable("線稿產生時頁面一直被更動，請稍後再試")
 
 
+def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_id: int):
+    """選定圖的底稿＋auto 層（還沒套 user 層）的墨水陣列，與 ensure_page_lineart 同樣的設定。
+    自動補線要依渲染順序（auto 再 user）試補線時用。來源圖片不見丟 LineartSourceMissing。"""
+    page = session.get(Page, page_id)
+    gen = session.get(Generation, gen_id)
+    if page is None or gen is None:
+        raise LineartUnavailable("這一頁還沒有選定圖片")
+    book = session.get(Book, page.book_id)
+    content_px = compute_layout(book.paper_size, book.print_mode).content_px
+    ink, _metrics = render_base(_load(storage, gen), content_px, page.line_detail, page.line_width_px)
+    auto = load_strokes(session, gen_id, layer=StrokeLayer.AUTO)
+    return apply_strokes(ink, auto) if auto else ink
+
+
 def read_page_lineart(session: Session, storage: Storage, page_id: int) -> tuple[PageLineart, bytes]:
     """ensure_page_lineart 再讀出線稿 PNG。資料庫說有、物件卻不見了（GC 或手動刪除）就重算一次。
     來源圖片也不見了丟 LineartSourceMissing。"""

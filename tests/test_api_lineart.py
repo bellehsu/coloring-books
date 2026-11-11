@@ -430,6 +430,37 @@ def test_autofix_limit_ignores_full_user_layer(client, app, monkeypatch):
     assert len(layer_strokes(app, ids[0], StrokeLayer.AUTO)) == 1
 
 
+@pytest.mark.parametrize("erase_px", [24, 30, 40])
+def test_autofix_respects_user_eraser(client, app, erase_px):
+    """使用者用橡皮擦擦開外框（1 個缺口）再按自動補線：渲染是 auto 再 user，所以被擦掉的補線不算。
+    一次就接好，或什麼都不補（回 0）；再按一次不再新增 auto 筆畫，也不退回 passed。"""
+    _, p, ids = selected_page(client, app)
+    edits = f"/api/pages/{p['id']}/lineart/edits"
+    url = f"/api/pages/{p['id']}/lineart/autofix"
+    for y in (0.170, 0.172, 0.174, 0.176):  # 外框上緣附近：找一個會擦出缺口的位置
+        erase = {"op": "erase", "width_px": erase_px, "points": [[0.5, y]]}
+        r = client.put(edits, json=edits_body(ids[0], [erase]))
+        assert r.status_code == 200, r.text
+        if r.json()["gap_count"]:
+            break
+    assert r.json()["gap_count"] == 1
+
+    out = client.post(url, json={"generation_id": ids[0]}).json()
+    if out["autofix_added"]:
+        assert out["gap_count"] == 0
+    else:
+        assert out["gap_count"] == 1
+    auto_after_first = layer_strokes(app, ids[0], StrokeLayer.AUTO)
+    assert len(auto_after_first) == out["autofix_added"]
+
+    make_passed(app, p["id"])
+    again = client.post(url, json={"generation_id": ids[0]}).json()
+    assert again["autofix_added"] == 0
+    assert again["status"] == "passed"
+    assert layer_strokes(app, ids[0], StrokeLayer.AUTO) == auto_after_first
+    assert client.get(edits).json()["strokes"] == [erase]
+
+
 def test_edits_api_writes_user_layer_only(client, app):
     _, p, ids = selected_page(client, app)
     url = f"/api/pages/{p['id']}/lineart/edits"

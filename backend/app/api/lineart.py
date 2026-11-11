@@ -40,6 +40,7 @@ from app.services.page_lineart import (
     PageLineart,
     ensure_page_lineart,
     ensure_preview,
+    ink_before_user_layer,
     load_strokes,
     read_page_lineart,
     save_strokes,
@@ -247,7 +248,8 @@ def autofix(
     """對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。
 
     只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。
-    使用者的修線（user 層）不動；筆數上限各層分開算。
+    使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），
+    會被使用者橡皮擦擦到的補線不補。
     """
     gid = _selected_or_409(owned_page(session, owner, page_id), body.generation_id)
     lin, data = _ensure_png(session, storage, owner, page_id, image_route=False)
@@ -261,20 +263,34 @@ def autofix(
     if len(existing) >= MAX_STROKES or points_left < 2:
         raise HTTPException(409, f"修改圖層已達上限（{MAX_STROKES} 筆／{MAX_TOTAL_POINTS} 點），無法自動補線")
 
-    ink = _read_ink(data)
-    h, w = ink.shape
+    # 依渲染順序試補線：底稿＋auto 層＋新補線，最後才套 user 層（使用者的橡皮擦會擦掉補線）
+    user = load_strokes(session, gid, layer=StrokeLayer.USER)
+    if user:
+        try:
+            pre = ink_before_user_layer(session, storage, page_id, gid)
+        except LineartUnavailable as e:
+            raise HTTPException(409, e.message) from e
+        erased = ~apply_strokes(np.ones_like(pre), user)  # user 層最後會擦成白的像素
+    else:
+        pre, erased = _read_ink(data), None  # 沒有 user 層：線稿圖就是底稿＋auto 層
+    h, w = pre.shape
+
+    def survives(stroke: Stroke) -> bool:
+        """補線有任何一點會被 user 層擦掉就不補（補了也接不起來，只會一直累積無用的 auto 筆畫）。"""
+        return erased is None or not (apply_strokes(np.zeros_like(pre), [stroke]) & erased).any()
+
     added: list[Stroke] = []
     gap_count, bridges = lin.qa.gap_count, lin.qa.bridges
     for _ in range(AUTOFIX_MAX_PASSES):
         room = min(MAX_STROKES - len(existing) - len(added), (points_left - 2 * len(added)) // 2)
-        batch = [_bridge_stroke(b, w, h, width) for b in bridges[:max(0, room)]]
+        batch = [s for s in (_bridge_stroke(b, w, h, width) for b in bridges[:max(0, room)]) if survives(s)]
         if not batch:
             break
-        trial = apply_strokes(ink, batch)
-        report = evaluate(trial, width)
+        trial_pre = apply_strokes(pre, batch)
+        report = evaluate(apply_strokes(trial_pre, user) if user else trial_pre, width)
         if report.gap_count >= gap_count:
             break  # 這一輪沒有進展：不留它的筆畫
-        ink, added = trial, added + batch
+        pre, added = trial_pre, added + batch
         gap_count, bridges = report.gap_count, report.bridges
         if gap_count == 0:
             break

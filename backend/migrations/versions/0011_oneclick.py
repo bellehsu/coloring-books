@@ -11,6 +11,7 @@ Create Date: 2026-11-11 00:00:05
 3. lineartedit 加 layer（AUTO／USER），主鍵改成 (generation_id, layer)。SQLite 改不了主鍵，所以重建資料表：
    建新表、複製（既有的修線都是使用者畫的：layer＝USER）、刪舊表、改名、重建索引。
 downgrade 反向執行；兩層併回一列（auto 在前、user 在後，與渲染順序相同，印出來的線稿不變）。
+併起來超過舊版 PUT 上限（500 筆／20000 點）時從最前面丟，保留最新的筆畫（見 _cap）。
 沿用 0006 的 batch 寫法（page 重建時以 table_kwargs 保留 AUTOINCREMENT）。
 """
 import json
@@ -97,8 +98,24 @@ def upgrade() -> None:
     _swap_in(_TMP)
 
 
+# 0010 的 PUT /lineart/edits 上限（app.api.schemas 在這個版本的值；遷移不 import 會變動的程式碼）
+_OLD_MAX_STROKES = 500
+_OLD_MAX_TOTAL_POINTS = 20000
+
+
+def _cap(strokes: list) -> list:
+    """併成一列後可能超過舊版 PUT 的上限，頁面就再也存不了修線。從最前面丟（auto 在前，所以先丟最舊的
+    自動補線），保留最新的筆畫：使用者畫的優先留下，補線之後重按「自動補線」就能補回。"""
+    start, points = 0, sum(len(s.get('points', [])) if isinstance(s, dict) else 0 for s in strokes)
+    while start < len(strokes) and (len(strokes) - start > _OLD_MAX_STROKES or points > _OLD_MAX_TOTAL_POINTS):
+        s = strokes[start]
+        points -= len(s.get('points', [])) if isinstance(s, dict) else 0
+        start += 1
+    return strokes[start:]
+
+
 def _merged_rows(conn) -> list[dict]:
-    """每張圖併成一列：auto 的筆畫在前、user 在後；只有一層就沿用那一層的原文。"""
+    """每張圖併成一列：auto 的筆畫在前、user 在後（見 _cap）；只有一層就沿用那一層的原文。"""
     rows = conn.execute(sa.text(
         "SELECT generation_id, layer, page_id, strokes_json, updated_at FROM lineartedit "
         "ORDER BY generation_id, layer"  # 'AUTO' < 'USER'
@@ -113,7 +130,7 @@ def _merged_rows(conn) -> list[dict]:
         if not first:
             cur['strokes_json'] = r['strokes_json']
         elif second:
-            cur['strokes_json'] = json.dumps(first + second, separators=(',', ':'), ensure_ascii=False)
+            cur['strokes_json'] = json.dumps(_cap(first + second), separators=(',', ':'), ensure_ascii=False)
         cur['updated_at'] = max(cur['updated_at'], r['updated_at'])
     return list(merged.values())
 

@@ -521,3 +521,34 @@ def test_0011_oneclick_downgrade_merges_auto_strokes(tmp_path):
     command.upgrade(alembic_config(eng), "head")
     with eng.connect() as c:
         assert c.exec_driver_sql("SELECT DISTINCT layer FROM lineartedit").all() == [("USER",)]
+
+
+def test_0011_downgrade_caps_merged_strokes_to_old_put_limits(tmp_path):
+    """兩層各自在上限內，併成一列可能超過舊 PUT 的上限（500 筆／20000 點）而讓頁面再也存不了修線：
+    併好之後從最前面（最舊的 auto 筆畫）丟，保留最新的筆畫。"""
+    import json
+
+    from app.api.schemas import MAX_STROKES, MAX_TOTAL_POINTS
+
+    eng = make_engine(tmp_path / "a.db")
+    _seed_0010(eng)
+    command.upgrade(alembic_config(eng), "0011")
+    stroke = lambda tag, n=1: {"op": "draw", "width_px": 11, "points": [[0.1, 0.1]] * n, "t": tag}  # noqa: E731
+    auto = [stroke(f"a{i}") for i in range(300)]
+    user = [stroke(f"u{i}") for i in range(300)]
+    auto31 = [stroke(f"b{i}", 100) for i in range(150)]  # 15000 點
+    user31 = [stroke(f"v{i}", 100) for i in range(100)]  # 10000 點
+    ts = "'2026-11-11 00:00:01'"
+    with eng.begin() as c:
+        c.exec_driver_sql("UPDATE lineartedit SET strokes_json = ?", (json.dumps(user),))
+        c.exec_driver_sql(
+            "INSERT INTO lineartedit (generation_id, layer, page_id, strokes_json, updated_at) "
+            f"VALUES (30, 'AUTO', 3, ?, {ts}), (31, 'AUTO', 3, ?, {ts}), (31, 'USER', 3, ?, {ts})",
+            (json.dumps(auto), json.dumps(auto31), json.dumps(user31)))
+    command.downgrade(alembic_config(eng), "0010")
+    with eng.connect() as c:
+        got = {g: json.loads(t) for g, t in c.exec_driver_sql("SELECT generation_id, strokes_json FROM lineartedit")}
+    assert len(got[30]) == MAX_STROKES
+    assert got[30] == (auto + user)[-MAX_STROKES:]  # 丟掉最舊的 100 筆 auto，使用者的全部保留
+    assert sum(len(s["points"]) for s in got[31]) <= MAX_TOTAL_POINTS
+    assert got[31] == (auto31 + user31)[-200:]  # 20000 點＝最後 200 筆
