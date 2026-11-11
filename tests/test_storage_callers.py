@@ -55,7 +55,7 @@ def test_no_abs_calls():
         f"{p.relative_to(REPO)}:{i}"
         for p in (REPO / "backend" / "app").rglob("*.py")
         for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
-        if ".abs(" in line or re.search(r"\bstorage\.write\(", line)
+        if re.search(r"storage\w*\.(abs|write)\(", line)
     ]
     assert hits == []
 
@@ -112,6 +112,20 @@ def test_missing_generation_object_lineart_regenerates_or_404(client, app):
         assert "圖片檔案遺失" in r.json()["detail"]
     r = client.get(f"/api/generations/{ids[0]}/image")
     assert r.status_code == 404 and r.json()["detail"] == "圖片檔案遺失"
+    # 角色動作的去背圖：圖或遮罩的物件不見了也是 404「圖片檔案遺失」
+    from tests.test_api_compose import compose_ready, gen_row
+
+    _, _, _, pose = compose_ready(client, app)
+    app.state.storage.delete(gen_row(app, pose).image_path)
+    r = client.get(f"/api/generations/{pose}/cutout")
+    assert r.status_code == 404 and r.json()["detail"] == "圖片檔案遺失"
+
+
+def test_no_abs_pattern_ignores_numpy():
+    pattern = re.compile(r"storage\w*\.(abs|write)\(")
+    assert not pattern.search("diff = np.abs(arr - bg)")
+    assert pattern.search("p = storage.abs(rel)") and pattern.search("self.storage.write(rel, b)")
+    assert pattern.search("app.state.storage.abs(x)")
 
 
 def test_missing_lineart_object_regenerates(client, app):
@@ -259,3 +273,54 @@ def test_r2_backend_full_flow(r2_app, settings_file):
         assert not r2.exists(f"books/{b['id']}/generations/{gid}.png")
     # 沒有任何圖片寫到本機資料夾（只有 SQLite 與簽章金鑰）
     assert not (storage_dir / "books").exists() and not (storage_dir / "cache").exists()
+
+
+class FlakyDeleteStorage(SpyStorage):
+    """delete／delete_prefix 對指定的 key 丟 OSError（模擬 R2 暫時失敗），其他照常。"""
+
+    def __init__(self, inner: Storage, fail: set[str]):
+        super().__init__(inner)
+        self.fail = fail
+
+    def __getattr__(self, name):
+        attr = super().__getattr__(name)
+        if name in ("delete", "delete_prefix"):
+            def maybe_fail(key, *a, **kw):
+                if key in self.fail:
+                    self.calls.append((name, key))
+                    raise OSError(f"boom: {key}")
+                return attr(key, *a, **kw)
+            return maybe_fail
+        return attr
+
+
+@pytest.mark.parametrize("which", ["first_image", "prefix", "preview"])
+def test_delete_page_cleanup_continues_after_one_failure(client, app, which):
+    """頁面刪除後清物件：某一個刪除失敗只記 log，其他物件照樣刪；回應仍是 204。"""
+    app.state.engine.image = color_png()
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p = new_page(client, b["id"])
+    gens = [seed_generation(app, b["id"], p["id"], color_png()) for _ in range(2)]
+    set_page(app, p["id"], selected_generation_id=gens[0])
+    assert client.get(f"/api/pages/{p['id']}/lineart").status_code == 200
+    assert client.get(f"/api/generations/{gens[1]}/lineart-preview").status_code == 200
+    storage = app.state.storage
+    with app.state.sessions() as s:
+        keys = [s.get(Generation, g).image_path for g in gens]
+    page_prefix = f"books/{b['id']}/pages/{p['id']}/"
+    preview = next(iter(storage.list(f"cache/previews/{gens[1]}_")))
+    failing = {"first_image": keys[0], "prefix": page_prefix, "preview": preview}[which]
+    app.state.storage = FlakyDeleteStorage(storage, {failing})
+
+    assert client.delete(f"/api/pages/{p['id']}").status_code == 204
+    assert any(k == failing for _, k in app.state.storage.calls)  # 真的失敗過
+    expect_gone = {
+        "image": [k for k in keys if k != failing],
+        "prefix": [] if failing == page_prefix else [page_prefix],
+        "preview": [] if failing == preview else [preview],
+    }
+    assert all(not storage.exists(k) for k in expect_gone["image"])
+    for prefix in expect_gone["prefix"]:
+        assert list(storage.list(prefix)) == []
+    for k in expect_gone["preview"]:
+        assert not storage.exists(k)

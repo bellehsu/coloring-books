@@ -115,9 +115,14 @@ def get_generation_cutout(
         raise HTTPException(404, "這筆生成紀錄沒有去背圖")
     try:
         pose_png, mask_png = storage.get(gen.image_path), storage.get(gen.mask_path)
+    except StorageNotFound:  # 物件不見了：與其他圖片端點一致
+        raise HTTPException(404, "圖片檔案遺失") from None
+    except ValueError:  # key 不合法
+        raise HTTPException(409, "圖片檔案遺失，請重新產生") from None
+    try:
         with Image.open(io.BytesIO(pose_png)) as pose, Image.open(io.BytesIO(mask_png)) as mask:
             out = cutout(pose, mask)
-    except (StorageNotFound, OSError, ValueError):
+    except (OSError, ValueError):  # 物件在但讀不出圖、或遮罩與圖對不上
         raise HTTPException(409, "圖片檔案遺失，請重新產生") from None
     buf = io.BytesIO()
     out.save(buf, format="PNG")

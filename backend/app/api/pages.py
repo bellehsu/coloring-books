@@ -207,14 +207,25 @@ def delete_page(
             p.position = i
             session.add(p)
     session.commit()
-    # 物件在交易提交後才刪（盡力而為；失敗只記 log，留下的孤兒物件由 storage_gc 清）
-    try:
-        for key in image_paths:
-            storage.delete(key)
-        # 結尾的 / 不可省：books/1/pages/1 會連 books/1/pages/10 一起刪
-        storage.delete_prefix(f"books/{book_id}/pages/{page_id}/")
-        for gid in gen_ids:
-            for key in list(storage.list(f"cache/previews/{gid}_")):
-                storage.delete(key)
-    except Exception:  # noqa: BLE001  資料庫已提交，刪物件失敗不可變成 500
-        log.warning("刪除頁面 %s 的物件時發生錯誤", page_id, exc_info=True)
+    # 物件在交易提交後才刪（盡力而為）：每個刪除各自處理錯誤，一個失敗不影響其他的；
+    # 資料庫已提交，失敗只記 log、不回 500，留下的孤兒物件由 storage_gc 清
+    def attempt(what: str, fn, *args) -> None:
+        try:
+            fn(*args)
+        except Exception:  # noqa: BLE001
+            log.warning("刪除頁面 %s 的物件失敗：%s", page_id, what, exc_info=True)
+
+    for key in image_paths:
+        attempt(key, storage.delete, key)
+    # 結尾的 / 不可省：books/1/pages/1 會連 books/1/pages/10 一起刪
+    page_prefix = f"books/{book_id}/pages/{page_id}/"
+    attempt(page_prefix, storage.delete_prefix, page_prefix)
+    for gid in gen_ids:
+        prefix = f"cache/previews/{gid}_"
+        try:
+            keys = list(storage.list(prefix))
+        except Exception:  # noqa: BLE001
+            log.warning("刪除頁面 %s 的物件失敗：列出 %s", page_id, prefix, exc_info=True)
+            continue
+        for key in keys:
+            attempt(key, storage.delete, key)

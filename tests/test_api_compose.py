@@ -561,10 +561,18 @@ def test_cutout_404_and_409(client, app):
     mask_bytes = app.state.storage.get(row.mask_path)
     app.state.storage.delete(row.mask_path)
     r = client.get(f"/api/generations/{pose}/cutout")
-    assert r.status_code == 409 and r.json()["detail"] == "圖片檔案遺失，請重新產生"
+    # 物件不見了：和其他圖片端點一樣 404「圖片檔案遺失」
+    assert r.status_code == 404 and r.json()["detail"] == "圖片檔案遺失"
     app.state.storage.put(row.mask_path, mask_bytes)
+    image_bytes = app.state.storage.get(row.image_path)
     app.state.storage.delete(row.image_path)
-    assert client.get(f"/api/generations/{pose}/cutout").status_code == 409
+    r = client.get(f"/api/generations/{pose}/cutout")
+    assert r.status_code == 404 and r.json()["detail"] == "圖片檔案遺失"
+    # 物件還在但壞掉（讀不出圖）：409，請使用者重新產生
+    app.state.storage.put(row.image_path, image_bytes)
+    app.state.storage.put(row.mask_path, b"not a png")
+    r = client.get(f"/api/generations/{pose}/cutout")
+    assert r.status_code == 409 and r.json()["detail"] == "圖片檔案遺失，請重新產生"
 
 
 def test_pick_validation(client, app):
