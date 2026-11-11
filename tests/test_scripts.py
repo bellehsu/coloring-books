@@ -1183,6 +1183,72 @@ def test_gc_deletes_only_expired_discarded_and_orphans(storage_gc, settings_file
     assert (rep.expired_generations, rep.expired_objects, rep.orphan_objects, rep.orphan_previews) == (0, 0, 0, 0)
 
 
+def _gc_ref_world(settings_file):
+    from app.models import Page
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "管理員", is_admin=True)
+    b = _book(sessions, oid)
+    p = _page(sessions, b)
+    old = _gen(sessions, storage, b, p, kind="pose", discarded_days=40)
+    return sessions, storage, b, p, old, Page
+
+
+def _gc_kept(storage_gc, sessions, storage, old) -> bool:
+    storage_gc.run_gc(sessions, storage, days=30, dry_run=False)
+    return _paths(sessions)[old][0] is not None
+
+
+def _gc_unreferenced_deleted(storage_gc, settings_file) -> None:
+    sessions, storage, b, p, old, _ = _gc_ref_world(settings_file)
+    assert not _gc_kept(storage_gc, sessions, storage, old)
+
+
+@pytest.mark.parametrize("field", ["auto_background_generation_id", "auto_pose_generation_id"])
+def test_gc_keeps_auto_selected_generations(storage_gc, settings_file, field):
+    sessions, storage, b, p, old, Page = _gc_ref_world(settings_file)
+    _set(sessions, Page, p, **{field: old})
+    assert _gc_kept(storage_gc, sessions, storage, old)
+    assert storage.exists(storage.generation_image(b, old))
+
+
+@pytest.mark.parametrize("field", ["background_generation_id", "pose_generation_id", "composite_generation_id"])
+def test_gc_keeps_generations_referenced_by_history_snapshots(storage_gc, settings_file, field):
+    from app.models import PageHistory
+
+    sessions, storage, b, p, old, _ = _gc_ref_world(settings_file)
+    with sessions() as s:
+        s.add(PageHistory(page_id=p, seq=1, snapshot_json=_json.dumps({field: old, "user_strokes": []})))
+        s.commit()
+    assert _gc_kept(storage_gc, sessions, storage, old)
+
+
+@pytest.mark.parametrize("status,kept", [("queued", True), ("running", True), ("succeeded", False), ("failed", False)])
+def test_gc_keeps_generations_of_pages_with_active_tasks(storage_gc, settings_file, status, kept):
+    from app.models import PageTask
+
+    sessions, storage, b, p, old, _ = _gc_ref_world(settings_file)
+    with sessions() as s:
+        s.add(PageTask(page_id=p, status=status))
+        s.commit()
+    assert _gc_kept(storage_gc, sessions, storage, old) is kept
+
+
+def test_gc_deletes_unreferenced_old_discarded_generation(storage_gc, settings_file):
+    _gc_unreferenced_deleted(storage_gc, settings_file)
+
+
+def test_gc_snapshot_with_garbage_json_is_ignored(storage_gc, settings_file):
+    from app.models import PageHistory
+
+    sessions, storage, b, p, old, _ = _gc_ref_world(settings_file)
+    with sessions() as s:
+        s.add(PageHistory(page_id=p, seq=1, snapshot_json="not json"))
+        s.add(PageHistory(page_id=p, seq=2, snapshot_json="[1]"))
+        s.commit()
+    assert not _gc_kept(storage_gc, sessions, storage, old)
+
+
 def test_gc_days_option(storage_gc, settings_file):
     sessions, storage, ids, _ = _gc_world(settings_file)
     assert storage_gc.main(["--settings", str(settings_file), "--days", "3"]) == 0
