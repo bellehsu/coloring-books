@@ -10,10 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, literal, null
 from sqlmodel import Session, col, delete, func, select, update
 
-from app.api.books import _book_or_404
-from app.api.deps import get_session, get_storage
+from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_page
 from app.api.schemas import PageCreate, PageOrder, PageOut, PageUpdate
-from app.models import Book, Generation, GenStatus, LineartEdit, Page, PageStatus, utcnow
+from app.models import Book, Generation, GenStatus, LineartEdit, Owner, Page, PageStatus, utcnow
 from app.services.compose import composite_matches, page_placement
 from app.services.layout import compute_layout
 from app.services.page_lineart import lineart_key
@@ -22,12 +21,6 @@ from app.storage import Storage
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["pages"])
 
-
-def _page_or_404(session: Session, page_id: int) -> Page:
-    page = session.get(Page, page_id)
-    if page is None:
-        raise HTTPException(404, "找不到這一頁")
-    return page
 
 
 def reset_review_when(cond) -> dict:
@@ -104,9 +97,12 @@ def page_out(session: Session, page: Page) -> PageOut:
 
 @router.post("/books/{book_id}/pages", status_code=201, response_model=PageOut)
 def create_page(
-    book_id: int, body: PageCreate, session: Session = Depends(get_session)
+    book_id: int,
+    body: PageCreate,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    _book_or_404(session, book_id)
+    owned_book(session, owner, book_id)
     top = session.exec(select(func.max(Page.position)).where(Page.book_id == book_id)).one()
     page = Page(book_id=book_id, position=0 if top is None else top + 1, scene_prompt=body.scene_prompt, action_prompt=body.action_prompt)
     session.add(page)
@@ -115,8 +111,12 @@ def create_page(
 
 
 @router.get("/books/{book_id}/pages", response_model=list[PageOut])
-def list_pages(book_id: int, session: Session = Depends(get_session)) -> list[PageOut]:
-    _book_or_404(session, book_id)
+def list_pages(
+    book_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> list[PageOut]:
+    owned_book(session, owner, book_id)
     pages = session.exec(
         select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
     ).all()
@@ -125,9 +125,12 @@ def list_pages(book_id: int, session: Session = Depends(get_session)) -> list[Pa
 
 @router.post("/books/{book_id}/pages/order", response_model=list[PageOut])
 def reorder_pages(
-    book_id: int, body: PageOrder, session: Session = Depends(get_session)
+    book_id: int,
+    body: PageOrder,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> list[PageOut]:
-    _book_or_404(session, book_id)
+    owned_book(session, owner, book_id)
     pages = {
         p.id: p for p in session.exec(select(Page).where(Page.book_id == book_id)).all()
     }
@@ -144,9 +147,12 @@ def reorder_pages(
 
 @router.patch("/pages/{page_id}", response_model=PageOut)
 def update_page(
-    page_id: int, body: PageUpdate, session: Session = Depends(get_session)
+    page_id: int,
+    body: PageUpdate,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     if body.scene_prompt is not None:
         page.scene_prompt = body.scene_prompt
     if body.action_prompt is not None:
@@ -174,8 +180,9 @@ def delete_page(
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> None:
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     book_id = page.book_id
     # 先取消排隊中的（條件式 UPDATE 取得寫入鎖，worker 之後無法再認領），再檢查有沒有執行中的
     session.exec(

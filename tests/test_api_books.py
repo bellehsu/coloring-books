@@ -241,10 +241,10 @@ def test_set_character_is_atomic_under_race(client, app, monkeypatch):
     b = new_book(client)
     gens = [{"id": i} for i in candidate_ids(client, b["id"], 2, seed=1)]
     run_jobs(client, app, 2)
-    real = books_mod._book_or_404
+    real = books_mod.owned_book  # 端點裡的載入（路由層級的檢查用 deps 的，不受影響）
 
-    def racing(session, book_id):
-        book = real(session, book_id)  # 驗證時角色尚未設定
+    def racing(session, owner, book_id):
+        book = real(session, owner, book_id)  # 驗證時角色尚未設定
         with app.state.sessions() as other:  # 驗證後、寫入前，另一請求搶先設定
             from app.models import Book
             row = other.get(Book, book_id)
@@ -254,7 +254,7 @@ def test_set_character_is_atomic_under_race(client, app, monkeypatch):
             other.commit()
         return book
 
-    monkeypatch.setattr(books_mod, "_book_or_404", racing)
+    monkeypatch.setattr(books_mod, "owned_book", racing)
     r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gens[0]["id"]})
     assert r.status_code == 409
     monkeypatch.undo()
@@ -268,10 +268,10 @@ def test_candidates_blocked_by_racing_set_character(client, app, monkeypatch):
     from app.models import Book
 
     b = new_book(client)
-    real = books_mod._book_or_404
+    real = books_mod.owned_book  # 端點裡的載入（路由層級的檢查用 deps 的，不受影響）
 
-    def racing(session, book_id):
-        book = real(session, book_id)
+    def racing(session, owner, book_id):
+        book = real(session, owner, book_id)
         with app.state.sessions() as other:
             row = other.get(Book, book_id)
             row.character_generation_id = 1
@@ -279,7 +279,7 @@ def test_candidates_blocked_by_racing_set_character(client, app, monkeypatch):
             other.commit()
         return book
 
-    monkeypatch.setattr(books_mod, "_book_or_404", racing)
+    monkeypatch.setattr(books_mod, "owned_book", racing)
     assert candidates(client, b["id"]).status_code == 409
     with app.state.sessions() as s:
         assert s.exec(select(Generation)).all() == []

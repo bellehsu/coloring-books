@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 
 from fastapi import Depends, HTTPException, Request
+from pydantic import TypeAdapter, ValidationError
 from sqlmodel import Session, select
 
 from app.models import Book, Generation, Owner, Page
@@ -87,7 +88,14 @@ def owned_generation(session: Session, owner: Owner, gen_id: int) -> Generation:
     return row[0]
 
 
-_PATH_CHECKS = (("book_id", owned_book), ("page_id", owned_page), ("gen_id", owned_generation))
+_PATH_CHECKS = (
+    ("book_id", owned_book, BOOK_NOT_FOUND),
+    ("page_id", owned_page, PAGE_NOT_FOUND),
+    ("gen_id", owned_generation, GENERATION_NOT_FOUND),
+)
+# 與 FastAPI 驗證路徑參數相同的轉換（寬鬆模式："1.0"、" 1"、"+1"、"01" 都是 1），
+# 這裡檢查的 id 才會跟端點實際拿到的 id 一樣
+_INT = TypeAdapter(int)
 
 
 def require_owned_path(
@@ -99,15 +107,14 @@ def require_owned_path(
 
     掛在每個 API router 上（main.py），在 body 驗證與端點本身之前執行：別人的 id 一律 404，
     什麼都不會被讀或改；新加的路由只要沿用這些參數名稱就自動受保護（tests/test_ownership.py 會檢查）。
-    非整數的 id 留給 FastAPI 的參數驗證回 422。
+    fail closed：id 轉不成整數也回 404（不交給後面處理）。端點本身也再以 owned_* 載入（縱深防禦）。
     """
-    for name, check in _PATH_CHECKS:
-        raw = request.path_params.get(name)
-        if raw is None:
+    for name, check, not_found in _PATH_CHECKS:
+        if name not in request.path_params:
             continue
         try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            continue
+            value = _INT.validate_python(request.path_params[name])
+        except ValidationError:
+            raise HTTPException(404, not_found) from None
         check(session, owner, value)
     return owner

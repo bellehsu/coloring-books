@@ -15,9 +15,17 @@ from PIL import Image
 from sqlalchemy import and_, case, null
 from sqlmodel import Session, col, select, update
 
-from app.api.books import MAX_SEED, _book_or_404
-from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_generation
-from app.api.pages import _page_or_404, page_out, reset_review_when
+from app.api.books import MAX_SEED
+from app.api.deps import (
+    current_owner,
+    get_session,
+    get_storage,
+    get_worker,
+    owned_book,
+    owned_generation,
+    owned_page,
+)
+from app.api.pages import page_out, reset_review_when
 from app.api.schemas import (
     BackgroundCreate,
     BatchMaterialsIn,
@@ -176,10 +184,11 @@ def create_background(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
     """產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。"""
-    page = _page_or_404(session, page_id)
-    book = _book_or_404(session, page.book_id)
+    page = owned_page(session, owner, page_id)
+    book = owned_book(session, owner, page.book_id)
     return _enqueue_background(session, storage, worker, book, page)
 
 
@@ -251,13 +260,14 @@ def create_materials_batch(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> BatchMaterialsOut:
     """「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
     略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
     _BATCH_LOCK 讓同時多個呼叫不會重複排隊。"""
     upload_pages = set(body.upload_page_ids) if body else set()
     with _BATCH_LOCK:
-        book = _book_or_404(session, book_id)
+        book = owned_book(session, owner, book_id)
         state = _BookState(session, book_id)
         char = (
             session.get(Generation, book.character_generation_id)
@@ -317,11 +327,12 @@ def create_pose(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
     """產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
     新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。"""
-    page = _page_or_404(session, page_id)
-    book = _book_or_404(session, page.book_id)
+    page = owned_page(session, owner, page_id)
+    book = owned_book(session, owner, page.book_id)
     char = (
         session.get(Generation, book.character_generation_id)
         if book.character_generation_id is not None
@@ -334,7 +345,7 @@ def create_pose(
 
 def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKind) -> PageOut:
     label = _LABEL[kind]
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     gen = owned_generation(session, owner, gen_id)  # 別人的與不存在一樣 404
     if gen.page_id != page_id:
         raise HTTPException(409, "這筆生成紀錄不屬於這一頁")
@@ -399,8 +410,8 @@ def upload_background(
     owner: Owner = Depends(current_owner),
 ) -> PageOut:
     """上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine="upload" 的背景並選用。"""
-    page = _page_or_404(session, page_id)
-    book = _book_or_404(session, page.book_id)
+    page = owned_page(session, owner, page_id)
+    book = owned_book(session, owner, page.book_id)
     started = time.monotonic()
     data = file.file.read(MAX_BG_UPLOAD_BYTES + 1)
     if len(data) > MAX_BG_UPLOAD_BYTES:
@@ -476,10 +487,13 @@ def select_pose(
 
 @router.put("/pages/{page_id}/placement", response_model=PageOut)
 def save_placement(
-    page_id: int, body: PagePlacement, session: Session = Depends(get_session)
+    page_id: int,
+    body: PagePlacement,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
     """位置草稿（拖拉時自動存）；不產生合成圖、不改頁面狀態。"""
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     page.placement_json = json.dumps(body.to_placement().to_dict())
     page.updated_at = utcnow()
     session.add(page)
@@ -534,10 +548,11 @@ def confirm_compose(
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
     """用頁面目前的背景、角色動作與位置（沒存過就用預設）產生合成圖並設為選定圖片。
     完全相同的既有合成圖直接選回（修線一起回來）；換了圖就退回草稿、清角色檢查。"""
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     bg = (session.get(Generation, page.background_generation_id)
           if page.background_generation_id is not None else None)
     if not _is_usable(bg, GenKind.BACKGROUND, page_id):

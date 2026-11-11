@@ -33,6 +33,8 @@ FASTAPI_DOCS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 PUBLIC = {("GET", "/i/{token}"), ("GET", "/api/files/{key:path}")}
 # 擁有者檢查用的 404 訊息（別人的資源與不存在的資源一樣）
 NOT_FOUND = {"找不到這本繪本", "找不到這一頁", "找不到這筆生成紀錄"}
+# 同一個 id 的其他寫法：pydantic 寬鬆模式把 "1.0"、"1.00"、" 1"、"+1"、"01" 都轉成 1
+ID_SPELLINGS = ("{}.0", "{}.00", "%20{}", "{}%20", "%2B{}", "0{}")
 
 
 def _routes():
@@ -140,6 +142,14 @@ def test_ownership_404_on_every_route(world, method, path):
     r2 = _call(client, method, missing)
     assert r2.status_code == 404 and r2.json()["detail"] == r.json()["detail"]
 
+    # 換一種寫法的 id（FastAPI／pydantic 寬鬆模式會轉成同一個整數）也不能繞過檢查（Task 5 review C1）
+    for fmt in ID_SPELLINGS:
+        alt = _url(path, {k: fmt.format(v) for k, v in ids.items()})
+        r3 = _call(client, method, alt)
+        assert r3.status_code == 404, (alt, r3.status_code, r3.text)
+        assert "location" not in r3.headers, alt
+        assert _snapshot(app) == before, alt
+
     # admin 看得到全部；擁有者本人當然也可以（DELETE 之後就沒了，只測 admin）
     for who in ("admin",) if method == "DELETE" else ("admin", "a"):
         as_(client, sids[who])
@@ -147,6 +157,31 @@ def test_ownership_404_on_every_route(world, method, path):
         assert r.status_code not in (401, 403), (who, url, r.text)
         if r.status_code == 404:
             assert r.json()["detail"] not in NOT_FOUND, (who, url, r.text)
+
+
+def test_endpoints_load_ids_through_owner_scoped_helpers():
+    """縱深防禦：除了路由層級的檢查，每個帶 id 的端點本身也拿 current_owner，
+    且 API 模組裡沒有不分擁有者就載入 book／page／generation 的輔助函式。"""
+    import inspect
+    from pathlib import Path
+
+    from app.api.deps import current_owner
+
+    app = create_app()
+    for rc in iter_route_contexts(app.routes):
+        route = rc.original_route
+        if not isinstance(route, APIRoute) or not set(re.findall(r"{(\w+)", rc.path)) & OWNED_PARAMS:
+            continue
+        deps = [p.default.dependency for p in inspect.signature(route.endpoint).parameters.values()
+                if hasattr(p.default, "dependency")]
+        assert current_owner in deps, rc.path
+    api_dir = Path(__file__).resolve().parents[1] / "backend" / "app" / "api"
+    unscoped = re.compile(
+        r"_book_or_404|_page_or_404|_gen_or_404|\.get\((Book|Page|Generation),\s*(book_id|page_id|gen_id)\b"
+    )
+    offenders = [f"{f.name}:{i}" for f in sorted(api_dir.glob("*.py")) if f.name != "deps.py"
+                 for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1) if unscoped.search(line)]
+    assert offenders == []
 
 
 @pytest.mark.parametrize("method,path", [(m, p) for m, p, _ in ROUTES if (m, p) not in PUBLIC])

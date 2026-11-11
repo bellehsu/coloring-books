@@ -62,3 +62,24 @@ def test_system_mode_endpoints_removed(settings_file):
     with TestClient(app) as client:
         assert client.get("/api/system/pose-modes").status_code == 404
         assert client.get("/api/system/background-styles").status_code == 404
+
+
+def test_startup_warns_loudly_when_dev_owner_set(settings_file, caplog):
+    """auth.dev_owner 會讓沒登入的人都變 admin：啟動時一定要大聲警告（雲端不可設）。"""
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    from tests.fake_engine import FakeEngine
+
+    s = load_settings(settings_file)
+    for dev, expect in (("admin", True), (None, False)):
+        caplog.clear()
+        cfg = s.model_copy(update={"auth": s.auth.model_copy(update={"dev_owner": dev})})
+        app = app_main.create_app(cfg, engine=FakeEngine(), start_worker=False, startup_preflight=False)
+        with caplog.at_level(logging.WARNING, logger="app"), TestClient(app):
+            pass
+        warned = [r for r in caplog.records if r.levelno >= logging.WARNING and "auth.dev_owner" in r.getMessage()]
+        assert bool(warned) is expect, dev
+        if expect:
+            assert "admin" in warned[0].getMessage() and "不可" in warned[0].getMessage()

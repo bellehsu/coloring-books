@@ -10,10 +10,8 @@ from fastapi.responses import Response
 from PIL import Image
 from sqlmodel import Session, col, select
 
-from app.api.books import _book_or_404
-from app.api.deps import get_session, get_storage
-from app.api.pages import _page_or_404
-from app.models import Book, Page, PageStatus
+from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_page
+from app.models import Book, Owner, Page, PageStatus
 from app.services.export import build_pdf, compose_page, png_bytes
 from app.services.layout import compute_layout
 from app.services.page_lineart import LineartUnavailable, ensure_page_lineart, read_page_lineart
@@ -46,8 +44,9 @@ def export_summary(
     book_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> dict:
-    _book_or_404(session, book_id)
+    owned_book(session, owner, book_id)
     pages = _ordered_pages(session, book_id)
     exportable, skipped = [], []
     for p in pages:
@@ -74,8 +73,9 @@ def export_pdf(
     include: Literal["passed", "all"] = "passed",
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
-    book = _book_or_404(session, book_id)
+    book = owned_book(session, owner, book_id)
     candidates = [
         p for p in _ordered_pages(session, book_id)
         if p.selected_generation_id is not None
@@ -102,10 +102,11 @@ def print_png(
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     if page.selected_generation_id is None:
         raise HTTPException(409, "這一頁還沒有選定圖片")
-    book = _book_or_404(session, page.book_id)
+    book = owned_book(session, owner, page.book_id)
     return Response(content=png_bytes(_composed(session, storage, book, page)),
                     media_type="image/png")

@@ -57,6 +57,15 @@ $VENV_ROOT/coloring-books/bin/pip install -e ".[dev]"
 cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
 ```
 
+### 邀請連結與本機開發
+
+- 每個使用者用自己的邀請連結 `/i/{token}` 開啟網站；後端設定 `cb_session` cookie（httpOnly、90 天），
+  之後每個請求都檢查 session 與 owner，只看得到自己的繪本（admin 看得到全部）。
+- 本機開發不想用連結時，設定 `auth.dev_owner: admin`（`config/settings.yaml`），或在 `scripts/dev.env`
+  設 `APP_AUTH__DEV_OWNER=admin`（`dev.env.example` 已預設）：沒有 cookie 的請求就當作 admin。
+  已有 admin（例如資料庫遷移時建立的）會直接沿用。
+- **對外部署一定不可設 `dev_owner`**（範本預設 `null`）；有設時後端啟動會印出警告。
+
 ## 模型（只需要 Qwen）
 
 所有生成（角色、背景、角色動作）都在 ComfyUI 上跑 Qwen-Image-Edit-2511。放在 `comfy.models_root` 底下的子資料夾

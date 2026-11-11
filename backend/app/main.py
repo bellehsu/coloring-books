@@ -60,6 +60,13 @@ def create_app(
             s.queue.retry_backoff_s,
         )
         app.state.preflight = None  # None＝還沒檢查過
+        if s.auth.dev_owner:
+            log.warning(
+                "!!! auth.dev_owner=%r：沒有 cookie 的請求一律當作 admin「%s」（看得到、改得到所有人的繪本）。"
+                "只限本機開發，對外部署不可設定（設成 null／移除 APP_AUTH__DEV_OWNER）!!!",
+                s.auth.dev_owner,
+                s.auth.dev_owner,
+            )
         try:
             if start_worker:
                 await app.state.worker.start()

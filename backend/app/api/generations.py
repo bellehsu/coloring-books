@@ -10,8 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import case, literal
 from sqlmodel import Session, col, func, select, update
 
-from app.api.books import _book_or_404
-from app.api.deps import current_owner, get_session, get_storage, get_worker
+from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
 from app.api.files import signed_redirect
 from app.api.schemas import GenerationOut
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
@@ -50,12 +49,6 @@ class QueueStatus(BaseModel):
     recent: list[RecentJob]
 
 
-def _gen_or_404(session: Session, gen_id: int) -> Generation:
-    gen = session.get(Generation, gen_id)
-    if gen is None:
-        raise HTTPException(404, "找不到這筆生成紀錄")
-    return gen
-
 
 def _out(gen: Generation, worker: GenerationWorker) -> GenerationOut:
     return GenerationOut.from_generation(
@@ -68,8 +61,9 @@ def get_generation(
     gen_id: int,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    return _out(_gen_or_404(session, gen_id), worker)
+    return _out(owned_generation(session, owner, gen_id), worker)
 
 
 @router.get("/generations/{gen_id}/image")
@@ -78,8 +72,9 @@ def get_generation_image(
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
-    gen = _gen_or_404(session, gen_id)
+    gen = owned_generation(session, owner, gen_id)
     if gen.status != GenStatus.SUCCEEDED or not gen.image_path:
         raise HTTPException(404, "這筆生成紀錄還沒有圖片")
     try:
@@ -97,8 +92,9 @@ def get_generation_mask(
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
-    gen = _gen_or_404(session, gen_id)
+    gen = owned_generation(session, owner, gen_id)
     if not gen.mask_path:
         raise HTTPException(404, "這筆生成紀錄沒有遮罩")
     try:
@@ -115,9 +111,10 @@ def get_generation_cutout(
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
     """角色動作的去背圖：裁到遮罩外接框的 RGBA PNG（alpha＝遮罩）。"""
-    gen = _gen_or_404(session, gen_id)
+    gen = owned_generation(session, owner, gen_id)
     if gen.kind != GenKind.POSE or not gen.mask_path or not gen.image_path:
         raise HTTPException(404, "這筆生成紀錄沒有去背圖")
     try:
@@ -146,8 +143,9 @@ def list_generations(
     include_discarded: bool = False,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> list[GenerationOut]:
-    _book_or_404(session, book_id)
+    owned_book(session, owner, book_id)
     stmt = select(Generation).where(col(Generation.book_id) == book_id)
     if kind is not None:
         stmt = stmt.where(col(Generation.kind) == kind)
@@ -165,8 +163,9 @@ def update_generation(
     body: GenerationUpdate,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    gen = _gen_or_404(session, gen_id)
+    gen = owned_generation(session, owner, gen_id)
     guard = col(Generation.id) == gen_id
     if body.discarded:
         in_use = (
@@ -205,8 +204,9 @@ def cancel_generation(
     gen_id: int,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    gen = _gen_or_404(session, gen_id)
+    gen = owned_generation(session, owner, gen_id)
     res = session.exec(
         update(Generation)
         .where(col(Generation.id) == gen_id, col(Generation.status) == GenStatus.QUEUED)

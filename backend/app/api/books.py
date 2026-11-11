@@ -7,7 +7,7 @@ import random
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlmodel import Session, col, select, update
 
-from app.api.deps import current_owner, get_session, get_worker, owned_generation
+from app.api.deps import current_owner, get_session, get_worker, owned_book, owned_generation
 from app.api.schemas import (
     BookCreate,
     BookOut,
@@ -29,13 +29,6 @@ router = APIRouter(prefix="/api/books", tags=["books"])
 CHARACTER_SIZE = QWEN_CHARACTER_SIZE
 MAX_SEED = 2**32 - 1
 
-
-def _book_or_404(session: Session, book_id: int) -> Book:
-    """路徑裡的 book_id 已由 require_owned_path（main.py 掛在 router 上）確認屬於目前的 owner。"""
-    book = session.get(Book, book_id)
-    if book is None:
-        raise HTTPException(404, "找不到這本繪本")
-    return book
 
 
 def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
@@ -104,8 +97,12 @@ def list_books(
 
 
 @router.get("/{book_id}", response_model=BookOut)
-def get_book(book_id: int, session: Session = Depends(get_session)) -> BookOut:
-    return book_out(session, _book_or_404(session, book_id))
+def get_book(
+    book_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> BookOut:
+    return book_out(session, owned_book(session, owner, book_id))
 
 
 def _recompute_book_lineart(sessions, storage, book_id: int) -> None:
@@ -131,8 +128,9 @@ def update_book(
     request: Request,
     background: BackgroundTasks,
     session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> BookOut:
-    book = _book_or_404(session, book_id)
+    book = owned_book(session, owner, book_id)
     if body.paper_size is not None and ratio_group(body.paper_size) != ratio_group(book.paper_size):
         same = "、".join(
             s.name if s.name[0] != "S" else s.value
@@ -183,9 +181,10 @@ def create_character_candidates(
     body: CharacterCandidatesCreate,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> list[GenerationOut]:
     """產生一張角色候選圖（Qwen 純文字生圖）；描述不翻譯、原樣放進樣板。回傳只含這一張的清單。"""
-    book = _book_or_404(session, book_id)
+    book = owned_book(session, owner, book_id)
     if book.character_generation_id is not None:
         raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
     # 一次一張：body.count 是舊前端送的，忽略。再按一次＝再產生一張，變化語不重複這本書上一張
@@ -241,7 +240,7 @@ def set_character(
     session: Session = Depends(get_session),
     owner: Owner = Depends(current_owner),
 ) -> BookOut:
-    book = _book_or_404(session, book_id)
+    book = owned_book(session, owner, book_id)
     if book.character_generation_id is not None:
         raise HTTPException(409, "這本繪本的角色已經設定")
     gen = owned_generation(session, owner, body.generation_id)  # 別人的與不存在一樣 404
