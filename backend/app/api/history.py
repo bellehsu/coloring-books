@@ -4,17 +4,21 @@
 重算補線，跑完仍是可以印。
 
 「這頁可以印了 ✓」（accept）：清掉「請看一下」、標成可以印（已經可以印的保留通過時間）。不是內容的改動，
-不存快照、不排流程。
+不存快照、不排流程。還在等重新合成（筆畫等著寫回）時不行：先等它做完或「再試一次」。
+
+「再試一次」（retry）：只處理這一頁。這頁最新一張背景／角色動作是失敗的（之後沒有成功的同一種）就重排那一種
+（同 C 的「換一張」：take，好了就換上去；算 1 次當日額度，用完 429）；沒有就重跑這頁的頁面流程（不計次數）。
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, literal
-from sqlmodel import Session, col, update
+from sqlmodel import Session, col, select, update
 
-from app.api.deps import current_owner, get_session, get_worker, owned_page
+from app.api.compose import _background_job, _enqueue_jobs, _pose_job, _take, has_character
+from app.api.deps import current_owner, get_session, get_worker, owned_book, owned_page
 from app.api.pages import page_out
-from app.api.schemas import PageOut, RestoreIn
-from app.models import Owner, Page, PageStatus, utcnow
+from app.api.schemas import PageOut, RestoreIn, RetryOut
+from app.models import Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
 from app.services import history
 from app.services.pipeline import enqueue_page_task
 from app.services.worker import GenerationWorker
@@ -79,6 +83,9 @@ def restore(
 
 NO_SELECTION = "這一頁還沒有選定圖片"
 CHANGED = "頁面剛被修改，請再按一次"
+STILL_RECOMPOSING = "這一頁還在重新合成，請等它做完或按「再試一次」"
+MISSING_IMAGES = "這一頁還缺背景或角色動作，請先畫一張"
+NO_CHARACTER = "請先設定角色"
 
 
 @router.post("/pages/{page_id}/accept", response_model=PageOut)
@@ -94,11 +101,14 @@ def accept(
     gid = page.selected_generation_id
     if gid is None:
         raise HTTPException(409, NO_SELECTION)
+    if page.pending_user_strokes is not None:  # 選定圖還是舊的合成圖：標成可以印會印錯、C 也一直等著
+        raise HTTPException(409, STILL_RECOMPOSING)
     now = utcnow()
     already = col(Page.status) == PageStatus.PASSED
     res = session.exec(
         update(Page)
-        .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid)
+        .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid,
+               col(Page.pending_user_strokes).is_(None))
         .values(status=PageStatus.PASSED,
                 passed_at=func.coalesce(case((already, col(Page.passed_at))),
                                         literal(now, Page.__table__.c.passed_at.type)),
@@ -109,3 +119,60 @@ def accept(
         raise HTTPException(409, CHANGED)
     session.refresh(page)
     return page_out(session, page)
+
+
+def _failed_kinds(session: Session, page_id: int) -> list[GenKind]:
+    """這頁最新一張（依 id）是失敗的背景／角色動作種類（之後有成功的、或還在排隊／執行中就不算）。"""
+    out = []
+    for kind in (GenKind.BACKGROUND, GenKind.POSE):
+        newest = session.exec(
+            select(Generation).where(Generation.page_id == page_id, Generation.kind == kind)
+            .order_by(col(Generation.id).desc())
+        ).first()
+        if newest is not None and newest.status == GenStatus.FAILED:
+            out.append(kind)
+    return out
+
+
+@router.post("/pages/{page_id}/retry", response_model=RetryOut)
+def retry(
+    page_id: int,
+    session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
+) -> RetryOut:
+    """C 的「再試一次」，只處理這一頁（見模組說明）。重排失敗的圖：額度不夠 429、什麼都不排；
+    沒有失敗的圖、也沒有背景＋角色動作 409。"""
+    page = owned_page(session, owner, page_id)
+    session.refresh(page)
+    book = owned_book(session, owner, page.book_id)
+    kinds = _failed_kinds(session, page_id)
+    if kinds:
+        if GenKind.POSE in kinds and not has_character(session, book):
+            raise HTTPException(409, NO_CHARACTER)
+        jobs = []
+        for kind in kinds:
+            if kind == GenKind.BACKGROUND:
+                jobs.append(_take(_background_job(session, book, page), True))
+            else:
+                failed = session.exec(
+                    select(Generation).where(Generation.page_id == page_id, Generation.kind == kind)
+                    .order_by(col(Generation.id).desc())
+                ).first()
+                action = (failed.user_text if failed else "") or page.action_prompt
+                jobs.append(_take(_pose_job(session, book, page, action), True))
+        _enqueue_jobs(session, worker, owner, jobs)  # 預留額度＋排隊＋commit；不夠 429
+        session.refresh(page)
+        return RetryOut(**page_out(session, page).model_dump(),
+                        requeued=[k.value for k in kinds], pipeline=False)
+    if page.background_generation_id is None or page.pose_generation_id is None:
+        raise HTTPException(409, MISSING_IMAGES)
+    try:
+        enqueue_page_task(session, page_id)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    worker.notify()
+    session.refresh(page)
+    return RetryOut(**page_out(session, page).model_dump(), requeued=[], pipeline=True)

@@ -834,6 +834,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pages/{page_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry
+         * @description C 的「再試一次」，只處理這一頁（見模組說明）。重排失敗的圖：額度不夠 429、什麼都不排；
+         *     沒有失敗的圖、也沒有背景＋角色動作 409。
+         */
+        post: operations["retry_api_pages__page_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/shared/books": {
         parameters: {
             query?: never;
@@ -1655,6 +1676,76 @@ export interface components {
              * @enum {string}
              */
             item: "background" | "pose" | "lines";
+        };
+        /**
+         * RetryOut
+         * @description C 的「再試一次」：頁面，加上這次做了什麼（重排了哪幾種圖、有沒有重跑頁面流程）。
+         */
+        RetryOut: {
+            /** Id */
+            id: number;
+            /** Book Id */
+            book_id: number;
+            /** Position */
+            position: number;
+            /** Scene Prompt */
+            scene_prompt: string;
+            /** Action Prompt */
+            action_prompt: string;
+            /** Caption Zh */
+            caption_zh: string | null;
+            /** Caption En */
+            caption_en: string | null;
+            /** Selected Generation Id */
+            selected_generation_id: number | null;
+            /** Background Generation Id */
+            background_generation_id: number | null;
+            /** Pose Generation Id */
+            pose_generation_id: number | null;
+            placement: components["schemas"]["PagePlacement"] | null;
+            status: components["schemas"]["PageStatus"];
+            line_detail: components["schemas"]["LineDetail"];
+            /** Line Width Px */
+            line_width_px: number;
+            character_check: components["schemas"]["CharacterCheck"] | null;
+            /** Lineart Url */
+            lineart_url: string | null;
+            /** Needs Fix */
+            needs_fix: boolean | null;
+            /** Aspect Mismatch */
+            aspect_mismatch: boolean;
+            /** Compose Pending */
+            compose_pending: boolean;
+            /** Attention */
+            attention: string | null;
+            /** Attention Detail */
+            attention_detail: string | null;
+            /** Auto Background Generation Id */
+            auto_background_generation_id: number | null;
+            /** Auto Pose Generation Id */
+            auto_pose_generation_id: number | null;
+            /** Has User Strokes */
+            has_user_strokes: boolean;
+            /** Recompose Pending */
+            recompose_pending: boolean;
+            /** Can Undo */
+            can_undo: boolean;
+            /** Can Redo */
+            can_redo: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Requeued */
+            requeued: ("background" | "pose")[];
+            /** Pipeline */
+            pipeline: boolean;
         };
         /** RunProgress */
         RunProgress: {
@@ -3383,6 +3474,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_api_pages__page_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryOut"];
                 };
             };
             /** @description Validation Error */

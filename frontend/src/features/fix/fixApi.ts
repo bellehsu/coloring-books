@@ -57,7 +57,7 @@ export function useFixPages(bookId: number, pageId: number, busy: boolean) {
   return q;
 }
 
-function usePageMutation<V>(bookId: number, pageId: number, fn: (v: V) => Promise<Page>) {
+function usePageMutation<V, R extends Page = Page>(bookId: number, pageId: number, fn: (v: V) => Promise<R>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
@@ -82,6 +82,10 @@ export const useRestorePage = (bookId: number, pageId: number) =>
 /** 「這頁可以印了 ✓」：清掉請看一下、標成可以印。 */
 export const useAcceptPage = (bookId: number, pageId: number) =>
   usePageMutation<void>(bookId, pageId, () => api.post<Page>(`/pages/${pageId}/accept`));
+
+/** 「再試一次」：只處理這一頁（重畫失敗的那張圖，或重跑這頁的流程）；回傳頁面＋做了什麼。 */
+export const useRetryPage = (bookId: number, pageId: number) =>
+  usePageMutation<void, S["RetryOut"]>(bookId, pageId, () => api.post<S["RetryOut"]>(`/pages/${pageId}/retry`));
 
 /** 拖完角色（或翻轉、重設）：位置變了就存快照、重新合成。 */
 export const useSavePlacementC = (bookId: number, pageId: number) =>

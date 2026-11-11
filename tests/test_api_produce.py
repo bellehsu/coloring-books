@@ -396,3 +396,27 @@ def test_produce_overview_and_plan_404_for_other_owner(client, app):
     assert book_gens(app, b["id"]) == []
     with app.state.sessions() as s:
         assert s.get(Book, b["id"]).produce_started_at is None
+
+
+def test_page_retry_counts_against_the_cap(client, app):
+    """C 的「再試一次」重排失敗的那一張：算 1 次；用完了 429，不排。"""
+    from tests.test_pipeline import drain
+
+    owner = login(client, app, cap=4)
+    b, (p,) = book_with_pages(client, app, [("公園", "揮手")])  # 角色 1 次（失敗的生成會退回次數）
+    pid = p["id"]
+    assert client.post(f"/api/pages/{pid}/backgrounds", params={"oneclick": "true"}).status_code == 202
+    assert client.post(f"/api/pages/{pid}/poses", params={"oneclick": "true"}, json={"action": "揮手"}).status_code == 202
+    run_jobs(client, app, 2)
+    drain(client, app)
+    app.state.engine.outcomes.append(EngineError("ComfyUI 執行失敗"))
+    assert client.post(f"/api/pages/{pid}/poses", params={"oneclick": "true"}, json={"action": "跳"}).status_code == 202
+    run_jobs(client, app)
+    assert used(app, owner) == 3 and get_page(app, pid).attention == "failed"
+    set_cap(app, owner, 3)
+    r = client.post(f"/api/pages/{pid}/retry")
+    assert r.status_code == 429 and r.json()["detail"] == CAP_MSG
+    set_cap(app, owner, 4)
+    r = client.post(f"/api/pages/{pid}/retry")
+    assert r.status_code == 200 and r.json()["requeued"] == ["pose"]
+    assert used(app, owner) == 4

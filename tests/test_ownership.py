@@ -78,6 +78,8 @@ PHASE13_ROUTES = {
     ("POST", "/api/books/{book_id}/character/upload"),
     # Task 7：C 的「這頁可以印了 ✓」
     ("POST", "/api/pages/{page_id}/accept"),
+    # Task 7 fix round 1：C 的「再試一次」（只處理這一頁）
+    ("POST", "/api/pages/{page_id}/retry"),
 }
 
 

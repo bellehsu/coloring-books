@@ -2442,6 +2442,49 @@
         }
       }
     },
+    "/api/pages/{page_id}/retry": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Retry",
+        "description": "C 的「再試一次」，只處理這一頁（見模組說明）。重排失敗的圖：額度不夠 429、什麼都不排；\n沒有失敗的圖、也沒有背景＋角色動作 409。",
+        "operationId": "retry_api_pages__page_id__retry_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/shared/books": {
       "get": {
         "tags": [
@@ -4840,6 +4883,266 @@
         ],
         "title": "RestoreIn",
         "description": "C 的「還原成自動畫的那張」：背景、角色動作或線條（清掉使用者筆畫）。"
+      },
+      "RetryOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "book_id": {
+            "type": "integer",
+            "title": "Book Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "scene_prompt": {
+            "type": "string",
+            "title": "Scene Prompt"
+          },
+          "action_prompt": {
+            "type": "string",
+            "title": "Action Prompt"
+          },
+          "caption_zh": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption Zh"
+          },
+          "caption_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption En"
+          },
+          "selected_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Generation Id"
+          },
+          "background_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Generation Id"
+          },
+          "pose_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pose Generation Id"
+          },
+          "placement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PagePlacement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/PageStatus"
+          },
+          "line_detail": {
+            "$ref": "#/components/schemas/LineDetail"
+          },
+          "line_width_px": {
+            "type": "integer",
+            "title": "Line Width Px"
+          },
+          "character_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lineart_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineart Url"
+          },
+          "needs_fix": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Fix"
+          },
+          "aspect_mismatch": {
+            "type": "boolean",
+            "title": "Aspect Mismatch"
+          },
+          "compose_pending": {
+            "type": "boolean",
+            "title": "Compose Pending"
+          },
+          "attention": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention"
+          },
+          "attention_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention Detail"
+          },
+          "auto_background_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Background Generation Id"
+          },
+          "auto_pose_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Pose Generation Id"
+          },
+          "has_user_strokes": {
+            "type": "boolean",
+            "title": "Has User Strokes"
+          },
+          "recompose_pending": {
+            "type": "boolean",
+            "title": "Recompose Pending"
+          },
+          "can_undo": {
+            "type": "boolean",
+            "title": "Can Undo"
+          },
+          "can_redo": {
+            "type": "boolean",
+            "title": "Can Redo"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "requeued": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "background",
+                "pose"
+              ]
+            },
+            "type": "array",
+            "title": "Requeued"
+          },
+          "pipeline": {
+            "type": "boolean",
+            "title": "Pipeline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "book_id",
+          "position",
+          "scene_prompt",
+          "action_prompt",
+          "caption_zh",
+          "caption_en",
+          "selected_generation_id",
+          "background_generation_id",
+          "pose_generation_id",
+          "placement",
+          "status",
+          "line_detail",
+          "line_width_px",
+          "character_check",
+          "lineart_url",
+          "needs_fix",
+          "aspect_mismatch",
+          "compose_pending",
+          "attention",
+          "attention_detail",
+          "auto_background_generation_id",
+          "auto_pose_generation_id",
+          "has_user_strokes",
+          "recompose_pending",
+          "can_undo",
+          "can_redo",
+          "created_at",
+          "updated_at",
+          "requeued",
+          "pipeline"
+        ],
+        "title": "RetryOut",
+        "description": "C 的「再試一次」：頁面，加上這次做了什麼（重排了哪幾種圖、有沒有重跑頁面流程）。"
       },
       "RunProgress": {
         "properties": {

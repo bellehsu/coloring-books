@@ -403,6 +403,13 @@ class PageOut(BaseModel):
         )
 
 
+class RetryOut(PageOut):
+    """C 的「再試一次」：頁面，加上這次做了什麼（重排了哪幾種圖、有沒有重跑頁面流程）。"""
+
+    requeued: list[Literal["background", "pose"]]
+    pipeline: bool
+
+
 # ---- 修改圖層與 QA ---------------------------------------------------------------
 
 STROKE_WIDTH_MIN, STROKE_WIDTH_MAX = 2, 64

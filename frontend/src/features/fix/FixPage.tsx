@@ -12,7 +12,6 @@ import {
   useBookOverview,
   useGenerations,
   usePagesFollowJobs,
-  useProduce,
   useQA,
 } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
@@ -36,6 +35,7 @@ import {
   useRedoPage,
   useRegenerate,
   useRestorePage,
+  useRetryPage,
   useSavePlacementC,
   useUndoPage,
   useUploadBackgroundC,
@@ -137,7 +137,8 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   const redoM = useRedoPage(bookId, pageId);
   const restoreM = useRestorePage(bookId, pageId);
   const acceptM = useAcceptPage(bookId, pageId);
-  const produceM = useProduce(bookId);
+  const retryM = useRetryPage(bookId, pageId);
+  const placement = usePlacementSaves(bookId, pageId);
 
   const [view, setView] = useState<View>("print");
   const [showGaps, setShowGaps] = useState(false);
@@ -175,9 +176,11 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
     }
   }
 
-  /** 復原／重做／還原：先收起畫筆（畫布的筆畫在之後重新從伺服器載入）。 */
+  /** 復原／重做／還原：先等拖拉的位置與筆畫寫完（晚到的寫入不會蓋掉復原），再收起畫筆
+   * （畫布的筆畫在之後重新從伺服器載入）。 */
   const runHistory = (fn: () => Promise<unknown>, fallback: string) =>
     act(async () => {
+      await placement.idle();
       await flushEdits();
       setDrawTool(null);
       await fn();
@@ -189,20 +192,28 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
 
   const accept = () =>
     act(async () => {
+      await placement.idle();
       await flushEdits();
       await acceptM.mutateAsync();
       router.push(next ? fixHref(bookId, next.id, filter) : `/books/${bookId}`);
     }, "沒辦法標成可以印");
 
+  /** 「再試一次」：只處理這一頁（重畫失敗的那張，或重跑這頁的流程）。 */
   const retry = () =>
     act(async () => {
-      const r = await produceM.mutateAsync();
-      if (r.pipeline_pages.includes(pageId) || r.queued.length > 0) toast.show("重新做這一頁了，好了會自動更新", "info");
-      else if (r.deferred_pages.includes(pageId)) toast.show("今天的生成次數不夠，明天再試", "info");
-      else toast.show("沒有可以重做的；可以換一張圖或上傳背景", "info");
+      const r = await retryM.mutateAsync();
+      if (r.requeued.length > 0) {
+        const what = r.requeued.map((k) => (k === "pose" ? "角色動作" : "背景")).join("和");
+        toast.show(`重新畫這一頁的${what}了，好了會自動換上去`, "info");
+      } else toast.show("重新做這一頁了，好了會自動更新", "info");
     }, "沒辦法再試一次");
 
-  const busy = acting || undoM.isPending || redoM.isPending;
+  const busy = acting || undoM.isPending || redoM.isPending || placement.saving;
+  const acceptBlocked = !page.recompose_pending
+    ? null
+    : page.attention === "failed"
+      ? "這一頁合成失敗，請先按「再試一次」再印"
+      : "這一頁還在重新合成，等它做完再按";
 
   return (
     <main className={styles.main}>
@@ -268,7 +279,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
             ) : view === "print" ? (
               <PrintPreview page={page} qa={qa} showGaps={showGaps} contentPx={book.layout.content_px} working={working} />
             ) : (
-              <ColorPreview bookId={bookId} page={page} bgGen={bgGen} poseGen={poseGen} />
+              <ColorPreview page={page} bgGen={bgGen} poseGen={poseGen} draft={placement.draft} onChange={placement.save} />
             )}
           </div>
           {working && (
@@ -318,10 +329,11 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
             <p className={styles.note}>線沒接起來也可以印；想讓顏色不漏出去，再按「自動補線」或用畫筆接起來。</p>
           )}
           {hasArt && (
-            <Button size="lg" className={styles.accept} disabled={busy} onClick={() => void accept()}>
+            <Button size="lg" className={styles.accept} disabled={busy || acceptBlocked !== null} onClick={() => void accept()}>
               這頁可以印了 ✓
             </Button>
           )}
+          {hasArt && acceptBlocked && <p className={styles.rowWarn}>{acceptBlocked}</p>}
           <Link href={`/books/${bookId}/editor?page=${pageId}`} className={styles.advanced}>
             進階編輯
           </Link>
@@ -420,38 +432,51 @@ function PrintPreview({
   );
 }
 
+/**
+ * 拖完角色的位置存檔（PUT /placement?oneclick=true）：依序送，存好前畫面用 draft。saving 時復原／重做／還原
+ * 停用，idle() 讓它們（與「這頁可以印了」）先等位置寫完，晚到的位置不會落在復原之後。
+ */
+function usePlacementSaves(bookId: number, pageId: number) {
+  const toast = useToast();
+  const save = useSavePlacementC(bookId, pageId);
+  const [draft, setDraft] = useState<Placement | null>(null);
+  const [saving, setSaving] = useState(false);
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const inFlight = useRef(0);
+  const onChange = (p: Placement) => {
+    setDraft(p);
+    setSaving(true);
+    inFlight.current += 1;
+    chain.current = chain.current
+      .then(() => save.mutateAsync(p))
+      .catch((e: unknown) => toast.show(errMsg(e, "位置沒有存起來，請再拖一次"), "error"))
+      .finally(() => {
+        inFlight.current -= 1;
+        if (inFlight.current === 0) {
+          setDraft(null);
+          setSaving(false);
+        }
+      });
+  };
+  return { draft, saving, save: onChange, idle: () => chain.current.catch(() => {}) };
+}
+
 function ColorPreview({
-  bookId,
   page,
   bgGen,
   poseGen,
+  draft,
+  onChange,
 }: {
-  bookId: number;
   page: Page;
   bgGen: Generation | undefined;
   poseGen: Generation | undefined;
+  draft: Placement | null;
+  onChange: (p: Placement) => void;
 }) {
-  const toast = useToast();
-  const save = useSavePlacementC(bookId, page.id);
-  const [draft, setDraft] = useState<Placement | null>(null);
-  const chain = useRef<Promise<unknown>>(Promise.resolve());
-  const inFlight = useRef(0);
-
   if (page.background_generation_id != null && page.pose_generation_id != null) {
     const bgUrl = bgGen?.image_url ?? `/api/generations/${page.background_generation_id}/image`;
     const cutUrl = poseGen ? poseGen.cutout_url : `/api/generations/${page.pose_generation_id}/cutout`;
-    /** 放開時存一次（依序送、最新的為準）；存好後畫面用伺服器的位置。 */
-    const onChange = (p: Placement) => {
-      setDraft(p);
-      inFlight.current += 1;
-      chain.current = chain.current
-        .then(() => save.mutateAsync(p))
-        .catch((e: unknown) => toast.show(errMsg(e, "位置沒有存起來，請再拖一次"), "error"))
-        .finally(() => {
-          inFlight.current -= 1;
-          if (inFlight.current === 0) setDraft(null);
-        });
-    };
     return (
       <div className={styles.colorWrap}>
         <ComposeStage
@@ -804,7 +829,7 @@ function LinesRow({
       restore={restore}
       actions={
         <>
-          <Button disabled={noArt || fixing || busy} onClick={() => void runAutofix()}>
+          <Button disabled={noArt || fixing || busy || blocked !== null} onClick={() => void runAutofix()}>
             {fixing ? "補線中…" : "自動補線"}
           </Button>
           <Button variant={tool === "draw" ? "sky" : "secondary"} aria-pressed={tool === "draw"} disabled={penOff} onClick={() => onTool("draw")}>

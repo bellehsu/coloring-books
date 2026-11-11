@@ -604,3 +604,111 @@ def test_c_autofix_keeps_pipeline_page_passed(client, app, monkeypatch):
     r = client.post(f"/api/pages/{pid}/lineart/autofix", json={"generation_id": gid})
     assert r.status_code == 200 and r.json()["autofix_added"] == 1
     assert get_page(app, pid).status == PageStatus.DRAFT
+
+
+def test_accept_refused_while_recompose_pending(client, app, monkeypatch):
+    """拖完、重新合成失敗（筆畫還等著寫回）：不能標成可以印（否則印的是舊合成圖、C 一直等著），先「再試一次」。"""
+    from app.services import page_compose, pipeline
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    draw(client, page, SCRIBBLE)
+    drain(client, app)
+
+    def boom(*a, **k):
+        raise page_compose.ComposeError("圖片檔案遺失，請重新產生")
+
+    monkeypatch.setattr(pipeline, "compose_page", boom)
+    client.put(f"/api/pages/{pid}/placement", params=C, json=MOVED)
+    drain(client, app)
+    out = page_json(client, pid)
+    assert out["attention"] == "failed" and out["recompose_pending"] is True
+    r = client.post(f"/api/pages/{pid}/accept")
+    assert r.status_code == 409 and r.json()["detail"] == "這一頁還在重新合成，請等它做完或按「再試一次」"
+    assert get_page(app, pid).attention == "failed"
+
+
+# ---- 「再試一次」（POST /pages/{id}/retry）：只處理這一頁 ------------------------------------
+
+
+def retry(client, pid, status=200):
+    r = client.post(f"/api/pages/{pid}/retry")
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def test_retry_requeues_failed_take_generation(client, app):
+    """「換一張」失敗：再試一次重排那一種（take：好了就換上去），不跑整本書。"""
+    from app.services.engine import EngineError
+    from app.models import Generation, GenKind, GenStatus
+    from app.services.pipeline import wants_take
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    other = client.post(f"/api/books/{b['id']}/pages", json={"scene_prompt": "海邊", "action_prompt": "看書"}).json()
+    app.state.engine.outcomes.append(EngineError("ComfyUI 執行失敗：記憶體不足"))
+    r = client.post(f"/api/pages/{pid}/poses", params=C, json={"action": "跳起來"})
+    assert r.status_code == 202
+    run_jobs(client, app)
+    assert get_page(app, pid).attention == "failed"
+
+    out = retry(client, pid)
+    assert out["requeued"] == ["pose"] and out["pipeline"] is False
+    assert out["id"] == pid and "can_undo" in out
+    with app.state.sessions() as s:
+        new = s.exec(select(Generation).where(Generation.page_id == pid, Generation.kind == GenKind.POSE)
+                     .order_by(col(Generation.id).desc())).first()
+        assert new.status == GenStatus.QUEUED and wants_take(new) and new.user_text == "跳起來"
+        # 其他頁沒有被排（不是整本書的「繼續做」）
+        assert s.exec(select(Generation).where(Generation.page_id == other["id"])).first() is None
+    run_jobs(client, app)
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.pose_generation_id == new.id and pg.attention is None and pg.status == PageStatus.PASSED
+
+
+def test_retry_reruns_pipeline_when_no_generation_failed(client, app, monkeypatch):
+    from app.services import page_compose, pipeline
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+
+    def boom(*a, **k):
+        raise page_compose.ComposeError("圖片檔案遺失，請重新產生")
+
+    monkeypatch.setattr(pipeline, "compose_page", boom)
+    client.put(f"/api/pages/{pid}/placement", params=C, json=MOVED)
+    drain(client, app)
+    assert get_page(app, pid).attention == "failed"
+    monkeypatch.undo()
+    out = retry(client, pid)
+    assert out["requeued"] == [] and out["pipeline"] is True and queued(app, pid)
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.attention is None and pg.pending_user_strokes is None and pg.status == PageStatus.PASSED
+
+
+def test_retry_ignores_failure_followed_by_success(client, app):
+    """失敗之後又有成功的同一種：不重排，跑流程。"""
+    from app.services.engine import EngineError
+    from tests.test_api_lineart import set_page
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    app.state.engine.outcomes.append(EngineError("壞了"))
+    client.post(f"/api/pages/{pid}/backgrounds", params=C)
+    run_jobs(client, app)
+    client.post(f"/api/pages/{pid}/backgrounds", params=C)
+    run_jobs(client, app)
+    drain(client, app)
+    set_page(app, pid, attention="failed", attention_detail="x")
+    out = retry(client, pid)
+    assert out["requeued"] == [] and out["pipeline"] is True
+
+
+def test_retry_without_images_is_409(client, app):
+    from tests.test_pipeline import book_page
+
+    b, p = book_page(client, app)
+    r = client.post(f"/api/pages/{p['id']}/retry")
+    assert r.status_code == 409 and r.json()["detail"] == "這一頁還缺背景或角色動作，請先畫一張"

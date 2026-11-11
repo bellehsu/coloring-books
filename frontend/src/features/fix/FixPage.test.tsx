@@ -252,6 +252,7 @@ describe("C 處理一頁：畫筆", () => {
     expect(within(r).getByRole("button", { name: "畫筆" })).toBeDisabled();
     expect(within(r).getByRole("button", { name: "擦除" })).toBeDisabled();
     expect(within(r).getByText("這一頁正在重新合成，請稍候再畫")).toBeInTheDocument();
+    expect(within(r).getByRole("button", { name: "自動補線" })).toBeDisabled();
   });
 
   it("pen disabled after a failed recompose says to retry first", async () => {
@@ -264,14 +265,30 @@ describe("C 處理一頁：畫筆", () => {
 });
 
 describe("C 處理一頁：請看一下", () => {
-  it("reason card only for failed pages; 再試一次 runs the book again", async () => {
+  it("reason card only for failed pages; 再試一次 retries only this page", async () => {
     page = mkPage({ attention: "failed", attention_detail: "圖片產生失敗，請重新產生" });
+    respond["POST /api/pages/5/retry"] = () => json({ ...page, requeued: ["pose"], pipeline: false });
     const user = userEvent.setup();
     setup();
     const card = await screen.findByRole("region", { name: "為什麼請你看" });
     expect(card).toHaveTextContent("圖片產生失敗，請重新產生");
     await user.click(within(card).getByRole("button", { name: "再試一次" }));
-    await waitFor(() => expect(posted(/\/api\/books\/1\/produce$/)).toHaveLength(1));
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/retry$/)).toHaveLength(1));
+    expect(posted(/\/produce$/)).toHaveLength(0);
+    expect(await screen.findByText("重新畫這一頁的角色動作了，好了會自動換上去")).toBeInTheDocument();
+  });
+
+  it("再試一次 that re-runs the page says so; 429 shows the cap message", async () => {
+    page = mkPage({ attention: "failed", attention_detail: "自動處理這一頁時發生錯誤，請再試一次" });
+    respond["POST /api/pages/5/retry"] = () => json({ ...page, requeued: [], pipeline: true });
+    const user = userEvent.setup();
+    setup();
+    const card = await screen.findByRole("region", { name: "為什麼請你看" });
+    await user.click(within(card).getByRole("button", { name: "再試一次" }));
+    expect(await screen.findByText("重新做這一頁了，好了會自動更新")).toBeInTheDocument();
+    respond["POST /api/pages/5/retry"] = () => json({ detail: "今天的生成次數已用完，明天再來" }, 429);
+    await user.click(within(card).getByRole("button", { name: "再試一次" }));
+    expect(await screen.findByText("今天的生成次數已用完，明天再來")).toBeInTheDocument();
   });
 
   it("no reason card when the page is fine", async () => {
@@ -306,6 +323,21 @@ describe("C 處理一頁：這頁可以印了", () => {
     await waitFor(() => expect(screen.getByRole("link", { name: "上一頁" })).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "這頁可以印了 ✓" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+  });
+
+  it("disabled with the reason while the page is being re-composed", async () => {
+    page = mkPage({ recompose_pending: true });
+    setup();
+    const btn = await screen.findByRole("button", { name: "這頁可以印了 ✓" });
+    expect(btn).toBeDisabled();
+    expect(screen.getByText("這一頁還在重新合成，等它做完再按")).toBeInTheDocument();
+  });
+
+  it("after a failed re-compose says to retry first", async () => {
+    page = mkPage({ recompose_pending: true, attention: "failed", attention_detail: "圖片檔案遺失，請重新產生" });
+    setup();
+    expect(await screen.findByRole("button", { name: "這頁可以印了 ✓" })).toBeDisabled();
+    expect(screen.getByText("這一頁合成失敗，請先按「再試一次」再印")).toBeInTheDocument();
   });
 
   it("not offered without a composite", async () => {
@@ -364,5 +396,31 @@ describe("C 處理一頁：預覽", () => {
     await waitFor(() => expect(posted(/\/api\/pages\/5\/placement\?oneclick=true$/, "PUT")).toHaveLength(1));
     expect(posted(/\/placement/, "PUT")[0].body).toMatchObject({ cx: 0.3 });
     expect(screen.getByTestId("compose")).toHaveAttribute("data-cx", "0.3");
+  });
+
+  it("復原 waits while a placement save is in flight, then runs after it", async () => {
+    page = mkPage({ can_undo: true });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const order: string[] = [];
+    const realFetch = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/pages/5/placement")) {
+        await gate;
+        order.push("placement");
+      }
+      if (url === "/api/pages/5/undo") order.push("undo");
+      return realFetch(url, init);
+    });
+    const user = userEvent.setup();
+    setup();
+    await user.click(await screen.findByRole("radio", { name: "彩色原圖" }));
+    await user.click(within(await screen.findByTestId("compose")).getByRole("button", { name: "stub-drag" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "復原" })).toBeDisabled());
+    release();
+    await waitFor(() => expect(order).toEqual(["placement"]));
+    await waitFor(() => expect(screen.getByRole("button", { name: "復原" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "復原" }));
+    await waitFor(() => expect(order).toEqual(["placement", "undo"]));
   });
 });

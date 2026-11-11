@@ -108,7 +108,7 @@ test("換背景 → 復原 → 重做 → 畫線再還原 → 這頁可以印了
   await expect(bgImg).toHaveAttribute("src", `/api/generations/${newBg}/image`);
   await settled(request, p1);
 
-  // 5. 畫一筆（user 層），再「還原成自動畫的那張」清掉
+  // 5. 畫一筆（user 層）；拖角色清掉、復原帶回來；再「還原成自動畫的那張」清掉
   await page.getByRole("radio", { name: "要印的線稿" }).click();
   const linesRow = page.getByRole("listitem", { name: "線條" });
   const pen = linesRow.getByRole("button", { name: "畫筆" });
@@ -128,6 +128,30 @@ test("換背景 → 復原 → 重做 → 畫線再還原 → 這頁可以印了
   await expect.poll(async () => (await pageOut(request, p1)).has_user_strokes).toBe(true);
   const restoreLines = linesRow.getByRole("button", { name: /還原成自動畫的那張/ });
   await expect(restoreLines).toBeVisible();
+  await settled(request, p1);
+
+  // 5b. 拖角色 → 重新合成，筆畫清掉（不跳對話框）→ 復原 → 筆畫回來
+  await page.getByRole("radio", { name: "彩色原圖" }).click();
+  const character = page.getByRole("group", { name: "角色位置" });
+  await expect(character).toHaveAttribute("data-ready", "true");
+  const cb = (await character.boundingBox())!;
+  const ov = (await page.getByTestId("compose-overlay").boundingBox())!;
+  const placed = page.waitForResponse((r) => /\/placement\?oneclick=true$/.test(r.url()) && r.request().method() === "PUT");
+  await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(cb.x + cb.width / 2 - ov.width * 0.05, cb.y + cb.height / 2, { steps: 4 });
+  await page.mouse.move(cb.x + cb.width / 2 - ov.width * 0.08, cb.y + cb.height / 2, { steps: 4 });
+  await page.mouse.up();
+  expect((await placed).status()).toBe(200);
+  await expect(restoreLines).toHaveCount(0); // 筆畫清掉了
+  expect((await pageOut(request, p1)).has_user_strokes).toBe(false);
+  await settled(request, p1);
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  await expect(restoreLines).toBeVisible(); // 筆畫回來了
+  await settled(request, p1);
+  expect((await pageOut(request, p1)).has_user_strokes).toBe(true);
+  await page.getByRole("radio", { name: "要印的線稿" }).click();
   await restoreLines.click();
   await expect(restoreLines).toHaveCount(0);
   expect((await pageOut(request, p1)).has_user_strokes).toBe(false);
