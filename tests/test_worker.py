@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.db import init_db, make_engine, session_factory
-from app.models import Book, GenKind, Generation, GenStatus
+from app.models import Book, GenKind, Generation, GenStatus, Owner
 from app.services.engine import EngineError, EngineUnavailable
 from app.services.layout import PaperSize, PrintMode
 from app.services.worker import (
@@ -18,13 +18,20 @@ from app.storage import LocalStorage, StorageNotFound
 from tests.fake_engine import FakeEngine
 
 
+def _owner(s) -> int:
+    o = Owner(name="t", token_hash="h" * 64)
+    s.add(o)
+    s.commit()
+    return o.id
+
+
 @pytest.fixture
 def env(tmp_path):
     db = make_engine(tmp_path / "t.db")
     init_db(db)
     sessions = session_factory(db)
     with sessions() as s:
-        s.add(Book(title="b", paper_size=PaperSize.A4, print_mode=PrintMode.HOME))
+        s.add(Book(title="b", paper_size=PaperSize.A4, print_mode=PrintMode.HOME, owner_id=_owner(s)))
         s.commit()
     storage = LocalStorage(tmp_path / "storage", b"test-signing-key")
     engine = FakeEngine()

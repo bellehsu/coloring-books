@@ -1,8 +1,10 @@
+import pytest
 from alembic import command
 from alembic.migration import MigrationContext
 from alembic.autogenerate import compare_metadata
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel
 
 from app.db import BASELINE_REVISION, alembic_config, init_db, make_engine
@@ -161,7 +163,7 @@ def test_upgrade_to_head_keeps_generation_and_accepts_new_kinds(tmp_path):
         assert c.exec_driver_sql("SELECT count(*) FROM generation WHERE kind IN ('BACKGROUND','POSE','COMPOSITE')").scalar() == 3
     # 0004 重建資料表後仍保留 AUTOINCREMENT（刪掉的 id 不可沿用）
     with eng.connect() as c:
-        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0005"
+        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == head_revision(eng)
         for t in AUTOINCREMENT_TABLES:
             assert "AUTOINCREMENT" in table_sql(c, t), t
 
@@ -182,3 +184,132 @@ def test_migration_0005_adds_action_prompt(tmp_path):
     command.downgrade(alembic_config(eng), "0004")
     with eng.connect() as c:
         assert "action_prompt" not in {col["name"] for col in inspect(c).get_columns("page")}
+
+
+def _seed_0005(eng) -> None:
+    """Phase 9 資料庫的複本：停在 0005，有書、已丟棄的生成紀錄、舊的構圖草圖欄位。"""
+    _seed_0002(eng)
+    command.upgrade(alembic_config(eng), "0005")
+    with eng.begin() as c:
+        c.exec_driver_sql(
+            "INSERT INTO book (id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (2, '第二本', 'A4', 'HOME', '2026-11-07 00:00:00', '2026-11-07 00:00:00')"
+        )
+        c.exec_driver_sql("UPDATE page SET sketch_path = 'books/1/pages/1/sketch.png', controlnet_strength = 0.7 WHERE id = 1")
+        # 30：已完成後丟棄 → 用 finished_at；31：沒有 finished_at → 退回 created_at；10：未丟棄
+        c.exec_driver_sql(
+            "UPDATE generation SET discarded = 1, finished_at = '2026-11-08 12:00:00.000000' WHERE id = 30")
+        c.exec_driver_sql("UPDATE generation SET discarded = 1, created_at = '2026-11-06 09:30:00.000000' WHERE id = 31")
+
+
+def _cols(c, table) -> dict:
+    return {col["name"]: col for col in inspect(c).get_columns(table)}
+
+
+def test_0006_upgrade_on_copy_of_phase9_db(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    _seed_0005(eng)
+    with eng.connect() as c:
+        before_pages = c.exec_driver_sql("SELECT id, book_id, position, scene_prompt FROM page ORDER BY id").all()
+    command.upgrade(alembic_config(eng), "0006")
+    with eng.connect() as c:
+        tables = set(inspect(c).get_table_names())
+        assert {"owner", "owner_session", "usage"} <= tables
+        owners = c.exec_driver_sql("SELECT id, name, token_hash, is_admin, daily_generation_cap, revoked_at FROM owner").all()
+        assert len(owners) == 1
+        oid, name, token_hash, is_admin, cap, revoked = owners[0]
+        assert (name, is_admin, cap, revoked) == ("admin", 1, 60, None)
+        assert len(token_hash) == 64 and int(token_hash, 16) >= 0  # sha256 hex，沒有人知道原始 token
+        assert c.exec_driver_sql("SELECT created_at FROM owner").scalar() is not None
+        assert c.exec_driver_sql("SELECT DISTINCT owner_id FROM book").all() == [(oid,)]
+        assert c.exec_driver_sql("SELECT count(*) FROM book").scalar() == 2
+        assert _cols(c, "book")["owner_id"]["nullable"] is False
+        # discarded_at：只回填已丟棄的
+        got = dict(c.exec_driver_sql("SELECT id, discarded_at FROM generation").all())
+        assert got[10] is None
+        assert got[30].startswith("2026-11-08 12:00:00")
+        assert got[31].startswith("2026-11-06 09:30:00")
+        # 兩個構圖草圖欄位已移除，其餘頁面資料不變
+        page_cols = _cols(c, "page")
+        assert "sketch_path" not in page_cols and "controlnet_strength" not in page_cols
+        assert c.exec_driver_sql("SELECT id, book_id, position, scene_prompt FROM page ORDER BY id").all() == before_pages
+        # 外鍵、索引、AUTOINCREMENT 都還在
+        insp = inspect(c)
+        fk = lambda t: {(tuple(f["constrained_columns"]), f["referred_table"]) for f in insp.get_foreign_keys(t)}  # noqa: E731
+        assert fk("book") == {(("owner_id",), "owner")}
+        assert fk("page") == {(("book_id",), "book")}
+        assert fk("generation") == {(("book_id",), "book"), (("page_id",), "page")}
+        assert fk("lineartedit") == {(("generation_id",), "generation"), (("page_id",), "page")}
+        assert fk("owner_session") == {(("owner_id",), "owner")}
+        assert fk("usage") == {(("owner_id",), "owner")}
+        assert {i["name"] for i in insp.get_indexes("page")} == {"ix_page_book_id"}
+        assert {i["name"] for i in insp.get_indexes("generation")} == {
+            "ix_generation_book_id", "ix_generation_page_id", "ix_generation_status"}
+        assert {i["name"] for i in insp.get_indexes("book")} == {"ix_book_owner_id"}
+        assert insp.get_pk_constraint("usage")["constrained_columns"] == ["owner_id", "day"]
+        uniq = lambda t: {tuple(i["column_names"]) for i in insp.get_indexes(t) if i["unique"]} | {  # noqa: E731
+            tuple(u["column_names"]) for u in insp.get_unique_constraints(t)}
+        assert ("token_hash",) in uniq("owner")
+        assert ("session_hash",) in uniq("owner_session")
+        for t in AUTOINCREMENT_TABLES:
+            assert "AUTOINCREMENT" in table_sql(c, t), t
+        assert c.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    init_db(eng)  # 冪等：不會再建第二個 admin
+    with eng.connect() as c:
+        assert c.exec_driver_sql("SELECT count(*) FROM owner").scalar() == 1
+
+
+def test_0006_book_owner_id_is_not_null(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    init_db(eng)
+    with pytest.raises(IntegrityError):
+        with eng.begin() as c:
+            c.exec_driver_sql(
+                "INSERT INTO book (title, paper_size, print_mode, created_at, updated_at) "
+                "VALUES ('x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+            )
+
+
+def test_0006_empty_db(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0005")
+    command.upgrade(alembic_config(eng), "0006")
+    with eng.connect() as c:
+        assert c.exec_driver_sql("SELECT count(*) FROM owner").scalar() == 0
+        assert _cols(c, "book")["owner_id"]["nullable"] is False
+
+
+def test_0006_downgrade_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    _seed_0005(eng)
+    with eng.connect() as c:
+        books_before = c.exec_driver_sql("SELECT * FROM book ORDER BY id").all()
+        gen_cols_before = set(_cols(c, "generation"))
+    command.upgrade(alembic_config(eng), "0006")
+    command.downgrade(alembic_config(eng), "0005")
+    with eng.connect() as c:
+        assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0005"
+        tables = set(inspect(c).get_table_names())
+        assert not ({"owner", "owner_session", "usage"} & tables)
+        assert "owner_id" not in _cols(c, "book")
+        assert c.exec_driver_sql("SELECT * FROM book ORDER BY id").all() == books_before
+        assert set(_cols(c, "generation")) == gen_cols_before  # discarded_at 已移除
+        page_cols = _cols(c, "page")
+        assert page_cols["sketch_path"]["nullable"] is True
+        assert page_cols["controlnet_strength"]["nullable"] is False
+        # 移除的資料無法復原：舊欄位回到預設值
+        assert c.exec_driver_sql("SELECT DISTINCT sketch_path, controlnet_strength FROM page").all() == [(None, 0.4)]
+        assert {i["name"] for i in inspect(c).get_indexes("book")} == set()
+        for t in AUTOINCREMENT_TABLES:
+            assert "AUTOINCREMENT" in table_sql(c, t), t
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    # 0005 的舊程式仍能新增頁面（不帶 controlnet_strength）
+    with eng.begin() as c:
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, status, line_detail, line_width_px, qa_note, created_at, updated_at) "
+            "VALUES (1, 5, '', 'DRAFT', 'STANDARD', 11, '', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "head")
+    with eng.connect() as c:
+        assert c.exec_driver_sql("SELECT count(*) FROM owner").scalar() == 1

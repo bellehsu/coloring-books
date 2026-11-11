@@ -14,8 +14,6 @@ const mkPage = (o: O = {}): Page =>
     position: 0,
     scene_prompt: "舊書堆成小山",
     action_prompt: "抱著一本書往上爬",
-    controlnet_strength: 0.4,
-    sketch_url: null,
     selected_generation_id: null,
     background_generation_id: null,
     pose_generation_id: null,

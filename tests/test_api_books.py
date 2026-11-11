@@ -56,6 +56,17 @@ def test_create_and_get_book_with_layout(client):
                                            "print_mode": "home"}).status_code == 422
 
 
+def test_create_book_assigns_admin_owner(client, app):
+    """Task 5 之前的暫時做法：新書都歸給唯一的 admin owner（沒有就建立）。"""
+    from app.models import Book, Owner
+
+    a, b = new_book(client, title="一"), new_book(client, title="二")
+    with app.state.sessions() as s:
+        owners = s.exec(select(Owner)).all()
+        assert len(owners) == 1 and owners[0].is_admin and owners[0].name == "admin"
+        assert {s.get(Book, x["id"]).owner_id for x in (a, b)} == {owners[0].id}
+
+
 def test_list_patch_and_404(client):
     a, b = new_book(client, title="一"), new_book(client, title="二")
     assert [x["id"] for x in client.get("/api/books").json()] == [b["id"], a["id"]]

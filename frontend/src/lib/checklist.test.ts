@@ -8,8 +8,6 @@ const page = (o: Partial<Page> = {}): Page =>
     book_id: 1,
     position: 0,
     scene_prompt: "",
-    controlnet_strength: 0.4,
-    sketch_url: null,
     selected_generation_id: null,
     background_generation_id: null,
     pose_generation_id: null,

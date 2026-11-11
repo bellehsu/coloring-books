@@ -5,7 +5,7 @@ import pytest
 from PIL import Image
 
 from app.db import init_db, make_engine, session_factory
-from app.models import Book, GenKind, Generation, GenStatus, Page, PageStatus
+from app.models import Book, GenKind, Generation, GenStatus, Owner, Page, PageStatus
 from app.services.layout import PaperSize, PrintMode
 from app.storage import ImageRejected, LocalStorage, normalize_png
 
@@ -16,12 +16,19 @@ def _img_bytes(size, fmt):
     return buf.getvalue()
 
 
+def _owner(s) -> int:
+    o = Owner(name="t", token_hash="h" * 64)
+    s.add(o)
+    s.commit()
+    return o.id
+
+
 def test_tables_roundtrip(tmp_path):
     engine = make_engine(tmp_path / "t.db")
     init_db(engine)
     make = session_factory(engine)
     with make() as s:
-        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME)
+        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME, owner_id=_owner(s))
         s.add(book)
         s.commit()
         page = Page(book_id=book.id, position=1)
@@ -42,7 +49,6 @@ def test_tables_roundtrip(tmp_path):
         assert book.print_mode is PrintMode.HOME
         assert book.created_at.utcoffset().total_seconds() == 0
         page = s.get(Page, pid)
-        assert page.controlnet_strength == 0.4
         assert page.status is PageStatus.DRAFT
         gen = s.get(Generation, gid)
         assert gen.status is GenStatus.QUEUED
@@ -63,7 +69,6 @@ def test_tables_roundtrip(tmp_path):
 def test_storage_paths_and_put(tmp_path):
     st = LocalStorage(tmp_path, b"test-signing-key")
     assert st.generation_image(3, 7) == "books/3/generations/7.png"
-    assert st.sketch(3, 5) == "books/3/pages/5/sketch.png"
     st.put(st.generation_image(3, 7), b"abc")
     assert (tmp_path / "books/3/generations/7.png").read_bytes() == b"abc"
     assert st.get("books/3/generations/7.png") == b"abc"
@@ -205,7 +210,7 @@ def test_page_phase3_defaults_and_lineart_edit(tmp_path):
     init_db(engine)
     make = session_factory(engine)
     with make() as s:
-        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME)
+        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME, owner_id=_owner(s))
         s.add(book)
         s.commit()
         page = Page(book_id=book.id, position=1)
@@ -246,7 +251,7 @@ def test_compose_kinds_and_fields_roundtrip(tmp_path):
     init_db(engine)
     make = session_factory(engine)
     with make() as s:
-        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME)
+        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME, owner_id=_owner(s))
         s.add(book)
         s.commit()
         for kind in (GenKind.BACKGROUND, GenKind.POSE, GenKind.COMPOSITE):
@@ -293,3 +298,70 @@ def test_load_rgb_draft_respects_exif_rotation():
     assert size == (1200, 2400)
     assert im.width < 1200 and im.width >= 200 and im.height >= 500
     assert im.height > im.width
+
+
+def test_owner_session_usage_roundtrip(tmp_path):
+    from datetime import date
+
+    from sqlalchemy.exc import IntegrityError
+
+    from sqlmodel import select
+
+    from app.models import OwnerSession, Usage
+
+    engine = make_engine(tmp_path / "t.db")
+    init_db(engine)
+    make = session_factory(engine)
+    with make() as s:
+        o = Owner(name="小明", token_hash="a" * 64)
+        s.add(o)
+        s.commit()
+        oid = o.id
+        s.add(OwnerSession(owner_id=oid, session_hash="b" * 64))
+        s.add(Usage(owner_id=oid, day=date(2026, 11, 11), generations=3))
+        s.add(Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME, owner_id=oid))
+        s.commit()
+    with make() as s:
+        o = s.get(Owner, oid)
+        assert o.is_admin is False and o.daily_generation_cap == 60 and o.revoked_at is None
+        assert o.created_at.utcoffset().total_seconds() == 0
+        sess = s.exec(select(OwnerSession)).one()
+        assert sess.owner_id == oid and sess.last_seen.utcoffset().total_seconds() == 0
+        u = s.get(Usage, (oid, date(2026, 11, 11)))
+        assert u.generations == 3
+        assert s.exec(select(Book)).one().owner_id == oid
+    with make() as s:
+        s.add(Owner(name="重複", token_hash="a" * 64))
+        with pytest.raises(IntegrityError):
+            s.commit()
+    with make() as s:
+        s.add(Book(title="無主", paper_size=PaperSize.A4, print_mode=PrintMode.HOME))
+        with pytest.raises(IntegrityError):
+            s.commit()
+
+
+def test_generation_discarded_at_and_no_sketch_columns(tmp_path):
+    engine = make_engine(tmp_path / "t.db")
+    init_db(engine)
+    make = session_factory(engine)
+    with make() as s:
+        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME, owner_id=_owner(s))
+        s.add(book)
+        s.commit()
+        when = datetime(2026, 11, 11, 3, tzinfo=timezone.utc)
+        gen = Generation(book_id=book.id, kind=GenKind.PAGE, user_text="u", prompt="p", negative_prompt="n",
+                         seed=1, width=8, height=8, request_json="{}", discarded=True, discarded_at=when)
+        s.add(gen)
+        s.commit()
+        gid = gen.id
+    with make() as s:
+        assert s.get(Generation, gid).discarded_at == when
+    assert "sketch_path" not in Page.model_fields and "controlnet_strength" not in Page.model_fields
+
+
+def test_page_out_has_no_sketch_fields():
+    from app.api.schemas import PageOut, PageUpdate
+
+    assert "sketch_url" not in PageOut.model_fields
+    assert "controlnet_strength" not in PageOut.model_fields
+    assert "controlnet_strength" in PageUpdate.model_fields  # 舊前端會送：照收但忽略

@@ -1303,6 +1303,7 @@
           "lineart"
         ],
         "summary": "Get Lineart",
+        "description": "線稿就是一個存放的物件：確認物件在（不在就重算，來源也不見則 404）後轉到簽章網址。",
         "operationId": "get_lineart_api_pages__page_id__lineart_get",
         "parameters": [
           {
@@ -1885,6 +1886,66 @@
             "schema": {
               "type": "integer",
               "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/{key}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Get File",
+        "operationId": "get_file_api_files__key__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Exp"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Sig"
             }
           }
         ],
@@ -2959,21 +3020,6 @@
             "type": "string",
             "title": "Action Prompt"
           },
-          "controlnet_strength": {
-            "type": "number",
-            "title": "Controlnet Strength"
-          },
-          "sketch_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sketch Url"
-          },
           "selected_generation_id": {
             "anyOf": [
               {
@@ -3085,8 +3131,6 @@
           "position",
           "scene_prompt",
           "action_prompt",
-          "controlnet_strength",
-          "sketch_url",
           "selected_generation_id",
           "background_generation_id",
           "pose_generation_id",

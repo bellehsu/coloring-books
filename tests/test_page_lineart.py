@@ -4,7 +4,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app.db import init_db, make_engine, session_factory
-from app.models import (Book, GenKind, Generation, GenStatus, Page, PageStatus, utcnow)
+from app.models import (Book, GenKind, Generation, GenStatus, Owner, Page, PageStatus, utcnow)
 from app.services import page_lineart
 from app.services.layout import PaperSize, PrintMode
 from app.services.lineart_render import Stroke
@@ -25,6 +25,13 @@ def _report(errors):
     return QAReport(errors=errors, warnings=[], gaps=[], dangling_count=0, gap_count=0)
 
 
+def _owner(s) -> int:
+    o = Owner(name="t", token_hash="h" * 64)
+    s.add(o)
+    s.commit()
+    return o.id
+
+
 @pytest.fixture
 def env(tmp_path):
     engine = make_engine(tmp_path / "t.db")
@@ -32,7 +39,7 @@ def env(tmp_path):
     make = session_factory(engine)
     storage = LocalStorage(tmp_path / "storage", b"test-signing-key")
     with make() as s:
-        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME)
+        book = Book(title="書", paper_size=PaperSize.A4, print_mode=PrintMode.HOME, owner_id=_owner(s))
         s.add(book)
         s.commit()
         page = Page(book_id=book.id, position=1)

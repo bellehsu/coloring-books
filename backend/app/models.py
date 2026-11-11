@@ -1,10 +1,10 @@
-"""資料表：Book / Page / Generation。
+"""資料表：Owner / OwnerSession / Usage / Book / Page / Generation。
 
 頁面與生成紀錄分離：Page 只存 selected_generation_id，重新生成只新增 Generation。
 時間一律為 UTC。注意：此檔不可使用 `from __future__ import annotations`（SQLModel 需要實際型別）。
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 
 from sqlalchemy import Column, DateTime
@@ -66,8 +66,41 @@ class CharacterCheck(str, Enum):
     INCONSISTENT = "inconsistent"
 
 
+class Owner(SQLModel, table=True):
+    """一個邀請連結＝一個 owner。DB 只存 token 的 sha256。"""
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    token_hash: str = Field(unique=True)
+    is_admin: bool = False
+    daily_generation_cap: int = 60
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+    revoked_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))
+
+
+class OwnerSession(SQLModel, table=True):
+    """cookie 裡是隨機 session id；DB 只存它的 sha256。"""
+
+    __tablename__ = "owner_session"
+
+    id: int | None = Field(default=None, primary_key=True)
+    owner_id: int = Field(foreign_key="owner.id", index=True)
+    session_hash: str = Field(unique=True)
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+    last_seen: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+
+
+class Usage(SQLModel, table=True):
+    """每個 owner 每天（Asia/Taipei）已排入的生成數。"""
+
+    owner_id: int = Field(foreign_key="owner.id", primary_key=True)
+    day: date = Field(primary_key=True)
+    generations: int = 0
+
+
 class Book(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
+    owner_id: int = Field(foreign_key="owner.id", index=True)  # 只有書有 owner；頁面／生成紀錄經 book_id 繼承
     title: str
     paper_size: PaperSize
     print_mode: PrintMode
@@ -86,8 +119,6 @@ class Page(SQLModel, table=True):
     position: int
     scene_prompt: str = ""
     action_prompt: str = Field(default="", sa_column_kwargs={"server_default": ""})
-    controlnet_strength: float = 0.4
-    sketch_path: str | None = None
     selected_generation_id: int | None = None
     background_generation_id: int | None = None
     pose_generation_id: int | None = None
@@ -115,6 +146,7 @@ class Generation(SQLModel, table=True):
     kind: GenKind
     status: GenStatus = Field(default=GenStatus.QUEUED, index=True)
     discarded: bool = False
+    discarded_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))  # 保留期限從這裡起算
     user_text: str  # 使用者輸入的原文（角色描述或場景描述）
     prompt: str
     negative_prompt: str

@@ -7,7 +7,7 @@ import random
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlmodel import Session, col, select, update
 
-from app.api.deps import get_session, get_worker
+from app.api.deps import get_session, get_worker, temporary_admin_owner
 from app.api.schemas import (
     BookCreate,
     BookOut,
@@ -80,7 +80,8 @@ def book_out(session: Session, book: Book) -> BookOut:
 
 @router.post("", status_code=201, response_model=BookOut)
 def create_book(body: BookCreate, session: Session = Depends(get_session)) -> BookOut:
-    book = Book(title=body.title, paper_size=body.paper_size, print_mode=body.print_mode)
+    owner = temporary_admin_owner(session)  # TEMPORARY：Task 5 改成 current_owner
+    book = Book(title=body.title, paper_size=body.paper_size, print_mode=body.print_mode, owner_id=owner.id)
     session.add(book)
     session.commit()
     return book_out(session, book)

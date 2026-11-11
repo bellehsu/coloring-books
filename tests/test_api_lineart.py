@@ -451,9 +451,7 @@ def test_page_out_aspect_and_no_sketch_url(client, app):
     assert page_out(client, b["id"], p["id"])["aspect_mismatch"] is True
     r = client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "公園"})
     assert r.json()["aspect_mismatch"] is True
-    # 舊資料留著的構圖草圖不再提供：sketch_url 一律 None（欄位保留到前端移除）
-    set_page(app, p["id"], sketch_path=f"books/{b['id']}/pages/{p['id']}/sketch.png")
-    assert page_out(client, b["id"], p["id"])["sketch_url"] is None
+    assert "sketch_url" not in page_out(client, b["id"], p["id"])  # 構圖草圖已移除（0006）
 
 
 def test_change_size_recomputes_and_demotes(client, app, monkeypatch):

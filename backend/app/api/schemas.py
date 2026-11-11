@@ -203,7 +203,7 @@ class PageCreate(BaseModel):
 class PageUpdate(BaseModel):
     scene_prompt: ScenePromptStr | None = None
     action_prompt: ActionPromptStr | None = None
-    controlnet_strength: float | None = None  # 構圖草圖已停用：舊前端會送，照收但忽略
+    controlnet_strength: float | None = None  # 構圖草圖已停用（0006 已移除欄位）：舊前端會送，照收但忽略
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
 
@@ -253,8 +253,6 @@ class PageOut(BaseModel):
     position: int
     scene_prompt: str
     action_prompt: str
-    controlnet_strength: float  # 構圖草圖已停用；舊資料的值照回
-    sketch_url: str | None  # 構圖草圖已停用：一律 None（欄位保留到前端移除）
     selected_generation_id: int | None
     background_generation_id: int | None
     pose_generation_id: int | None
@@ -295,8 +293,6 @@ class PageOut(BaseModel):
             position=page.position,
             scene_prompt=page.scene_prompt,
             action_prompt=page.action_prompt,
-            controlnet_strength=page.controlnet_strength,
-            sketch_url=None,
             selected_generation_id=page.selected_generation_id,
             background_generation_id=page.background_generation_id,
             pose_generation_id=page.pose_generation_id,

@@ -20,7 +20,7 @@ from app.services.prompts import (
     qwen_background_prompt,
     qwen_pose_prompt,
 )
-from tests.fake_engine import FakeEngine, make_png
+from tests.fake_engine import FakeEngine
 from tests.test_api_books import new_book, run_jobs
 from tests.test_api_lineart import (
     A5_HOME, DRAW, color_png, edits_body, get_page, legacy_page, make_passed, set_page,
@@ -186,29 +186,17 @@ def qwen_missing_report(workflow):
     ])
 
 
-def with_sketch(app, book_id, page_id, *, file=True):
-    """舊資料：頁面有構圖草圖（強度 0.4）；file=False 時草圖檔已遺失。"""
-    rel = app.state.storage.sketch(book_id, page_id)
-    if file:
-        app.state.storage.put(rel, make_png((128, 128)))
-    set_page(app, page_id, sketch_path=rel, controlnet_strength=0.4)
-
-
-def test_background_ignores_sketch_and_preflight(client, app):
-    """有草圖（強度 > 0）、草圖檔遺失、或快取的 preflight 說 qwen_background 缺模型：照樣排簡潔，
-    不存草圖快照、不先擋（缺東西時由生成失敗回報）。"""
+def test_background_ignores_preflight(client, app):
+    """快取的 preflight 說 qwen_background 缺模型：照樣排簡潔，不存草圖快照、不先擋（缺東西時由生成失敗回報）。"""
     b = new_book(client)
     p = new_page(client, b["id"], scene_prompt="公園")
-    with_sketch(app, b["id"], p["id"])
     app.state.preflight = qwen_missing_report("qwen_background")
-    g = _bg_post(client, p["id"], None).json()
+    r = _bg_post(client, p["id"], None)
+    assert r.status_code == 202, r.text
+    g = r.json()
     assert g["background_style"] == "simple"
     assert "structure_image" not in _rj(app, g["id"])
     assert not list(app.state.storage.root.rglob("sketch_*.png"))  # 沒有生成用的草圖快照
-    app.state.storage.delete(app.state.storage.sketch(b["id"], p["id"]))
-    r = _bg_post(client, p["id"], None)
-    assert r.status_code == 202, r.text
-    assert r.json()["background_style"] == "simple"
 
 
 def test_background_simple_records_variation(client, app, monkeypatch):
@@ -311,11 +299,9 @@ def test_batch_simple_excludes_latest_simple_per_page(client, app, monkeypatch):
 
 
 def test_batch_ignores_style(client, app):
-    """批次：有草圖的頁面、草圖檔遺失的頁面、preflight 說缺模型，全都排簡潔（Qwen），不存草圖快照。"""
+    """批次：preflight 說缺模型時，全都排簡潔（Qwen），不存草圖快照。"""
     b = new_book(client)
     pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(3)]
-    with_sketch(app, b["id"], pages[1]["id"])
-    with_sketch(app, b["id"], pages[2]["id"], file=False)  # 草圖檔遺失
     app.state.preflight = qwen_missing_report("qwen_background")
     scenes = {p["id"]: p["scene_prompt"] for p in pages}
     out = batch(client, b["id"])

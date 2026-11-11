@@ -418,7 +418,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Lineart */
+        /**
+         * Get Lineart
+         * @description 線稿就是一個存放的物件：確認物件在（不在就重算，來源也不見則 404）後轉到簽章網址。
+         */
         get: operations["get_lineart_api_pages__page_id__lineart_get"];
         put?: never;
         post?: never;
@@ -616,6 +619,23 @@ export interface paths {
         };
         /** Print Png */
         get: operations["print_png_api_pages__page_id__print_png_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get File */
+        get: operations["get_file_api_files__key__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -989,10 +1009,6 @@ export interface components {
             scene_prompt: string;
             /** Action Prompt */
             action_prompt: string;
-            /** Controlnet Strength */
-            controlnet_strength: number;
-            /** Sketch Url */
-            sketch_url: string | null;
             /** Selected Generation Id */
             selected_generation_id: number | null;
             /** Background Generation Id */
@@ -2487,6 +2503,40 @@ export interface operations {
             header?: never;
             path: {
                 page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_file_api_files__key__get: {
+        parameters: {
+            query?: {
+                exp?: string;
+                sig?: string;
+            };
+            header?: never;
+            path: {
+                key: string;
             };
             cookie?: never;
         };

@@ -106,7 +106,6 @@ class Storage(Protocol):
 
     def generation_image(self, book_id: int, gen_id: int) -> str: ...
     def generation_mask(self, book_id: int, gen_id: int) -> str: ...
-    def sketch(self, book_id: int, page_id: int) -> str: ...
     def lineart(self, book_id: int, page_id: int, key: str) -> str: ...
     def preview(self, gen_id: int, key: str) -> str: ...
 
@@ -119,10 +118,6 @@ class _KeyBuilders:
 
     def generation_mask(self, book_id: int, gen_id: int) -> str:
         return f"books/{book_id}/generations/{gen_id}_mask.png"
-
-    def sketch(self, book_id: int, page_id: int) -> str:
-        """舊資料的構圖草圖位置（Phase 9 起不再寫入；頁面刪除時連同資料夾一起清掉）。"""
-        return f"books/{book_id}/pages/{page_id}/sketch.png"
 
     def lineart(self, book_id: int, page_id: int, key: str) -> str:
         return f"books/{book_id}/pages/{page_id}/lineart_{key}.png"
