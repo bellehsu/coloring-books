@@ -19,9 +19,15 @@ describe("next.config rewrites", () => {
   });
 
   it("截斷或多出段落的邀請連結轉到 /invalid-link（不顯示後端的 JSON 404）", async () => {
-    expect(await nextConfig.redirects!()).toEqual([
-      { source: "/i", destination: "/invalid-link", permanent: false },
-      { source: "/i/:token/:rest+", destination: "/invalid-link", permanent: false },
-    ]);
+    const redirects = await nextConfig.redirects!();
+    expect(redirects).toContainEqual({ source: "/i", destination: "/invalid-link", permanent: false });
+    expect(redirects).toContainEqual({ source: "/i/:token/:rest+", destination: "/invalid-link", permanent: false });
+  });
+
+  it("舊的角色、故事頁轉到 A「主角與故事」（/books/{id}/setup）", async () => {
+    const redirects = await nextConfig.redirects!();
+    expect(redirects).toContainEqual({ source: "/books/:bookId/character", destination: "/books/:bookId/setup", permanent: false });
+    expect(redirects).toContainEqual({ source: "/books/:bookId/story", destination: "/books/:bookId/setup", permanent: false });
+    expect(redirects).toHaveLength(4);
   });
 });

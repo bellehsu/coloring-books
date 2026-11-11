@@ -26,8 +26,8 @@ export interface BookBarProps {
 
 export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
   const hasCharacter = book.character_generation_id != null;
-  const charHref = `/books/${book.id}/character`;
-  const storyHref = `/books/${book.id}/story`;
+  const charHref = `/books/${book.id}/setup`; // 角色、故事都在 A「主角與故事」
+  const storyHref = `/books/${book.id}/setup`;
   const pagesHref = `/books/${book.id}/editor`;
   const pagesLabel = hasCharacter ? `頁面 ${book.stats.passed} / ${book.stats.pages}` : "頁面";
   const hintId = `pages-hint-${book.id}`;

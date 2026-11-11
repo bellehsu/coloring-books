@@ -18,55 +18,22 @@ const PLACEMENT = /\/api\/pages\/\d+\/placement$/;
 /** 故事頁打的動作：中文自由文字，只寫動作、不寫地點（地點寫在場景）。 */
 const ACTION = "抱著一顆紅色的球開心地跳";
 
-test("完整流程：建書 → 角色 → 故事 → 產生全部素材 → 構圖（拖曳自動合成）→ 補線 → 完成 → 匯出 PDF", async ({ page }) => {
-  const title = uniqueTitle("e2e 小貓");
-
-  // ---- 我的繪本：建立 A4 印刷廠的書 ----
-  await page.goto("/");
-  await page.getByRole("button", { name: "建立新繪本" }).first().click();
-  const dialog = page.getByRole("dialog", { name: "建立新繪本" });
-  await dialog.getByLabel("書名").fill(title);
-  await dialog.getByRole("radio", { name: /A4/ }).click();
-  await dialog.getByRole("radio", { name: /印刷廠/ }).click();
-  await dialog.getByRole("button", { name: /建立，接著設定角色/ }).click();
-
-  // ---- 角色：一次產生一張 → 按鈕改叫「再產生一張」→ 選它 → 用這個角色，開始寫故事 ----
-  await expect(page).toHaveURL(/\/books\/\d+\/character$/);
-  const bookId = Number(/\/books\/(\d+)\//.exec(page.url())![1]);
-  await page.getByLabel("描述角色的外型").fill("一隻圓滾滾的橘色小貓，大耳朵");
-  await page.getByRole("button", { name: "產生角色" }).click();
-  const charCards = page.getByRole("button", { name: /^選 seed \d+$/ });
-  await expect(charCards).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "再產生一張" })).toBeEnabled();
-  await charCards.first().click();
-  await expect(charCards.first()).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "用這個角色，開始寫故事 →" }).click();
-
-  // ---- 故事：新增一頁，寫場景與中文動作 → 產生全部素材 → 縮圖出現 ----
-  await expect(page).toHaveURL(new RegExp(`/books/${bookId}/story$`));
-  await page.getByRole("button", { name: "＋ 新增一頁" }).click();
-  const row = page.getByRole("article", { name: "第 1 頁" });
-  await row.getByRole("textbox", { name: "第 1 頁場景" }).fill("陽光公園，有一棵大樹和小草叢");
-  const action = row.getByRole("textbox", { name: "第 1 頁角色動作" });
-  await action.fill(ACTION);
-  await expect(action).toHaveAccessibleDescription(/^只寫動作，地點寫在背景的場景描述/);
-  await action.blur();
-  const generateAll = page.getByRole("button", { name: "產生全部素材（還有 2 張）" });
-  await expect(generateAll).toBeEnabled();
-  const batched = page.waitForResponse((r) => r.url().endsWith(`/api/books/${bookId}/materials/batch`));
-  await generateAll.click();
-  expect((await batched).status()).toBe(202);
-  await expect(row.getByRole("img", { name: "第 1 頁背景" })).toBeVisible();
-  await expect(row.getByRole("img", { name: "第 1 頁角色動作" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "產生全部素材（還有 0 張）" })).toBeDisabled();
+test("進階編輯完整流程：（A 建好的書）構圖（拖曳自動合成）→ 補線 → 完成 → 匯出 PDF", async ({ page, request }) => {
+  // 建書、主角、故事與「開始做這本書」的畫面在 oneclick.spec.ts；這裡用 API 準備，專測舊的編輯器（進階編輯）
+  const book = await createBook(request, uniqueTitle("e2e 小貓"));
+  const bookId = book.id;
+  await setCharacter(request, bookId);
+  await createPage(request, bookId, "陽光公園，有一棵大樹和小草叢", ACTION);
+  expect((await request.post(`/api/books/${bookId}/produce`)).status()).toBe(202);
+  await expect
+    .poll(async () => (await getPages(request, bookId))[0]?.status, { timeout: 20_000 })
+    .toBe("passed");
   // 動作原樣（中文、不翻譯）送進角色動作
-  const [pose] = await getGenerations(page.request, bookId, "pose");
+  const [pose] = await getGenerations(request, bookId, "pose");
   expect(pose.user_text).toBe(ACTION);
+  await page.goto(`/books/${bookId}/editor`);
 
   // ---- 頁面 ① 構圖：素材已自動選用 → 開頁自動合成；拖曳角色 → 放開後再自動合成 ----
-  // 頁面流程（Phase 13）在素材都好了之後自動合成並標成可以印，所以完成數可能已經是 1
-  await page.getByRole("link", { name: /頁面 [01] \/ 1/ }).click();
-  await expect(page).toHaveURL(/\/books\/\d+\/editor/);
   await expect(page.getByRole("tab", { name: "① 構圖" })).toHaveAttribute("aria-selected", "true");
   const status = page.getByRole("status").filter({ hasText: /線稿已自動更新|更新中/ });
   await expect(status).toHaveText("✓ 線稿已自動更新");
@@ -150,7 +117,7 @@ test("構圖上傳背景圖：4000×800 的寬圖裁成頁面比例，縮圖有�
   expect(gen.source).toBe("upload");
 });
 
-test("產生全部素材後馬上打開頁面：素材完成時舞台自動填上並合成，不用重新整理", async ({ page, request }) => {
+test("開始做這本書（POST /produce）後馬上打開頁面：素材完成時舞台自動填上並合成，不用重新整理", async ({ page, request }) => {
   const book = await createBook(request, uniqueTitle("e2e 先開頁面"));
   await setCharacter(request, book.id);
   const p = await createPage(request, book.id, "陽光公園", "揮手");
@@ -159,10 +126,7 @@ test("產生全部素材後馬上打開頁面：素材完成時舞台自動填�
   for (let i = 0; i < 8; i++) {
     await ok(await request.post(`/api/books/${blocker.id}/character/candidates`, { data: { description: "一隻圓圓的小貓" } }));
   }
-  await page.goto(`/books/${book.id}/story`);
-  const batched = page.waitForResponse((r) => r.url().endsWith(`/api/books/${book.id}/materials/batch`));
-  await page.getByRole("button", { name: "產生全部素材（還有 2 張）" }).click();
-  expect((await batched).status()).toBe(202);
+  expect((await request.post(`/api/books/${book.id}/produce`)).status()).toBe(202);
 
   await page.goto(`/books/${book.id}/editor?page=${p.id}`);
   await expect(page.getByText("背景與角色動作產生中…")).toBeVisible();

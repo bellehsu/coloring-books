@@ -26,6 +26,9 @@ const nextConfig: NextConfig = {
     return [
       { source: "/i", destination: "/invalid-link", permanent: false },
       { source: "/i/:token/:rest+", destination: "/invalid-link", permanent: false },
+      // Phase 13：舊的角色、故事頁併進 A「主角與故事」
+      { source: "/books/:bookId/character", destination: "/books/:bookId/setup", permanent: false },
+      { source: "/books/:bookId/story", destination: "/books/:bookId/setup", permanent: false },
     ];
   },
 };

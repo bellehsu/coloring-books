@@ -357,7 +357,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     );
   }
 
-  const characterHref = `/books/${bookId}/character`;
+  const characterHref = `/books/${bookId}/setup`;
   const busyPageIds = new Set(
     (bookGens.data ?? []).filter(isActive).map((g) => g.page_id).filter((x): x is number => x != null),
   );

@@ -62,8 +62,9 @@ const isActive = (g: Generation) => g.status === "queued" || g.status === "runni
 
 export const useBooks = () => useQuery({ queryKey: qk.books(), queryFn: () => api.get<Book[]>("/books") });
 
-export const useBook = (id: number) =>
-  useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`) });
+/** enabled＝false：還沒有書（A 的 /books/new 在書建立前）。 */
+export const useBook = (id: number, enabled = true) =>
+  useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`), enabled });
 
 /** 目前的使用者（名字與是否為管理者）；首頁用它決定要不要顯示「邀請管理」。 */
 export const useMe = () => useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me"), retry: false });
@@ -95,12 +96,13 @@ export const useSharedBook = (id: number) =>
     retry: false,
   });
 
-export const usePages = (bookId: number) =>
-  useQuery({ queryKey: qk.pages(bookId), queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`) });
+export const usePages = (bookId: number, enabled = true) =>
+  useQuery({ queryKey: qk.pages(bookId), queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`), enabled });
 
 /** 有 queued/running 的 generation 時每 2 秒輪詢，否則停止。 */
-export function useGenerations(bookId: number, f: GenFilter = {}) {
+export function useGenerations(bookId: number, f: GenFilter = {}, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: qk.generations(bookId, f),
     queryFn: () => {
       const q = new URLSearchParams();
@@ -173,8 +175,9 @@ export const useBookOverview = (bookId: number) =>
   });
 
 /** 「開始做這本書」要排幾張、今天還剩幾次（remaining null＝不限）。 */
-export const useProducePlan = (bookId: number) =>
+export const useProducePlan = (bookId: number, enabled = true) =>
   useQuery({
+    enabled,
     queryKey: qk.producePlan(bookId),
     queryFn: () => api.get<ProducePlan>(`/books/${bookId}/produce/plan`),
   });
@@ -252,8 +255,53 @@ export function useCharacterCandidates(bookId: number) {
       b: Omit<S["CharacterCandidatesCreate"], "count" | "confirm_change"> & { confirm_change?: boolean },
     ) =>
       api.post<Generation[]>(`/books/${bookId}/character/candidates`, b),
-    onSuccess: () => invalidateJobs(qc, bookId),
+    onSuccess: () =>
+      Promise.all([invalidateJobs(qc, bookId), qc.invalidateQueries({ queryKey: qk.producePlan(bookId) })]),
   });
+}
+
+/** 主角換了（選定或上傳）：book（回應直接寫進快取）, books, generations, producePlan。 */
+function afterCharacterSet(qc: QueryClient, book: Book) {
+  qc.setQueryData(qk.book(book.id), book);
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: qk.book(book.id) }),
+    qc.invalidateQueries({ queryKey: qk.books() }),
+    qc.invalidateQueries({ queryKey: qk.generationsOf(book.id) }),
+    qc.invalidateQueries({ queryKey: qk.producePlan(book.id) }),
+  ]);
+}
+
+/**
+ * A 的主角（spec §4.5）：bookId 放在 variables，因為 /books/new 的書是在第一次動作時才建立的。
+ * - generate：產生一張候選（已有主角時要 confirm＝true，後端才不會 409；這只是多一張候選，主角還沒換）
+ * - choose：選這隻（已有主角時 confirm＝true：使用者已確認「換主角？」）
+ * - upload：↑ 上傳自己的主角（multipart；confirm 同上）
+ */
+export function useSetupCharacter() {
+  const qc = useQueryClient();
+  const generate = useMutation({
+    mutationFn: ({ bookId, description, confirm }: { bookId: number; description: string; confirm: boolean }) =>
+      api.post<Generation[]>(`/books/${bookId}/character/candidates`, {
+        description,
+        ...(confirm ? { confirm_change: true } : {}),
+      }),
+    onSuccess: (_d, v) =>
+      Promise.all([invalidateJobs(qc, v.bookId), qc.invalidateQueries({ queryKey: qk.producePlan(v.bookId) })]),
+  });
+  const choose = useMutation({
+    mutationFn: ({ bookId, generationId, confirm }: { bookId: number; generationId: number; confirm: boolean }) =>
+      api.post<Book>(`/books/${bookId}/character`, {
+        generation_id: generationId,
+        ...(confirm ? { confirm_change: true } : {}),
+      }),
+    onSuccess: (book) => afterCharacterSet(qc, book),
+  });
+  const upload = useMutation({
+    mutationFn: ({ bookId, file, confirm }: { bookId: number; file: File; confirm: boolean }) =>
+      api.upload<Book>(`/books/${bookId}/character/upload`, file, confirm ? { confirm_change: "true" } : {}),
+    onSuccess: (book) => afterCharacterSet(qc, book),
+  });
+  return { generate, choose, upload };
 }
 
 /** invalidate: book, books, generations */

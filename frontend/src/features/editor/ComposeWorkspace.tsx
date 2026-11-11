@@ -418,7 +418,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
       </Button>
       {book && !hasCharacter && (
         <span className={styles.hint}>
-          <Link href={`/books/${bookId}/character`}>先設定角色</Link>
+          <Link href={`/books/${bookId}/setup`}>先設定角色</Link>
         </span>
       )}
       <details className={styles.details}>

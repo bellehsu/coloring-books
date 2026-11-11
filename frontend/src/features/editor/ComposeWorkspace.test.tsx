@@ -403,7 +403,7 @@ describe("ComposeWorkspace", () => {
     hasCharacter = false;
     setup();
     const pose = card("角色動作");
-    expect(await within(pose).findByRole("link", { name: "先設定角色" })).toHaveAttribute("href", "/books/1/character");
+    expect(await within(pose).findByRole("link", { name: "先設定角色" })).toHaveAttribute("href", "/books/1/setup");
     expect(within(pose).getByRole("button", { name: "換一張角色動作" })).toBeDisabled();
   });
 

@@ -1004,7 +1004,7 @@ describe("EditorPage", () => {
     await screen.findAllByRole("tab");
     expect(composeTab()).toHaveAttribute("aria-selected", "true");
     const links = screen.getAllByRole("link", { name: /角色工作室|先設定角色/ });
-    expect(links[0]).toHaveAttribute("href", "/books/1/character");
+    expect(links[0]).toHaveAttribute("href", "/books/1/setup");
     expect(within(poseCard()).getByRole("button", { name: "換一張角色動作" })).toBeDisabled();
     expect(within(bgCard()).getByRole("button", { name: "換一張背景" })).not.toBeDisabled();
   });

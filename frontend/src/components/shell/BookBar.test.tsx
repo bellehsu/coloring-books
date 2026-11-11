@@ -26,7 +26,7 @@ describe("BookBar", () => {
     expect(screen.getByRole("heading", { name: "小兔子的一天" })).toBeInTheDocument();
     expect(screen.getByText(/A4・印刷廠/)).toBeInTheDocument();
     expect(screen.getByText("頁面 14 / 20")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /角色/ })).toHaveAttribute("href", "/books/7/character");
+    expect(screen.getByRole("link", { name: /角色/ })).toHaveAttribute("href", "/books/7/setup");
     expect(screen.getByText("頁面 14 / 20").closest("[aria-current]")).toHaveAttribute("aria-current", "step");
   });
 
@@ -50,7 +50,7 @@ describe("BookBar", () => {
 
   it("角色已設定：故事連到故事頁，目前在故事頁時是 current step", () => {
     const { rerender } = render(<BookBar book={book()} current="pages" />);
-    expect(screen.getByRole("link", { name: /故事/ })).toHaveAttribute("href", "/books/7/story");
+    expect(screen.getByRole("link", { name: /故事/ })).toHaveAttribute("href", "/books/7/setup");
     rerender(<BookBar book={book()} current="story" />);
     expect(screen.getByText("故事").closest("[aria-current]")).toHaveAttribute("aria-current", "step");
     expect(screen.getByRole("link", { name: /頁面 14 \/ 20/ })).toHaveAttribute("href", "/books/7/editor");

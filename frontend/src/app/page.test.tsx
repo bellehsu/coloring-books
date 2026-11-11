@@ -58,6 +58,16 @@ describe("我的繪本", () => {
     mockBooks([]);
     setup();
     expect(await screen.findByText(/還沒有繪本/)).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "建立新繪本" })).toHaveLength(1);
+  });
+
+  it("「建立新繪本」到 A 做一本新的著色書（/books/new）", async () => {
+    mockBooks([book(1, 5)]);
+    setup();
+    await screen.findByRole("link", { name: /書1/ });
+    const links = screen.getAllByRole("link", { name: "建立新繪本" });
+    expect(links).toHaveLength(2);
+    for (const a of links) expect(a).toHaveAttribute("href", "/books/new");
   });
   it("錯誤顯示訊息", async () => {
     mockBooks({ detail: "資料庫壞了" }, 500);
