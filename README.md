@@ -44,6 +44,8 @@ scripts/
   check_env.py                 環境檢查
   sync_comfy_model_paths.py    產生 ComfyUI extra_model_paths.yaml
   preflight.py                 命令列 preflight
+  invites.py                   邀請連結管理（create／list／rotate／revoke／delete-data）
+  storage_gc.py                清理過期的捨棄圖與孤兒物件
 config/settings.example.yaml   設定範本（複製成 settings.yaml）
 storage/                       生成檔案與 SQLite
 tests/                         pytest（全部可在無 GPU、無 ComfyUI 下執行）
@@ -65,6 +67,26 @@ cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
   設 `APP_AUTH__DEV_OWNER=admin`（`dev.env.example` 已預設）：沒有 cookie 的請求就當作 admin。
   已有 admin（例如資料庫遷移時建立的）會直接沿用。
 - **對外部署一定不可設 `dev_owner`**（範本預設 `null`）；有設時後端啟動會印出警告。
+
+### 管理邀請與清理儲存空間
+
+兩個腳本都在專案根目錄執行，設定與後端相同（`config/settings.yaml` 或 `APP_SETTINGS_FILE`，`APP_` 環境變數覆寫；
+R2 憑證只來自 `APP_STORAGE__R2__ACCESS_KEY`／`SECRET_KEY`）。DB 只存 token 的 hash，連結只在 create／rotate 時印一次。
+
+```bash
+PY=$VENV_ROOT/coloring-books/bin/python
+env -u PYTHONPATH $PY scripts/invites.py create --name 小明 [--cap 60] [--admin] [--base-url https://網站]
+env -u PYTHONPATH $PY scripts/invites.py list                # id、名稱、admin、每日上限、今天（台北）用量、撤銷、session 數；不顯示 token
+env -u PYTHONPATH $PY scripts/invites.py rotate --id 1       # 換發新連結（例如遷移時建立、沒人知道 token 的 admin）；舊連結與已登入的瀏覽器失效
+env -u PYTHONPATH $PY scripts/invites.py revoke --id 2       # 撤銷，並刪除它的 session（下一個請求就 401）
+env -u PYTHONPATH $PY scripts/invites.py delete-data --id 2  # 刪除它的書、頁面、生成紀錄、圖片、session、用量與 owner；要輸入名稱確認（--yes 略過）
+env -u PYTHONPATH $PY scripts/storage_gc.py --dry-run        # 只計數：捨棄超過 30 天的圖（--days 調整）與沒有資料列指到的孤兒物件
+env -u PYTHONPATH $PY scripts/storage_gc.py                  # 真的刪除（頁面選用中、角色圖不會刪）
+```
+
+- 連結前綴：`--base-url`，其次 `auth.invite_base_url`，預設 `http://localhost:3000`。
+- 最後一個未撤銷的 admin 要加 `--force-admin` 才能 `delete-data`；還有圖片正在生成時 `delete-data` 會拒絕，稍後再試。
+- `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試）、2 設定錯誤。
 
 ## 模型（只需要 Qwen）
 

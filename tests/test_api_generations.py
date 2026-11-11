@@ -67,6 +67,41 @@ def test_discard_and_list_filter(client, app):
     assert c in [g["id"] for g in client.get(base).json()]
 
 
+def _discarded_at(app, gen_id):
+    from app.models import Generation
+
+    with app.state.sessions() as s:
+        return s.get(Generation, gen_id).discarded_at
+
+
+def test_discard_sets_and_restore_clears_discarded_at(client, app, monkeypatch):
+    # 保留期限（storage_gc 30 天）從 discarded_at 起算：捨棄時記下，還原時清掉；重複捨棄不延後期限
+    from datetime import datetime, timezone
+
+    from app.api import generations as gen_api
+
+    b, _ = book_with_character(client, app)
+    page = new_page(client, b["id"])
+    c = seed_generation(app, b["id"], page["id"], color_png())
+    assert _discarded_at(app, c) is None
+    t1 = datetime(2026, 11, 1, 3, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(gen_api, "utcnow", lambda: t1)
+    assert client.patch(f"/api/generations/{c}", json={"discarded": True}).status_code == 200
+    assert _discarded_at(app, c) == t1
+    monkeypatch.setattr(gen_api, "utcnow", lambda: datetime(2026, 11, 5, tzinfo=timezone.utc))
+    assert client.patch(f"/api/generations/{c}", json={"discarded": True}).status_code == 200
+    assert _discarded_at(app, c) == t1  # 已捨棄的再捨棄一次：期限不重算
+    r = client.patch(f"/api/generations/{c}", json={"discarded": False})
+    assert r.status_code == 200 and r.json()["discarded"] is False
+    assert _discarded_at(app, c) is None
+
+
+def test_discard_blocked_leaves_discarded_at_null(client, app):
+    b, char_id = book_with_character(client, app)
+    assert client.patch(f"/api/generations/{char_id}", json={"discarded": True}).status_code == 409
+    assert _discarded_at(app, char_id) is None
+
+
 def test_cancel_only_queued(client, app):
     b = new_book(client)
     (g1,) = candidates(client, b["id"], seed=1).json()  # 一次一張

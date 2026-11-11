@@ -90,6 +90,8 @@ class AuthSettings(BaseModel):
     dev_owner: str | None = None
     # cb_session cookie 是否加 Secure（HTTPS 部署時開啟；本機 http 開發要關）
     cookie_secure: bool = False
+    # scripts/invites.py 印出的連結前綴（網站對外網址，例如 https://books.example）；None＝http://localhost:3000
+    invite_base_url: str | None = None
 
     @field_validator("dev_owner")
     @classmethod

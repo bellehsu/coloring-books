@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, delete, select
 
 from app.models import Owner, OwnerSession, utcnow
 
@@ -38,6 +38,21 @@ def create_owner(session: Session, name: str, *, is_admin: bool = False, cap: in
     session.commit()
     session.refresh(owner)
     return owner, token
+
+
+def rotate_token(session: Session, owner: Owner) -> str:
+    """換發 owner 的邀請 token（舊連結立即失效）並刪掉它所有 session，回傳新的原始 token。不 commit。"""
+    token = secrets.token_urlsafe(32)
+    owner.token_hash = hash_token(token)
+    session.add(owner)
+    delete_sessions(session, owner.id)
+    return token
+
+
+def delete_sessions(session: Session, owner_id: int) -> int:
+    """刪掉 owner 的所有 session（已開過連結的瀏覽器下一個請求就是 401）。回傳筆數。不 commit。"""
+    res = session.exec(delete(OwnerSession).where(col(OwnerSession.owner_id) == owner_id))
+    return res.rowcount
 
 
 def owner_for_token(session: Session, token: str) -> Owner | None:

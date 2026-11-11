@@ -196,7 +196,7 @@ def test_auth_settings_defaults_and_env(settings_file: Path, monkeypatch):
 def test_example_settings_has_auth_section():
     """範本不啟用 dev_owner（複製到雲端也安全）；本機開發自己設（README、dev.env.example 有寫）。"""
     raw = yaml.safe_load((PROJECT_ROOT / "config" / "settings.example.yaml").read_text(encoding="utf-8"))
-    assert raw["auth"] == {"dev_owner": None, "cookie_secure": False}
+    assert raw["auth"] == {"dev_owner": None, "cookie_secure": False, "invite_base_url": None}
     assert "APP_AUTH__DEV_OWNER=admin" in (PROJECT_ROOT / "scripts" / "dev.env.example").read_text(encoding="utf-8")
 
 

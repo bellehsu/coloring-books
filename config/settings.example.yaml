@@ -56,3 +56,5 @@ auth:
   dev_owner: null
   # cb_session cookie 加上 Secure（HTTPS 部署時設 true；本機 http 開發維持 false）
   cookie_secure: false
+  # scripts/invites.py 印出的邀請連結前綴（網站對外網址）；null＝http://localhost:3000。可用 --base-url 覆寫
+  invite_base_url: null

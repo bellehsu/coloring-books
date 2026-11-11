@@ -664,3 +664,496 @@ def test_dev_sh_allows_loopback_ip_origin(tmp_path):
     assert r.returncode == 0, r.stderr
     line = next(l for l in r.stdout.splitlines() if "允許的開發來源" in l)
     assert "127.0.0.1" in line.split("：", 1)[1].split(",")
+
+
+# ---------- scripts/invites.py 與 scripts/storage_gc.py（Phase 10 Task 7） ----------
+
+import json as _json  # noqa: E402
+import re as _re  # noqa: E402
+from datetime import timedelta as _td  # noqa: E402
+
+
+@pytest.fixture
+def invites():
+    return _load("invites")
+
+
+@pytest.fixture
+def storage_gc():
+    return _load("storage_gc")
+
+
+def _env(settings_file):
+    """與 app 相同的方式開 DB 與 Storage：(settings, sessions, storage)。"""
+    from app.config import load_settings
+    from app.db import init_db, make_engine, session_factory
+    from app.storage import make_storage
+
+    s = load_settings(settings_file)
+    eng = make_engine(s.paths.database)
+    init_db(eng)
+    return s, session_factory(eng), make_storage(s)
+
+
+def _owner(sessions, name="小明", **kw) -> tuple[int, str]:
+    from app.services import auth
+
+    with sessions() as s:
+        o, token = auth.create_owner(s, name, **kw)
+        return o.id, token
+
+
+def _book(sessions, owner_id, **kw) -> int:
+    from app.models import Book
+
+    with sessions() as s:
+        b = Book(owner_id=owner_id, title="書", paper_size="a4", print_mode="home", **kw)
+        s.add(b)
+        s.commit()
+        return b.id
+
+
+def _page(sessions, book_id, **kw) -> int:
+    from app.models import Page
+
+    with sessions() as s:
+        p = Page(book_id=book_id, position=0, **kw)
+        s.add(p)
+        s.commit()
+        return p.id
+
+
+def _gen(sessions, storage, book_id, page_id=None, *, kind="composite", status="succeeded", image=True,
+         mask=False, discarded_days=None, request_json="{}", preview=False) -> int:
+    """一筆 generation；image／mask 為 True 時寫入物件並記在列上。discarded_days：幾天前捨棄。"""
+    from app.models import Generation, GenKind, GenStatus, utcnow
+
+    with sessions() as s:
+        g = Generation(book_id=book_id, page_id=page_id, kind=GenKind(kind), status=GenStatus(status),
+                       user_text="", prompt="", negative_prompt="", seed=0, width=8, height=8,
+                       request_json=request_json)
+        if discarded_days is not None:
+            g.discarded = True
+            g.discarded_at = utcnow() - _td(days=discarded_days)
+        s.add(g)
+        s.flush()
+        if image:
+            g.image_path = storage.generation_image(book_id, g.id)
+            storage.put(g.image_path, b"img")
+        if mask:
+            g.mask_path = storage.generation_mask(book_id, g.id)
+            storage.put(g.mask_path, b"mask")
+        if preview:
+            storage.put(storage.preview(g.id, "k"), b"pv")
+        s.commit()
+        return g.id
+
+
+def _set(sessions, model, row_id, **values):
+    with sessions() as s:
+        row = s.get(model, row_id)
+        for k, v in values.items():
+            setattr(row, k, v)
+        s.add(row)
+        s.commit()
+
+
+def _keys(storage) -> set[str]:
+    return set(storage.list("books/")) | set(storage.list("cache/"))
+
+
+def _link_token(out: str, base: str) -> str:
+    links = _re.findall(_re.escape(base) + r"/i/([A-Za-z0-9_-]+)", out)
+    assert len(links) == 1, out  # 連結只印一次
+    return links[0]
+
+
+def _row(out: str, name: str) -> list[str]:
+    rows = [line.split() for line in out.splitlines() if name in line.split()]
+    assert len(rows) == 1, out
+    return rows[0]
+
+
+# --- invites.py ---
+
+
+def test_invites_create_prints_link_once_and_list_hides_tokens(invites, settings_file, capsys):
+    from sqlmodel import select
+
+    from app.models import Owner, Usage
+    from app.services import auth
+    from app.services.usage import taipei_day
+
+    args = ["--settings", str(settings_file)]
+    assert invites.main(args + ["create", "--name", "小明", "--cap", "12",
+                                "--base-url", "https://books.example/"]) == 0
+    token = _link_token(capsys.readouterr().out, "https://books.example")
+    assert invites.main(args + ["create", "--name", "管理員", "--admin"]) == 0
+    admin_token = _link_token(capsys.readouterr().out, "http://localhost:3000")
+
+    _, sessions, _ = _env(settings_file)
+    with sessions() as s:
+        o = s.exec(select(Owner).where(Owner.name == "小明")).one()
+        assert o.token_hash == auth.hash_token(token) and o.daily_generation_cap == 12 and not o.is_admin
+        auth.start_session(s, o)
+        auth.start_session(s, o)
+        s.add(Usage(owner_id=o.id, day=taipei_day(auth.utcnow()), generations=7))
+        s.add(Usage(owner_id=o.id, day=taipei_day(auth.utcnow()) - _td(days=1), generations=30))
+        s.commit()
+        hashes = [x.token_hash for x in s.exec(select(Owner)).all()]
+        oid = o.id
+
+    assert invites.main(args + ["list"]) == 0
+    out = capsys.readouterr().out
+    for secret in [token, admin_token, *hashes]:
+        assert secret not in out
+    assert out.splitlines()[0].split() == ["id", "name", "admin", "cap", "today", "revoked", "sessions"]
+    assert _row(out, "小明") == [str(oid), "小明", "no", "12", "7", "no", "2"]
+    assert _row(out, "管理員")[2:] == ["yes", "unlimited", "0", "no", "0"]
+
+
+def test_invites_create_base_url_from_settings(invites, settings_file, capsys, monkeypatch):
+    monkeypatch.setenv("APP_AUTH__INVITE_BASE_URL", "https://cb.example/")
+    assert invites.main(["--settings", str(settings_file), "create", "--name", "阿華"]) == 0
+    _link_token(capsys.readouterr().out, "https://cb.example")
+
+
+def test_invites_create_rejects_bad_input(invites, settings_file):
+    args = ["--settings", str(settings_file), "create"]
+    assert invites.main(args + ["--name", "  "]) == 1
+    assert invites.main(args + ["--name", "x", "--cap", "-1"]) == 1
+
+
+def test_invites_revoke_kills_sessions_and_link(invites, settings_file, capsys):
+    from fastapi.testclient import TestClient
+    from sqlmodel import select
+
+    from app.config import load_settings
+    from app.main import create_app
+    from app.models import Owner, OwnerSession
+    from tests.fake_engine import FakeEngine
+
+    args = ["--settings", str(settings_file)]
+    assert invites.main(args + ["create", "--name", "小明"]) == 0
+    token = _link_token(capsys.readouterr().out, "http://localhost:3000")
+    app = create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False)
+    with TestClient(app) as client:
+        assert client.get(f"/i/{token}", follow_redirects=False).status_code == 303
+        assert client.get("/api/books").status_code == 200
+        with app.state.sessions() as s:
+            oid = s.exec(select(Owner).where(Owner.name == "小明")).one().id
+        assert invites.main(args + ["revoke", "--id", str(oid)]) == 0
+        assert client.get("/api/books").status_code == 401
+        client.cookies.clear()
+        r = client.get(f"/i/{token}", follow_redirects=False)
+        assert r.headers["location"] == "/invalid-link"
+        with app.state.sessions() as s:
+            assert s.get(Owner, oid).revoked_at is not None
+            assert s.exec(select(OwnerSession).where(OwnerSession.owner_id == oid)).all() == []
+    assert invites.main(args + ["revoke", "--id", "999"]) == 1
+
+
+def test_invites_rotate_issues_new_link_and_drops_sessions(invites, settings_file, capsys):
+    from sqlmodel import select
+
+    from app.models import OwnerSession
+    from app.services import auth
+
+    _, sessions, _ = _env(settings_file)
+    with sessions() as s:
+        dev = auth.resolve_dev_owner(s, "admin")  # 遷移／本機的 admin：沒有人知道它的 token
+        auth.start_session(s, dev)
+        dev_id = dev.id
+    oid, old = _owner(sessions)
+    args = ["--settings", str(settings_file)]
+    for target in (dev_id, oid):
+        assert invites.main(args + ["rotate", "--id", str(target), "--base-url", "https://x.test"]) == 0
+        new = _link_token(capsys.readouterr().out, "https://x.test")
+        with sessions() as s:
+            assert auth.owner_for_token(s, new).id == target
+            assert s.exec(select(OwnerSession).where(OwnerSession.owner_id == target)).all() == []
+    with sessions() as s:
+        assert auth.owner_for_token(s, old) is None
+    assert invites.main(args + ["revoke", "--id", str(oid)]) == 0
+    assert invites.main(args + ["rotate", "--id", str(oid)]) == 1  # 已撤銷的不發新連結
+    assert invites.main(args + ["rotate", "--id", "999"]) == 1
+
+
+def _owner_with_data(sessions, storage, name, **kw) -> dict:
+    """一個 owner：兩本書（一本有頁面、生成紀錄、修線、線稿、預覽），一個 session，兩天的用量。"""
+    from app.models import LineartEdit, Owner, Page, Usage
+    from app.services import auth
+    from app.services.usage import taipei_day
+
+    oid, _ = _owner(sessions, name, **kw)
+    b1 = _book(sessions, oid)
+    b2 = _book(sessions, oid)
+    p = _page(sessions, b1)
+    g = _gen(sessions, storage, b1, p, kind="pose", mask=True, preview=True)
+    q = _gen(sessions, storage, b1, p, status="queued", image=False)
+    lin = storage.lineart(b1, p, "abc")
+    storage.put(lin, b"lin")
+    _set(sessions, Page, p, lineart_path=lin, lineart_key="abc",
+         selected_generation_id=g)
+    with sessions() as s:
+        s.add(LineartEdit(generation_id=g, page_id=p, strokes_json="[]"))
+        owner = s.get(Owner, oid)
+        auth.start_session(s, owner)
+        s.add(Usage(owner_id=oid, day=taipei_day(auth.utcnow()), generations=3))
+        s.commit()
+    return {"owner": oid, "books": [b1, b2], "page": p, "gens": [g, q]}
+
+
+def _counts(sessions, d) -> dict:
+    from sqlmodel import col, select
+
+    from app.models import Book, Generation, LineartEdit, Owner, OwnerSession, Page, Usage
+
+    with sessions() as s:
+        return {
+            "owner": s.get(Owner, d["owner"]) is not None,
+            "books": len(s.exec(select(Book).where(Book.owner_id == d["owner"])).all()),
+            "pages": len(s.exec(select(Page).where(col(Page.book_id).in_(d["books"]))).all()),
+            "gens": len(s.exec(select(Generation).where(col(Generation.book_id).in_(d["books"]))).all()),
+            "edits": len(s.exec(select(LineartEdit).where(LineartEdit.page_id == d["page"])).all()),
+            "sessions": len(s.exec(select(OwnerSession).where(OwnerSession.owner_id == d["owner"])).all()),
+            "usage": len(s.exec(select(Usage).where(Usage.owner_id == d["owner"])).all()),
+        }
+
+
+def _owned_keys(storage, d) -> set[str]:
+    keys = {k for b in d["books"] for k in storage.list(f"books/{b}/")}
+    return keys | {k for g in d["gens"] for k in storage.list(f"cache/previews/{g}_")}
+
+
+def test_delete_data_removes_rows_and_objects_only_for_that_owner(invites, settings_file, capsys):
+    _, sessions, storage = _env(settings_file)
+    _owner(sessions, "管理員", is_admin=True)
+    a = _owner_with_data(sessions, storage, "小明")
+    b = _owner_with_data(sessions, storage, "阿華")
+    before_b = _counts(sessions, b)
+    keys_b = _owned_keys(storage, b)
+    assert len(_owned_keys(storage, a)) == 4 and len(keys_b) == 4
+
+    assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]) == 0
+    assert _counts(sessions, a) == {"owner": False, "books": 0, "pages": 0, "gens": 0, "edits": 0,
+                                    "sessions": 0, "usage": 0}
+    assert _owned_keys(storage, a) == set()
+    assert _counts(sessions, b) == before_b and _owned_keys(storage, b) == keys_b
+    assert "小明" in capsys.readouterr().out
+
+
+def test_delete_data_asks_for_the_name(invites, settings_file, monkeypatch):
+    _, sessions, storage = _env(settings_file)
+    _owner(sessions, "管理員", is_admin=True)
+    a = _owner_with_data(sessions, storage, "小明")
+    before = _counts(sessions, a)
+    args = ["--settings", str(settings_file), "delete-data", "--id", str(a["owner"])]
+    monkeypatch.setattr("builtins.input", lambda prompt="": "小")
+    assert invites.main(args) == 1
+    assert _counts(sessions, a) == before
+    monkeypatch.setattr("builtins.input", lambda prompt="": "小明")
+    assert invites.main(args) == 0
+    assert _counts(sessions, a)["owner"] is False
+
+
+def test_delete_data_refuses_last_admin(invites, settings_file):
+    from app.models import Owner, utcnow
+
+    _, sessions, storage = _env(settings_file)
+    admin = _owner_with_data(sessions, storage, "管理員", is_admin=True)
+    _owner(sessions, "小明")
+    old_admin, _ = _owner(sessions, "舊管理員", is_admin=True)
+    _set(sessions, Owner, old_admin, revoked_at=utcnow())  # 已撤銷的 admin 不算
+    args = ["--settings", str(settings_file), "delete-data", "--id", str(admin["owner"]), "--yes"]
+    assert invites.main(args) == 1
+    assert _counts(sessions, admin)["books"] == 2
+    _owner(sessions, "新管理員", is_admin=True)
+    assert invites.main(args) == 0
+    assert _counts(sessions, admin)["owner"] is False
+
+
+def test_delete_data_force_admin(invites, settings_file):
+    _, sessions, storage = _env(settings_file)
+    admin = _owner_with_data(sessions, storage, "管理員", is_admin=True)
+    args = ["--settings", str(settings_file), "delete-data", "--id", str(admin["owner"]), "--yes"]
+    assert invites.main(args + ["--force-admin"]) == 0
+    assert _counts(sessions, admin)["owner"] is False
+
+
+def test_delete_data_refuses_while_generating(invites, settings_file):
+    from app.models import Generation, GenStatus
+
+    _, sessions, storage = _env(settings_file)
+    _owner(sessions, "管理員", is_admin=True)
+    a = _owner_with_data(sessions, storage, "小明")
+    _gen(sessions, storage, a["books"][1], status="running", image=False)
+    before = _counts(sessions, a)
+    keys = _owned_keys(storage, a)
+    args = ["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]
+    assert invites.main(args) == 1
+    assert _counts(sessions, a) == before and _owned_keys(storage, a) == keys
+    with sessions() as s:
+        assert s.get(Generation, a["gens"][1]).status == GenStatus.QUEUED  # 取消已 rollback
+    assert invites.main(["--settings", str(settings_file), "delete-data", "--id", "999", "--yes"]) == 1
+
+
+# --- storage_gc.py ---
+
+
+def _gc_world(settings_file):
+    """一本書、一頁，各種 generation 與物件。回傳 (sessions, storage, ids, expected)。"""
+    from app.models import Book, Generation, Page
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "管理員", is_admin=True)
+    b = _book(sessions, oid)
+    p = _page(sessions, b)
+    ids = {}
+    ids["old"] = _gen(sessions, storage, b, p, kind="pose", mask=True, discarded_days=31, preview=True)
+    ids["recent"] = _gen(sessions, storage, b, p, discarded_days=5)
+    ids["live"] = _gen(sessions, storage, b, p, preview=True)
+    for name in ("sel", "bg", "pose", "char", "ref"):
+        ids[name] = _gen(sessions, storage, b, p, mask=(name == "pose"), discarded_days=40)
+    ref_key = storage.generation_image(b, ids["ref"])
+    ids["queued"] = _gen(sessions, storage, b, p, kind="pose", status="queued", image=False,
+                         request_json=_json.dumps({"character_image": ref_key}))
+    ids["running"] = _gen(sessions, storage, b, p, status="running", image=False)
+    storage.put(storage.generation_image(b, ids["running"]), b"partial")  # worker 寫了、還沒記到列上
+    ids["gone"] = _gen(sessions, storage, b, p, mask=True, preview=True)
+    with sessions() as s:
+        s.delete(s.get(Generation, ids["gone"]))
+        s.commit()
+    inflight = ids["gone"] + 10  # 還沒 commit 的列（id 大於 sqlite_sequence）：物件先寫、列後 commit
+    storage.put(storage.generation_image(b, inflight), b"new")
+    storage.put(storage.preview(inflight, "k"), b"pv")
+    lin_cur, lin_old = storage.lineart(b, p, "cur"), storage.lineart(b, p, "old")
+    storage.put(lin_cur, b"l")
+    storage.put(lin_old, b"l")
+    sketch = f"books/{b}/pages/{p}/sketch.png"  # 舊版欄位（已移除）留下的檔案
+    storage.put(sketch, b"s")
+    wrong_book = storage.generation_image(b + 50, ids["live"])
+    storage.put(wrong_book, b"x")
+    _set(sessions, Page, p, selected_generation_id=ids["sel"], background_generation_id=ids["bg"],
+         pose_generation_id=ids["pose"], lineart_path=lin_cur, lineart_key="cur")
+    _set(sessions, Book, b, character_generation_id=ids["char"])
+
+    expired = {storage.generation_image(b, ids["old"]), storage.generation_mask(b, ids["old"]),
+               storage.preview(ids["old"], "k")}
+    orphans = {storage.generation_image(b, ids["gone"]), storage.generation_mask(b, ids["gone"]),
+               lin_old, sketch, wrong_book}
+    orphan_previews = {storage.preview(ids["gone"], "k")}
+    return sessions, storage, ids, {"expired": expired, "orphans": orphans, "orphan_previews": orphan_previews}
+
+
+def _paths(sessions) -> dict:
+    from sqlmodel import select
+
+    from app.models import Generation
+
+    with sessions() as s:
+        return {g.id: (g.image_path, g.mask_path) for g in s.exec(select(Generation)).all()}
+
+
+def test_gc_dry_run_deletes_nothing(storage_gc, settings_file, capsys):
+    sessions, storage, ids, exp = _gc_world(settings_file)
+    keys, paths = _keys(storage), _paths(sessions)
+    assert storage_gc.main(["--settings", str(settings_file), "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert _keys(storage) == keys and _paths(sessions) == paths
+    assert "dry-run" in out.lower()
+    rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=True)
+    assert (rep.expired_generations, rep.expired_objects) == (1, 3)
+    assert (rep.orphan_objects, rep.orphan_previews) == (5, 1)
+    assert _keys(storage) == keys and _paths(sessions) == paths
+
+
+def test_gc_deletes_only_expired_discarded_and_orphans(storage_gc, settings_file, capsys):
+    sessions, storage, ids, exp = _gc_world(settings_file)
+    keys, paths = _keys(storage), _paths(sessions)
+    assert storage_gc.main(["--settings", str(settings_file)]) == 0
+    out = capsys.readouterr().out
+    gone = exp["expired"] | exp["orphans"] | exp["orphan_previews"]
+    assert gone <= keys
+    assert _keys(storage) == keys - gone
+    after = _paths(sessions)
+    assert after[ids["old"]] == (None, None)  # 物件刪了，key 清掉
+    for name in ("recent", "live", "sel", "bg", "pose", "char", "ref"):
+        assert after[ids[name]] == paths[ids[name]], name  # 選用中的、角色、排隊任務要用的，捨棄再久也不刪
+    for n in ("1", "3", "5"):
+        assert n in out
+    # 再跑一次：沒有東西可刪
+    rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=False)
+    assert (rep.expired_generations, rep.expired_objects, rep.orphan_objects, rep.orphan_previews) == (0, 0, 0, 0)
+
+
+def test_gc_days_option(storage_gc, settings_file):
+    sessions, storage, ids, _ = _gc_world(settings_file)
+    assert storage_gc.main(["--settings", str(settings_file), "--days", "3"]) == 0
+    after = _paths(sessions)
+    assert after[ids["recent"]] == (None, None) and after[ids["old"]] == (None, None)
+    assert after[ids["live"]][0] is not None and after[ids["sel"]][0] is not None
+    assert storage_gc.main(["--settings", str(settings_file), "--days", "-1"]) == 2
+
+
+def test_gc_never_clears_a_generation_that_became_selected(storage_gc, settings_file, monkeypatch):
+    # 讀完 DB 之後才被選用（另一個行程）：清 key 的 UPDATE 重新檢查，不清也不刪
+    from sqlmodel import select
+
+    from app.models import Page
+
+    sessions, storage, ids, _ = _gc_world(settings_file)
+    real = storage_gc._load_state
+
+    def racing(sess, now, days):
+        st = real(sess, now, days)
+        with sessions() as s:
+            page_id = s.exec(select(Page)).first().id
+        _set(sessions, Page, page_id, selected_generation_id=ids["old"])
+        return st
+
+    monkeypatch.setattr(storage_gc, "_load_state", racing)
+    before = _paths(sessions)[ids["old"]]
+    rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=False)
+    assert rep.expired_generations == 0
+    assert _paths(sessions)[ids["old"]] == before
+    assert all(storage.exists(k) for k in before)
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    import socket
+
+    def blocked(*args, **kwargs):
+        raise RuntimeError(f"測試不可連網：{args!r}")
+
+    monkeypatch.setattr(socket.socket, "connect", blocked)
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    monkeypatch.setattr(socket, "getaddrinfo", blocked)
+
+
+def test_gc_on_r2_deletes_through_cached_storage(storage_gc, settings_file, tmp_path, monkeypatch, no_network):
+    import boto3
+    import moto
+
+    from app.storage import CachedStorage
+
+    for k in ("AWS_PROFILE", "AWS_SESSION_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    cache = tmp_path / "r2cache"
+    for k, v in {"BACKEND": "r2", "R2__ENDPOINT": "https://s3.amazonaws.com", "R2__BUCKET": "gc-bucket",
+                 "R2__ACCESS_KEY": "AK", "R2__SECRET_KEY": "SK", "CACHE_DIR": str(cache)}.items():
+        monkeypatch.setenv(f"APP_STORAGE__{k}", v)
+    with moto.mock_aws():
+        boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="gc-bucket")
+        sessions, storage, ids, exp = _gc_world(settings_file)
+        assert isinstance(storage, CachedStorage)
+        old = storage.generation_image(1, ids["old"])
+        assert storage.get(old) == b"img" and (cache / old).is_file()  # 快取裡也有一份
+        assert storage_gc.main(["--settings", str(settings_file)]) == 0
+        assert not storage.inner.exists(old)
+        assert not (cache / old).exists()
+        assert not any(storage.inner.exists(k) for k in exp["orphans"] | exp["orphan_previews"])
+        assert storage.inner.exists(storage.generation_image(1, ids["sel"]))

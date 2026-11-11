@@ -178,7 +178,16 @@ def update_generation(
             | select(Book.id).where(col(Book.character_generation_id) == gen_id).exists()
         )
         guard = guard & ~in_use
-    values: dict = {"discarded": body.discarded}
+    # 保留期限（storage_gc）從 discarded_at 起算：捨棄時記下（已捨棄的不重算，期限不往後延），還原時清掉
+    discarded_at_type = Generation.__table__.c.discarded_at.type
+    values: dict = {
+        "discarded": body.discarded,
+        "discarded_at": (
+            func.coalesce(col(Generation.discarded_at), literal(utcnow(), discarded_at_type))
+            if body.discarded
+            else None
+        ),
+    }
     if body.discarded:
         # 捨棄排隊中的任務等於取消它，避免 worker 之後仍去執行
         values["status"] = case(
