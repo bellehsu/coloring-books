@@ -17,6 +17,7 @@ from .api import books, compose, export, files, generations, invites, lineart, p
 from .api.deps import require_admin, require_owned_path
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
+from .log_redact import install_log_redaction
 from .services.comfy_client import ComfyClient
 from .services.comfy_engine import ComfyEngine
 from .services.engine import GenerationEngine
@@ -36,8 +37,12 @@ def create_app(
     start_worker: bool = True,
     startup_preflight: bool = True,
 ) -> FastAPI:
+    # 邀請連結的 token 不進 access log（GET /i/<token> → /i/***）。uvicorn CLI（dev.sh）import 本模組時就會裝上
+    install_log_redaction()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        install_log_redaction()  # 建 app 之後才重設 logging 的啟動方式也涵蓋（重複呼叫只裝一次）
         s = settings or load_settings()
         app.state.settings = s
         app.state.registry = WorkflowRegistry(s.paths.workflows_dir).load()
