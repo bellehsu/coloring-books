@@ -27,6 +27,30 @@ BUCKET = "test-bucket"
 MOTO_ENDPOINT = "https://s3.amazonaws.com"
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """結構性擋掉真正的網路：socket connect 與 DNS 一律丟錯（moto 在 botocore 層攔截，不需要 socket）。"""
+    import socket
+
+    def blocked(*args, **kwargs):
+        raise RuntimeError(f"測試不可連網：{args!r}")
+
+    monkeypatch.setattr(socket.socket, "connect", blocked)
+    monkeypatch.setattr(socket.socket, "connect_ex", blocked)
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    monkeypatch.setattr(socket, "getaddrinfo", blocked)
+    monkeypatch.setattr(socket, "gethostbyname", blocked)
+
+
+def test_network_is_blocked():
+    import socket
+
+    with pytest.raises(RuntimeError):
+        socket.getaddrinfo("example.com", 443)
+    with pytest.raises(RuntimeError):
+        socket.create_connection(("127.0.0.1", 9))
+
+
 @pytest.fixture
 def aws_env(monkeypatch):
     """確保不會讀到本機真正的 AWS 憑證。"""
@@ -91,7 +115,7 @@ def test_list_prefix_returns_only_matching(storage):
     assert sorted(storage.list("books/1/")) == sorted(keys[:3])
     assert sorted(storage.list("books/1/generations/")) == keys[:2]
     assert list(storage.list("books/99/")) == []
-    assert sorted(storage.list("")) == sorted(keys)
+    assert sorted([*storage.list("books/"), *storage.list("cache/")]) == sorted(keys)
 
 
 def test_delete_prefix(storage):
@@ -100,7 +124,7 @@ def test_delete_prefix(storage):
     for k in keys:
         storage.put(k, b"x")
     storage.delete_prefix("books/1/pages/3/")
-    assert sorted(storage.list("")) == sorted(keys[2:])
+    assert sorted(storage.list("books/")) == sorted(keys[2:])
     for k in keys[:2]:
         assert not storage.exists(k)
         with pytest.raises(StorageNotFound):
@@ -108,11 +132,43 @@ def test_delete_prefix(storage):
     storage.delete_prefix("books/77/")  # 不存在的 prefix 不報錯
 
 
-def test_delete_prefix_refuses_empty(storage):
-    storage.put("books/1/a.png", b"x")
+@pytest.mark.parametrize("bad_prefix", ["", "books/1", "books", "app", "books/1/a.png"])
+def test_delete_prefix_requires_trailing_slash(storage, bad_prefix):
+    keys = ["books/1/a.png", "books/10/a.png", "books/12/a.png"]
+    for k in keys:
+        storage.put(k, b"x")
     with pytest.raises(ValueError):
-        storage.delete_prefix("")
-    assert storage.exists("books/1/a.png")
+        storage.delete_prefix(bad_prefix)
+    for k in keys:
+        assert storage.exists(k)
+    # books/1/ 只刪 books/1，不碰 books/10、books/12
+    storage.delete_prefix("books/1/")
+    assert sorted(storage.list("books/")) == ["books/10/a.png", "books/12/a.png"]
+
+
+@pytest.mark.parametrize("make", ["local", "cached"])
+def test_local_prefix_ops_limited_to_books_and_cache(tmp_path, make):
+    root = tmp_path / "root"
+    local = LocalStorage(root, b"k")
+    st = local if make == "local" else CachedStorage(local, tmp_path / "cache", 10_000)
+    root.mkdir(parents=True)
+    (root / "app.db").write_bytes(b"db")
+    (root / ".signing_key").write_bytes(b"k" * 64)
+    st.put("books/1/a.png", b"x")
+    st.put("cache/previews/1_a.png", b"x")
+    for bad in ("", "app", "a", ".", ".s", "storage/", "booksx/", "books"):
+        with pytest.raises(ValueError):
+            list(st.list(bad))
+    for bad in ("app/", ".signing_key/", "other/"):
+        with pytest.raises(ValueError):
+            st.delete_prefix(bad)
+    assert list(st.list("books/")) == ["books/1/a.png"]
+    assert list(st.list("cache/")) == ["cache/previews/1_a.png"]
+    assert list(st.list("books/1")) == ["books/1/a.png"]
+    st.delete_prefix("cache/")
+    st.delete_prefix("books/")
+    assert (root / "app.db").read_bytes() == b"db"
+    assert (root / ".signing_key").exists()
 
 
 BAD_KEYS = ["../evil.png", "books/../../evil.png", "books/1/..", "/etc/passwd", "/books/1/a.png"]
@@ -163,6 +219,11 @@ def test_local_signed_url_verifies(tmp_path):
     assert not st.verify("books/1/generations/2.png", exp + 1, sig, now=now)
     assert not st.verify("books/1/generations/2.png", "abc", sig, now=now)
     assert not st.verify("../evil.png", exp, sig, now=now)
+    # 非 ASCII／非字串的 sig 回 False，不丟 TypeError
+    assert not st.verify("books/1/generations/2.png", exp, "é" * 64, now=now)
+    assert not st.verify("books/1/a.png", 9999999999, "é" * 64)
+    assert not st.verify("books/1/generations/2.png", exp, None, now=now)
+    assert not st.verify("books/1/generations/2.png", exp, sig.upper() + "\x00", now=now)
     # 過期
     assert not st.verify("books/1/generations/2.png", exp, sig, now=now + 121)
     # 不同金鑰簽的不算
@@ -357,4 +418,4 @@ def test_local_put_is_atomic(tmp_path, monkeypatch):
     # 暫存檔以 .tmp 結尾（既有測試用 rglob("*.tmp") 檢查沒有殘留）
     assert seen and seen[0].endswith(".tmp")
     assert st.get("books/1/a.png") == b"old"
-    assert sorted(st.list("")) == ["books/1/a.png"]
+    assert sorted(st.list("books/")) == ["books/1/a.png"]

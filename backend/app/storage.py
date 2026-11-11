@@ -67,6 +67,24 @@ def _check_key(key: str, *, prefix: bool = False) -> str:
     return key
 
 
+def _check_delete_prefix(prefix: str) -> str:
+    """delete_prefix 的 prefix 必須非空且以 / 結尾（避免 books/1 誤刪 books/10、app 誤刪 app.db）。"""
+    _check_key(prefix, prefix=True)
+    if not prefix or not prefix.endswith("/"):
+        raise ValueError(f"delete_prefix 的 prefix 必須非空且以 / 結尾：{prefix!r}")
+    return prefix
+
+
+# LocalStorage 的 root 也放 app.db 與 .signing_key；list／delete_prefix 只能碰這兩個資料夾
+_LOCAL_PREFIX_ROOTS = ("books/", "cache/")
+
+
+def _check_local_prefix(prefix: str) -> str:
+    if not prefix.startswith(_LOCAL_PREFIX_ROOTS):
+        raise ValueError(f"LocalStorage 只能列出／刪除 books/ 或 cache/ 底下：{prefix!r}")
+    return prefix
+
+
 class StorageProtocol(Protocol):
     """所有二進位檔案（生成圖、遮罩、線稿、預覽）的存取介面。key 是今天的相對路徑格式。
 
@@ -78,7 +96,7 @@ class StorageProtocol(Protocol):
     def exists(self, key: str) -> bool: ...
     def signed_url(self, key: str, ttl_s: int) -> str: ...
     def list(self, prefix: str) -> Iterator[str]: ...
-    def delete_prefix(self, prefix: str) -> None: ...  # prefix 不可為空
+    def delete_prefix(self, prefix: str) -> None: ...  # prefix 必須非空且以 / 結尾
 
     def generation_image(self, book_id: int, gen_id: int) -> str: ...
     def generation_mask(self, book_id: int, gen_id: int) -> str: ...
@@ -194,13 +212,11 @@ class LocalStorage(_KeyBuilders):
         return self._path(key).is_file()
 
     def list(self, prefix: str) -> Iterator[str]:
-        _check_key(prefix, prefix=True)
+        _check_local_prefix(_check_key(prefix, prefix=True))
         return (key for key, _ in _walk_files(self.root, prefix))
 
     def delete_prefix(self, prefix: str) -> None:
-        _check_key(prefix, prefix=True)
-        if not prefix:
-            raise ValueError("delete_prefix 的 prefix 不可為空")
+        _check_local_prefix(_check_delete_prefix(prefix))
         for _key, path in list(_walk_files(self.root, prefix)):
             path.unlink(missing_ok=True)
         _prune_empty_dirs(self.root, prefix)
@@ -222,9 +238,10 @@ class LocalStorage(_KeyBuilders):
             return False
         if exp_i < (time.time() if now is None else now):
             return False
-        if not isinstance(sig, str):
+        # compare_digest 遇到非 ASCII 的 str 會丟 TypeError；不是 ASCII 字串就直接不合格
+        if not isinstance(sig, str) or not sig.isascii():
             return False
-        return hmac.compare_digest(self._sign(key, exp_i), sig)
+        return hmac.compare_digest(self._sign(key, exp_i).encode(), sig.encode())
 
     # --- 暫時保留（Task 2 把呼叫端改成 put/get 後移除） ---
 
@@ -321,9 +338,7 @@ class R2Storage(_KeyBuilders):
                 yield obj["Key"]
 
     def delete_prefix(self, prefix: str) -> None:
-        _check_key(prefix, prefix=True)
-        if not prefix:
-            raise ValueError("delete_prefix 的 prefix 不可為空")
+        _check_delete_prefix(prefix)
         batch: list[dict[str, str]] = []
         for key in self._iter_keys(prefix):
             batch.append({"Key": key})
@@ -428,9 +443,7 @@ class CachedStorage(_KeyBuilders):
         return self.inner.list(prefix)
 
     def delete_prefix(self, prefix: str) -> None:
-        _check_key(prefix, prefix=True)
-        if not prefix:
-            raise ValueError("delete_prefix 的 prefix 不可為空")
+        _check_delete_prefix(prefix)
         self.inner.delete_prefix(prefix)
         for _key, path in list(_walk_files(self.cache_dir, prefix)):
             path.unlink(missing_ok=True)
@@ -459,6 +472,9 @@ def _load_or_create_signing_key(storage_dir: Path) -> bytes:
                 pass  # 別的行程先建好了，用它的
         finally:
             Path(tmp).unlink(missing_ok=True)
+    # 既有的金鑰檔權限比 0600 寬就收緊（例如手動建立或從備份還原）
+    if os.stat(path).st_mode & 0o077:
+        os.chmod(path, 0o600)
     key = path.read_bytes().strip()
     if len(key) < 32:
         raise SettingsError([f"簽章金鑰檔內容不完整：{path}（刪除後重啟即可重新產生）"])

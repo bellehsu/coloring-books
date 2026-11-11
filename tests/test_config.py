@@ -205,6 +205,20 @@ def test_make_storage_local_generates_signing_key_once(settings_file: Path, clea
     assert st2.verify("books/1/a.png", q["exp"][0], q["sig"][0])
 
 
+def test_make_storage_tightens_loose_signing_key_permissions(settings_file: Path, clean_storage_env):
+    import stat
+
+    from app.storage import make_storage
+
+    s = load_settings(settings_file)
+    key_file = s.paths.storage_dir / ".signing_key"
+    key_file.write_text("a" * 64)
+    key_file.chmod(0o644)
+    make_storage(s)
+    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+    assert key_file.read_text() == "a" * 64
+
+
 def test_make_storage_signing_key_from_env(settings_file: Path, clean_storage_env, monkeypatch):
     from urllib.parse import parse_qs, urlparse
 
