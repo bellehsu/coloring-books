@@ -65,6 +65,10 @@ describe("actions", () => {
       expect(setExclusivePhrase(`a, ${happy}, b`, EXPRESSIONS, null)).toBe("a, b");
       expect(setExclusivePhrase(happy, EXPRESSIONS, null)).toBe("");
     });
+    it("cleans a leftover full-width comma", () => {
+      expect(setExclusivePhrase(`揮手, ${EXPRESSIONS[0].phrase}，跑步`, EXPRESSIONS, laugh)).toBe(`揮手, 跑步, ${laugh}`);
+      expect(setExclusivePhrase(`揮手，${happy}`, EXPRESSIONS, null)).toBe("揮手");
+    });
     it("leaves other groups alone", () => {
       const left = FACINGS[0].phrase;
       expect(setExclusivePhrase(`${happy}, ${left}`, EXPRESSIONS, laugh)).toBe(`${left}, ${laugh}`);

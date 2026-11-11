@@ -149,7 +149,19 @@ function usePageText(serverValue: string, send: (v: string) => Promise<unknown>)
     });
     return p;
   };
-  return { value, setValue: setEdited, save };
+  /** 設定值並立刻送出（晶片點擊用）；送的是 v，不是還沒更新的 edited。 */
+  const setNow = (v: string): Promise<unknown> => {
+    setEdited(v);
+    if (!sent.current && v === serverValue) return Promise.resolve();
+    const p = send(v);
+    const entry = { value: v, p };
+    sent.current = entry;
+    p.catch(() => {
+      if (sent.current === entry) sent.current = null;
+    });
+    return p;
+  };
+  return { value, setValue: setEdited, setNow, save };
 }
 
 /** 一次只跑一個（整段 await 期間停用按鈕；ref 擋住同一輪 render 前的第二次點擊）。 */
@@ -449,7 +461,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
                   disabled={added || tooLong}
                   aria-label={added ? `${a.label}（已加入）` : undefined}
                   title={tooLong ? `再加入會超過 ${MAX_ACTION} 字` : undefined}
-                  onClick={() => action.setValue(appendPhrase(action.value, a.phrase))}
+                  onClick={() => void action.setNow(appendPhrase(action.value, a.phrase)).catch(() => {})}
                 >
                   {added ? <span aria-hidden="true">✓ </span> : null}
                   {a.label}
@@ -457,12 +469,12 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
               );
             })}
           </div>
-          <ExclusiveChips label="表情" group={EXPRESSIONS} text={action.value} onChange={action.setValue} />
+          <ExclusiveChips label="表情" group={EXPRESSIONS} text={action.value} onChange={(v) => void action.setNow(v).catch(() => {})} />
           <ExclusiveChips
             label="面向"
             group={FACINGS}
             text={action.value}
-            onChange={action.setValue}
+            onChange={(v) => void action.setNow(v).catch(() => {})}
             hint={FACING_HINT}
           />
           <p className={styles.hint}>改動作文字後按「換一張」。</p>

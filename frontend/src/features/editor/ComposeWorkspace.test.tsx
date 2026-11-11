@@ -298,6 +298,30 @@ describe("ComposeWorkspace", () => {
     expect(order.indexOf("PATCH /api/pages/1")).toBeLessThan(order.indexOf("POST /api/pages/1/poses"));
   });
 
+  it("點晶片立即存 action_prompt（不用等 blur）：動作、表情、面向、取代表情", async () => {
+    setup();
+    const pose = card("角色動作");
+    await userEvent.click(within(pose).getByRole("button", { name: "揮手" }));
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+    expect(calledWith("PATCH", "/api/pages/1")[0].body).toEqual({ action_prompt: "抱著一本書往上爬, waving one hand" });
+    const expr = within(pose).getByRole("group", { name: "表情" });
+    await userEvent.click(within(expr).getByRole("button", { name: "大笑" }));
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(2));
+    expect(calledWith("PATCH", "/api/pages/1")[1].body).toEqual({
+      action_prompt: "抱著一本書往上爬, waving one hand, with a big laughing expression",
+    });
+    await userEvent.click(within(expr).getByRole("button", { name: "難過" })); // 取代
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(3));
+    expect(calledWith("PATCH", "/api/pages/1")[2].body).toEqual({
+      action_prompt: "抱著一本書往上爬, waving one hand, with a sad expression",
+    });
+    await userEvent.click(within(pose).getByRole("group", { name: "面向" }).querySelector("button") as HTMLElement);
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(4));
+    expect((calledWith("PATCH", "/api/pages/1")[3].body as { action_prompt: string }).action_prompt).toContain(
+      "facing toward the left side of the picture",
+    );
+  });
+
   it("表情與面向：單選、再按一次取消、超過長度停用、面向提示", async () => {
     setup();
     const pose = card("角色動作");

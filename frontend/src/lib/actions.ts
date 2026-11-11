@@ -36,7 +36,7 @@ export const EXPRESSIONS: { label: string; phrase: string }[] = [
   { label: "害怕", phrase: "with a scared expression" },
 ];
 
-/** 面向（單選）：後端以這些完整片語偵測（不分大小寫），偵測到時只用轉身幅度小的變化。 */
+/** 面向（單選）：後端以這些完整片語偵測（不分大小寫），偵測到時不用轉向變化，只用動作幅度變化（3、4）。 */
 export const FACINGS: { label: string; phrase: string }[] = [
   { label: "朝左", phrase: "facing toward the left side of the picture" },
   { label: "正面", phrase: "facing the viewer" },
@@ -75,8 +75,8 @@ export function setExclusivePhrase(text: string, group: { phrase: string }[], ph
   }
   out = out
     .replace(/[ \t]{2,}/g, " ")
-    .replace(/\s*,(?:\s*,)+/g, ",")
-    .replace(/^[\s,]+|[\s,]+$/g, "")
-    .replace(/\s+,/g, ",");
+    .replace(/\s*[,，](?:\s*[,，])+\s*/g, ", ")
+    .replace(/^[\s,，]+|[\s,，]+$/g, "")
+    .replace(/\s+[,，]/g, ",");
   return phrase ? appendPhrase(out, phrase) : out;
 }
