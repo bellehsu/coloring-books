@@ -33,7 +33,7 @@ async def _main(args: argparse.Namespace) -> int:
         registry.entries = {k: v for k, v in registry.entries.items() if k in args.workflow}
     url = args.comfy_url or settings.comfy.url
     async with ComfyClient(url, request_timeout_s=settings.comfy.request_timeout_s) as client:
-        report = await run_preflight(client, registry)
+        report = await run_preflight(client, registry, caption_font=settings.paths.caption_font)
     if args.json:
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
     else:

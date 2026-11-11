@@ -18,6 +18,7 @@ from .api.deps import require_admin, require_owned_path
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
 from .log_redact import install_log_redaction
+from .services.captions import check_caption_font
 from .services.comfy_client import ComfyClient
 from .services.comfy_engine import ComfyEngine
 from .services.engine import GenerationEngine
@@ -67,6 +68,9 @@ def create_app(
             s.queue.retry_backoff_s,
         )
         app.state.preflight = None  # None＝還沒檢查過
+        font_problem = check_caption_font(s.paths.caption_font)
+        if font_problem:  # 不擋啟動：只有「有頁面文字」的頁面匯出會 409
+            log.warning("頁面文字字型不能用（paths.caption_font）：%s", font_problem)
         if s.auth.dev_owner:
             log.warning(
                 "!!! auth.dev_owner=%r：沒有 cookie 的請求一律當作 admin「%s」（看得到、改得到所有人的繪本）。"
@@ -83,7 +87,8 @@ def create_app(
                 except Exception:  # noqa: BLE001  preflight 失敗不可讓服務當機
                     log.exception("preflight failed")
                 else:
-                    (log.info if report.ok else log.warning)("preflight\n%s", format_report(report))
+                    font_ok = report.caption_font is None or report.caption_font.ok
+                    (log.info if report.ok and font_ok else log.warning)("preflight\n%s", format_report(report))
             yield
         finally:
             await app.state.worker.stop()
@@ -133,7 +138,7 @@ def create_app(
         """跑 preflight 並更新快取 app.state.preflight。"""
         s: Settings = app.state.settings
         async with ComfyClient(s.comfy.url, request_timeout_s=s.comfy.request_timeout_s) as client:
-            report = await run_preflight(client, app.state.registry)
+            report = await run_preflight(client, app.state.registry, caption_font=s.paths.caption_font)
         app.state.preflight = report
         return report
 

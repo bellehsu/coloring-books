@@ -83,3 +83,16 @@ def test_startup_warns_loudly_when_dev_owner_set(settings_file, caplog):
         assert bool(warned) is expect, dev
         if expect:
             assert "admin" in warned[0].getMessage() and "不可" in warned[0].getMessage()
+
+
+def test_preflight_endpoint_reports_missing_caption_font(settings_file, object_info_subset, monkeypatch, tmp_path):
+    from tests.test_preflight import tiny_object_info
+
+    fake = FakeComfy(object_info=tiny_object_info(object_info_subset))
+    monkeypatch.setattr(app_main, "ComfyClient", lambda url, **kw: fake.client(**kw))
+    monkeypatch.setenv("APP_PATHS__CAPTION_FONT", str(tmp_path / "missing.ttf"))
+    app = app_main.create_app(load_settings(settings_file))  # 字型不見不會讓啟動失敗
+    with TestClient(app) as client:
+        body = client.get("/api/system/preflight").json()
+    assert body["ok"] and body["workflows"][0]["ok"]
+    assert body["caption_font"]["ok"] is False and "missing.ttf" in body["caption_font"]["error"]

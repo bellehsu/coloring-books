@@ -1,6 +1,7 @@
 """共用相依：從 request.app.state 取得 session、storage、worker；目前的 owner 與擁有權檢查。"""
 
 from collections.abc import Iterator
+from pathlib import Path
 
 from fastapi import Depends, HTTPException, Request
 from pydantic import TypeAdapter, ValidationError
@@ -26,6 +27,11 @@ def get_session(request: Request) -> Iterator[Session]:
 
 def get_storage(request: Request) -> Storage:
     return request.app.state.storage
+
+
+def get_caption_font(request: Request) -> Path | None:
+    """頁面文字的字型路徑（paths.caption_font）；檔案在不在由使用端處理（缺字型 → 409，preflight 會回報）。"""
+    return request.app.state.settings.paths.caption_font
 
 
 def get_worker(request: Request) -> GenerationWorker:

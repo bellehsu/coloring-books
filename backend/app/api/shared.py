@@ -6,13 +6,15 @@
 檢視與下載不計入每日生成上限（不會呼叫 usage.reserve）。
 """
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from PIL import Image
 from pydantic import TypeAdapter, ValidationError
 from sqlmodel import Session, col, select
 
-from app.api.deps import current_owner, get_session, get_storage
+from app.api.deps import current_owner, get_caption_font, get_session, get_storage
 from app.api.export import book_pdf, composed_page, pdf_response
 from app.api.schemas import SharedBookDetailOut, SharedBookOut, SharedPageOut
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Owner, Page, PageStatus
@@ -106,6 +108,7 @@ def shared_page_image(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     owner: Owner = Depends(current_owner),
+    font_path: Path | None = Depends(get_caption_font),
 ) -> Response:
     """PDF 用的同一張合成頁（含修線），長邊縮到 1600 px 以內。"""
     # 刻意不分擁有者載入：這裡只是先找出頁面所屬的書。真正的可見性檢查是下一行的 _visible_book
@@ -118,7 +121,7 @@ def shared_page_image(
     if page.id not in {p.id for p in pages}:
         raise _gone()
     try:
-        img = composed_page(session, storage, book, page)
+        img = composed_page(session, storage, book, page, font_path)
     except HTTPException:
         raise _gone() from None  # 線稿讀不到：對檢視者就是沒有這一頁
     session.refresh(page)
@@ -135,10 +138,11 @@ def shared_book_pdf(
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     owner: Owner = Depends(current_owner),
+    font_path: Path | None = Depends(get_caption_font),
 ) -> Response:
     book, _o, _pages = _visible_book(session, book_id)
     try:
-        pdf = book_pdf(session, storage, book, "passed")
+        pdf = book_pdf(session, storage, book, "passed", font_path)
     except HTTPException:
         raise _gone() from None
     return pdf_response(book, pdf)

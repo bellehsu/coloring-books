@@ -28,6 +28,9 @@ paths:
   # storage.backend: r2 時請改用另一個資料庫（例如 storage-r2/app.db，資料夾先建好）：
   # DB 與 bucket 是一組，不要把 local 模式的 DB 指到 R2，也不要把同一個 DB 複製給開發與正式環境共用 bucket
   database: storage/app.db
+  # 頁面文字（中英空心字）的字型；預設是專案內附的 Noto Sans TC（SIL OFL 1.1，授權見 assets/fonts/OFL.txt）。
+  # 找不到時服務照常啟動，preflight 會列出；匯出有頁面文字的頁面時回 409
+  caption_font: assets/fonts/NotoSansTC-VF.ttf
 
 queue:
   # 生成 worker 遇到 ComfyUI 無法連線時，重試前等待的秒數（0 代表立即重試）
