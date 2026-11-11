@@ -74,7 +74,7 @@ def test_env_flag_allows_the_upgrade(legacy_db, monkeypatch):
     eng = make_engine(legacy_db)
     init_db(eng)
     cur, head = schema_revisions(eng)
-    assert cur == head == "0010"
+    assert head is not None and cur == head  # head 由 alembic 腳本算出，下一個 migration 不用改這裡
 
 
 def test_pre_0006_db_without_books_still_upgrades(tmp_path):
@@ -105,4 +105,6 @@ def test_current_db_with_books_is_not_affected(tmp_path):
                           "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
         c.exec_driver_sql("INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
                           "VALUES (1, 'x', 'A4', 'HOME', '2026-11-07 00:00:00', '2026-11-07 00:00:00')")
-    init_db(eng)  # 已經是 0010：照常
+    init_db(eng)  # 已經是最新 head：照常
+    cur, head = schema_revisions(eng)
+    assert head is not None and cur == head
