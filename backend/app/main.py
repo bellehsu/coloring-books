@@ -20,6 +20,7 @@ from .db import init_db, make_engine, session_factory
 from .services.comfy_client import ComfyClient
 from .services.comfy_engine import ComfyEngine
 from .services.engine import GenerationEngine
+from .services.instance import ensure_instance
 from .services.preflight import format_report, run_preflight
 from .services.worker import GenerationWorker
 from .services.workflow_registry import WorkflowRegistry
@@ -45,6 +46,7 @@ def create_app(
         app.state.db = db
         app.state.sessions = session_factory(db)
         app.state.storage = make_storage(s)
+        _check_storage_instance(app)
         gen_engine = engine or ComfyEngine(
             client_factory=lambda: ComfyClient(
                 s.comfy.url, request_timeout_s=s.comfy.request_timeout_s
@@ -90,6 +92,23 @@ def create_app(
         app.include_router(r.router, dependencies=owned)
     app.include_router(files.router)
     app.include_router(invites.router)
+
+    def _check_storage_instance(app: FastAPI) -> None:
+        """DB 與 storage 的身分標記：新部署建立；對不上只記警告、照常服務（storage_gc 會拒絕執行）。"""
+        try:
+            with app.state.sessions() as session:
+                res = ensure_instance(session, app.state.storage)
+        except Exception:  # noqa: BLE001  檢查失敗（例如 storage 暫時連不上）不可讓服務當機
+            log.warning("!!! storage instance 身分標記檢查失敗", exc_info=True)
+            return
+        if res.created:
+            log.info("storage instance 身分標記已建立：%s", res.db_id)
+        elif not res.ok:
+            log.warning(
+                "!!! storage instance 身分標記對不上：%s。資料庫與 storage（資料夾／bucket）可能不是一組；"
+                "storage_gc 會拒絕執行。確認設定無誤後，若 storage 沒有標記，用 scripts/storage_gc.py --init-instance 補上 !!!",
+                res.describe(),
+            )
 
     async def _preflight(app: FastAPI):
         """跑 preflight 並更新快取 app.state.preflight。"""

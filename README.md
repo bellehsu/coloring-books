@@ -28,6 +28,7 @@ backend/app/
   services/lineart_extract.py  生成圖轉線稿（呼叫 lineart_post）
   services/workflow_registry.py workflow 登錄、白名單參數、hash
   services/preflight.py        節點／模型／輸入欄位檢查
+  services/instance.py         DB 與 storage 的身分標記（storage_instance_id；storage_gc 只在兩邊一致時執行）
   services/lineart_post.py     線稿後處理與指標
 comfy_workflows/<name>/        workflow_api.json + manifest.yaml（qwen_character、qwen_background、qwen_edit_pose_cutout）
 archive/comfy_workflows/       已停用的 workflow（SDXL、Route B；preflight 不掃描）
@@ -82,6 +83,7 @@ env -u PYTHONPATH $PY scripts/invites.py revoke --id 2       # 撤銷，並刪�
 env -u PYTHONPATH $PY scripts/invites.py delete-data --id 2  # 刪除它的書、頁面、生成紀錄、圖片、session、用量與 owner；要輸入名稱確認（--yes 略過）
 env -u PYTHONPATH $PY scripts/storage_gc.py --dry-run        # 只計數：捨棄超過 30 天的圖（--days 調整）與沒有資料列指到的孤兒物件
 env -u PYTHONPATH $PY scripts/storage_gc.py                  # 真的刪除（頁面選用中、角色圖不會刪）
+env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance  # storage 缺身分標記時，寫入 DB 的 id（不覆寫不同的）
 ```
 
 - 連結前綴：`--base-url`，其次 `auth.invite_base_url`，預設 `http://localhost:3000`。
@@ -89,7 +91,15 @@ env -u PYTHONPATH $PY scripts/storage_gc.py                  # 真的刪除（�
 - `storage_gc.py` 不升級資料庫結構：DB 不是最新版時請先啟動一次後端。與 DB 對不上的物件（書／頁／生成紀錄 id 超出 DB、
   或屬於另一本書）不刪。孤兒超過 20 個且超過「孤兒＋被參照物件」的 20%，或對不上的物件超過 20 個且超過列出物件的 20%，
   就整個中止、什麼都不刪（多半是設定指錯 DB 或 bucket）；先用 `--dry-run -v --allow-mass-delete` 看清單，確認無誤才加 `--allow-mass-delete`。
-- `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試）、2 設定錯誤或 DB 不是最新版、3 孤兒太多而中止。
+- **身分標記：** DB（`app_meta.storage_instance_id`）與 storage（物件 `books/_instance.json`）存同一個隨機 id。
+  後端啟動時兩邊都沒有（新部署）就建立；只有一邊有或兩邊不同時只印警告、照常服務。`storage_gc.py` 要求兩邊一致，
+  否則結束碼 4、什麼都不刪（`--allow-mass-delete` 也不例外）。storage 沒有標記時，確認設定指的是同一組後用
+  `storage_gc.py --init-instance` 把 DB 的 id 寫進去（不會覆寫不同的標記）。這個物件永遠不會被 GC 或 `delete-data` 刪掉。
+- **還原舊備份的限制：** 從備份還原的舊 DB 與 bucket 的身分標記相同，GC 會照常執行。這時受影響的只有兩種物件：
+  頁面線稿（備份之後重算過的會被當成孤兒刪掉，下次讀取時自動重算）；備份之後才產生的生成圖 id 大於 DB 的
+  `sqlite_sequence`，會當成「可能正在寫入」略過、不刪。備份之後新建的書（書號大於 DB 最大的書）也一律略過。
+- `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試）、2 設定錯誤或 DB 不是最新版、3 孤兒太多而中止、
+  4 DB 與 storage 的身分標記不一致。
 
 ## 模型（只需要 Qwen）
 

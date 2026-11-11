@@ -689,10 +689,23 @@ def _env(settings_file):
     from app.db import init_db, make_engine, session_factory
     from app.storage import make_storage
 
+    from app.services.instance import ensure_instance
+
     s = load_settings(settings_file)
     eng = make_engine(s.paths.database)
     init_db(eng)
-    return s, session_factory(eng), make_storage(s)
+    sessions, storage = session_factory(eng), make_storage(s)
+    with sessions() as sess:
+        ensure_instance(sess, storage)  # 與後端啟動相同：新部署建立一致的身分標記
+    return s, sessions, storage
+
+
+def _same_instance(sessions, storage):
+    """讓另一個 DB 帶著 storage 的身分標記（例如還原的舊備份）：只剩比例防線在擋。"""
+    from app.services import instance
+
+    with sessions() as s:
+        instance.set_db_instance_id(s, instance.bucket_instance_id(storage))
 
 
 def _owner(sessions, name="小明", **kw) -> tuple[int, str]:
@@ -1184,6 +1197,7 @@ def test_gc_mismatched_db_deletes_nothing_live(storage_gc, settings_file, tmp_pa
     eng = make_engine(tmp_path / "other.db")
     init_db(eng)
     other = session_factory(eng)
+    _same_instance(other, storage)
     o2, _ = _owner(other, "x", is_admin=True)
     b2 = _book(other, o2)
     assert b2 == b
@@ -1226,7 +1240,7 @@ def test_gc_aborts_mass_delete_unless_allowed(storage_gc, settings_file, capsys)
     assert "--allow-mass-delete" in out.out + out.err
     assert _keys(storage) == before
     assert storage_gc.main(args + ["--allow-mass-delete"]) == 0
-    assert _keys(storage) == {storage.generation_image(1, g) for g in live}
+    assert _keys(storage) == {storage.generation_image(1, g) for g in live} | {"books/_instance.json"}
 
 
 def test_gc_small_orphan_count_is_not_mass(storage_gc, settings_file):
@@ -1300,6 +1314,7 @@ def test_gc_dilution_by_mismatched_keys_still_aborts(storage_gc, settings_file, 
     eng = make_engine(other_db)
     init_db(eng)
     other = session_factory(eng)
+    _same_instance(other, storage)
     oid, _ = _owner(other, "x", is_admin=True)
     _bulk_gens(other, _book(other, oid), 100)
     before = _keys(storage)
@@ -1385,8 +1400,138 @@ def test_gc_small_overlap_wrong_db_deletes_no_previews(storage_gc, settings_file
     eng = make_engine(tmp_path / "other.db")
     init_db(eng)
     other = session_factory(eng)
+    _same_instance(other, storage)
     o2, _ = _owner(other, "x", is_admin=True)
     _bulk_gens(other, _book(other, o2) + 100, 10)
     before = _keys(storage)
     rep = storage_gc.run_gc(other, storage, days=30)
     assert not rep.aborted and _keys(storage) == before
+
+
+# --- 身分標記（storage_instance_id） ---
+
+
+def _other_db(tmp_path, storage=None, *, same_id=False, name="other.db"):
+    """另一個（錯的）DB；same_id=False 時它有自己的身分標記（像另一個部署）。"""
+    from app.db import init_db, make_engine, session_factory
+    from app.services import instance
+
+    path = tmp_path / name
+    eng = make_engine(path)
+    init_db(eng)
+    other = session_factory(eng)
+    with other() as s:
+        instance.set_db_instance_id(s, instance.bucket_instance_id(storage) if same_id else "a" * 32)
+    return path, other
+
+
+def test_gc_refuses_wrong_db_with_full_id_overlap(storage_gc, settings_file, tmp_path, monkeypatch, capsys):
+    """≤ 20 個物件、id 完全重疊的錯 DB：比例防線擋不到，身分標記擋下來（結束碼 4，什麼都不刪）。"""
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    [_gen(sessions, storage, b, preview=True) for _ in range(10)]
+    path, other = _other_db(tmp_path, storage)
+    o2, _ = _owner(other, "x", is_admin=True)
+    _bulk_gens(other, _book(other, o2), 10)  # 同書號、同 id、沒有圖：每個物件看起來都是孤兒
+    before = _keys(storage)
+    monkeypatch.setenv("APP_PATHS__DATABASE", str(path))
+    for extra in ([], ["--allow-mass-delete"], ["--dry-run"]):
+        assert storage_gc.main(["--settings", str(settings_file), *extra]) == 4
+    assert _keys(storage) == before
+    err = capsys.readouterr().err
+    assert "a" * 32 in err and instance.bucket_instance_id(storage) in err
+
+
+def test_gc_refuses_mixed_wrong_db(storage_gc, settings_file, tmp_path, monkeypatch):
+    # 100 個被參照＋20 個沒被參照（低於比例門檻）：DB 沒有身分標記 → 結束碼 4
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    [_gen(sessions, storage, b) for _ in range(120)]
+    path, other = _other_db(tmp_path, storage)
+    with other() as s:
+        instance.delete_db_instance_id(s)
+    o2, _ = _owner(other, "x", is_admin=True)
+    ob = _book(other, o2)
+    with other() as s:  # 前 100 筆有圖（被參照）、後 20 筆沒有
+        from app.models import Generation, GenKind, GenStatus
+
+        for gid in range(1, 121):
+            s.add(Generation(id=gid, book_id=ob, kind=GenKind.COMPOSITE, status=GenStatus.SUCCEEDED, user_text="",
+                             prompt="", negative_prompt="", seed=0, width=8, height=8, request_json="{}",
+                             image_path=storage.generation_image(ob, gid) if gid <= 100 else None))
+        s.commit()
+    before = _keys(storage)
+    monkeypatch.setenv("APP_PATHS__DATABASE", str(path))
+    assert storage_gc.main(["--settings", str(settings_file)]) == 4
+    assert _keys(storage) == before
+    # 同一個情境若身分標記一致，比例防線不會擋（20 個 ≤ 門檻）：這正是身分標記要補的洞
+    _same_instance(other, storage)
+    rep = storage_gc.run_gc(other, storage, days=30, dry_run=True)
+    assert not rep.aborted and rep.orphan_objects == 20
+
+
+def test_gc_refuses_when_bucket_marker_missing_and_init_instance(storage_gc, settings_file, capsys):
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    with sessions() as s:
+        db_id = instance.db_instance_id(s)
+    storage.delete(instance.MARKER_KEY)
+    args = ["--settings", str(settings_file)]
+    assert storage_gc.main(args) == 4
+    assert "--init-instance" in capsys.readouterr().err
+    assert storage_gc.main(args + ["--init-instance"]) == 0
+    assert instance.bucket_instance_id(storage) == db_id
+    assert storage_gc.main(args + ["--init-instance"]) == 0  # 已一致：不變
+    assert storage_gc.main(args + ["--dry-run"]) == 0
+
+
+def test_init_instance_never_overwrites_a_differing_marker(storage_gc, settings_file):
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    instance.write_bucket_instance_id(storage, "b" * 32)
+    args = ["--settings", str(settings_file)]
+    assert storage_gc.main(args + ["--init-instance"]) == 4
+    assert storage_gc.main(args + ["--allow-mass-delete"]) == 4
+    assert instance.bucket_instance_id(storage) == "b" * 32
+
+
+def test_init_instance_requires_db_id(storage_gc, settings_file):
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    storage.delete(instance.MARKER_KEY)
+    with sessions() as s:
+        instance.delete_db_instance_id(s)
+    assert storage_gc.main(["--settings", str(settings_file), "--init-instance"]) == 4
+    assert instance.bucket_instance_id(storage) is None
+
+
+def test_run_gc_refuses_mismatch_directly(storage_gc, settings_file):
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    instance.write_bucket_instance_id(storage, "c" * 32)
+    with pytest.raises(storage_gc.InstanceMismatch):
+        storage_gc.run_gc(sessions, storage, days=30)
+
+
+def test_marker_never_deleted_by_gc_or_delete_data(storage_gc, invites, settings_file):
+    from app.services import instance
+
+    sessions, storage, gone, live = _mass_orphans(settings_file)
+    marker = instance.bucket_instance_id(storage)
+    rep = storage_gc.run_gc(sessions, storage, days=30, allow_mass_delete=True)
+    assert rep.orphan_objects == 25 and instance.MARKER_KEY not in [k for _, k in rep.actions]
+    assert instance.bucket_instance_id(storage) == marker
+    _owner(sessions, "管理員", is_admin=True)
+    a = _owner_with_data(sessions, storage, "小明")
+    assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]) == 0
+    assert instance.bucket_instance_id(storage) == marker

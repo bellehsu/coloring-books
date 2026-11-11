@@ -313,3 +313,16 @@ def test_0006_downgrade_roundtrip(tmp_path):
     command.upgrade(alembic_config(eng), "head")
     with eng.connect() as c:
         assert c.exec_driver_sql("SELECT count(*) FROM owner").scalar() == 1
+
+
+def test_0007_app_meta_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0006")
+    command.upgrade(alembic_config(eng), "0007")
+    with eng.begin() as c:
+        assert "app_meta" in set(inspect(c).get_table_names())
+        c.exec_driver_sql("INSERT INTO app_meta (key, value) VALUES ('storage_instance_id', 'abc')")
+    command.downgrade(alembic_config(eng), "0006")
+    with eng.connect() as c:
+        assert "app_meta" not in set(inspect(c).get_table_names())
+    command.upgrade(alembic_config(eng), "head")

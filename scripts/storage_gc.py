@@ -11,11 +11,15 @@
 
 用法（在專案根目錄執行）：
   python scripts/storage_gc.py [--settings PATH] [--dry-run] [--days 30] [-v] [--allow-mass-delete]
+  python scripts/storage_gc.py --init-instance
 --dry-run 只計數、不刪任何東西；-v 列出每個物件。
 設定與 app 相同（R2 憑證只來自環境變數）；R2 經過 CachedStorage 刪除，本機快取一起作廢。
 孤兒超過 20 個且超過「孤兒＋被參照物件」的 20%，或與 DB 對不上的物件超過 20 個且超過列出物件的 20%
 （多半是 DB 與 storage 不是一組）時整個中止、什麼都不刪，除非加 --allow-mass-delete。資料庫結構不是最新版時拒絕執行（不跑 migration；請先啟動後端）。
-結束碼：0 成功；1 有物件刪除失敗；2 設定或參數錯誤；3 孤兒太多而中止。
+執行前要求 DB 的 storage_instance_id 與 storage 的 books/_instance.json 一致（後端啟動時建立），
+否則結束碼 4、什麼都不刪（--allow-mass-delete 也不例外）。storage 沒有標記時，確認設定無誤後用
+--init-instance 把資料庫的 id 寫進去（不會覆寫不同的標記）。
+結束碼：0 成功；1 有物件刪除失敗；2 設定或參數錯誤；3 孤兒太多而中止；4 DB 與 storage 不是一組。
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from sqlmodel import Session, col, select, update  # noqa: E402
 from app.config import SettingsError, load_settings  # noqa: E402
 from app.db import make_engine, schema_revisions, session_factory  # noqa: E402
 from app.models import Book, Generation, GenStatus, Page, utcnow  # noqa: E402
+from app.services import instance  # noqa: E402
 from app.storage import Storage, make_storage  # noqa: E402
 
 DEFAULT_DAYS = 30
@@ -51,6 +56,29 @@ MASS_DELETE_RATIO = 0.2
 MASS_DELETE_MIN = 20
 # cache/previews/{gen}_{key}.png
 _PREVIEW_KEY = re.compile(r"^cache/previews/(\d+)_[^/]*$")
+
+
+class InstanceMismatch(RuntimeError):
+    """DB 與 storage 的身分標記不一致（或缺少）：不是一組，什麼都不能刪。"""
+
+
+def check_instance(sessions, storage: Storage) -> instance.InstanceCheck:
+    """執行前確認 DB 與 storage 是一組；否則丟 InstanceMismatch（訊息列出兩邊的 id）。"""
+    try:
+        with sessions() as s:
+            res = instance.check_instance(s, storage)
+    except instance.InstanceMarkerError as e:
+        raise InstanceMismatch(f"{e}；storage_gc 不執行，什麼都沒刪。") from e
+    if not res.ok:
+        hint = ""
+        if res.db_id and res.bucket_id is None:
+            hint = "\n確認 paths.database 與 storage 設定是同一組後，可用 --init-instance 把資料庫的 id 寫進 storage。"
+        elif res.db_id is None:
+            hint = "\n資料庫沒有身分標記：確認設定指的是正確的資料庫（全新部署請先啟動一次後端）。"
+        raise InstanceMismatch(
+            f"資料庫與 storage 的身分標記不一致，storage_gc 不執行，什麼都沒刪。\n{res.describe()}{hint}"
+        )
+    return res
 
 
 @dataclass
@@ -269,9 +297,10 @@ def _mass_delete_reason(r: GcReport) -> str | None:
 def run_gc(sessions, storage: Storage, *, days: int = DEFAULT_DAYS, dry_run: bool = False,
            now: datetime | None = None, allow_mass_delete: bool = False) -> GcReport:
     now = now or utcnow()
+    check_instance(sessions, storage)  # DB 與 storage 不是一組就什麼都不做（--allow-mass-delete 也不例外）
     report = GcReport(dry_run=dry_run, days=days, cutoff=now - timedelta(days=days))
-    # 先列物件再讀 DB：列出之後才 commit 的列，讀 DB 時就看得到
-    book_keys = list(storage.list("books/"))
+    # 先列物件再讀 DB：列出之後才 commit 的列，讀 DB 時就看得到。身分標記永遠不列入（不能被刪）
+    book_keys = [k for k in storage.list("books/") if k != instance.MARKER_KEY]
     preview_keys = list(storage.list("cache/previews/"))
     report.listed = len(book_keys) + len(preview_keys)
     with sessions() as s:
@@ -342,12 +371,33 @@ def format_report(r: GcReport, *, verbose: bool = False) -> str:
     return "\n".join(lines)
 
 
+def init_instance(sessions, storage: Storage) -> int:
+    """把資料庫的身分標記寫進 storage；只在 storage 沒有標記時寫，永不覆寫不同的標記。"""
+    try:
+        with sessions() as s:
+            res = instance.check_instance(s, storage)
+    except instance.InstanceMarkerError as e:
+        print(f"{e}；不覆寫，請手動檢查。", file=sys.stderr)
+        return 4
+    if res.ok:
+        print(f"身分標記已一致：{res.db_id}")
+        return 0
+    if res.db_id is None or res.bucket_id is not None:
+        print(f"不寫入身分標記（只在資料庫有 id、storage 沒有標記時寫入）。\n{res.describe()}", file=sys.stderr)
+        return 4
+    instance.write_bucket_instance_id(storage, res.db_id)
+    print(f"已把資料庫的身分標記寫進 storage 的 {instance.MARKER_KEY}：{res.db_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--settings", type=Path, help="設定檔（預設 config/settings.yaml 或 APP_SETTINGS_FILE）")
     p.add_argument("--dry-run", action="store_true", help="只計數，不刪除")
     p.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"捨棄多少天後刪除（預設 {DEFAULT_DAYS}）")
     p.add_argument("-v", "--verbose", action="store_true", help="列出每個物件")
+    p.add_argument("--init-instance", action="store_true",
+                   help="storage 沒有身分標記時，寫入資料庫的 id 後結束（不會覆寫不同的標記）")
     p.add_argument("--allow-mass-delete", action="store_true",
                    help="孤兒或對不上的物件太多時仍然執行（預設整個中止）；對不上的物件照樣不刪")
     args = p.parse_args(argv)
@@ -371,8 +421,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SettingsError as e:
         print(e, file=sys.stderr)
         return 2
-    report = run_gc(session_factory(engine), storage, days=args.days, dry_run=args.dry_run,
-                    allow_mass_delete=args.allow_mass_delete)
+    sessions = session_factory(engine)
+    if args.init_instance:
+        return init_instance(sessions, storage)
+    try:
+        report = run_gc(sessions, storage, days=args.days, dry_run=args.dry_run,
+                        allow_mass_delete=args.allow_mass_delete)
+    except InstanceMismatch as e:
+        print(e, file=sys.stderr)
+        return 4
     if report.aborted:
         print(format_report(report), file=sys.stderr)
         return 3

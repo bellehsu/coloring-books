@@ -176,3 +176,12 @@ class LineartEdit(SQLModel, table=True):
     page_id: int = Field(foreign_key="page.id", index=True)
     strokes_json: str = "[]"
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
+
+
+class AppMeta(SQLModel, table=True):
+    """小型 key-value 設定（例如 storage_instance_id：DB 與 storage 的身分標記）。"""
+
+    __tablename__ = "app_meta"
+
+    key: str = Field(primary_key=True)
+    value: str
