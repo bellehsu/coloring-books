@@ -14,6 +14,7 @@
 .fieldHead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
 .lbl { font-size: 13px; font-weight: 700; color: var(--muted-2); }
 .textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); font: inherit; font-size: 15px; line-height: 1.55; color: var(--ink); background: var(--surface); resize: vertical; }
+.captions { flex: 1 1 100%; min-width: 0; display: flex; flex-wrap: wrap; gap: 12px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { min-height: 44px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--muted-2); font: inherit; font-size: 13px; cursor: pointer; }
 .chip:disabled { opacity: 0.5; cursor: default; }

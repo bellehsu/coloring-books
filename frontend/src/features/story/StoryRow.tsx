@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Generation, Page } from "@/api/client";
+import { CaptionField, captionError } from "@/components/ui/CaptionField";
 import { Icons } from "@/components/ui/Icons";
 import { Segmented } from "@/components/ui/Segmented";
 import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
@@ -117,7 +118,7 @@ export interface StoryRowProps {
   uploading?: boolean;
   onUpload: (file: File) => void;
   /** 回傳的 Promise 失敗（呼叫端已提示）時，同一段文字之後可以再送。 */
-  onSave: (patch: { scene_prompt?: string; action_prompt?: string }) => Promise<unknown>;
+  onSave: (patch: { scene_prompt?: string; action_prompt?: string; caption_zh?: string; caption_en?: string }) => Promise<unknown>;
   bg: SlotView;
   pose: SlotView;
   onRetry: () => void;
@@ -128,6 +129,13 @@ export interface StoryRowProps {
 export function StoryRow({ n, page, mode, onModeChange, fileName, uploaded = false, uploading, onUpload, onSave, bg, pose, onRetry, actionHintId }: StoryRowProps) {
   const scene = useAutosave(page.scene_prompt, (v) => onSave({ scene_prompt: v }));
   const action = useAutosave(page.action_prompt, (v) => onSave({ action_prompt: v }));
+  // 超過上限的文字不存（欄位下方已顯示訊息）；清空存 ""
+  const captionZh = useAutosave(page.caption_zh ?? "", (v) =>
+    captionError("zh", v) ? Promise.resolve() : onSave({ caption_zh: v }),
+  );
+  const captionEn = useAutosave(page.caption_en ?? "", (v) =>
+    captionError("en", v) ? Promise.resolve() : onSave({ caption_en: v }),
+  );
   const fileInput = useRef<HTMLInputElement>(null);
   const hasUpload = !!fileName || uploaded;
   /** 常用動作：欄位空的時候填入；已有文字就用「、」接在後面（超過字數就不加）。 */
@@ -220,6 +228,10 @@ export function StoryRow({ n, page, mode, onModeChange, fileName, uploaded = fal
       <div className={styles.thumbs}>
         <Thumb label="背景" alt={`第 ${n} 頁背景`} view={bg} onRetry={onRetry} />
         <Thumb label="角色動作" alt={`第 ${n} 頁角色動作`} view={pose} onRetry={onRetry} contain />
+      </div>
+      <div className={styles.captions}>
+        <CaptionField kind="zh" value={captionZh.value} onChange={captionZh.onChange} onBlur={captionZh.onBlur} />
+        <CaptionField kind="en" value={captionEn.value} onChange={captionEn.onChange} onBlur={captionEn.onBlur} />
       </div>
     </article>
   );

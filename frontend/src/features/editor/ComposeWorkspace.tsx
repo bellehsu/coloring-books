@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { Generation, Page } from "@/api/client";
 import { useBook, useGenerateBackground, useGeneratePose, useUpdatePage, useUploadBackground } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
+import { CaptionField, captionError } from "@/components/ui/CaptionField";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { ACTION_HINT, ACTIONS, appendPhrase, hasPhrase } from "@/lib/actions";
@@ -51,6 +52,7 @@ export function ComposeWorkspace(props: ComposeWorkspaceProps) {
     <div className={styles.cards} data-compact={!!props.compact}>
       <BackgroundCard {...props} />
       <PoseCard {...props} />
+      <CaptionCard bookId={props.bookId} page={props.page} />
     </div>
   );
 }
@@ -171,11 +173,36 @@ const quiet = (p: Promise<unknown>) => p.catch(() => {});
 function useSavePage(bookId: number, pageId: number) {
   const toast = useToast();
   const update = useUpdatePage(bookId);
-  return (body: { scene_prompt?: string; action_prompt?: string }) =>
+  return (body: { scene_prompt?: string; action_prompt?: string; caption_zh?: string; caption_en?: string }) =>
     update.mutateAsync({ pageId, ...body }).catch((e: unknown) => {
       toast.show(errMsg(e, "無法儲存"), "error");
       throw e;
     });
+}
+
+/**
+ * 圖下方的文字（中文字、英文字）：和場景、動作欄位一樣，離開欄位時存回頁面。
+ * 超過上限（以 code point 計）時不存，欄位下方顯示訊息。手機也直接顯示（欄位很小，不收合）。
+ */
+function CaptionCard({ bookId, page }: { bookId: number; page: Page }) {
+  const id = useId();
+  const savePage = useSavePage(bookId, page.id);
+  const zh = usePageText(page.caption_zh ?? "", (v) => (captionError("zh", v) ? Promise.resolve() : savePage({ caption_zh: v })));
+  const en = usePageText(page.caption_en ?? "", (v) => (captionError("en", v) ? Promise.resolve() : savePage({ caption_en: v })));
+  return (
+    <section aria-labelledby={`${id}-h`} className={styles.card}>
+      <div className={styles.head}>
+        <h2 id={`${id}-h`} className={styles.title}>
+          圖下方的文字
+        </h2>
+      </div>
+      <div className={styles.captionFields}>
+        <CaptionField kind="zh" value={zh.value} onChange={zh.setValue} onBlur={() => quiet(zh.save())} />
+        <CaptionField kind="en" value={en.value} onChange={en.setValue} onBlur={() => quiet(en.save())} />
+      </div>
+      <p className={styles.hint}>選填，印在列印頁的圖下方。</p>
+    </section>
+  );
 }
 
 function BackgroundCard({

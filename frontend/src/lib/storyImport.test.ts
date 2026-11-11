@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { countChars, MAX_CAPTION_EN, MAX_CAPTION_ZH } from "./limits";
 import { parseStory, planImport } from "./storyImport";
 
 const two = "第1頁\n場景：森林\n動作：跑步\n第2頁\n場景：海邊\n動作：游泳";
@@ -209,5 +210,75 @@ describe("planImport", () => {
     );
     expect(rows[0].problems).toEqual(["場景超過 800 字"]);
     expect(rows[1].problems).toEqual(["動作超過 300 字"]);
+  });
+});
+
+describe("captions", () => {
+  it("counts code points, not UTF-16 units", () => {
+    expect(countChars("𠮷")).toBe(1);
+    expect(MAX_CAPTION_ZH).toBe(12);
+    expect(MAX_CAPTION_EN).toBe(28);
+  });
+
+  it.each([
+    ["中文：消防車", "英文：Fire Engine"],
+    ["中文:消防車", "English: Fire Engine"],
+    ["中文：消防車", "english：Fire Engine"],
+    ["中文：消防車", "ENGLISH:Fire Engine"],
+  ])("reads %s / %s anywhere after the heading, in any order", (zh, en) => {
+    for (const body of [`場景：消防局\n動作：開車\n${zh}\n${en}`, `${en}\n${zh}\n場景：消防局\n動作：開車`, `場景：消防局\n${en}\n動作：開車\n${zh}`]) {
+      expect(parseStory(`第1頁\n${body}`).pages).toEqual([
+        { n: 1, scene: "消防局", action: "開車", captionZh: "消防車", captionEn: "Fire Engine" },
+      ]);
+    }
+  });
+
+  it("works without headings (a repeated label starts the next page)", () => {
+    const r = parseStory("場景：a\n動作：b\n中文：甲\n英文：A\n場景：c\n動作：d\n中文：乙");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "a", action: "b", captionZh: "甲", captionEn: "A" },
+      { n: 2, scene: "c", action: "d", captionZh: "乙" },
+    ]);
+  });
+
+  it("does not treat 「文字：」 as a caption", () => {
+    const r = parseStory("第1頁\n場景：a\n動作：b\n文字：消防車");
+    expect(r.pages).toEqual([{ n: 1, scene: "a", action: "b\n文字：消防車" }]);
+    expect(r.pages[0]).not.toHaveProperty("captionZh");
+  });
+
+  it("a heading line never yields a caption", () => {
+    for (const h of ["第1頁 中文：消防車", "第1頁 English: Fire", "1. 英文：Fire"]) {
+      const r = parseStory(`${h}\n場景：a\n動作：b`);
+      expect(r.pages).toHaveLength(1);
+      expect(r.pages[0]).not.toHaveProperty("captionZh");
+      expect(r.pages[0]).not.toHaveProperty("captionEn");
+    }
+  });
+
+  it("spreadsheet columns 中文 / 英文 / English", () => {
+    const r = parseStory("場景\t動作\t中文\tEnglish\n消防局\t開車\t消防車\tFire Engine\n醫院\t揮手\t\t");
+    expect(r.pages).toEqual([
+      { n: 1, scene: "消防局", action: "開車", captionZh: "消防車", captionEn: "Fire Engine" },
+      { n: 2, scene: "醫院", action: "揮手" },
+    ]);
+    const r2 = parseStory("英文\t中文\t場景\t動作\nFire\t火\ta\tb");
+    expect(r2.pages).toEqual([{ n: 1, scene: "a", action: "b", captionZh: "火", captionEn: "Fire" }]);
+  });
+
+  const ex = [{ position: 1, scene_prompt: "", action_prompt: "", caption_zh: "舊", caption_en: null }];
+  it("fills captions only where empty", () => {
+    const rows = planImport([{ n: 1, scene: "s", action: "a", captionZh: "新", captionEn: "New" }], ex);
+    expect(rows[0].captionZh).toBe("新");
+    expect(rows[0].fill).toEqual({ scene: true, action: true, captionZh: false, captionEn: true });
+    const rows2 = planImport([{ n: 2, scene: "s", action: "a", captionZh: "新" }], ex);
+    expect(rows2[0]).toMatchObject({ create: true, fill: { captionZh: true, captionEn: false } });
+  });
+
+  it("reports over-limit captions with the spec messages, counting code points", () => {
+    const ok = planImport([{ n: 1, scene: "s", action: "a", captionZh: "𠮷".repeat(12), captionEn: "x".repeat(28) }], []);
+    expect(ok[0].problems).toEqual([]);
+    const bad = planImport([{ n: 1, scene: "s", action: "a", captionZh: "𠮷".repeat(13), captionEn: "x".repeat(29) }], []);
+    expect(bad[0].problems).toEqual(["中文字最多 12 個字", "英文字最多 28 個字元"]);
   });
 });

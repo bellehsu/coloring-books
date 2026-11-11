@@ -123,4 +123,44 @@ describe("ImportDialog", () => {
     expect(writeText).toHaveBeenCalledWith(AI_PROMPT(2));
     expect(await screen.findByText("已複製")).toBeInTheDocument();
   });
+  describe("圖下方的文字", () => {
+    const CAP = "第1頁\n場景：森林\n動作：跑步\n中文：小熊\n英文：Bear\n第2頁\n場景：山\n動作：爬山\n中文：登山";
+
+    it("預覽顯示中文字、英文字兩欄，只填空欄位", () => {
+      pages = [{ ...pg(11, 1, "", ""), caption_zh: "舊", caption_en: null }, pg(12, 2, "舊場景", "")];
+      setup(CAP);
+      const head = screen.getAllByRole("columnheader").map((h) => h.textContent);
+      expect(head).toEqual(["頁", "場景", "動作", "中文字", "英文字", "結果"]);
+      const rows = screen.getAllByRole("row");
+      expect(within(rows[1]).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+        "1", "森林", "跑步", "小熊", "Bear", "填入場景、動作、英文字",
+      ]);
+      expect(screen.getByRole("button", { name: "匯入（新增 0 頁、填入 5 格）" })).toBeEnabled();
+    });
+
+    it("沒有任何文字時不顯示這兩欄", () => {
+      setup(TEXT_OK);
+      expect(screen.queryByRole("columnheader", { name: "中文字" })).not.toBeInTheDocument();
+    });
+
+    it("套用：現有頁用 update，新增的頁先建立再用 update 補文字", async () => {
+      pages = [pg(11, 1, "", "")];
+      create.mockResolvedValueOnce({ id: 31 });
+      const onClose = setup(CAP);
+      await userEvent.click(screen.getByRole("button", { name: /^匯入/ }));
+      await waitFor(() => expect(onClose).toHaveBeenCalled());
+      expect(update).toHaveBeenCalledWith({
+        pageId: 11, scene_prompt: "森林", action_prompt: "跑步", caption_zh: "小熊", caption_en: "Bear",
+      });
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledWith({ scene_prompt: "山", action_prompt: "爬山" });
+      expect(update).toHaveBeenCalledWith({ pageId: 31, caption_zh: "登山" });
+    });
+
+    it("超過上限的列顯示訊息且不套用", async () => {
+      setup(`場景：森林\n動作：跑\n中文：${"字".repeat(13)}`);
+      expect(screen.getByText("中文字最多 12 個字")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^匯入/ })).toBeDisabled();
+    });
+  });
 });

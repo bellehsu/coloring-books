@@ -31,6 +31,7 @@ import { checklist } from "@/lib/checklist";
 import { PHONE_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
 import { createAutoCompose } from "./autoCompose";
 import { ComposePreview, ComposeStage, ComposeStatus } from "./ComposeStage";
+import { CaptionPreview } from "./CaptionPreview";
 import { ComposeWorkspace } from "./ComposeWorkspace";
 import { peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 import { forgetDeletedPage, forgetPageId } from "./forgetPage";
@@ -645,6 +646,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           )}
           {stage}
         </div>
+        <CaptionPreview page={current} />
       </section>
       <Inspector title={`第 ${index + 1} 頁進度`} items={items} checklistLast={phone}>
         {panel}

@@ -210,3 +210,9 @@
   flex-direction: column;
   gap: 10px;
 }
+.captionFields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}

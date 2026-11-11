@@ -87,4 +87,43 @@ describe("StoryRow", () => {
     expect(screen.getByText("線條簡單的插畫效果最好；照片擷取的線稿可能很亂，需要多補線。")).toBeInTheDocument();
     expect(screen.getByLabelText("第 1 頁背景圖片")).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
   });
+  describe("圖下方的文字", () => {
+    const zh = () => screen.getByRole("textbox", { name: "中文字" });
+    const en = () => screen.getByRole("textbox", { name: "英文字" });
+
+    it("兩個欄位顯示剩餘字數，離開欄位時存", async () => {
+      const { onSave } = setup({ page: page({ caption_zh: "消防車", caption_en: null }) });
+      expect(zh()).toHaveValue("消防車");
+      expect(en()).toHaveValue("");
+      expect(screen.getByText("還可 9 字")).toBeInTheDocument();
+      expect(screen.getByText("還可 28 字元")).toBeInTheDocument();
+      await userEvent.type(en(), "Fire Engine");
+      expect(screen.getByText("還可 17 字元")).toBeInTheDocument();
+      await userEvent.tab();
+      expect(onSave).toHaveBeenCalledWith({ caption_en: "Fire Engine" });
+    });
+
+    it("清空會存空字串", async () => {
+      const { onSave } = setup({ page: page({ caption_zh: "消防車" }) });
+      await userEvent.clear(zh());
+      await userEvent.tab();
+      expect(onSave).toHaveBeenCalledWith({ caption_zh: "" });
+    });
+
+    it("超過上限：顯示訊息、不存；𠮷 以 code point 計，12 個剛好可以", async () => {
+      const { onSave } = setup();
+      fireEvent.change(zh(), { target: { value: "𠮷".repeat(12) } });
+      fireEvent.blur(zh());
+      expect(onSave).toHaveBeenCalledWith({ caption_zh: "𠮷".repeat(12) });
+      expect(screen.queryByText("中文字最多 12 個字")).not.toBeInTheDocument();
+      onSave.mockClear();
+      fireEvent.change(zh(), { target: { value: "𠮷".repeat(13) } });
+      fireEvent.blur(zh());
+      expect(screen.getByText("中文字最多 12 個字")).toBeInTheDocument();
+      fireEvent.change(en(), { target: { value: "x".repeat(29) } });
+      fireEvent.blur(en());
+      expect(screen.getByText("英文字最多 28 個字元")).toBeInTheDocument();
+      expect(onSave).not.toHaveBeenCalled();
+    });
+  });
 });

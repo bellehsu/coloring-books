@@ -86,7 +86,7 @@ export function StoryPage({ bookId }: { bookId: number }) {
   }, 0);
   const busy = (gensQ.data ?? []).some((g) => (g.kind === "background" || g.kind === "pose") && isActive(g));
 
-  const save = (pageId: number, patch: { scene_prompt?: string; action_prompt?: string }) => {
+  const save = (pageId: number, patch: { scene_prompt?: string; action_prompt?: string; caption_zh?: string; caption_en?: string }) => {
     const p = updatePage.mutateAsync({ pageId, ...patch }).catch((e: unknown) => {
       toast.show(errMsg(e, "無法儲存，請再試一次"), "error");
       throw e;

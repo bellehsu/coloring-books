@@ -1345,4 +1345,47 @@ describe("EditorPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: /^第 3 頁(?!的更多動作)/ }));
     await expectFreshPage3();
   });
+  describe("圖下方的文字預覽與列印頁連結", () => {
+    const preview = () => screen.queryByRole("group", { name: "圖下方的文字預覽" });
+
+    it("構圖：預覽顯示兩行文字，「預覽列印頁」開新分頁指向 print.png", async () => {
+      pages[0] = mkPage(1, { caption_zh: "消防車", caption_en: "Fire Engine" });
+      setup();
+      await screen.findAllByRole("tab");
+      const pv = await screen.findByRole("group", { name: "圖下方的文字預覽" });
+      expect(within(pv).getByText("消防車")).toBeInTheDocument();
+      expect(within(pv).getByText("Fire Engine")).toBeInTheDocument();
+      const link = within(pv).getByRole("link", { name: "預覽列印頁" });
+      expect(link).toHaveAttribute("href", "/api/pages/1/print.png");
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+    });
+
+    it("補線也看得到", async () => {
+      search = "page=1&mode=line";
+      pages[0] = mkPage(1, { selected_generation_id: 5, caption_zh: "消防車", caption_en: null });
+      gens = [mkGen(5)];
+      setup();
+      await screen.findByTestId("linefix");
+      const pv = await screen.findByRole("group", { name: "圖下方的文字預覽" });
+      expect(within(pv).getByText("消防車")).toBeInTheDocument();
+      expect(within(pv).getByRole("link", { name: "預覽列印頁" })).toHaveAttribute("href", "/api/pages/1/print.png");
+    });
+
+    it("只有一行也可以（空白不算）", async () => {
+      pages[0] = mkPage(1, { caption_zh: "  ", caption_en: "Bus" });
+      setup();
+      await screen.findAllByRole("tab");
+      const pv = await screen.findByRole("group", { name: "圖下方的文字預覽" });
+      expect(within(pv).getByText("Bus")).toBeInTheDocument();
+      expect(screen.getAllByRole("link", { name: "預覽列印頁" })).toHaveLength(1);
+    });
+
+    it("沒有文字：不顯示預覽與連結", async () => {
+      setup();
+      await screen.findAllByRole("tab");
+      expect(preview()).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "預覽列印頁" })).not.toBeInTheDocument();
+    });
+  });
 });
