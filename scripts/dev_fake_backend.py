@@ -11,7 +11,9 @@ API 全是真的：上傳背景圖、故事頁的「產生全部素材」（mate
 背景的缺口框在畫面上方，預設位置（DEFAULT_PLACEMENT）的角色不會蓋到它。
 
 用法：
-  python scripts/dev_fake_backend.py [--port 8000] [--host 127.0.0.1] [--storage <dir>]
+  python scripts/dev_fake_backend.py [--port 8000] [--host 127.0.0.1] [--storage <dir>] [--dev-owner admin]
+
+另有只在這支假後端才有的 POST /api/_test/invite（建立第二個邀請，回傳 token；e2e 隔離測試用）。
 
 設定沿用 load_settings()（config/settings.yaml 或 APP_SETTINGS_FILE，可被 APP_ 環境變數覆寫），
 但 paths.storage_dir／paths.database 一律改到 --storage（預設：新的暫存資料夾），不會碰到正式資料；
@@ -33,12 +35,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
+from fastapi import Request  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
 from app.config import Settings, SettingsError, load_settings  # noqa: E402
 from app.models import GenKind  # noqa: E402
 from app.services.engine import GenerationRequest, GenerationResult, ProgressFn  # noqa: E402
 from app.services.prompts import POSE_SIZE  # noqa: E402
+
+
+
+class InviteIn(BaseModel):
+    name: str = "e2e"
+
 
 OUTLINE_PX = 6
 # 缺口寬度（生成圖的像素）。線稿會放大到 300 DPI 內容尺寸再處理：A4 約放大 3 倍，
@@ -215,12 +225,23 @@ def demo_settings(storage: Path, base: Settings | None = None, *, dev_owner: str
     })
 
 
-def create_demo_app(storage: Path, base: Settings | None = None, engine: DemoEngine | None = None):
+def create_demo_app(storage: Path, base: Settings | None = None, engine: DemoEngine | None = None,
+                    *, dev_owner: str | None = "admin"):
+    from app.services import auth
     from app.main import create_app
 
     # 不跑啟動 preflight：DemoEngine 不連 ComfyUI，也不該看本機 ComfyUI 的狀態
-    return create_app(demo_settings(storage, base), engine=engine or DemoEngine(), start_worker=True,
-                      startup_preflight=False)
+    app = create_app(demo_settings(storage, base, dev_owner=dev_owner), engine=engine or DemoEngine(),
+                     start_worker=True, startup_preflight=False)
+
+    @app.post("/api/_test/invite")
+    def test_only_create_invite(body: InviteIn, request: Request) -> dict:
+        """只有假後端有（真的 app 沒有）：建立另一個邀請，e2e 用它驗證 owner 隔離。回傳原始 token。"""
+        with request.app.state.sessions() as s:
+            owner, token = auth.create_owner(s, body.name)
+        return {"owner_id": owner.id, "token": token}
+
+    return app
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -228,10 +249,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--storage", type=Path, default=None, help="資料夾（含 SQLite）；預設新建暫存資料夾")
+    p.add_argument("--dev-owner", default="admin", help="沒有 cookie 的請求當作這個 admin（預設 admin；空字串＝關閉）")
     args = p.parse_args(argv)
     storage = args.storage or Path(tempfile.mkdtemp(prefix="coloring-books-fake-"))
     try:
-        app = create_demo_app(storage)
+        app = create_demo_app(storage, dev_owner=args.dev_owner or None)
     except SettingsError as e:
         print(e, file=sys.stderr)
         return 2

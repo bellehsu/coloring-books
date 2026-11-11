@@ -69,9 +69,24 @@ async function failure(res: Response): Promise<ApiError> {
   return new ApiError(res.status, detail);
 }
 
+type ApiErrorListener = (err: ApiError) => void;
+const errorListeners = new Set<ApiErrorListener>();
+
+/** 全域 API 錯誤通知（401 轉址、429 toast 等）；回傳取消訂閱函式。錯誤照常丟給呼叫端。 */
+export function onApiError(fn: ApiErrorListener): () => void {
+  errorListeners.add(fn);
+  return () => {
+    errorListeners.delete(fn);
+  };
+}
+
 async function request(path: string, init: RequestInit): Promise<Response> {
   const res = await fetch(`${BASE}${path}`, init);
-  if (!res.ok) throw await failure(res);
+  if (!res.ok) {
+    const err = await failure(res);
+    errorListeners.forEach((fn) => fn(err));
+    throw err;
+  }
   return res;
 }
 

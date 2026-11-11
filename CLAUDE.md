@@ -18,6 +18,9 @@
 ## 路徑設定（唯一來源）
 - 所有路徑都來自 `config/settings.yaml`，可被環境變數覆寫（前綴 `APP_`）。程式碼中不得寫死路徑。
 - 必要設定：`comfy.url`、`comfy.models_root`、`comfy.install_dir`（選填）、`paths.workflows_dir`、`paths.storage_dir`、`paths.database`。
+- 儲存與身分設定：`storage.backend`（`local`｜`r2`）、`storage.r2.endpoint`、`storage.r2.bucket`、`storage.signed_url_ttl_s`、`storage.cache_dir`、`storage.cache_max_bytes`；
+  `auth.dev_owner`、`auth.cookie_secure`、`auth.invite_base_url`。金鑰只能用環境變數：`APP_STORAGE__R2__ACCESS_KEY`、`APP_STORAGE__R2__SECRET_KEY`、
+  `APP_STORAGE__SIGNING_KEY`（local 的 HMAC 簽章金鑰），不可寫進設定檔。R2 模式的資料庫要用另一個路徑（例如 `paths.database: storage-r2/app.db`）。
 - `scripts/sync_comfy_model_paths.py` 依 settings 產生 ComfyUI 的 `extra_model_paths.yaml`。修改 models_root 後需重啟 ComfyUI。
 - 後端啟動與 `GET /api/system/preflight` 時檢查：ComfyUI 是否可連線、每個 workflow 的 manifest 所需模型是否出現在 ComfyUI 的模型清單中、
   所需節點類別是否存在於 `/object_info`。檢查失敗要回報清楚的缺漏清單，不可讓整個服務當機。

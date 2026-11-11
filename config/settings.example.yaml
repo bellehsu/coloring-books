@@ -24,6 +24,8 @@ paths:
   # 生成結果、上傳圖片等檔案
   storage_dir: storage
   # SQLite 資料庫檔案（父資料夾必須存在）
+  # storage.backend: r2 時請改用另一個資料庫（例如 storage-r2/app.db，資料夾先建好）：
+  # DB 與 bucket 是一組，不要把 local 模式的 DB 指到 R2，也不要把同一個 DB 複製給開發與正式環境共用 bucket
   database: storage/app.db
 
 queue:
@@ -58,3 +60,5 @@ auth:
   cookie_secure: false
   # scripts/invites.py 印出的邀請連結前綴（網站對外網址）；null＝http://localhost:3000。可用 --base-url 覆寫
   invite_base_url: null
+  # 每日生成上限不是這裡的設定：每個邀請各自有「每日生成次數」（台北時間，預設 60），
+  # 用 scripts/invites.py create --cap N 設定；超過時 API 回 429「今天的生成次數已用完，明天再來」。

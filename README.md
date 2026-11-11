@@ -47,6 +47,7 @@ scripts/
   preflight.py                 命令列 preflight
   invites.py                   邀請連結管理（create／list／rotate／revoke／delete-data）
   storage_gc.py                清理過期的捨棄圖與孤兒物件
+  dev_fake_backend.py          不需要 GPU 的假生成後端（e2e 用；另有只在這裡才有的 POST /api/_test/invite）
 config/settings.example.yaml   設定範本（複製成 settings.yaml）
 storage/                       生成檔案與 SQLite
 tests/                         pytest（全部可在無 GPU、無 ComfyUI 下執行）
@@ -68,6 +69,29 @@ cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
   設 `APP_AUTH__DEV_OWNER=admin`（`dev.env.example` 已預設）：沒有 cookie 的請求就當作 admin。
   已有 admin（例如資料庫遷移時建立的）會直接沿用。
 - **對外部署一定不可設 `dev_owner`**（範本預設 `null`）；有設時後端啟動會印出警告。
+
+### R2 準備（Cloudflare R2 物件儲存；只有雲端或想在本機驗證 R2 時才需要）
+
+`storage.backend: local`（預設）不需要以下任何東西。要用 R2，你需要自己建立：
+
+1. Cloudflare 帳號，並在 Dashboard 啟用 R2。
+2. 兩個 bucket：開發用 `coloring-books-dev`、正式用 `coloring-books-prod`（兩個環境不要共用，見下方警告）。
+3. 每個 bucket 各一個 API token（R2 → Manage API tokens → Object Read & Write，只套用到那個 bucket），記下 Access Key ID 與 Secret Access Key。
+4. 每個 bucket 的 CORS 規則：允許網站來源（例如 `http://localhost:3000`、正式網址）的 `GET`（`AllowedHeaders: *`），
+   瀏覽器才能載入 302 轉址後的簽章網址（canvas 讀圖需要 CORS）。
+5. `scripts/dev.env`（不進版控）加上憑證，或在雲端用環境變數：
+   ```
+   APP_STORAGE__BACKEND=r2
+   APP_STORAGE__R2__ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+   APP_STORAGE__R2__BUCKET=coloring-books-dev
+   APP_STORAGE__R2__ACCESS_KEY=...
+   APP_STORAGE__R2__SECRET_KEY=...
+   ```
+   憑證只能用環境變數，寫進 `settings.yaml` 會報錯。`config/settings.example.yaml` 的 `storage` 與 `auth` 區塊有每個欄位的說明。
+6. **R2 用另一個資料庫：** 把 `paths.database` 改成例如 `storage-r2/app.db`（資料夾先建好，也可用
+   `APP_PATHS__DATABASE=storage-r2/app.db`）。local 模式的 `storage/app.db` 與 R2 的資料是兩組，不要混用。
+7. 第一次啟動後用 `scripts/invites.py create --name 你的名字 --admin` 建立自己的連結（`dev_owner` 只限本機）。
+8. 正式環境的 DB 備份可用 `deploy/litestream.yml`（範本，預設不啟用）。
 
 ### 管理邀請與清理儲存空間
 
@@ -108,6 +132,8 @@ env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance --adopt-bucket-id  #
 - **還原舊備份的限制：** 從備份還原的舊 DB 與 bucket 的身分標記相同，GC 會照常執行。這時受影響的只有兩種物件：
   頁面線稿（備份之後重算過的會被當成孤兒刪掉，下次讀取時自動重算）；備份之後才產生的生成圖 id 大於 DB 的
   `sqlite_sequence`，會當成「可能正在寫入」略過、不刪。備份之後新建的書（書號大於 DB 最大的書）也一律略過。
+- **GC 與本機快取：** `storage_gc.py` 在另一台機器執行時，不會讓網站主機的磁碟快取失效：被刪的物件可能還留在
+  那台的 `<storage.cache_dir>/<bucket>`（快取只是加速，圖片網址仍受權限檢查）。GC 之後請在網站主機重啟後端或清空該快取資料夾。
 - `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試；`--init-instance` 為取消）、2 設定或參數錯誤、
   DB 不是最新版、3 孤兒太多而中止、4 DB 與 storage 的身分標記不一致（或缺少）、5 讀不到 storage 的身分標記
   （例如 R2 403、逾時、連不上；什麼都沒刪）。`invites.py delete-data` 同樣用 4 與 5。
@@ -192,6 +218,8 @@ $VENV_ROOT/coloring-books/bin/python scripts/dev_fake_backend.py --port 8000 [--
 BACKEND_URL=http://127.0.0.1:8000 npm run dev   # 另一個終端機，在 frontend/
 ```
 
+`--dev-owner admin`（預設）：沒有 cookie 的請求當作 admin；`/i/{token}` 照常運作。`POST /api/_test/invite` 只存在於假後端，建立第二個邀請並回傳 token（e2e 隔離測試用，真的 app 沒有）。
+
 設定沿用 `config/settings.yaml`（或 `APP_SETTINGS_FILE`），但資料庫與檔案一律放在 `--storage`（預設：新的暫存資料夾），不會碰到正式資料。
 啟動時不跑 ComfyUI preflight（`create_app(startup_preflight=False)`）：本機 ComfyUI 開著與否、workflow 能不能跑都不影響它。
 
@@ -220,6 +248,9 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
   「產生全部素材（還有 6 張）」→ 每頁的背景與角色動作縮圖都出現。
 - `e2e/batch.spec.ts`：`POST /books/{id}/materials/batch`（`upload_page_ids` 的頁略過背景、沒場景的頁略過）→ 排入的項目與略過原因 →
   worker 完成後自動選用（只填空的欄位）→ 再呼叫一次不再排。
+- `e2e/isolation.spec.ts`：邀請 A 建書；邀請 B（全新的瀏覽器 context 開 `/i/{token}`）書單是空的，開 A 的編輯器網址顯示錯誤（API 404）；
+  圖片 API 302 到 `/api/files/...?exp&sig` 後取得 image/png。
+- 全域錯誤處理（vitest `providers.test.tsx`）：任何 API 回 401 就轉到 `/invalid-link`；429 用 toast 顯示後端訊息（「今天的生成次數已用完，明天再來」）。
 - `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色、故事（含貼上對話框）、頁面編輯器 ① 構圖與 ② 補線，整頁不可水平捲動。
   390 時：故事每列上下堆疊；頁面清單變成「第 N 頁 / M」下拉選單（用它換頁）；背景與角色動作是舞台下方並排的精簡卡片，點了才展開、可收合；
   舞台照樣可以拖曳角色。1440 時：頁面清單在左、卡片完整顯示。

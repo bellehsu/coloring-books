@@ -43,7 +43,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `env -u PYTHONPATH ${python} ../scripts/dev_fake_backend.py --port ${BACKEND_PORT} --storage ${storage}`,
+      command: `env -u PYTHONPATH ${python} ../scripts/dev_fake_backend.py --port ${BACKEND_PORT} --storage ${storage} --dev-owner admin`,
       url: `http://127.0.0.1:${BACKEND_PORT}/api/system/queue`,
       reuseExistingServer: reuse,
       timeout: 60_000,

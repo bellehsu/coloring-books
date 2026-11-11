@@ -308,6 +308,28 @@ def test_demo_engine_pose_records_variation():
     assert "variation" not in asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req)).params
 
 
+def test_fake_backend_test_invite_route(settings_file, tmp_path):
+    """假後端專用的 /api/_test/invite：建立第二個邀請，/i/{token} 之後只看得到自己的書；真 app 沒有這個路由。"""
+    from fastapi.testclient import TestClient
+
+    from app.config import load_settings
+    from app.main import create_app
+
+    app = fake_backend.create_demo_app(tmp_path / "s", load_settings(settings_file),
+                                       engine=fake_backend.DemoEngine(delay_s=0.01))
+    with TestClient(app) as admin:
+        admin.post("/api/books", json={"title": "A", "paper_size": "a4", "print_mode": "print_shop"})
+        res = admin.post("/api/_test/invite", json={"name": "B"})
+        assert res.status_code == 200
+        token = res.json()["token"]
+        assert len(admin.get("/api/books").json()) == 1
+        with TestClient(app) as b:
+            assert b.get(f"/i/{token}", follow_redirects=False).status_code in (302, 303, 307)
+            assert b.get("/api/books").json() == []
+    real = create_app(load_settings(settings_file), start_worker=False, startup_preflight=False)
+    assert "/api/_test/invite" not in set(real.openapi()["paths"])
+
+
 def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
     """假後端可啟動：角色 → 背景 → 角色動作（有遮罩、去背圖）→ 合成 → QA 有缺口 → 自動補線後 0；
     資料寫在 --storage，不碰設定的 storage。"""
