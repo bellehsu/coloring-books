@@ -1,0 +1,43 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-card);
+}
+.card:hover {
+  box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-float);
+}
+.stage {
+  aspect-ratio: 4 / 3;
+  background-color: var(--chip-bg);
+  background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px);
+  background-size: 14px 14px;
+  display: grid;
+  place-items: center;
+}
+.cover {
+  height: 82%;
+  max-width: 90%;
+  object-fit: contain;
+  background: var(--surface);
+  box-shadow: var(--shadow-paper);
+}
+.body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.title {
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+.meta {
+  font-size: 13px;
+  color: var(--muted);
+}

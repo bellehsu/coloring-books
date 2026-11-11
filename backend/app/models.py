@@ -111,6 +111,7 @@ class Book(SQLModel, table=True):
     print_mode: PrintMode
     character_description: str | None = None
     character_generation_id: int | None = None
+    shared_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))  # null＝不分享
     created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
 

@@ -16,14 +16,18 @@ const book = (id: number, charId: number | null) => ({
   stats: { pages: 4, passed: 1, needs_fix: 0, no_selection: 0 },
 });
 
-function mockBooks(body: unknown, status = 200) {
+function mockBooks(body: unknown, status = 200, shared: unknown = []) {
   const json = (b: unknown, st: number) =>
     new Response(JSON.stringify(b), { status: st, headers: { "content-type": "application/json" } });
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string) =>
       Promise.resolve(
-        url === "/api/books" ? json(body, status) : json({ queued: 0, running: 0, comfy_ok: true }, 200),
+        url === "/api/books"
+          ? json(body, status)
+          : url === "/api/shared/books"
+            ? json(shared, 200)
+            : json({ queued: 0, running: 0, comfy_ok: true }, 200),
       ),
     ),
   );
@@ -57,5 +61,42 @@ describe("我的繪本", () => {
     mockBooks({ detail: "資料庫壞了" }, 500);
     setup();
     expect(await screen.findByRole("alert")).toHaveTextContent("資料庫壞了");
+  });
+
+  it("我的繪本裡已分享的書有「已分享」徽章，沒分享的沒有", async () => {
+    mockBooks([{ ...book(1, 5), shared_at: "2026-11-11T01:00:00Z" }, book(2, 5)]);
+    setup();
+    await screen.findByRole("link", { name: /書1/ });
+    expect(screen.getAllByText("已分享")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /書1/ })).toHaveTextContent("已分享");
+    expect(screen.getByRole("link", { name: /書2/ })).not.toHaveTextContent("已分享");
+  });
+});
+
+describe("大家的繪本", () => {
+  const sharedItem = {
+    id: 9,
+    title: "小熊歷險記",
+    author: "小華",
+    paper_size: "a4",
+    page_count: 3,
+    cover_page_id: 77,
+    shared_at: "2026-11-11T01:00:00Z",
+    mine: false,
+  };
+  it("列出別人分享的書：封面、書名、作者、頁數，連到唯讀頁", async () => {
+    mockBooks([], 200, [sharedItem]);
+    setup();
+    expect(screen.getByRole("heading", { name: "大家的繪本" })).toBeInTheDocument();
+    const link = await screen.findByRole("link", { name: /小熊歷險記/ });
+    expect(link).toHaveAttribute("href", "/shared/9");
+    expect(link).toHaveTextContent("作者：小華");
+    expect(link).toHaveTextContent("3 頁");
+    expect(link.querySelector("img")).toHaveAttribute("src", "/api/shared/pages/77/image.png");
+  });
+  it("沒有人分享時顯示空狀態", async () => {
+    mockBooks([], 200, []);
+    setup();
+    expect(await screen.findByText("還沒有人分享繪本。")).toBeInTheDocument();
   });
 });

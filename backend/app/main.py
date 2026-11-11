@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
-from .api import books, compose, export, files, generations, invites, lineart, pages, review
+from .api import books, compose, export, files, generations, invites, lineart, pages, review, shared
 from .api.deps import require_admin, require_owned_path
 from .config import Settings, load_settings
 from .db import init_db, make_engine, session_factory
@@ -95,6 +95,8 @@ def create_app(
     owned = [Depends(require_owned_path)]
     for r in (books, pages, compose, generations, lineart, review, export):
         app.include_router(r.router, dependencies=owned)
+    # 分享（唯讀）：不掛 require_owned_path（不是擁有者），但每個端點自己要 current_owner；見 api/shared.py
+    app.include_router(shared.router)
     app.include_router(files.router)
     app.include_router(invites.router)
 

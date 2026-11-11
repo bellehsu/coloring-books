@@ -162,6 +162,59 @@
         }
       }
     },
+    "/api/books/{book_id}/share": {
+      "put": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Set Share",
+        "description": "分享開關（擁有者或 admin）：開啟需要至少一個完成的頁面；關閉下一個請求就生效。",
+        "operationId": "set_share_api_books__book_id__share_put",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/books/{book_id}/character/candidates": {
       "post": {
         "tags": [
@@ -1915,6 +1968,155 @@
         }
       }
     },
+    "/api/shared/books": {
+      "get": {
+        "tags": [
+          "shared"
+        ],
+        "summary": "List Shared Books",
+        "description": "別人分享的書（自己的不列，首頁用徽章標示），分享時間新到舊。",
+        "operationId": "list_shared_books_api_shared_books_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SharedBookOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Shared Books Api Shared Books Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shared/books/{book_id}": {
+      "get": {
+        "tags": [
+          "shared"
+        ],
+        "summary": "Shared Book",
+        "operationId": "shared_book_api_shared_books__book_id__get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedBookDetailOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shared/pages/{page_id}/image.png": {
+      "get": {
+        "tags": [
+          "shared"
+        ],
+        "summary": "Shared Page Image",
+        "description": "PDF 用的同一張合成頁（含修線），長邊縮到 1600 px 以內。",
+        "operationId": "shared_page_image_api_shared_pages__page_id__image_png_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shared/books/{book_id}/export.pdf": {
+      "get": {
+        "tags": [
+          "shared"
+        ],
+        "summary": "Shared Book Pdf",
+        "operationId": "shared_book_pdf_api_shared_books__book_id__export_pdf_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/files/{key}": {
       "get": {
         "tags": [
@@ -2320,6 +2522,18 @@
               }
             ],
             "title": "Cover Url"
+          },
+          "shared_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared At"
           },
           "created_at": {
             "type": "string",
@@ -3562,6 +3776,126 @@
           "generation_id"
         ],
         "title": "SelectGeneration"
+      },
+      "ShareIn": {
+        "properties": {
+          "shared": {
+            "type": "boolean",
+            "title": "Shared"
+          }
+        },
+        "type": "object",
+        "required": [
+          "shared"
+        ],
+        "title": "ShareIn"
+      },
+      "SharedBookDetailOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "paper_size": {
+            "$ref": "#/components/schemas/PaperSize"
+          },
+          "mine": {
+            "type": "boolean",
+            "title": "Mine"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/SharedPageOut"
+            },
+            "type": "array",
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "author",
+          "paper_size",
+          "mine",
+          "pages"
+        ],
+        "title": "SharedBookDetailOut"
+      },
+      "SharedBookOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "paper_size": {
+            "$ref": "#/components/schemas/PaperSize"
+          },
+          "page_count": {
+            "type": "integer",
+            "title": "Page Count"
+          },
+          "cover_page_id": {
+            "type": "integer",
+            "title": "Cover Page Id"
+          },
+          "shared_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Shared At"
+          },
+          "mine": {
+            "type": "boolean",
+            "title": "Mine"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "author",
+          "paper_size",
+          "page_count",
+          "cover_page_id",
+          "shared_at",
+          "mine"
+        ],
+        "title": "SharedBookOut",
+        "description": "別人分享的書（列表項目）：只含完成的頁面數與封面頁（第一個完成的頁）。"
+      },
+      "SharedPageOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "position"
+        ],
+        "title": "SharedPageOut"
       },
       "StrokeIn": {
         "properties": {

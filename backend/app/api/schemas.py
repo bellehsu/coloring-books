@@ -56,6 +56,37 @@ class BookStats(BaseModel):
     no_selection: int = 0
 
 
+class ShareIn(BaseModel):
+    shared: bool
+
+
+class SharedBookOut(BaseModel):
+    """別人分享的書（列表項目）：只含完成的頁面數與封面頁（第一個完成的頁）。"""
+
+    id: int
+    title: str
+    author: str
+    paper_size: PaperSize
+    page_count: int
+    cover_page_id: int
+    shared_at: datetime
+    mine: bool
+
+
+class SharedPageOut(BaseModel):
+    id: int
+    position: int
+
+
+class SharedBookDetailOut(BaseModel):
+    id: int
+    title: str
+    author: str
+    paper_size: PaperSize
+    mine: bool
+    pages: list[SharedPageOut]
+
+
 class BookOut(BaseModel):
     id: int
     title: str
@@ -66,6 +97,7 @@ class BookOut(BaseModel):
     layout: LayoutOut
     stats: BookStats
     cover_url: str | None  # position 最小且有選圖的頁的 lineart_url
+    shared_at: datetime | None = None  # null＝沒有分享
     created_at: datetime
     updated_at: datetime
 
@@ -95,6 +127,7 @@ class BookOut(BaseModel):
             ),
             stats=stats or BookStats(),
             cover_url=cover_url,
+            shared_at=book.shared_at,
             created_at=book.created_at,
             updated_at=book.updated_at,
         )

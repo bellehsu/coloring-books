@@ -16,6 +16,7 @@ from app.api.schemas import (
     CharacterCandidatesCreate,
     CharacterSelect,
     GenerationOut,
+    ShareIn,
 )
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
 from app.services.layout import PaperSize, ratio_group
@@ -156,6 +157,33 @@ def update_book(
         background.add_task(
             _recompute_book_lineart, request.app.state.sessions, request.app.state.storage, book_id
         )
+    return book_out(session, book)
+
+
+NEED_PASSED_PAGE = "至少完成一頁才能分享"
+
+
+@router.put("/{book_id}/share", response_model=BookOut)
+def set_share(
+    book_id: int,
+    body: ShareIn,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> BookOut:
+    """分享開關（擁有者或 admin）：開啟需要至少一個完成的頁面；關閉下一個請求就生效。"""
+    book = owned_book(session, owner, book_id)
+    if body.shared:
+        passed = session.exec(
+            select(Page.id).where(col(Page.book_id) == book_id, col(Page.status) == PageStatus.PASSED).limit(1)
+        ).first()
+        if passed is None:
+            raise HTTPException(409, NEED_PASSED_PAGE)
+        if book.shared_at is None:
+            book.shared_at = utcnow()
+    else:
+        book.shared_at = None
+    session.add(book)
+    session.commit()
     return book_out(session, book)
 
 

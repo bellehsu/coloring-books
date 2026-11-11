@@ -326,3 +326,26 @@ def test_0007_app_meta_roundtrip(tmp_path):
     with eng.connect() as c:
         assert "app_meta" not in set(inspect(c).get_table_names())
     command.upgrade(alembic_config(eng), "head")
+
+
+def test_0008_book_shared_at_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0007")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "0008")
+    with eng.connect() as c:
+        col = _cols(c, "book")["shared_at"]
+        assert col["nullable"] is True
+        assert c.exec_driver_sql("SELECT shared_at FROM book").scalar() is None  # 既有的書預設不分享
+    command.downgrade(alembic_config(eng), "0007")
+    with eng.connect() as c:
+        assert "shared_at" not in _cols(c, "book")
+        assert c.exec_driver_sql("SELECT title FROM book").scalar() == "x"
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")

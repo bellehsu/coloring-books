@@ -43,6 +43,26 @@ export interface paths {
         patch: operations["update_book_api_books__book_id__patch"];
         trace?: never;
     };
+    "/api/books/{book_id}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Share
+         * @description 分享開關（擁有者或 admin）：開啟需要至少一個完成的頁面；關閉下一個請求就生效。
+         */
+        put: operations["set_share_api_books__book_id__share_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/books/{book_id}/character/candidates": {
         parameters: {
             query?: never;
@@ -634,6 +654,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/shared/books": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Shared Books
+         * @description 別人分享的書（自己的不列，首頁用徽章標示），分享時間新到舊。
+         */
+        get: operations["list_shared_books_api_shared_books_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/shared/books/{book_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Shared Book */
+        get: operations["shared_book_api_shared_books__book_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/shared/pages/{page_id}/image.png": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Shared Page Image
+         * @description PDF 用的同一張合成頁（含修線），長邊縮到 1600 px 以內。
+         */
+        get: operations["shared_page_image_api_shared_pages__page_id__image_png_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/shared/books/{book_id}/export.pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Shared Book Pdf */
+        get: operations["shared_book_pdf_api_shared_books__book_id__export_pdf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/files/{key}": {
         parameters: {
             query?: never;
@@ -768,6 +862,8 @@ export interface components {
             stats: components["schemas"]["BookStats"];
             /** Cover Url */
             cover_url: string | null;
+            /** Shared At */
+            shared_at?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1177,6 +1273,56 @@ export interface components {
             /** Generation Id */
             generation_id: number;
         };
+        /** ShareIn */
+        ShareIn: {
+            /** Shared */
+            shared: boolean;
+        };
+        /** SharedBookDetailOut */
+        SharedBookDetailOut: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /** Author */
+            author: string;
+            paper_size: components["schemas"]["PaperSize"];
+            /** Mine */
+            mine: boolean;
+            /** Pages */
+            pages: components["schemas"]["SharedPageOut"][];
+        };
+        /**
+         * SharedBookOut
+         * @description 別人分享的書（列表項目）：只含完成的頁面數與封面頁（第一個完成的頁）。
+         */
+        SharedBookOut: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /** Author */
+            author: string;
+            paper_size: components["schemas"]["PaperSize"];
+            /** Page Count */
+            page_count: number;
+            /** Cover Page Id */
+            cover_page_id: number;
+            /**
+             * Shared At
+             * Format: date-time
+             */
+            shared_at: string;
+            /** Mine */
+            mine: boolean;
+        };
+        /** SharedPageOut */
+        SharedPageOut: {
+            /** Id */
+            id: number;
+            /** Position */
+            position: number;
+        };
         /** StrokeIn */
         StrokeIn: {
             /**
@@ -1330,6 +1476,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["BookUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_share_api_books__book_id__share_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShareIn"];
             };
         };
         responses: {
@@ -2510,6 +2691,119 @@ export interface operations {
             header?: never;
             path: {
                 page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_shared_books_api_shared_books_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBookOut"][];
+                };
+            };
+        };
+    };
+    shared_book_api_shared_books__book_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBookDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    shared_page_image_api_shared_pages__page_id__image_png_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    shared_book_pdf_api_shared_books__book_id__export_pdf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
             };
             cookie?: never;
         };

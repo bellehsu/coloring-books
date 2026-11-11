@@ -2,6 +2,8 @@ import type { components } from "./schema";
 
 type S = components["schemas"];
 export type Book = S["BookOut"];
+export type SharedBook = S["SharedBookOut"];
+export type SharedBookDetail = S["SharedBookDetailOut"];
 export type Page = S["PageOut"];
 export type Generation = S["GenerationOut"];
 export type QA = S["QAOut"];

@@ -43,7 +43,7 @@ beforeEach(() => {
     });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       calls.push(url);
       if (url.includes("/lineart/edits")) {
         if (writeGate) await writeGate;
@@ -51,6 +51,10 @@ beforeEach(() => {
           status: writeStatus,
           headers: { "content-type": "application/json" },
         });
+      }
+      if (url.includes("/share")) {
+        calls.push(`body:${init?.body}`);
+        return json({ ...book, shared_at: "2026-11-11T01:00:00Z" });
       }
       if (url.includes("export/summary")) return json(summary);
       if (url.includes("export.pdf")) return pdfRes();
@@ -251,5 +255,42 @@ describe("ExportDrawer", () => {
     await userEvent.click(await screen.findByRole("button", { name: /下載 PDF（1 頁）/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/尚未儲存/);
     expect(calls.some((u) => u.includes("export.pdf"))).toBe(false);
+  });
+
+  describe("分享開關", () => {
+    it("沒有完成的頁時停用，並說明「至少完成一頁才能分享」", async () => {
+      summary = { total: 1, passed: 0, exportable_ids: [], skipped: [{ page_id: 1, position: 0, reason: "not_passed" }] };
+      setup();
+      const sw = await screen.findByRole("switch", { name: "分享給其他使用者" });
+      await waitFor(() => expect(screen.getByText("至少完成一頁才能分享")).toBeInTheDocument());
+      expect(sw).toBeDisabled();
+    });
+    it("有完成的頁時可切換，呼叫 PUT /books/1/share；說明只有完成的頁面", async () => {
+      summary = { total: 1, passed: 1, exportable_ids: [1], skipped: [] };
+      setup();
+      const sw = await screen.findByRole("switch", { name: "分享給其他使用者" });
+      expect(screen.getByText(/其他使用者可以檢視並下載已完成的頁面/)).toBeInTheDocument();
+      await waitFor(() => expect(sw).toBeEnabled());
+      expect(sw).not.toBeChecked();
+      await userEvent.click(sw);
+      await waitFor(() => expect(calls).toContain("body:" + JSON.stringify({ shared: true })));
+      expect(calls).toContain("/api/books/1/share");
+    });
+    it("已分享的書開關是開的，關閉送 shared:false", async () => {
+      summary = { total: 1, passed: 1, exportable_ids: [1], skipped: [] };
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={qc}>
+          <ToastProvider>
+            <ExportDrawer open onClose={() => {}} book={{ ...book, shared_at: "2026-11-11T01:00:00Z" } as Book} />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+      const sw = await screen.findByRole("switch", { name: "分享給其他使用者" });
+      expect(sw).toBeChecked();
+      await waitFor(() => expect(sw).toBeEnabled());
+      await userEvent.click(sw);
+      await waitFor(() => expect(calls).toContain("body:" + JSON.stringify({ shared: false })));
+    });
   });
 });

@@ -28,7 +28,7 @@ def _ordered_pages(session: Session, book_id: int) -> list[Page]:
     ).all())
 
 
-def _composed(session: Session, storage: Storage, book: Book, page: Page):
+def composed_page(session: Session, storage: Storage, book: Book, page: Page):
     layout = compute_layout(book.paper_size, book.print_mode)
     try:
         _lin, data = read_page_lineart(session, storage, page.id)
@@ -37,6 +37,31 @@ def _composed(session: Session, storage: Storage, book: Book, page: Page):
     with Image.open(io.BytesIO(data)) as im:
         ink = np.asarray(im.convert("L")) < 128
     return compose_page(ink, layout)
+
+
+def book_pdf(session: Session, storage: Storage, book: Book, include: Literal["passed", "all"] = "passed") -> bytes:
+    """書的 PDF（擁有者匯出與分享下載共用）：include=passed 只含「現在」仍通過的頁面；沒有頁面 → 409。"""
+    candidates = [
+        p for p in _ordered_pages(session, book.id)
+        if p.selected_generation_id is not None
+        and (include == "all" or p.status == PageStatus.PASSED)
+    ]
+    images = []
+    for p in candidates:
+        img = composed_page(session, storage, book, p)
+        # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍通過的頁面
+        session.refresh(p)
+        if include == "passed" and p.status != PageStatus.PASSED:
+            continue
+        images.append(img)
+    if not images:
+        raise HTTPException(409, NOTHING_TO_EXPORT)
+    return build_pdf(images)
+
+
+def pdf_response(book: Book, pdf: bytes) -> Response:
+    disp = f'attachment; filename="book-{book.id}.pdf"; filename*=UTF-8\'\'{quote(book.title)}.pdf'
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": disp})
 
 
 @router.get("/books/{book_id}/export/summary")
@@ -76,25 +101,8 @@ def export_pdf(
     owner: Owner = Depends(current_owner),
 ) -> Response:
     book = owned_book(session, owner, book_id)
-    candidates = [
-        p for p in _ordered_pages(session, book_id)
-        if p.selected_generation_id is not None
-        and (include == "all" or p.status == PageStatus.PASSED)
-    ]
-    images = []
-    for p in candidates:
-        img = _composed(session, storage, book, p)
-        # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍通過的頁面
-        session.refresh(p)
-        if include == "passed" and p.status != PageStatus.PASSED:
-            continue
-        images.append(img)
-    if not images:
-        raise HTTPException(409, NOTHING_TO_EXPORT)
-    pdf = build_pdf(images)
-    disp = f'attachment; filename="book-{book_id}.pdf"; filename*=UTF-8\'\'{quote(book.title)}.pdf'
-    return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": disp})
+    pdf = book_pdf(session, storage, book, include)
+    return pdf_response(book, pdf)
 
 
 @router.get("/pages/{page_id}/print.png")
@@ -108,5 +116,5 @@ def print_png(
     if page.selected_generation_id is None:
         raise HTTPException(409, "這一頁還沒有選定圖片")
     book = owned_book(session, owner, page.book_id)
-    return Response(content=png_bytes(_composed(session, storage, book, page)),
+    return Response(content=png_bytes(composed_page(session, storage, book, page)),
                     media_type="image/png")

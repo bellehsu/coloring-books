@@ -82,3 +82,13 @@
   margin: 0;
   color: var(--muted-2);
 }
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.h2 {
+  margin: 0;
+  font-size: clamp(20px, 2.6vw, 24px);
+  line-height: 1.2;
+}

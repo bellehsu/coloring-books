@@ -16,6 +16,8 @@ import type {
   Generation,
   Page,
   QA,
+  SharedBook,
+  SharedBookDetail,
   QueueStatus,
 } from "./client";
 
@@ -34,6 +36,8 @@ export const qk = {
   qa: (pageId: number) => ["qa", pageId] as const,
   edits: (pageId: number) => ["edits", pageId] as const,
   exportSummary: (bookId: number) => ["exportSummary", bookId] as const,
+  sharedBooks: () => ["sharedBooks"] as const,
+  sharedBook: (id: number) => ["sharedBook", id] as const,
 };
 
 export interface GenFilter {
@@ -50,6 +54,18 @@ export const useBooks = () => useQuery({ queryKey: qk.books(), queryFn: () => ap
 
 export const useBook = (id: number) =>
   useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`) });
+
+/** 別人分享的書（唯讀）。 */
+export const useSharedBooks = () =>
+  useQuery({ queryKey: qk.sharedBooks(), queryFn: () => api.get<SharedBook[]>("/shared/books") });
+
+/** 單本分享的書（只含完成的頁面）；404＝已不再分享，不重試。 */
+export const useSharedBook = (id: number) =>
+  useQuery({
+    queryKey: qk.sharedBook(id),
+    queryFn: () => api.get<SharedBookDetail>(`/shared/books/${id}`),
+    retry: false,
+  });
 
 export const usePages = (bookId: number) =>
   useQuery({ queryKey: qk.pages(bookId), queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`) });
@@ -159,6 +175,20 @@ export function useUpdateBook(bookId: number) {
         // 版面改變後後端會重算線稿與 QA；QA 結果以 ["qa"] 前綴一併重抓
         qc.invalidateQueries({ queryKey: ["qa"] }),
         qc.invalidateQueries({ queryKey: qk.exportSummary(bookId) }),
+      ]),
+  });
+}
+
+/** 分享開關（PUT /books/{id}/share）→ book, books, sharedBooks */
+export function useShareBook(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (shared: boolean) => api.put<Book>(`/books/${bookId}/share`, { shared }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.book(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.books() }),
+        qc.invalidateQueries({ queryKey: qk.sharedBooks() }),
       ]),
   });
 }

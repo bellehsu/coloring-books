@@ -22,6 +22,7 @@ OWNED_PARAMS = {"book_id", "page_id", "gen_id"}
 # 不帶擁有物 id 的路由（仍需登入，除了 /i 與 /api/files）。新增路由時，要嘛帶 id，要嘛明確加到這裡。
 NO_OWNED_ID = {
     ("GET", "/api/books"),
+    ("GET", "/api/shared/books"),  # 分享列表（唯讀）：只回別人分享且已完成的書
     ("POST", "/api/books"),
     ("GET", "/api/system/queue"),
     ("GET", "/api/system/preflight"),
@@ -53,7 +54,9 @@ def _routes():
 
 
 ROUTES = _routes()
-ID_ROUTES = [(m, p) for m, p, params in ROUTES if (m, p) not in NO_OWNED_ID]
+# 分享的唯讀路由（/api/shared，Task 10）：不是擁有者路由，可見性規則與測試在 tests/test_sharing.py
+SHARED = {(m, p) for m, p, _ in ROUTES if p.startswith("/api/shared/")}
+ID_ROUTES = [(m, p) for m, p, params in ROUTES if (m, p) not in NO_OWNED_ID | SHARED]
 
 
 def test_route_inventory_is_explicit():

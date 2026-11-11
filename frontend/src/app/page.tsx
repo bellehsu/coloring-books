@@ -5,15 +5,18 @@ import { AppBar } from "@/components/shell/AppBar";
 import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { ApiError } from "@/api/client";
-import { useBooks } from "@/api/hooks";
+import { useBooks, useSharedBooks } from "@/api/hooks";
 import { BookCard } from "@/features/books/BookCard";
 import { CreateBookDialog } from "@/features/books/CreateBookDialog";
+import { SharedBookCard } from "@/features/shared/SharedBookCard";
 import styles from "./page.module.css";
 
 export default function Home() {
   const books = useBooks();
   const [creating, setCreating] = useState(false);
+  const shared = useSharedBooks();
   const list = books.data;
+  const others = shared.data;
 
   return (
     <>
@@ -59,6 +62,31 @@ export default function Home() {
             </button>
           </div>
         )}
+
+        <section aria-labelledby="shared-h" className={styles.section}>
+          <div className={styles.titles}>
+            <h2 id="shared-h" className={styles.h2}>
+              大家的繪本
+            </h2>
+          </div>
+          {shared.isError && (
+            <p role="alert" className={styles.error}>
+              {shared.error instanceof ApiError ? shared.error.message : "無法載入大家的繪本"}
+            </p>
+          )}
+          {others && others.length === 0 && (
+            <div className={styles.empty}>
+              <p className={styles.emptyText}>還沒有人分享繪本。</p>
+            </div>
+          )}
+          {others && others.length > 0 && (
+            <div className={styles.grid}>
+              {others.map((b) => (
+                <SharedBookCard key={b.id} book={b} />
+              ))}
+            </div>
+          )}
+        </section>
       </main>
       {creating && <CreateBookDialog open onClose={() => setCreating(false)} />}
     </>
