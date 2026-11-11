@@ -712,3 +712,54 @@ def test_retry_without_images_is_409(client, app):
     b, p = book_page(client, app)
     r = client.post(f"/api/pages/{p['id']}/retry")
     assert r.status_code == 409 and r.json()["detail"] == "這一頁還缺背景或角色動作，請先畫一張"
+
+
+def test_concurrent_retry_queues_and_charges_once(client, app, monkeypatch):
+    """兩個分頁同時按「再試一次」：與「繼續做」共用 _BATCH_LOCK，鎖裡重看失敗的圖，只排一張、只算 1 次。"""
+    import threading
+    import time
+
+    import app.api.history as h
+    from app.models import Generation, GenKind, Usage
+    from app.services.engine import EngineError
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    app.state.engine.outcomes.append(EngineError("壞了"))
+    assert client.post(f"/api/pages/{pid}/poses", params=C, json={"action": "跳起來"}).status_code == 202
+    run_jobs(client, app)
+    assert get_page(app, pid).attention == "failed"
+
+    def poses():
+        with app.state.sessions() as s:
+            return len(s.exec(select(Generation).where(Generation.page_id == pid,
+                                                       Generation.kind == GenKind.POSE)).all())
+
+    def charged():
+        with app.state.sessions() as s:
+            return sum(u.generations for u in s.exec(select(Usage)).all())
+
+    before_poses, before_used = poses(), charged()
+    real = h._failed_kinds
+
+    def slow(session, page_id):  # 讓兩個請求都在對方 commit 之前讀到「失敗」
+        out = real(session, page_id)
+        time.sleep(0.3)
+        return out
+
+    monkeypatch.setattr(h, "_failed_kinds", slow)
+    res = []
+
+    def go():
+        r = client.post(f"/api/pages/{pid}/retry")
+        res.append((r.status_code, r.json().get("requeued")))
+
+    ts = [threading.Thread(target=go) for _ in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert sorted(code for code, _ in res) == [200, 200], res
+    assert sorted(len(q) for _, q in res) == [0, 1], res  # 一個重排角色動作，另一個只重跑流程
+    assert poses() == before_poses + 1
+    assert charged() == before_used + 1
