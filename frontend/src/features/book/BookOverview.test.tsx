@@ -43,6 +43,7 @@ const ov = (pages: OverviewPage[], extra: Partial<Overview> = {}): Overview => (
 let overview: Overview;
 let plan: ProducePlan;
 let produceRes: () => Response;
+let summary: unknown;
 let calls: { url: string; method: string }[];
 
 function json(b: unknown, status = 200) {
@@ -58,6 +59,13 @@ beforeEach(() => {
   ]);
   plan = { backgrounds: 0, poses: 0, total: 0, estimate_s: 0, remaining: 5, fits: 0 };
   produceRes = () => json({ queued: [11], deferred_pages: [], pipeline_pages: [] }, 202);
+  summary = {
+    total: 3,
+    passed: 2,
+    exportable_ids: [2, 3],
+    ready_ids: [2, 3],
+    skipped: [{ page_id: 1, position: 0, reason: "not_passed" }],
+  };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -67,9 +75,13 @@ beforeEach(() => {
       if (url === "/api/books/1/overview") return json(overview);
       if (url === "/api/books/1/produce/plan") return json(plan);
       if (url === "/api/books/1/produce" && method === "POST") return produceRes();
-      if (url === "/api/books/1/export/summary")
-        return json({ total: 3, passed: 2, exportable_ids: [2, 3], skipped: [{ page_id: 1, position: 0, reason: "not_passed" }] });
-      if (url === "/api/books/1/pages") return json([]);
+      if (url === "/api/books/1/export/summary") return json(summary);
+      if (url.startsWith("/api/books/1/export.pdf"))
+        return new Response(new Blob(["%PDF"]), {
+          status: 200,
+          headers: { "content-type": "application/pdf", "content-disposition": 'attachment; filename="book-1.pdf"' },
+        });
+      if (url === "/api/books/1/pages") return json(overview.pages.map((p) => ({ id: p.id, position: p.position, needs_fix: false })));
       return json({ queued: 0, running: 0, comfy_ok: true });
     }),
   );
@@ -367,7 +379,7 @@ describe("B 整本書：印出這本書", () => {
 
     await userEvent.click(within(sheet).getByRole("button", { name: "看好了，下一步 →" }));
     expect(await within(sheet).findByRole("button", { name: "下載 PDF（2 頁）" })).toBeInTheDocument();
-    expect(within(sheet).getByRole("radio", { name: /只有完成的頁面/ })).toBeChecked();
+    expect(within(sheet).getByRole("radio", { name: /可以印的頁面/ })).toBeChecked();
     await userEvent.click(within(sheet).getByRole("button", { name: "← 回去看一眼" }));
     expect(within(sheet).getByRole("list", { name: "會印出來的頁面" })).toBeInTheDocument();
   });
@@ -380,6 +392,51 @@ describe("B 整本書：印出這本書", () => {
     await userEvent.click(within(sheet).getByRole("checkbox", { name: "這些頁也一起印（試印）" }));
     await userEvent.click(within(sheet).getByRole("button", { name: "看好了，下一步 →" }));
     await within(sheet).findByRole("button", { name: /下載 PDF/ });
-    expect(within(sheet).getByRole("radio", { name: /所有已選圖的頁面/ })).toBeChecked();
+    expect(within(sheet).getByRole("radio", { name: /所有已經有圖的頁面/ })).toBeChecked();
+  });
+
+  it("請看一下但還是 PASSED 的頁（換一張失敗）：看一眼不算它，預設的 PDF 也不印它", async () => {
+    overview = ov([pg(1, "attention", { attention_detail: "圖片產生失敗" }), pg(2, "ready"), pg(3, "ready")]);
+    summary = { total: 3, passed: 3, exportable_ids: [1, 2, 3], ready_ids: [2, 3], skipped: [] };
+    const createObjectURL = vi.fn(() => "blob:x");
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
+    setup();
+    await screen.findByRole("list", { name: "頁面" });
+    await userEvent.click(screen.getByRole("button", { name: "印出這本書" }));
+    const sheet = screen.getByRole("dialog", { name: "印出這本書" });
+    await waitFor(() => expect(sheet).toHaveTextContent("這 2 頁會印出來。"));
+    const glance = within(sheet).getByRole("list", { name: "會印出來的頁面" });
+    expect(within(glance).getAllByRole("img").map((i) => i.getAttribute("alt"))).toEqual(["第 2 頁", "第 3 頁"]);
+    expect(within(sheet).getByRole("list", { name: "請看一下的頁面" })).toHaveTextContent("第 1 頁");
+
+    await userEvent.click(within(sheet).getByRole("button", { name: "看好了，下一步 →" }));
+    const dl = await within(sheet).findByRole("button", { name: "下載 PDF（2 頁）" });
+    expect(within(sheet).getByRole("list", { name: "不會印的頁面" })).toHaveTextContent("第 1 頁請看一下");
+    await userEvent.click(dl);
+    await waitFor(() => expect(calls.some((c) => c.url.startsWith("/api/books/1/export.pdf"))).toBe(true));
+    expect(calls.filter((c) => c.url.startsWith("/api/books/1/export.pdf")).map((c) => c.url)).toEqual([
+      "/api/books/1/export.pdf?include=ready",
+    ]);
+  });
+
+  it("勾了一起印：看一眼說一共印幾頁，與 PDF 的頁數一樣", async () => {
+    overview = ov([pg(1, "attention", { attention_detail: "圖片產生失敗" }), pg(2, "ready"), pg(3, "todo", { lineart_url: null, thumb_url: null })]);
+    summary = {
+      total: 3,
+      passed: 2,
+      exportable_ids: [1, 2],
+      ready_ids: [2],
+      skipped: [{ page_id: 3, position: 2, reason: "no_selection" }],
+    };
+    setup();
+    await screen.findByRole("list", { name: "頁面" });
+    await userEvent.click(screen.getByRole("button", { name: "印出這本書" }));
+    const sheet = screen.getByRole("dialog", { name: "印出這本書" });
+    await waitFor(() => expect(sheet).toHaveTextContent("這 1 頁會印出來。"));
+    expect(sheet).toHaveTextContent("還有 1 頁還沒做完，不會印出來。");
+    await userEvent.click(within(sheet).getByRole("checkbox", { name: "這些頁也一起印（試印）" }));
+    expect(sheet).toHaveTextContent("加上請看一下的頁，一共印 2 頁。");
+    await userEvent.click(within(sheet).getByRole("button", { name: "看好了，下一步 →" }));
+    expect(await within(sheet).findByRole("button", { name: "下載 PDF（2 頁）" })).toBeInTheDocument();
   });
 });

@@ -45,20 +45,29 @@ def composed_page(session: Session, storage: Storage, book: Book, page: Page, fo
         raise HTTPException(409, CAPTION_FONT_MISSING) from e
 
 
-def book_pdf(session: Session, storage: Storage, book: Book, include: Literal["passed", "all"],
+Include = Literal["passed", "ready", "all"]
+
+
+def _included(p: Page, include: Include) -> bool:
+    """passed：通過的頁；ready：通過而且沒有「請看一下」（B 的可以印，spec §4.3）；all：有選定圖的頁。"""
+    if p.selected_generation_id is None:
+        return False
+    if include == "all":
+        return True
+    return p.status == PageStatus.PASSED and (include == "passed" or p.attention is None)
+
+
+def book_pdf(session: Session, storage: Storage, book: Book, include: Include,
              font_path: Path | None) -> bytes:
-    """書的 PDF（擁有者匯出與分享下載共用）：include=passed 只含「現在」仍通過的頁面；沒有頁面 → 409。"""
-    candidates = [
-        p for p in _ordered_pages(session, book.id)
-        if p.selected_generation_id is not None
-        and (include == "all" or p.status == PageStatus.PASSED)
-    ]
+    """書的 PDF（擁有者匯出與分享下載共用）：include=passed 只含「現在」仍通過的頁面，ready 再去掉
+    「請看一下」的頁（B 的「印出這本書」預設）；沒有頁面 → 409。"""
+    candidates = [p for p in _ordered_pages(session, book.id) if _included(p, include)]
     images = []
     for p in candidates:
         img = composed_page(session, storage, book, p, font_path)
-        # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍通過的頁面
+        # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍符合的頁面
         session.refresh(p)
-        if include == "passed" and p.status != PageStatus.PASSED:
+        if not _included(p, include):
             continue
         images.append(img)
     if not images:
@@ -80,7 +89,7 @@ def export_summary(
 ) -> dict:
     owned_book(session, owner, book_id)
     pages = _ordered_pages(session, book_id)
-    exportable, skipped = [], []
+    exportable, ready, skipped = [], [], []
     for p in pages:
         if p.selected_generation_id is not None and p.status == PageStatus.PASSED:
             # 先確保線稿是最新的（可能因此退回草稿），再依目前狀態計數
@@ -95,14 +104,17 @@ def export_summary(
             skipped.append({"page_id": p.id, "position": p.position, "reason": "not_passed"})
         else:
             exportable.append(p.id)
+            if p.attention is None:
+                ready.append(p.id)
+    # ready_ids：include=ready 會印的頁（通過、沒有「請看一下」），B 的「先看一眼」用
     return {"total": len(pages), "passed": len(exportable),
-            "exportable_ids": exportable, "skipped": skipped}
+            "exportable_ids": exportable, "ready_ids": ready, "skipped": skipped}
 
 
 @router.get("/books/{book_id}/export.pdf")
 def export_pdf(
     book_id: int,
-    include: Literal["passed", "all"] = "passed",
+    include: Include = "passed",
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     owner: Owner = Depends(current_owner),

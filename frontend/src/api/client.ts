@@ -31,6 +31,8 @@ export interface ExportSummary {
   total: number;
   passed: number;
   exportable_ids: number[];
+  /** include=ready 會印的頁：通過而且沒有「請看一下」（B 的「印出這本書」預設）。 */
+  ready_ids: number[];
   skipped: { page_id: number; position: number; reason: "no_selection" | "not_passed" }[];
 }
 

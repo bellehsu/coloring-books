@@ -19,7 +19,8 @@ import styles from "./ExportDrawer.module.css";
 
 const Download = Icons.download;
 
-export type Include = "passed" | "all";
+/** passed：通過的頁（進階編輯）；ready：通過而且沒有「請看一下」（B）；all：有選定圖的頁（試印）。 */
+export type Include = "passed" | "ready" | "all";
 
 export interface ExportDrawerProps {
   open: boolean;
@@ -43,6 +44,8 @@ export interface ExportOptionsProps {
   initialInclude?: Include;
   /** 沒有完成的頁面時的提示。 */
   emptyPassedHint?: string;
+  /** book：B 的「印出這本書」（可以印／請看一下／還沒做完的說法，預設範圍是 ready）。 */
+  variant?: "editor" | "book";
 }
 
 /** 匯出 PDF 的選項與下載（編輯器的「匯出 PDF」抽屜與 B 的「印出這本書」共用）。 */
@@ -51,7 +54,9 @@ export function ExportOptions({
   active: open,
   initialInclude = "passed",
   emptyPassedHint = "沒有完成的頁面可以匯出，先在 ② 補線 按「完成這一頁 ✓」。",
+  variant = "editor",
 }: ExportOptionsProps) {
+  const isBook = variant === "book";
   const qc = useQueryClient();
   const summary = useExportSummary(book.id, open);
   const pages = usePages(book.id);
@@ -84,7 +89,9 @@ export function ExportOptions({
   const selectedCount = data
     ? data.total - skipped.filter((s) => s.reason === "no_selection").length
     : 0;
-  const count = include === "passed" ? passed : selectedCount;
+  const readyIds = new Set(data?.ready_ids ?? []);
+  const readyCount = readyIds.size;
+  const count = include === "passed" ? passed : include === "ready" ? readyCount : selectedCount;
   const needsFix = new Set(
     (pages.data ?? []).filter((p) => p.needs_fix).map((p) => p.id),
   );
@@ -149,12 +156,32 @@ export function ExportOptions({
         ? "需要修線"
         : "未完成";
 
+  // B：這次不會印的頁（依目前的範圍）：ready 時還有「請看一下」但仍通過的頁
+  const positions = new Map((pages.data ?? []).map((p) => [p.id, p.position]));
+  const notPrinted: { page_id: number; position: number; label: string; warn: boolean }[] = isBook
+    ? [
+        ...(include === "ready"
+          ? (data?.exportable_ids ?? [])
+              .filter((id) => !readyIds.has(id))
+              .map((id) => ({ page_id: id, position: positions.get(id) ?? -1, label: "請看一下", warn: true }))
+          : []),
+        ...skipped
+          .filter((s) => include !== "all" || s.reason === "no_selection")
+          .map((s) => ({
+            page_id: s.page_id,
+            position: s.position,
+            label: s.reason === "no_selection" ? "還沒有圖" : "還沒做完",
+            warn: s.reason === "not_passed",
+          })),
+      ].sort((a, b) => a.position - b.position)
+    : skipped.map((s) => ({ page_id: s.page_id, position: s.position, label: reason(s.reason, s.page_id), warn: s.reason === "not_passed" }));
+
   let hint: string;
   if (summary.isLoading) hint = "讀取中…";
   else if (summary.isError) hint = "";
   else if (count === 0)
     hint =
-      include === "passed"
+      include !== "all"
         ? emptyPassedHint
         : "沒有已選圖的頁面可以匯出。";
   else hint = "約 10 秒";
@@ -171,13 +198,13 @@ export function ExportOptions({
         <>
           <div className={styles.stats}>
             <div className={`${styles.stat} ${styles.ok}`}>
-              <span>已完成</span>
-              <b data-testid="passed-count">{data ? passed : "–"}</b>
+              <span>{isBook ? "可以印" : "已完成"}</span>
+              <b data-testid="passed-count">{data ? (isBook ? readyCount : passed) : "–"}</b>
             </div>
             <div className={`${styles.stat} ${styles.warn}`}>
-              <span>未完成</span>
+              <span>{isBook ? "請看一下／還沒做完" : "未完成"}</span>
               <b data-testid="failed-count">
-                {data ? data.total - passed : "–"}
+                {data ? data.total - (isBook ? readyCount : passed) : "–"}
               </b>
             </div>
           </div>
@@ -185,15 +212,19 @@ export function ExportOptions({
 
           <fieldset className={styles.fieldset}>
             <legend className={styles.legend}>匯出範圍</legend>
-            {(
-              [
-                ["passed", "只有完成的頁面", `${passed} 頁，可直接送印`],
-                [
-                  "all",
-                  "所有已選圖的頁面",
-                  `${selectedCount} 頁，含未完成，試印用`,
-                ],
-              ] as const
+            {(isBook
+              ? ([
+                  ["ready", "可以印的頁面", `${readyCount} 頁，可直接送印`],
+                  ["all", "所有已經有圖的頁面", `${selectedCount} 頁，含請看一下和還沒做完的頁，試印用`],
+                ] as const)
+              : ([
+                  ["passed", "只有完成的頁面", `${passed} 頁，可直接送印`],
+                  [
+                    "all",
+                    "所有已選圖的頁面",
+                    `${selectedCount} 頁，含未完成，試印用`,
+                  ],
+                ] as const)
             ).map(([v, name, note]) => (
               <label
                 key={v}
@@ -214,22 +245,16 @@ export function ExportOptions({
             ))}
           </fieldset>
 
-          {skipped.length > 0 && (
+          {notPrinted.length > 0 && (
             <div className={styles.skipped}>
-              <b>不會匯出的頁面</b>
-              <ul>
-                {skipped.map((s) => (
+              <b>{isBook ? "不會印的頁面" : "不會匯出的頁面"}</b>
+              <ul aria-label={isBook ? "不會印的頁面" : "不會匯出的頁面"}>
+                {notPrinted.map((s) => (
                   <li key={s.page_id}>
                     <span className={styles.pageNo}>
-                      第 {s.position + 1} 頁
+                      {s.position >= 0 ? `第 ${s.position + 1} 頁` : "一頁"}
                     </span>
-                    <span
-                      className={
-                        s.reason === "not_passed" ? styles.warnText : undefined
-                      }
-                    >
-                      {reason(s.reason, s.page_id)}
-                    </span>
+                    <span className={s.warn ? styles.warnText : undefined}>{s.label}</span>
                   </li>
                 ))}
               </ul>

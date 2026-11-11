@@ -326,7 +326,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
    連按兩次不會重複排隊。
 3. **整本書**（B，`/books/{id}`）：每頁一張卡片，顯示做到哪裡（可以印 ✓／製作中／請看一下／還沒做完），可以篩選；
    延後的頁面在次數恢復後按 **繼續做** 接著排（也會補上「兩張圖都有、還沒合成」的頁面）；
-   全部做好時顯示「整本做好了」，並可「印出這本書先看一眼」與匯出 PDF（只含可以印的頁面）。
+   全部做好時顯示「整本做好了」，並可「印出這本書先看一眼」與匯出 PDF（預設只含可以印的頁面；「請看一下」的頁列出來，勾選「這些頁也一起印」才印）。
 4. **處理一頁**（C，`/books/{id}/page/{pageId}`）：預覽加一列修改（換一張背景或動作、改場景與動作文字、移動角色、手畫線、改圖下方的字）。
    每個修改之前會存快照：**復原／重做**（最多保留 50 步；做了新修改就截掉重做），**還原**可以把背景或角色動作還原成「自動畫的那張」。
    修改後頁面自動重新合成、補線，成功就自動標成 **可以印**（不用另外按「角色看起來對嗎」；使用者手畫的線在獨立的 user 層，自動補的線在 auto 層，互不覆蓋）。
@@ -430,8 +430,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | POST | `/pages/{page_id}/character-check` | 標記角色是否一致（需帶 `generation_id`，選定圖片已更換則 409） |
 | POST | `/pages/{page_id}/pass` | 完成頁面（body 可以是 `{}`；QA 有缺口時後端自動記錄原因「使用者確認完成（N 個缺口）」，也可自帶 `force_reason`） |
 | POST | `/pages/{page_id}/unpass` | 取消完成 |
-| GET | `/books/{book_id}/export/summary` | 匯出摘要（可匯出頁、略過原因） |
-| GET | `/books/{book_id}/export.pdf` | 匯出書本 PDF（`include=passed|all`） |
+| GET | `/books/{book_id}/export/summary` | 匯出摘要（`exportable_ids` 通過的頁、`ready_ids` 通過而且沒有「請看一下」的頁、略過原因） |
+| GET | `/books/{book_id}/export.pdf` | 匯出書本 PDF（`include=passed`（預設，進階編輯）、`ready`（B：去掉「請看一下」的頁）或 `all`（有選定圖的頁）） |
 | GET | `/pages/{page_id}/print.png` | 單頁完整版面 1-bit PNG（300 DPI） |
 | GET | `/system/queue` | 佇列狀態（worker 狀態、排隊數、執行中任務）；`pending` 列出排隊中／執行中的角色、背景、角色動作（舊→新），`recent` 是各類型最近 10 筆成功的 Qwen 生成耗時（新→舊，不含上傳），供估算剩餘時間 |
 | GET | `/system/preflight` | ComfyUI 連線、模型與節點檢查（並更新快取） |

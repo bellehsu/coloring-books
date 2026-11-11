@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Book, OverviewPage } from "@/api/client";
+import { useExportSummary } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Drawer } from "@/components/ui/Drawer";
 import { ExportOptions } from "@/features/editor/ExportDrawer";
@@ -18,13 +19,24 @@ const thumbOf = (p: OverviewPage) => p.lineart_url ?? p.thumb_url;
 /**
  * 「印出這本書」：先看一眼（可以印的頁面縮圖；請看一下的頁也列出來，可以勾選一起印），
  * 再到原本的 PDF 選項。開啟時才掛載，每次都從「看一眼」開始。
+ *
+ * 「會印出來」與 PDF 用同一份名單：匯出摘要的 ready_ids（通過而且沒有請看一下，等於 include=ready）。
+ * 換一張失敗、還是 PASSED 的「請看一下」頁也不算（spec §4.3：列出來，勾了才一起印＝include=all）。
+ * 摘要還沒回來時先用總覽的「可以印」。
  */
 export function ExportSheet({ onClose, book, pages }: ExportSheetProps) {
   const [step, setStep] = useState<"glance" | "options">("glance");
   const [withAttention, setWithAttention] = useState(false);
-  const ready = pages.filter((p) => p.state === "ready");
-  const attention = pages.filter((p) => p.state === "attention");
+  const summary = useExportSummary(book.id).data;
+  const readyIds = summary ? new Set(summary.ready_ids) : null;
+  const ready = pages.filter((p) => (readyIds ? readyIds.has(p.id) : p.state === "ready"));
+  const attention = pages.filter((p) => p.state === "attention" && !readyIds?.has(p.id));
   const unfinished = pages.length - ready.length - attention.length;
+  // 勾了一起印（include=all）：有圖的頁都印，只有還沒有圖的不印
+  const noImage = summary
+    ? summary.skipped.filter((s) => s.reason === "no_selection").length
+    : pages.filter((p) => p.thumb_url == null).length;
+  const allCount = pages.length - noImage;
   const [cw, ch] = book.layout.content_px;
 
   return (
@@ -35,7 +47,9 @@ export function ExportSheet({ onClose, book, pages }: ExportSheetProps) {
             <h3 className={styles.h3}>先看一眼</h3>
             <p className={styles.note}>
               {ready.length > 0 ? `這 ${ready.length} 頁會印出來。` : "還沒有可以印的頁面。"}
-              {unfinished > 0 && `還有 ${unfinished} 頁還沒做完，不會印出來。`}
+              {withAttention
+                ? `加上請看一下的頁，一共印 ${allCount} 頁。${noImage > 0 ? `還有 ${noImage} 頁還沒有圖，不會印出來。` : ""}`
+                : unfinished > 0 && `還有 ${unfinished} 頁還沒做完，不會印出來。`}
             </p>
           </div>
           {ready.length > 0 && (
@@ -87,7 +101,8 @@ export function ExportSheet({ onClose, book, pages }: ExportSheetProps) {
           <ExportOptions
             book={book}
             active
-            initialInclude={withAttention ? "all" : "passed"}
+            variant="book"
+            initialInclude={withAttention ? "all" : "ready"}
             emptyPassedHint="還沒有可以印的頁面。"
           />
         </>
