@@ -14,8 +14,13 @@ import type {
   Edits,
   ExportSummary,
   Generation,
+  Invite,
+  InviteCreate,
+  Me,
   Page,
   QA,
+  SharedBook,
+  SharedBookDetail,
   QueueStatus,
 } from "./client";
 
@@ -34,6 +39,10 @@ export const qk = {
   qa: (pageId: number) => ["qa", pageId] as const,
   edits: (pageId: number) => ["edits", pageId] as const,
   exportSummary: (bookId: number) => ["exportSummary", bookId] as const,
+  sharedBooks: () => ["sharedBooks"] as const,
+  sharedBook: (id: number) => ["sharedBook", id] as const,
+  me: () => ["me"] as const,
+  invites: () => ["invites"] as const,
 };
 
 export interface GenFilter {
@@ -50,6 +59,36 @@ export const useBooks = () => useQuery({ queryKey: qk.books(), queryFn: () => ap
 
 export const useBook = (id: number) =>
   useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`) });
+
+/** 目前的使用者（名字與是否為管理者）；首頁用它決定要不要顯示「邀請管理」。 */
+export const useMe = () => useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me"), retry: false });
+
+/** 管理者的邀請列表；非管理者後端回 404（頁面顯示一般的 404）。 */
+export const useInvites = () =>
+  useQuery({ queryKey: qk.invites(), queryFn: () => api.get<Invite[]>("/admin/invites"), retry: false });
+
+export const useCreateInvite = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: InviteCreate) => api.post<Invite>("/admin/invites", body),
+    onSuccess: (row) => {
+      qc.setQueryData<Invite[]>(qk.invites(), (old) => [row, ...(old ?? []).filter((r) => r.id !== row.id)]);
+      void qc.invalidateQueries({ queryKey: qk.invites() });
+    },
+  });
+};
+
+/** 別人分享的書（唯讀）。 */
+export const useSharedBooks = () =>
+  useQuery({ queryKey: qk.sharedBooks(), queryFn: () => api.get<SharedBook[]>("/shared/books") });
+
+/** 單本分享的書（只含完成的頁面）；404＝已不再分享，不重試。 */
+export const useSharedBook = (id: number) =>
+  useQuery({
+    queryKey: qk.sharedBook(id),
+    queryFn: () => api.get<SharedBookDetail>(`/shared/books/${id}`),
+    retry: false,
+  });
 
 export const usePages = (bookId: number) =>
   useQuery({ queryKey: qk.pages(bookId), queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`) });
@@ -159,6 +198,20 @@ export function useUpdateBook(bookId: number) {
         // 版面改變後後端會重算線稿與 QA；QA 結果以 ["qa"] 前綴一併重抓
         qc.invalidateQueries({ queryKey: ["qa"] }),
         qc.invalidateQueries({ queryKey: qk.exportSummary(bookId) }),
+      ]),
+  });
+}
+
+/** 分享開關（PUT /books/{id}/share）→ book, books, sharedBooks */
+export function useShareBook(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (shared: boolean) => api.put<Book>(`/books/${bookId}/share`, { shared }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.book(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.books() }),
+        qc.invalidateQueries({ queryKey: qk.sharedBooks() }),
       ]),
   });
 }

@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 # backend/app/config.py → 專案根目錄
@@ -64,6 +64,54 @@ class PathSettings(BaseModel):
     database: Path
 
 
+class R2Settings(BaseModel):
+    endpoint: str | None = None
+    bucket: str | None = None
+    # 憑證只能來自環境變數（APP_STORAGE__R2__ACCESS_KEY／SECRET_KEY）；SecretStr 讓 repr／log 只顯示 ****
+    access_key: SecretStr | None = None
+    secret_key: SecretStr | None = None
+
+
+class StorageSettings(BaseModel):
+    backend: Literal["local", "r2"] = "local"
+    r2: R2Settings = R2Settings()
+    # 簽章網址有效秒數；網址拿到就立刻用（302 轉址），所以很短
+    signed_url_ttl_s: int = Field(120, gt=0)
+    # R2 物件的本機快取（只是加速，隨時可刪）；None＝<paths.storage_dir>/r2_cache。實際放在 <cache_dir>/<bucket>
+    cache_dir: Path | None = None
+    cache_max_bytes: int = Field(2 * 1024**3, gt=0)
+    # LocalStorage 的 HMAC 金鑰；只能來自環境變數 APP_STORAGE__SIGNING_KEY，
+    # 沒設時自動產生並存在 <paths.storage_dir>/.signing_key（0600）
+    signing_key: SecretStr | None = None
+
+
+class AuthSettings(BaseModel):
+    # 本機開發：沒有 cookie 的請求視為這個名字的 admin owner（沒有就建立）。雲端一定要留空（None）
+    dev_owner: str | None = None
+    # cb_session cookie 是否加 Secure（HTTPS 部署時開啟；本機 http 開發要關）
+    cookie_secure: bool = False
+    # scripts/invites.py 印出的連結前綴（網站對外網址，例如 https://books.example）；None＝http://localhost:3000
+    invite_base_url: str | None = None
+    # 邀請連結加密存放（owner.token_encrypted）用的金鑰；只能來自環境變數 APP_AUTH__LINK_KEY，
+    # 沒設時自動產生並存在 <paths.storage_dir>/.link_key（0600）
+    link_key: SecretStr | None = None
+
+    @field_validator("dev_owner")
+    @classmethod
+    def _blank_is_none(cls, v: str | None) -> str | None:
+        v = v.strip() if v is not None else None
+        return v or None
+
+
+# 只能用環境變數設定的欄位（設定檔裡出現就報錯，避免憑證進到檔案或版控）
+_ENV_ONLY_FIELDS = {
+    ("storage", "r2", "access_key"): "APP_STORAGE__R2__ACCESS_KEY",
+    ("storage", "r2", "secret_key"): "APP_STORAGE__R2__SECRET_KEY",
+    ("storage", "signing_key"): "APP_STORAGE__SIGNING_KEY",
+    ("auth", "link_key"): "APP_AUTH__LINK_KEY",
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APP_",
@@ -74,6 +122,8 @@ class Settings(BaseSettings):
     comfy: ComfySettings
     paths: PathSettings
     queue: QueueSettings = QueueSettings()
+    storage: StorageSettings = StorageSettings()
+    auth: AuthSettings = AuthSettings()
 
     @classmethod
     def settings_customise_sources(
@@ -108,6 +158,7 @@ class Settings(BaseSettings):
                         "database": abs_(self.paths.database),
                     }
                 ),
+                "storage": self.storage.model_copy(update={"cache_dir": abs_(self.storage.cache_dir)}),
             }
         )
 
@@ -131,6 +182,20 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise SettingsError(["設定檔頂層必須是 mapping"], path)
     return data
+
+
+def _env_only_problems(data: dict[str, Any]) -> list[str]:
+    """設定檔裡不可出現憑證欄位；訊息只列欄位名稱，不含值。"""
+    problems: list[str] = []
+    for loc, env_name in _ENV_ONLY_FIELDS.items():
+        node: Any = data
+        for part in loc:
+            node = node.get(part) if isinstance(node, dict) else None
+            if node is None:
+                break
+        else:
+            problems.append(f"{'.'.join(loc)} 不可寫在設定檔，請改用環境變數 {env_name}")
+    return problems
 
 
 def validate_paths(s: Settings) -> list[str]:
@@ -159,6 +224,9 @@ def load_settings(path: Path | None = None, *, check_paths: bool = True) -> Sett
     """
     path = path or settings_file_path()
     data = _read_yaml(path)
+    problems = _env_only_problems(data)
+    if problems:
+        raise SettingsError(problems, path)
     try:
         settings = Settings(**data).resolved()
     except ValidationError as e:

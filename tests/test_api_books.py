@@ -56,6 +56,17 @@ def test_create_and_get_book_with_layout(client):
                                            "print_mode": "home"}).status_code == 422
 
 
+def test_create_book_assigns_admin_owner(client, app):
+    """沒有 cookie 時是 auth.dev_owner（測試預設 admin）：新書都歸給那個 admin owner（沒有就建立一個）。"""
+    from app.models import Book, Owner
+
+    a, b = new_book(client, title="一"), new_book(client, title="二")
+    with app.state.sessions() as s:
+        owners = s.exec(select(Owner)).all()
+        assert len(owners) == 1 and owners[0].is_admin and owners[0].name == "admin"
+        assert {s.get(Book, x["id"]).owner_id for x in (a, b)} == {owners[0].id}
+
+
 def test_list_patch_and_404(client):
     a, b = new_book(client, title="一"), new_book(client, title="二")
     assert [x["id"] for x in client.get("/api/books").json()] == [b["id"], a["id"]]
@@ -109,14 +120,16 @@ def test_candidates_stored_fields_and_random_seed(client, app):
     gid = candidates(client, b["id"]).json()[0]["id"]
     with app.state.sessions() as s:
         g = s.get(Generation, gid)
-        v = json.loads(g.request_json)["variation"]
+        d = json.loads(g.request_json)
+        v = d["variation"]
         assert g.user_text == "一隻戴帽子的小熊"
         assert v in prompts.QWEN_CHARACTER_VARIATIONS
         assert g.prompt == qwen_character_prompt("一隻戴帽子的小熊", v)
         assert g.negative_prompt == ""
         assert g.request_json == encode_request(
             kind=GenKind.CHARACTER, prompt=g.prompt, negative_prompt="",
-            seed=g.seed, width=QWEN_CHARACTER_SIZE[0], height=QWEN_CHARACTER_SIZE[1], variation=v)
+            seed=g.seed, width=QWEN_CHARACTER_SIZE[0], height=QWEN_CHARACTER_SIZE[1], variation=v,
+            extra={"usage_day": d["usage_day"], "usage_owner": d["usage_owner"]})  # 每日上限的計數紀錄
         assert 0 <= g.seed <= 2**32 - 1
 
 
@@ -230,10 +243,10 @@ def test_set_character_is_atomic_under_race(client, app, monkeypatch):
     b = new_book(client)
     gens = [{"id": i} for i in candidate_ids(client, b["id"], 2, seed=1)]
     run_jobs(client, app, 2)
-    real = books_mod._book_or_404
+    real = books_mod.owned_book  # 端點裡的載入（路由層級的檢查用 deps 的，不受影響）
 
-    def racing(session, book_id):
-        book = real(session, book_id)  # 驗證時角色尚未設定
+    def racing(session, owner, book_id):
+        book = real(session, owner, book_id)  # 驗證時角色尚未設定
         with app.state.sessions() as other:  # 驗證後、寫入前，另一請求搶先設定
             from app.models import Book
             row = other.get(Book, book_id)
@@ -243,7 +256,7 @@ def test_set_character_is_atomic_under_race(client, app, monkeypatch):
             other.commit()
         return book
 
-    monkeypatch.setattr(books_mod, "_book_or_404", racing)
+    monkeypatch.setattr(books_mod, "owned_book", racing)
     r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gens[0]["id"]})
     assert r.status_code == 409
     monkeypatch.undo()
@@ -257,10 +270,10 @@ def test_candidates_blocked_by_racing_set_character(client, app, monkeypatch):
     from app.models import Book
 
     b = new_book(client)
-    real = books_mod._book_or_404
+    real = books_mod.owned_book  # 端點裡的載入（路由層級的檢查用 deps 的，不受影響）
 
-    def racing(session, book_id):
-        book = real(session, book_id)
+    def racing(session, owner, book_id):
+        book = real(session, owner, book_id)
         with app.state.sessions() as other:
             row = other.get(Book, book_id)
             row.character_generation_id = 1
@@ -268,7 +281,7 @@ def test_candidates_blocked_by_racing_set_character(client, app, monkeypatch):
             other.commit()
         return book
 
-    monkeypatch.setattr(books_mod, "_book_or_404", racing)
+    monkeypatch.setattr(books_mod, "owned_book", racing)
     assert candidates(client, b["id"]).status_code == 409
     with app.state.sessions() as s:
         assert s.exec(select(Generation)).all() == []
@@ -384,3 +397,42 @@ def test_book_stats_and_cover(client, app):
     assert listed[b["id"]]["stats"] == got["stats"]
     assert listed[b["id"]]["cover_url"] == got["cover_url"]
     assert p0["position"] == 1 and p2["position"] == 2
+
+
+def _clear_image(app, gen_id):
+    """storage_gc 清掉過期捨棄圖之後的樣子：成功、沒有圖。"""
+    with app.state.sessions() as s:
+        row = s.get(Generation, gen_id)
+        row.image_path = None
+        s.add(row)
+        s.commit()
+
+
+def test_set_character_rejects_cleared_image(client, app):
+    # 被 storage_gc 清掉圖的候選圖不能變成角色：之後每個角色動作任務都會拿不到角色圖
+    b = new_book(client)
+    gid = candidate_ids(client, b["id"], 1, seed=1)[0]
+    run_jobs(client, app)
+    _clear_image(app, gid)
+    r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gid})
+    assert r.status_code == 409
+    assert client.get(f"/api/books/{b['id']}").json()["character_generation_id"] is None
+
+
+def test_set_character_blocked_by_racing_gc_clear(client, app, monkeypatch):
+    from app.api import books as books_mod
+
+    b = new_book(client)
+    gid = candidate_ids(client, b["id"], 1, seed=1)[0]
+    run_jobs(client, app)
+    real = books_mod.utcnow
+
+    def racing():
+        _clear_image(app, gid)  # 驗證後、UPDATE 前，storage_gc 清掉了圖
+        return real()
+
+    monkeypatch.setattr(books_mod, "utcnow", racing)
+    r = client.post(f"/api/books/{b['id']}/character", json={"generation_id": gid})
+    assert r.status_code == 409
+    monkeypatch.undo()
+    assert client.get(f"/api/books/{b['id']}").json()["character_generation_id"] is None

@@ -55,14 +55,14 @@ def test_pages_append_and_reorder(client):
 
 
 def test_controlnet_strength_is_ignored(client):
-    """構圖強度已停用：舊前端送的值照收但不存（欄位留在 DB 與 PageOut）。"""
+    """構圖強度已停用（0006 移除欄位）：舊前端送的值照收但忽略；PageOut 不再有草圖欄位。"""
     p = new_page(client, new_book(client)["id"])
-    assert p["controlnet_strength"] == 0.4 and p["sketch_url"] is None
+    assert "controlnet_strength" not in p and "sketch_url" not in p
     for v in (0.6, 0.0, 0.7):
         r = client.patch(f"/api/pages/{p['id']}", json={"controlnet_strength": v})
-        assert r.status_code == 200 and r.json()["controlnet_strength"] == 0.4
+        assert r.status_code == 200 and "controlnet_strength" not in r.json()
     r = client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "公園", "controlnet_strength": 0.2})
-    assert r.json()["scene_prompt"] == "公園" and r.json()["controlnet_strength"] == 0.4
+    assert r.status_code == 200 and r.json()["scene_prompt"] == "公園"
     assert client.patch("/api/pages/999", json={}).status_code == 404
 
 
@@ -100,16 +100,16 @@ def test_delete_page_cascades_and_reorders(client, app):
     set_page(app, mid["id"], selected_generation_id=done)
     assert client.get(f"/api/pages/{mid['id']}/lineart").status_code == 200  # 產生線稿檔
     storage = app.state.storage
-    img = storage.abs(f"books/{b['id']}/generations/{done}.png")
-    pdir = storage.abs(f"books/{b['id']}/pages/{mid['id']}")
-    assert img.is_file() and pdir.is_dir()
+    img = f"books/{b['id']}/generations/{done}.png"
+    pdir = f"books/{b['id']}/pages/{mid['id']}/"
+    assert storage.exists(img) and list(storage.list(pdir))
 
     assert client.delete(f"/api/pages/{mid['id']}").status_code == 204
     assert client.delete(f"/api/pages/{mid['id']}").status_code == 404
     got = client.get(f"/api/books/{b['id']}/pages").json()
     assert [p["id"] for p in got] == [pages[0]["id"], pages[2]["id"]]
     assert [p["position"] for p in got] == [0, 1]
-    assert not img.exists() and not pdir.exists()
+    assert not storage.exists(img) and list(storage.list(pdir)) == []
     with app.state.sessions() as s:
         assert s.exec(select(Generation).where(Generation.page_id == mid["id"])).all() == []
         assert s.exec(select(LineartEdit).where(LineartEdit.page_id == mid["id"])).all() == []

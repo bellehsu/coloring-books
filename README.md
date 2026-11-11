@@ -28,6 +28,7 @@ backend/app/
   services/lineart_extract.py  生成圖轉線稿（呼叫 lineart_post）
   services/workflow_registry.py workflow 登錄、白名單參數、hash
   services/preflight.py        節點／模型／輸入欄位檢查
+  services/instance.py         DB 與 storage 的身分標記（storage_instance_id；storage_gc 只在兩邊一致時執行）
   services/lineart_post.py     線稿後處理與指標
 comfy_workflows/<name>/        workflow_api.json + manifest.yaml（qwen_character、qwen_background、qwen_edit_pose_cutout）
 archive/comfy_workflows/       已停用的 workflow（SDXL、Route B；preflight 不掃描）
@@ -44,6 +45,9 @@ scripts/
   check_env.py                 環境檢查
   sync_comfy_model_paths.py    產生 ComfyUI extra_model_paths.yaml
   preflight.py                 命令列 preflight
+  invites.py                   邀請連結管理（create／list／rotate／revoke／delete-data）
+  storage_gc.py                清理過期的捨棄圖與孤兒物件
+  dev_fake_backend.py          不需要 GPU 的假生成後端（e2e 用；另有只在這裡才有的 POST /api/_test/invite）
 config/settings.example.yaml   設定範本（複製成 settings.yaml）
 storage/                       生成檔案與 SQLite
 tests/                         pytest（全部可在無 GPU、無 ComfyUI 下執行）
@@ -56,6 +60,138 @@ python3 -m venv $VENV_ROOT/coloring-books
 $VENV_ROOT/coloring-books/bin/pip install -e ".[dev]"
 cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
 ```
+
+### 邀請連結與本機開發
+
+- 每個使用者用自己的邀請連結 `/i/{token}` 開啟網站；後端設定 `cb_session` cookie（httpOnly、90 天），
+  之後每個請求都檢查 session 與 owner，只看得到自己的繪本（admin 看得到全部）。
+- 本機開發不想用連結時，設定 `auth.dev_owner: admin`（`config/settings.yaml`），或在 `scripts/dev.env`
+  設 `APP_AUTH__DEV_OWNER=admin`（`dev.env.example` 已預設）：沒有 cookie 的請求就當作 admin。
+  已有 admin（例如資料庫遷移時建立的）會直接沿用。
+- **邀請管理頁不接受 `dev_owner` 的後備 admin**：沒有 cookie 的請求即使被當作 admin，`/api/admin/*` 也是 404、首頁沒有「邀請管理」
+  （否則區網上任何裝置都能取得每個人的連結）。本機要用邀請管理：載入 dev.env 後執行一次
+  `( set -a; . scripts/dev.env; set +a; env -u PYTHONPATH $VENV_ROOT/coloring-books/bin/python scripts/invites.py create --name 自己 --admin )`，
+  用印出的管理者連結在瀏覽器開一次（之後有 cookie 就是真正的管理者）。
+- **對外部署一定不可設 `dev_owner`**（範本預設 `null`）；有設時後端啟動會印出警告。
+
+### 從 Phase 9 升級（合併後第一次重啟 dev.sh 之前必做）
+
+Phase 10 起本機也用 R2，資料庫與本機資料夾都換一組新的；舊的 `storage/app.db` 與 `storage/books/` 留著當備份、**不再使用**。
+後端每次啟動都會把 `paths.database` 指到的資料庫升級到最新版。如果第一次重啟時設定還指著舊的 `storage/app.db`，
+它會被**遷移並改寫**：0005 → 0009 刪掉 `page.sketch_path`／`controlnet_strength` 欄位、新增 admin 並把所有書歸給它，
+還會在 `storage/books/` 寫入身分標記 `_instance.json`。這些改動無法完整還原，所以順序很重要：
+
+1. 先停掉 dev.sh，**備份整個 `storage/`**：`cp -a storage storage-backup-$(date +%Y%m%d)`。
+2. 建立新資料夾：`mkdir storage-r2`（已在 `.gitignore`）。
+3. **在第一次重啟之前**，在 `scripts/dev.env` 加上（`dev.env.example` 有同樣的註解範本）：
+   ```
+   APP_STORAGE__BACKEND=r2
+   APP_PATHS__DATABASE=storage-r2/app.db
+   APP_PATHS__STORAGE_DIR=storage-r2
+   APP_AUTH__DEV_OWNER=admin
+   APP_STORAGE__R2__ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+   APP_STORAGE__R2__BUCKET=coloring-books-dev
+   APP_STORAGE__R2__ACCESS_KEY=...
+   APP_STORAGE__R2__SECRET_KEY=...
+   ```
+   - `APP_PATHS__STORAGE_DIR` 也要改：R2 模式下圖片在 bucket，但本機快取預設放在 `<paths.storage_dir>/r2_cache/<bucket>`；
+     不改的話快取會寫進舊的 `storage/`。相對路徑以專案根目錄為準。
+   - R2 帳號、bucket 與憑證的準備見下一節。
+4. 重啟前確認設定真的生效（只印路徑，不印憑證）：
+   ```bash
+   ( set -a; . scripts/dev.env; set +a; env -u PYTHONPATH $VENV_ROOT/coloring-books/bin/python -c \
+     'import sys; sys.path.insert(0, "backend"); from app.config import load_settings; s = load_settings(); print(s.storage.backend, s.paths.database, s.paths.storage_dir)' )
+   ```
+   要看到 `r2 …/storage-r2/app.db …/storage-r2`，才可以執行 `scripts/dev.sh`。
+5. 新資料庫是空的（舊的書不搬到 R2）。要再看舊資料，請**複製一份**備份，再用
+   `APP_STORAGE__BACKEND=local`、`APP_PATHS__DATABASE=<複製的資料夾>/app.db`、`APP_PATHS__STORAGE_DIR=<複製的資料夾>`
+   指過去；不要直接指向 `storage/`。
+
+### R2 準備（Cloudflare R2 物件儲存；只有雲端或想在本機驗證 R2 時才需要）
+
+`storage.backend: local`（預設）不需要以下任何東西。要用 R2，你需要自己建立：
+
+1. Cloudflare 帳號，並在 Dashboard 啟用 R2。
+2. 兩個 bucket：開發用 `coloring-books-dev`、正式用 `coloring-books-prod`（兩個環境不要共用，見下方警告）。
+3. 每個 bucket 各一個 API token（R2 → Manage API tokens → Object Read & Write，只套用到那個 bucket），記下 Access Key ID 與 Secret Access Key。
+4. 每個 bucket 的 CORS 規則：允許網站來源（例如 `http://localhost:3000`、正式網址）的 `GET`（`AllowedHeaders: *`），
+   目前圖片只用 `<img>` 載入，不設 CORS 也能顯示；之後若要從瀏覽器直接讀取圖檔內容（canvas、fetch）才需要，先設好避免日後出錯。
+5. `scripts/dev.env`（不進版控）加上憑證，或在雲端用環境變數：
+   ```
+   APP_STORAGE__BACKEND=r2
+   APP_STORAGE__R2__ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+   APP_STORAGE__R2__BUCKET=coloring-books-dev
+   APP_STORAGE__R2__ACCESS_KEY=...
+   APP_STORAGE__R2__SECRET_KEY=...
+   ```
+   憑證只能用環境變數，寫進 `settings.yaml` 會報錯。`config/settings.example.yaml` 的 `storage` 與 `auth` 區塊有每個欄位的說明。
+6. **R2 用另一個資料庫與資料夾：** 把 `paths.database` 改成例如 `storage-r2/app.db`、`paths.storage_dir` 改成 `storage-r2`
+   （資料夾先建好；也可用 `APP_PATHS__DATABASE=storage-r2/app.db`、`APP_PATHS__STORAGE_DIR=storage-r2`）。
+   R2 的本機快取預設放在 `<paths.storage_dir>/r2_cache/<bucket>`。local 模式的 `storage/` 與 R2 的資料是兩組，不要混用；
+   從舊版升級時要在第一次啟動前設好（見上一節）。
+7. 第一次啟動後，先載入 dev.env（`set -a; . scripts/dev.env; set +a`）再用 `scripts/invites.py create --name 你的名字 --admin` 建立自己的連結（`dev_owner` 只限本機）；要用「邀請管理」必須用這個管理者連結開一次。
+8. 正式環境的 DB 備份可用 `deploy/litestream.yml`（範本，預設不啟用）。
+
+### 管理邀請與清理儲存空間
+
+兩個腳本都在專案根目錄執行，設定與後端相同（`config/settings.yaml` 或 `APP_SETTINGS_FILE`，`APP_` 環境變數覆寫；
+R2 憑證只來自 `APP_STORAGE__R2__ACCESS_KEY`／`SECRET_KEY`）。DB 存 token 的 hash（查詢用）與 Fernet 加密版（`owner.token_encrypted`；金鑰見下方「邀請管理頁」），所以管理頁與 `list --show-links` 能再顯示連結。
+
+```bash
+PY=$VENV_ROOT/coloring-books/bin/python
+set -a; . scripts/dev.env; set +a   # 先載入 dev.env（資料庫、storage、R2 設定）：不載入的話腳本會用 settings.yaml 的路徑，也就是舊的 storage/app.db
+env -u PYTHONPATH $PY scripts/invites.py create --name 小明 [--cap 60] [--admin] [--base-url https://網站]
+env -u PYTHONPATH $PY scripts/invites.py list                # id、名稱、admin、每日上限、今天（台北）用量、撤銷、session 數；預設不顯示連結（--show-links 多一欄「連結」）
+env -u PYTHONPATH $PY scripts/invites.py rotate --id 1       # 換發新連結（例如遷移時建立、沒人知道 token 的 admin）；舊連結與已登入的瀏覽器失效
+env -u PYTHONPATH $PY scripts/invites.py revoke --id 2       # 撤銷，並刪除它的 session（下一個請求就 401）
+env -u PYTHONPATH $PY scripts/invites.py delete-data --id 2  # 刪除它的書、頁面、生成紀錄、圖片、session、用量與 owner；要輸入名稱確認（--yes 略過）
+env -u PYTHONPATH $PY scripts/storage_gc.py --dry-run        # 只計數：捨棄超過 30 天的圖（--days 調整）與沒有資料列指到的孤兒物件
+env -u PYTHONPATH $PY scripts/storage_gc.py                  # 真的刪除（頁面選用中、角色圖不會刪）
+env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance  # 補上缺少的身分標記（要輸入 storage 名稱確認；--yes 略過）
+env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance --adopt-bucket-id  # DB 沒有 id、storage 有標記時，把它寫進 DB
+```
+
+- **舊資料庫保護：** 資料庫在 0006 之前（Phase 9）而且已經有書時，後端啟動與 `invites.py` 都會拒絕自動升級，印出提示並結束
+  （檔案完全不動）；確定要就地升級時才設 `APP_ALLOW_LEGACY_UPGRADE=1`。沒有書的舊庫照常升級。
+- 連結前綴：`--base-url`，其次 `auth.invite_base_url`，預設 `http://localhost:3000`。
+
+**邀請管理頁（管理者）：** 管理者的首頁有「邀請管理」連結 → `/admin/invites`：填名字（1–40 字，未撤銷的邀請不可重名）、管理者、每日上限（1–1000，預設 60）→
+「產生連結」，列表（新的在最上面）顯示身分、上限、今天、書數、最後使用、狀態與連結（可隨時再看、按「複製」）。
+換發、撤銷、改上限、刪資料仍用 `scripts/invites.py`。非管理者打開這頁與 `/api/admin/*` 都是 404。
+
+- 連結前綴：`auth.invite_base_url`，沒設就用瀏覽器開頁面的網址（尊重 Next proxy 轉發的 `X-Forwarded-Host`／`X-Forwarded-Proto`），
+  所以用區網 IP 開管理頁就會得到區網連結。
+- 連結金鑰：環境變數 `APP_AUTH__LINK_KEY`（只能放環境變數，不可寫進 settings.yaml），沒設就自動產生 `<paths.storage_dir>/.link_key`（0600）。
+  拿到資料庫或 Litestream 備份但沒有金鑰就看不到連結。**這把金鑰要跟資料庫一起保管**：弄丟或更換後，既有連結變成
+  「這個連結無法再顯示，請用指令換發」（`invites.py rotate --id N`），邀請本身與已登入的瀏覽器不受影響。
+  升級前建立的邀請、`dev_owner` 的 admin 也是同樣顯示（沒有加密的 token）。已撤銷的邀請不顯示連結。
+- 最後一個未撤銷的 admin 要加 `--force-admin` 才能 `delete-data`；還有圖片正在生成時 `delete-data` 會拒絕，稍後再試。
+- `storage_gc.py` 不升級資料庫結構：DB 不是最新版時請先啟動一次後端。與 DB 對不上的物件（書／頁／生成紀錄 id 超出 DB、
+  或屬於另一本書）不刪。孤兒超過 20 個且超過「孤兒＋被參照物件」的 20%，或對不上的物件超過 20 個且超過列出物件的 20%，
+  就整個中止、什麼都不刪（多半是設定指錯 DB 或 bucket）；先用 `--dry-run -v --allow-mass-delete` 看清單，確認無誤才加 `--allow-mass-delete`。
+- **身分標記：** DB（`app_meta.storage_instance_id`）與 storage（物件 `books/_instance.json`）存同一個隨機 id。
+  標記一律直接讀寫 R2（不經過本機快取）。`storage_gc.py` 與 `invites.py delete-data` 要求兩邊都有且一致，
+  否則結束碼 4、什麼都不刪、也不改 DB（`--allow-mass-delete` 也不例外）。這個物件永遠不會被 GC 或 `delete-data` 刪掉。
+- **後端啟動時的自動建立：** 兩邊都沒有標記時，只有「DB 至少有一本書」或「storage 的 `books/` 是空的」才自動建立
+  （新部署、或既有部署升級後第一次啟動）。空的新 DB 指到 `books/` 已經有物件、沒有標記的 storage 時**不會**自動認領：
+  只印 `!!!` 警告、照常服務，兩邊都不寫。只有一邊有或兩邊不同時同樣只警告。
+- **補標記（復原）：** 先確認 `paths.database` 與 storage 設定指的是同一組，再執行 `storage_gc.py --init-instance`：
+  DB 有 id、storage 沒有 → 寫進 storage；兩邊都沒有 → 產生新 id 寫進兩邊。DB 沒有 id、storage 有標記
+  （例如降級後再升級、或還原了 0007 之前的備份）→ 加 `--adopt-bucket-id` 把 storage 的 id 寫進 DB。
+  都要輸入 storage 名稱確認（R2 是 bucket 名稱，本機是 storage 資料夾的絕對路徑；`--yes` 略過），
+  永遠不覆寫已存在的 id（兩邊不同時結束碼 4，請檢查設定）；不能搭配 `--dry-run`。
+- **不要把複製的 DB 指到正在使用的 bucket：** 複製（或還原）的 DB 帶著同一個身分標記，GC 與 `delete-data` 會照常執行、
+  刪掉另一份 DB 還在用的物件。開發與正式環境各用自己的 bucket（或本機資料夾）。
+- **還原舊備份的限制：** 從備份還原的舊 DB 與 bucket 的身分標記相同，GC 會照常執行。這時受影響的只有兩種物件：
+  頁面線稿（備份之後重算過的會被當成孤兒刪掉，下次讀取時自動重算）；備份之後才產生的生成圖 id 大於 DB 的
+  `sqlite_sequence`，會當成「可能正在寫入」略過、不刪。備份之後新建的書（書號大於 DB 最大的書）也一律略過。
+- **GC 與本機快取：** `storage_gc.py` 在另一台機器執行時，不會讓網站主機的磁碟快取失效：被刪的物件可能還留在
+  那台的 `<storage.cache_dir>/<bucket>`（快取只是加速，圖片網址仍受權限檢查）。GC 之後請在網站主機刪掉快取資料夾 `<storage.cache_dir>/<bucket>`（預設 `<paths.storage_dir>/r2_cache/<bucket>`），最好在後端停止或閒置時做；重啟後端不會清快取（快取存在磁碟上）。
+- `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試；`--init-instance` 為取消）、2 設定或參數錯誤、
+  DB 不是最新版、3 孤兒太多而中止、4 DB 與 storage 的身分標記不一致（或缺少）、5 讀不到 storage 的身分標記
+  （例如 R2 403、逾時、連不上；什麼都沒刪）。`invites.py delete-data` 同樣用 4 與 5。
+- R2 的 boto3 client 設了連線逾時 5 秒、讀取逾時 30 秒、最多重試 3 次：R2 連不上時，後端啟動的身分標記檢查約 20 秒後放棄
+  （記警告、照常啟動）。R2 的本機快取放在 `<storage.cache_dir>/<bucket>`；舊版放在 `<cache_dir>` 底下的檔案可以直接刪掉。
 
 ## 模型（只需要 Qwen）
 
@@ -135,6 +271,8 @@ $VENV_ROOT/coloring-books/bin/python scripts/dev_fake_backend.py --port 8000 [--
 BACKEND_URL=http://127.0.0.1:8000 npm run dev   # 另一個終端機，在 frontend/
 ```
 
+`--dev-owner admin`（預設）：沒有 cookie 的請求當作 admin；`/i/{token}` 照常運作。`POST /api/_test/invite` 只存在於假後端，建立第二個邀請並回傳 token（e2e 隔離測試用，真的 app 沒有）。
+
 設定沿用 `config/settings.yaml`（或 `APP_SETTINGS_FILE`），但資料庫與檔案一律放在 `--storage`（預設：新的暫存資料夾），不會碰到正式資料。
 啟動時不跑 ComfyUI preflight（`create_app(startup_preflight=False)`）：本機 ComfyUI 開著與否、workflow 能不能跑都不影響它。
 
@@ -163,6 +301,15 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
   「產生全部素材（還有 6 張）」→ 每頁的背景與角色動作縮圖都出現。
 - `e2e/batch.spec.ts`：`POST /books/{id}/materials/batch`（`upload_page_ids` 的頁略過背景、沒場景的頁略過）→ 排入的項目與略過原因 →
   worker 完成後自動選用（只填空的欄位）→ 再呼叫一次不再排。
+- `e2e/isolation.spec.ts`：邀請 A 建書；邀請 B（全新的瀏覽器 context 開 `/i/{token}`）書單是空的，開 A 的編輯器網址顯示錯誤（API 404）；
+  圖片 API 302 到 `/api/files/...?exp&sig` 後取得 image/png。也確認 A 的 cookie 真的生效（不是沒有 cookie 而被當成 dev admin）：
+  有 `cb_session`、preflight 403、書單只有自己的書（沒有 admin 剛建的書）。
+- `e2e/invites-admin.spec.ts`：管理者在 `/admin/invites` 產生「小美」→ 列表最上面出現、連結前綴是 3010（經 Next proxy）→ 「複製」→ 剪貼簿 → 全新的 context 開連結，
+  首頁沒有書、沒有「邀請管理」、管理頁是 404 → 回管理者重新整理，連結仍在、書 0；390 px 沒有橫向捲動。
+- `e2e/invite-links.spec.ts`：無效 token、截斷（`/i`、`/i/`）或多段（`/i/a/b`）的連結都到「連結已失效」頁；
+  壞掉的 cookie 到 `/invalid-link?reason=missing`（「請用邀請連結開啟」）。
+- 全域錯誤處理（vitest `providers.test.tsx`）：API 回 401 就轉到 `/invalid-link`：detail「請用邀請連結開啟」（這個瀏覽器沒有 session）
+  帶 `?reason=missing`，其他（owner 被撤銷）帶 `?reason=revoked`。429 不在全域處理：各呼叫端的錯誤 toast 顯示後端訊息（「今天的生成次數已用完，明天再來」；批次超過剩下的次數時整批不排，訊息是「今天只剩 X 次，這次需要 N 次」）。
 - `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色、故事（含貼上對話框）、頁面編輯器 ① 構圖與 ② 補線，整頁不可水平捲動。
   390 時：故事每列上下堆疊；頁面清單變成「第 N 頁 / M」下拉選單（用它換頁）；背景與角色動作是舞台下方並排的精簡卡片，點了才展開、可收合；
   舞台照樣可以拖曳角色。1440 時：頁面清單在左、卡片完整顯示。

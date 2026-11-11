@@ -11,10 +11,13 @@ API 全是真的：上傳背景圖、故事頁的「產生全部素材」（mate
 背景的缺口框在畫面上方，預設位置（DEFAULT_PLACEMENT）的角色不會蓋到它。
 
 用法：
-  python scripts/dev_fake_backend.py [--port 8000] [--host 127.0.0.1] [--storage <dir>]
+  python scripts/dev_fake_backend.py [--port 8000] [--host 127.0.0.1] [--storage <dir>] [--dev-owner admin]
+
+另有只在這支假後端才有的 POST /api/_test/invite（建立第二個邀請，回傳 token；e2e 隔離測試用）。
 
 設定沿用 load_settings()（config/settings.yaml 或 APP_SETTINGS_FILE，可被 APP_ 環境變數覆寫），
-但 paths.storage_dir／paths.database 一律改到 --storage（預設：新的暫存資料夾），不會碰到正式資料。
+但 paths.storage_dir／paths.database 一律改到 --storage（預設：新的暫存資料夾），不會碰到正式資料；
+storage.backend 一律是 local（就算設定檔寫 r2），不連網路。
 啟動時不跑 ComfyUI preflight（快取維持 None），
 結果不受本機 ComfyUI 有沒有開、workflow 能不能跑影響（e2e 才穩定）。
 """
@@ -32,12 +35,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
+from fastapi import Request  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
 from app.config import Settings, SettingsError, load_settings  # noqa: E402
 from app.models import GenKind  # noqa: E402
 from app.services.engine import GenerationRequest, GenerationResult, ProgressFn  # noqa: E402
 from app.services.prompts import POSE_SIZE  # noqa: E402
+
+
+class InviteIn(BaseModel):
+    name: str = "e2e"
+    is_admin: bool = False  # 只有假後端：e2e 用管理者邀請登入（dev_owner 後備的 admin 不能用邀請管理）
+
 
 OUTLINE_PX = 6
 # 缺口寬度（生成圖的像素）。線稿會放大到 300 DPI 內容尺寸再處理：A4 約放大 3 倍，
@@ -199,22 +210,38 @@ class DemoEngine:
         )
 
 
-def demo_settings(storage: Path, base: Settings | None = None) -> Settings:
-    """load_settings() 的設定，但 storage_dir／database 改到 storage（會建立資料夾）。"""
+def demo_settings(storage: Path, base: Settings | None = None, *, dev_owner: str | None = "admin") -> Settings:
+    """load_settings() 的設定，但 storage_dir／database 改到 storage（會建立資料夾），
+    且一律用 LocalStorage（storage.backend=local）：假後端與 e2e 不需要網路或 R2 憑證。
+    auth.dev_owner 預設 admin：沒有 cookie 的請求就是 admin，e2e 不用邀請連結；
+    有 cookie（GET /i/{token}）時照常以那個 owner 身分。"""
     s = base or load_settings(check_paths=False)
     storage = storage.expanduser().resolve()
     storage.mkdir(parents=True, exist_ok=True)
     return s.model_copy(update={
         "paths": s.paths.model_copy(update={"storage_dir": storage, "database": storage / "app.db"}),
+        "storage": s.storage.model_copy(update={"backend": "local", "cache_dir": None}),
+        "auth": s.auth.model_copy(update={"dev_owner": dev_owner}),
     })
 
 
-def create_demo_app(storage: Path, base: Settings | None = None, engine: DemoEngine | None = None):
+def create_demo_app(storage: Path, base: Settings | None = None, engine: DemoEngine | None = None,
+                    *, dev_owner: str | None = "admin"):
+    from app.services import auth
     from app.main import create_app
 
     # 不跑啟動 preflight：DemoEngine 不連 ComfyUI，也不該看本機 ComfyUI 的狀態
-    return create_app(demo_settings(storage, base), engine=engine or DemoEngine(), start_worker=True,
-                      startup_preflight=False)
+    app = create_app(demo_settings(storage, base, dev_owner=dev_owner), engine=engine or DemoEngine(),
+                     start_worker=True, startup_preflight=False)
+
+    @app.post("/api/_test/invite")
+    def test_only_create_invite(body: InviteIn, request: Request) -> dict:
+        """只有假後端有（真的 app 沒有）：建立另一個邀請，e2e 用它驗證 owner 隔離。回傳原始 token。"""
+        with request.app.state.sessions() as s:
+            owner, token = auth.create_owner(s, body.name, is_admin=body.is_admin, link_key=auth.link_key(request.app.state.settings))
+        return {"owner_id": owner.id, "token": token}
+
+    return app
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -222,10 +249,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--storage", type=Path, default=None, help="資料夾（含 SQLite）；預設新建暫存資料夾")
+    p.add_argument("--dev-owner", default="admin", help="沒有 cookie 的請求當作這個 admin（預設 admin；空字串＝關閉）")
     args = p.parse_args(argv)
     storage = args.storage or Path(tempfile.mkdtemp(prefix="coloring-books-fake-"))
     try:
-        app = create_demo_app(storage)
+        app = create_demo_app(storage, dev_owner=args.dev_owner or None)
     except SettingsError as e:
         print(e, file=sys.stderr)
         return 2

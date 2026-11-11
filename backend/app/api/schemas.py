@@ -6,11 +6,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from app.models import Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
+from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
 from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
 from app.services.qa import QA_MESSAGES, QAReport
+
+# 請求裡的資料列 id：超出 SQLite INTEGER 的回 422（不然查詢時 OverflowError → 500）
+DbId = Annotated[int, Field(ge=SQLITE_INT_MIN, le=SQLITE_INT_MAX)]
 
 
 # 去除前後空白後再檢查長度，避免純空白字串通過
@@ -53,6 +56,37 @@ class BookStats(BaseModel):
     no_selection: int = 0
 
 
+class ShareIn(BaseModel):
+    shared: bool
+
+
+class SharedBookOut(BaseModel):
+    """別人分享的書（列表項目）：只含完成的頁面數與封面頁（第一個完成的頁）。"""
+
+    id: int
+    title: str
+    author: str
+    paper_size: PaperSize
+    page_count: int
+    cover_page_id: int
+    shared_at: datetime
+    mine: bool
+
+
+class SharedPageOut(BaseModel):
+    id: int
+    position: int
+
+
+class SharedBookDetailOut(BaseModel):
+    id: int
+    title: str
+    author: str
+    paper_size: PaperSize
+    mine: bool
+    pages: list[SharedPageOut]
+
+
 class BookOut(BaseModel):
     id: int
     title: str
@@ -63,6 +97,7 @@ class BookOut(BaseModel):
     layout: LayoutOut
     stats: BookStats
     cover_url: str | None  # position 最小且有選圖的頁的 lineart_url
+    shared_at: datetime | None = None  # null＝沒有分享
     created_at: datetime
     updated_at: datetime
 
@@ -92,6 +127,7 @@ class BookOut(BaseModel):
             ),
             stats=stats or BookStats(),
             cover_url=cover_url,
+            shared_at=book.shared_at,
             created_at=book.created_at,
             updated_at=book.updated_at,
         )
@@ -104,7 +140,7 @@ class CharacterCandidatesCreate(BaseModel):
 
 
 class CharacterSelect(BaseModel):
-    generation_id: int
+    generation_id: DbId
 
 
 # 角色動作模式與背景風格：新列一律 precise／simple（Qwen）；fast／detailed 只出現在 Phase 9 以前的 SDXL 舊列，
@@ -203,17 +239,17 @@ class PageCreate(BaseModel):
 class PageUpdate(BaseModel):
     scene_prompt: ScenePromptStr | None = None
     action_prompt: ActionPromptStr | None = None
-    controlnet_strength: float | None = None  # 構圖草圖已停用：舊前端會送，照收但忽略
+    controlnet_strength: float | None = None  # 構圖草圖已停用（0006 已移除欄位）：舊前端會送，照收但忽略
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
 
 
 class PageOrder(BaseModel):
-    page_ids: list[int]
+    page_ids: list[DbId]
 
 
 class SelectGeneration(BaseModel):
-    generation_id: int
+    generation_id: DbId
 
 
 class PoseCreate(BaseModel):
@@ -253,8 +289,6 @@ class PageOut(BaseModel):
     position: int
     scene_prompt: str
     action_prompt: str
-    controlnet_strength: float  # 構圖草圖已停用；舊資料的值照回
-    sketch_url: str | None  # 構圖草圖已停用：一律 None（欄位保留到前端移除）
     selected_generation_id: int | None
     background_generation_id: int | None
     pose_generation_id: int | None
@@ -295,8 +329,6 @@ class PageOut(BaseModel):
             position=page.position,
             scene_prompt=page.scene_prompt,
             action_prompt=page.action_prompt,
-            controlnet_strength=page.controlnet_strength,
-            sketch_url=None,
             selected_generation_id=page.selected_generation_id,
             background_generation_id=page.background_generation_id,
             pose_generation_id=page.pose_generation_id,
@@ -332,7 +364,7 @@ class StrokeIn(BaseModel):
 
 
 class EditsIn(BaseModel):
-    generation_id: int
+    generation_id: DbId
     strokes: list[StrokeIn] = Field(max_length=MAX_STROKES)
 
     @model_validator(mode="after")
@@ -355,7 +387,7 @@ class EditsOut(BaseModel):
 
 
 class AutofixIn(BaseModel):
-    generation_id: int
+    generation_id: DbId
 
 
 class QAMessage(BaseModel):
@@ -412,9 +444,40 @@ class BatchSkip(BaseModel):
 
 
 class BatchMaterialsIn(BaseModel):
-    upload_page_ids: list[int] = Field(default_factory=list, max_length=500)  # 這些頁改用上傳圖片：不排背景
+    upload_page_ids: list[DbId] = Field(default_factory=list, max_length=500)  # 這些頁改用上傳圖片：不排背景
 
 
 class BatchMaterialsOut(BaseModel):
     queued: list[GenerationOut]
     skipped: list[BatchSkip]
+
+
+InviteNameStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+
+
+class MeOut(BaseModel):
+    name: str
+    is_admin: bool
+    # 只靠 auth.dev_owner（沒有 cookie）當作這個 admin：邀請管理不開放（見 deps.require_admin_hidden）
+    via_dev_owner: bool = False
+
+
+class InviteCreate(BaseModel):
+    name: InviteNameStr
+    is_admin: bool = False
+    daily_generation_cap: int = Field(60, ge=1, le=1000)
+
+
+class InviteOut(BaseModel):
+    """管理頁的一筆邀請。link＝完整連結；舊資料、金鑰不對或已撤銷時為 null。"""
+
+    id: int
+    name: str
+    is_admin: bool
+    daily_generation_cap: int | None  # null＝不設上限（管理者）
+    today: int  # 今天（台北）已排入的生成數
+    book_count: int
+    last_seen: datetime | None
+    created_at: datetime
+    revoked: bool
+    link: str | None

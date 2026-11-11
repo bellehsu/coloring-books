@@ -20,10 +20,7 @@ QWEN_MODELS = {
 
 
 def make_req(tmp_path: Path, kind=GenKind.CHARACTER, character=False, width=832, height=1216, **kw):
-    char = None
-    if character:
-        char = tmp_path / "char.png"
-        char.write_bytes(png_bytes())
+    char = png_bytes() if character else None  # 引擎收 bytes（worker 從 Storage 讀出）
     return GenerationRequest(kind=kind, prompt="a cat", negative_prompt="", seed=7, width=width, height=height,
                              character_image=char, **kw)
 
@@ -81,6 +78,9 @@ async def test_engine_routes_three_kinds(tmp_path, kind, workflow, character):
         assert len(fake.uploads) == 1 and fake.uploads[0]["subfolder"] == "coloring_books"
         ref = by_title(sent, "CHARACTER_REF")["image"]
         assert ref.endswith("_char.png") and ref == res.params["character_image"]
+        # 上傳的是請求裡的 bytes（檔名是內容 hash）
+        import hashlib
+        assert hashlib.sha256(png_bytes()).hexdigest()[:12] in ref
         assert res.extra_images == {"mask": fake.mask_image}
     else:
         assert fake.uploads == []

@@ -58,7 +58,7 @@ def seed_generation(app, book_id, page_id, png: bytes, kind=GenKind.COMPOSITE) -
         s.add(g)
         s.flush()
         rel = app.state.storage.generation_image(book_id, g.id)
-        app.state.storage.write(rel, png)
+        app.state.storage.put(rel, png)
         g.image_path = rel
         s.commit()
         return g.id
@@ -156,13 +156,16 @@ def test_lineart_requires_selection(client, app):
     assert p["lineart_url"] is None and p["needs_fix"] is None and p["aspect_mismatch"] is False
 
 
-def test_lineart_missing_image_is_409(client, app):
+def test_lineart_missing_image(client, app):
+    """選定圖片的物件遺失：線稿圖片端點回 404「圖片檔案遺失」；JSON 端點（QA）仍回 409 並說明怎麼辦。"""
     _, p, ids = selected_page(client, app)
     from app.models import Generation
 
     with app.state.sessions() as s:
-        app.state.storage.abs(s.get(Generation, ids[0]).image_path).unlink()
+        app.state.storage.delete(s.get(Generation, ids[0]).image_path)
     r = client.get(f"/api/pages/{p['id']}/lineart")
+    assert r.status_code == 404 and r.json()["detail"] == "圖片檔案遺失"
+    r = client.get(f"/api/pages/{p['id']}/qa")
     assert r.status_code == 409 and r.json()["detail"] == "選定的圖片檔案遺失，請重新選圖或重新生成"
 
 
@@ -448,9 +451,7 @@ def test_page_out_aspect_and_no_sketch_url(client, app):
     assert page_out(client, b["id"], p["id"])["aspect_mismatch"] is True
     r = client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "公園"})
     assert r.json()["aspect_mismatch"] is True
-    # 舊資料留著的構圖草圖不再提供：sketch_url 一律 None（欄位保留到前端移除）
-    set_page(app, p["id"], sketch_path=f"books/{b['id']}/pages/{p['id']}/sketch.png")
-    assert page_out(client, b["id"], p["id"])["sketch_url"] is None
+    assert "sketch_url" not in page_out(client, b["id"], p["id"])  # 構圖草圖已移除（0006）
 
 
 def test_change_size_recomputes_and_demotes(client, app, monkeypatch):

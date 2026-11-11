@@ -1,0 +1,17 @@
+# Litestream：把 SQLite 持續複寫到 R2（正式環境用，目前未啟用）。
+# 啟用前：安裝 litestream、建立專用 bucket（建議與圖片 bucket 分開，例如 coloring-books-db）與只給它的 token，
+# 並把 path 改成 paths.database 的絕對路徑。憑證用環境變數，不寫進這個檔案：
+#   LITESTREAM_ACCESS_KEY_ID、LITESTREAM_SECRET_ACCESS_KEY、R2_ACCOUNT_ID
+# 執行：litestream replicate -config deploy/litestream.yml
+# 還原：litestream restore -config deploy/litestream.yml -o <新 DB 路徑> <paths.database>
+# 還原後的舊 DB 與圖片 bucket 的身分標記相同，見 README「還原舊備份的限制」。
+dbs:
+  - path: /path/to/storage-r2/app.db   # 改成 paths.database
+    replicas:
+      - type: s3
+        bucket: coloring-books-db
+        path: app.db
+        endpoint: https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+        region: auto
+        force-path-style: true
+        retention: 72h

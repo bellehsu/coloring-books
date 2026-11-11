@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type Book } from "@/api/client";
-import { qk, useExportSummary, usePages } from "@/api/hooks";
+import { qk, useExportSummary, usePages, useShareBook } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Drawer } from "@/components/ui/Drawer";
 import { Icons } from "@/components/ui/Icons";
@@ -31,6 +31,7 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
   const qc = useQueryClient();
   const summary = useExportSummary(book.id, open);
   const pages = usePages(book.id);
+  const share = useShareBook(book.id);
   const [include, setInclude] = useState<Include>("passed");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(
@@ -63,6 +64,17 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
   const needsFix = new Set(
     (pages.data ?? []).filter((p) => p.needs_fix).map((p) => p.id),
   );
+
+  const shared = book.shared_at != null;
+  const canShare = data != null && passed > 0;
+  async function toggleShare(next: boolean) {
+    setMsg(null);
+    try {
+      await share.mutateAsync(next);
+    } catch (e) {
+      setMsg({ tone: "error", text: errMsg(e, "無法更改分享設定，請稍後再試") });
+    }
+  }
 
   async function download() {
     if (busy || count === 0) return;
@@ -201,6 +213,24 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
           )}
         </>
       )}
+
+      <div className={styles.share}>
+        <label className={styles.shareRow}>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={shared}
+            disabled={share.isPending || (!shared && !canShare)}
+            onChange={(e) => void toggleShare(e.target.checked)}
+          />
+          <b>分享給其他使用者</b>
+        </label>
+        <p className={styles.shareNote}>
+          {!shared && data && passed === 0
+            ? "至少完成一頁才能分享"
+            : "其他使用者可以檢視並下載已完成的頁面，不能修改。"}
+        </p>
+      </div>
 
       <div className={styles.foot}>
         <Button

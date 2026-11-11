@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Protocol
 
 from app.models import GenKind
@@ -22,7 +21,7 @@ class GenerationRequest:
     seed: int
     width: int
     height: int
-    character_image: Path | None = None  # 只用於 POSE：角色參考圖
+    character_image: bytes | None = None  # 只用於 POSE：角色參考圖的 PNG bytes（worker 從 Storage 讀出）
     variation: str | None = None  # 變化語（已併入 prompt；另記錄在 params）
 
 

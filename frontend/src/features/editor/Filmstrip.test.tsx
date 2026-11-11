@@ -10,8 +10,6 @@ const page = (id: number, o: Partial<Page> = {}): Page =>
     book_id: 1,
     position: id - 1,
     scene_prompt: `場景 ${id}`,
-    controlnet_strength: 0.4,
-    sketch_url: null,
     selected_generation_id: null,
     status: "draft",
     line_detail: "standard",

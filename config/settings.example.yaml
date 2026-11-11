@@ -21,11 +21,47 @@ comfy:
 paths:
   # workflow 資料夾（每個子資料夾含 workflow_api.json + manifest.yaml）
   workflows_dir: comfy_workflows
-  # 生成結果、上傳圖片等檔案
+  # 生成結果、上傳圖片等檔案（local）；storage.backend: r2 時圖片在 bucket，這裡放 R2 的本機快取（r2_cache/），
+  # 請改用另一個資料夾（例如 storage-r2，和下面的 database 同一組）
   storage_dir: storage
   # SQLite 資料庫檔案（父資料夾必須存在）
+  # storage.backend: r2 時請改用另一個資料庫（例如 storage-r2/app.db，資料夾先建好）：
+  # DB 與 bucket 是一組，不要把 local 模式的 DB 指到 R2，也不要把同一個 DB 複製給開發與正式環境共用 bucket
   database: storage/app.db
 
 queue:
   # 生成 worker 遇到 ComfyUI 無法連線時，重試前等待的秒數（0 代表立即重試）
   retry_backoff_s: 10
+
+storage:
+  # 檔案存放位置：local＝paths.storage_dir 資料夾；r2＝Cloudflare R2（S3 API）
+  backend: local
+  r2:
+    # 例如 https://<account_id>.r2.cloudflarestorage.com
+    endpoint: null
+    bucket: null
+    # 憑證不可寫在這裡，只能用環境變數：
+    #   APP_STORAGE__R2__ACCESS_KEY=...
+    #   APP_STORAGE__R2__SECRET_KEY=...
+  # 圖片簽章網址的有效秒數（API 檢查權限後立刻 302 轉址，所以很短）
+  signed_url_ttl_s: 120
+  # R2 物件的本機快取資料夾（只是加速，隨時可刪；null＝<paths.storage_dir>/r2_cache）；實際放在 <cache_dir>/<bucket>
+  cache_dir: null
+  # 快取總量上限（bytes），超過時刪最舊的；預設 2 GiB
+  cache_max_bytes: 2147483648
+  # local 模式 /api/files 網址的 HMAC 金鑰：只能用環境變數 APP_STORAGE__SIGNING_KEY；
+  # 沒設時自動產生並存在 <paths.storage_dir>/.signing_key（權限 0600）
+
+auth:
+  # 本機開發才設（例如 admin，或在 scripts/dev.env 設 APP_AUTH__DEV_OWNER=admin）：沒有 cookie
+  # （沒開過邀請連結）的請求視為這個名字的 admin，不用連結就能用；已有 admin 會直接沿用，不會重複建立。
+  # 對外部署（雲端）一定要維持 null：否則沒登入的人都是 admin。設了的話後端啟動時會印警告。
+  dev_owner: null
+  # cb_session cookie 加上 Secure（HTTPS 部署時設 true；本機 http 開發維持 false）
+  cookie_secure: false
+  # scripts/invites.py 印出的邀請連結前綴（網站對外網址）；null＝http://localhost:3000。可用 --base-url 覆寫
+  invite_base_url: null
+  # 邀請連結加密存放（管理頁可再顯示連結）的金鑰：只能用環境變數 APP_AUTH__LINK_KEY（寫在這裡會報錯）；
+  # 沒設時自動產生並存在 <paths.storage_dir>/.link_key（權限 0600）。要和資料庫一起保管
+  # 每日生成上限不是這裡的設定：每個邀請各自有「每日生成次數」（台北時間，預設 60；admin 邀請沒有每日上限，但用量仍會計入），
+  # 用 scripts/invites.py create --cap N 設定；超過時 API 回 429「今天的生成次數已用完，明天再來」。

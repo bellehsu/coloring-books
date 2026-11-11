@@ -11,6 +11,7 @@
           "books"
         ],
         "summary": "List Books",
+        "description": "自己的書；admin 看全部。",
         "operationId": "list_books_api_books_get",
         "responses": {
           "200": {
@@ -133,6 +134,59 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BookUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/share": {
+      "put": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Set Share",
+        "description": "分享開關（擁有者或 admin）：開啟需要至少一個完成的頁面；關閉下一個請求就生效。",
+        "operationId": "set_share_api_books__book_id__share_put",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareIn"
               }
             }
           }
@@ -573,7 +627,7 @@
           "compose"
         ],
         "summary": "Create Materials Batch",
-        "description": "「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。\n略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。\n_BATCH_LOCK 讓同時多個呼叫不會重複排隊。",
+        "description": "「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。\n略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。\n_BATCH_LOCK 讓同時多個呼叫不會重複排隊。整批一次預留 N 次當日額度：不夠就 429，一筆都不排。",
         "operationId": "create_materials_batch_api_books__book_id__materials_batch_post",
         "parameters": [
           {
@@ -1186,7 +1240,9 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "integer"
+                  "type": "integer",
+                  "maximum": 9223372036854775807,
+                  "minimum": -9223372036854775808
                 },
                 {
                   "type": "null"
@@ -1282,6 +1338,7 @@
           "generations"
         ],
         "summary": "Queue Status",
+        "description": "全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。\n非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。",
         "operationId": "queue_status_api_system_queue_get",
         "responses": {
           "200": {
@@ -1303,6 +1360,7 @@
           "lineart"
         ],
         "summary": "Get Lineart",
+        "description": "線稿就是一個存放的物件：確認物件在（不在就重算，來源也不見則 404）後轉到簽章網址。",
         "operationId": "get_lineart_api_pages__page_id__lineart_get",
         "parameters": [
           {
@@ -1910,6 +1968,300 @@
         }
       }
     },
+    "/api/shared/books": {
+      "get": {
+        "tags": [
+          "shared"
+        ],
+        "summary": "List Shared Books",
+        "description": "別人分享的書（自己的不列，首頁用徽章標示），分享時間新到舊。",
+        "operationId": "list_shared_books_api_shared_books_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SharedBookOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Shared Books Api Shared Books Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shared/books/{book_id}": {
+      "get": {
+        "tags": [
+          "shared"
+        ],
+        "summary": "Shared Book",
+        "operationId": "shared_book_api_shared_books__book_id__get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedBookDetailOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shared/pages/{page_id}/image.png": {
+      "get": {
+        "tags": [
+          "shared"
+        ],
+        "summary": "Shared Page Image",
+        "description": "PDF 用的同一張合成頁（含修線），長邊縮到 1600 px 以內。",
+        "operationId": "shared_page_image_api_shared_pages__page_id__image_png_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shared/books/{book_id}/export.pdf": {
+      "get": {
+        "tags": [
+          "shared"
+        ],
+        "summary": "Shared Book Pdf",
+        "operationId": "shared_book_pdf_api_shared_books__book_id__export_pdf_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/{key}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Get File",
+        "operationId": "get_file_api_files__key__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Exp"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Sig"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Me",
+        "operationId": "me_api_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOut"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/invites": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Invites",
+        "operationId": "list_invites_api_admin_invites_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InviteOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Invites Api Admin Invites Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Create Invite",
+        "operationId": "create_invite_api_admin_invites_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/system/preflight": {
       "get": {
         "summary": "Preflight",
@@ -1959,6 +2311,8 @@
         "properties": {
           "generation_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
           }
         },
@@ -2094,7 +2448,9 @@
         "properties": {
           "upload_page_ids": {
             "items": {
-              "type": "integer"
+              "type": "integer",
+              "maximum": 9.223372036854776e+18,
+              "minimum": -9.223372036854776e+18
             },
             "type": "array",
             "maxItems": 500,
@@ -2251,6 +2607,18 @@
               }
             ],
             "title": "Cover Url"
+          },
+          "shared_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared At"
           },
           "created_at": {
             "type": "string",
@@ -2414,6 +2782,8 @@
         "properties": {
           "generation_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
           }
         },
@@ -2427,6 +2797,8 @@
         "properties": {
           "generation_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
           },
           "strokes": {
@@ -2723,6 +3095,115 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "InviteCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "is_admin": {
+            "type": "boolean",
+            "title": "Is Admin",
+            "default": false
+          },
+          "daily_generation_cap": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Daily Generation Cap",
+            "default": 60
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "InviteCreate"
+      },
+      "InviteOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_admin": {
+            "type": "boolean",
+            "title": "Is Admin"
+          },
+          "daily_generation_cap": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Generation Cap"
+          },
+          "today": {
+            "type": "integer",
+            "title": "Today"
+          },
+          "book_count": {
+            "type": "integer",
+            "title": "Book Count"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "revoked": {
+            "type": "boolean",
+            "title": "Revoked"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "is_admin",
+          "daily_generation_cap",
+          "today",
+          "book_count",
+          "last_seen",
+          "created_at",
+          "revoked",
+          "link"
+        ],
+        "title": "InviteOut",
+        "description": "管理頁的一筆邀請。link＝完整連結；舊資料、金鑰不對或已撤銷時為 null。"
+      },
       "LayoutOut": {
         "properties": {
           "paper_mm": {
@@ -2903,6 +3384,29 @@
         ],
         "title": "LineDetail"
       },
+      "MeOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_admin": {
+            "type": "boolean",
+            "title": "Is Admin"
+          },
+          "via_dev_owner": {
+            "type": "boolean",
+            "title": "Via Dev Owner",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "is_admin"
+        ],
+        "title": "MeOut"
+      },
       "PageCreate": {
         "properties": {
           "scene_prompt": {
@@ -2925,7 +3429,9 @@
         "properties": {
           "page_ids": {
             "items": {
-              "type": "integer"
+              "type": "integer",
+              "maximum": 9.223372036854776e+18,
+              "minimum": -9.223372036854776e+18
             },
             "type": "array",
             "title": "Page Ids"
@@ -2958,21 +3464,6 @@
           "action_prompt": {
             "type": "string",
             "title": "Action Prompt"
-          },
-          "controlnet_strength": {
-            "type": "number",
-            "title": "Controlnet Strength"
-          },
-          "sketch_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sketch Url"
           },
           "selected_generation_id": {
             "anyOf": [
@@ -3085,8 +3576,6 @@
           "position",
           "scene_prompt",
           "action_prompt",
-          "controlnet_strength",
-          "sketch_url",
           "selected_generation_id",
           "background_generation_id",
           "pose_generation_id",
@@ -3494,6 +3983,8 @@
         "properties": {
           "generation_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
           }
         },
@@ -3502,6 +3993,126 @@
           "generation_id"
         ],
         "title": "SelectGeneration"
+      },
+      "ShareIn": {
+        "properties": {
+          "shared": {
+            "type": "boolean",
+            "title": "Shared"
+          }
+        },
+        "type": "object",
+        "required": [
+          "shared"
+        ],
+        "title": "ShareIn"
+      },
+      "SharedBookDetailOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "paper_size": {
+            "$ref": "#/components/schemas/PaperSize"
+          },
+          "mine": {
+            "type": "boolean",
+            "title": "Mine"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/SharedPageOut"
+            },
+            "type": "array",
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "author",
+          "paper_size",
+          "mine",
+          "pages"
+        ],
+        "title": "SharedBookDetailOut"
+      },
+      "SharedBookOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "paper_size": {
+            "$ref": "#/components/schemas/PaperSize"
+          },
+          "page_count": {
+            "type": "integer",
+            "title": "Page Count"
+          },
+          "cover_page_id": {
+            "type": "integer",
+            "title": "Cover Page Id"
+          },
+          "shared_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Shared At"
+          },
+          "mine": {
+            "type": "boolean",
+            "title": "Mine"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "author",
+          "paper_size",
+          "page_count",
+          "cover_page_id",
+          "shared_at",
+          "mine"
+        ],
+        "title": "SharedBookOut",
+        "description": "別人分享的書（列表項目）：只含完成的頁面數與封面頁（第一個完成的頁）。"
+      },
+      "SharedPageOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "position"
+        ],
+        "title": "SharedPageOut"
       },
       "StrokeIn": {
         "properties": {

@@ -1,5 +1,6 @@
 """匯出端點：書本 PDF、匯出摘要、單頁列印 PNG。同步 `def`（CPU 工作走 threadpool）。"""
 
+import io
 from typing import Literal
 from urllib.parse import quote
 
@@ -9,13 +10,11 @@ from fastapi.responses import Response
 from PIL import Image
 from sqlmodel import Session, col, select
 
-from app.api.books import _book_or_404
-from app.api.deps import get_session, get_storage
-from app.api.pages import _page_or_404
-from app.models import Book, Page, PageStatus
+from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_page
+from app.models import Book, Owner, Page, PageStatus
 from app.services.export import build_pdf, compose_page, png_bytes
 from app.services.layout import compute_layout
-from app.services.page_lineart import LineartUnavailable, ensure_page_lineart
+from app.services.page_lineart import LineartUnavailable, ensure_page_lineart, read_page_lineart
 from app.storage import Storage
 
 router = APIRouter(prefix="/api", tags=["export"])
@@ -29,15 +28,40 @@ def _ordered_pages(session: Session, book_id: int) -> list[Page]:
     ).all())
 
 
-def _composed(session: Session, storage: Storage, book: Book, page: Page):
+def composed_page(session: Session, storage: Storage, book: Book, page: Page):
     layout = compute_layout(book.paper_size, book.print_mode)
     try:
-        lin = ensure_page_lineart(session, storage, page.id)
+        _lin, data = read_page_lineart(session, storage, page.id)
     except LineartUnavailable as e:
         raise HTTPException(409, f"第 {page.position + 1} 頁：{e.message}") from e
-    with Image.open(storage.abs(lin.path)) as im:
+    with Image.open(io.BytesIO(data)) as im:
         ink = np.asarray(im.convert("L")) < 128
     return compose_page(ink, layout)
+
+
+def book_pdf(session: Session, storage: Storage, book: Book, include: Literal["passed", "all"] = "passed") -> bytes:
+    """書的 PDF（擁有者匯出與分享下載共用）：include=passed 只含「現在」仍通過的頁面；沒有頁面 → 409。"""
+    candidates = [
+        p for p in _ordered_pages(session, book.id)
+        if p.selected_generation_id is not None
+        and (include == "all" or p.status == PageStatus.PASSED)
+    ]
+    images = []
+    for p in candidates:
+        img = composed_page(session, storage, book, p)
+        # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍通過的頁面
+        session.refresh(p)
+        if include == "passed" and p.status != PageStatus.PASSED:
+            continue
+        images.append(img)
+    if not images:
+        raise HTTPException(409, NOTHING_TO_EXPORT)
+    return build_pdf(images)
+
+
+def pdf_response(book: Book, pdf: bytes) -> Response:
+    disp = f'attachment; filename="book-{book.id}.pdf"; filename*=UTF-8\'\'{quote(book.title)}.pdf'
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": disp})
 
 
 @router.get("/books/{book_id}/export/summary")
@@ -45,8 +69,9 @@ def export_summary(
     book_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> dict:
-    _book_or_404(session, book_id)
+    owned_book(session, owner, book_id)
     pages = _ordered_pages(session, book_id)
     exportable, skipped = [], []
     for p in pages:
@@ -73,27 +98,11 @@ def export_pdf(
     include: Literal["passed", "all"] = "passed",
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
-    book = _book_or_404(session, book_id)
-    candidates = [
-        p for p in _ordered_pages(session, book_id)
-        if p.selected_generation_id is not None
-        and (include == "all" or p.status == PageStatus.PASSED)
-    ]
-    images = []
-    for p in candidates:
-        img = _composed(session, storage, book, p)
-        # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍通過的頁面
-        session.refresh(p)
-        if include == "passed" and p.status != PageStatus.PASSED:
-            continue
-        images.append(img)
-    if not images:
-        raise HTTPException(409, NOTHING_TO_EXPORT)
-    pdf = build_pdf(images)
-    disp = f'attachment; filename="book-{book_id}.pdf"; filename*=UTF-8\'\'{quote(book.title)}.pdf'
-    return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": disp})
+    book = owned_book(session, owner, book_id)
+    pdf = book_pdf(session, storage, book, include)
+    return pdf_response(book, pdf)
 
 
 @router.get("/pages/{page_id}/print.png")
@@ -101,10 +110,11 @@ def print_png(
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     if page.selected_generation_id is None:
         raise HTTPException(409, "這一頁還沒有選定圖片")
-    book = _book_or_404(session, page.book_id)
-    return Response(content=png_bytes(_composed(session, storage, book, page)),
+    book = owned_book(session, owner, page.book_id)
+    return Response(content=png_bytes(composed_page(session, storage, book, page)),
                     media_type="image/png")

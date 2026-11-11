@@ -11,7 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Books */
+        /**
+         * List Books
+         * @description 自己的書；admin 看全部。
+         */
         get: operations["list_books_api_books_get"];
         put?: never;
         /** Create Book */
@@ -38,6 +41,26 @@ export interface paths {
         head?: never;
         /** Update Book */
         patch: operations["update_book_api_books__book_id__patch"];
+        trace?: never;
+    };
+    "/api/books/{book_id}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Share
+         * @description 分享開關（擁有者或 admin）：開啟需要至少一個完成的頁面；關閉下一個請求就生效。
+         */
+        put: operations["set_share_api_books__book_id__share_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/books/{book_id}/character/candidates": {
@@ -163,7 +186,7 @@ export interface paths {
          * Create Materials Batch
          * @description 「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
          *     略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
-         *     _BATCH_LOCK 讓同時多個呼叫不會重複排隊。
+         *     _BATCH_LOCK 讓同時多個呼叫不會重複排隊。整批一次預留 N 次當日額度：不夠就 429，一筆都不排。
          */
         post: operations["create_materials_batch_api_books__book_id__materials_batch_post"];
         delete?: never;
@@ -401,7 +424,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Queue Status */
+        /**
+         * Queue Status
+         * @description 全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。
+         *     非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。
+         */
         get: operations["queue_status_api_system_queue_get"];
         put?: never;
         post?: never;
@@ -418,7 +445,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Lineart */
+        /**
+         * Get Lineart
+         * @description 線稿就是一個存放的物件：確認物件在（不在就重算，來源也不見則 404）後轉到簽章網址。
+         */
         get: operations["get_lineart_api_pages__page_id__lineart_get"];
         put?: never;
         post?: never;
@@ -624,6 +654,132 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/shared/books": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Shared Books
+         * @description 別人分享的書（自己的不列，首頁用徽章標示），分享時間新到舊。
+         */
+        get: operations["list_shared_books_api_shared_books_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/shared/books/{book_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Shared Book */
+        get: operations["shared_book_api_shared_books__book_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/shared/pages/{page_id}/image.png": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Shared Page Image
+         * @description PDF 用的同一張合成頁（含修線），長邊縮到 1600 px 以內。
+         */
+        get: operations["shared_page_image_api_shared_pages__page_id__image_png_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/shared/books/{book_id}/export.pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Shared Book Pdf */
+        get: operations["shared_book_pdf_api_shared_books__book_id__export_pdf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get File */
+        get: operations["get_file_api_files__key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_api_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Invites */
+        get: operations["list_invites_api_admin_invites_get"];
+        put?: never;
+        /** Create Invite */
+        post: operations["create_invite_api_admin_invites_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/preflight": {
         parameters: {
             query?: never;
@@ -741,6 +897,8 @@ export interface components {
             stats: components["schemas"]["BookStats"];
             /** Cover Url */
             cover_url: string | null;
+            /** Shared At */
+            shared_at?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -903,6 +1061,50 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** InviteCreate */
+        InviteCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Is Admin
+             * @default false
+             */
+            is_admin: boolean;
+            /**
+             * Daily Generation Cap
+             * @default 60
+             */
+            daily_generation_cap: number;
+        };
+        /**
+         * InviteOut
+         * @description 管理頁的一筆邀請。link＝完整連結；舊資料、金鑰不對或已撤銷時為 null。
+         */
+        InviteOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Is Admin */
+            is_admin: boolean;
+            /** Daily Generation Cap */
+            daily_generation_cap: number | null;
+            /** Today */
+            today: number;
+            /** Book Count */
+            book_count: number;
+            /** Last Seen */
+            last_seen: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Revoked */
+            revoked: boolean;
+            /** Link */
+            link: string | null;
+        };
         /** LayoutOut */
         LayoutOut: {
             /** Paper Mm */
@@ -959,6 +1161,18 @@ export interface components {
          * @enum {string}
          */
         LineDetail: "simple" | "standard" | "detailed";
+        /** MeOut */
+        MeOut: {
+            /** Name */
+            name: string;
+            /** Is Admin */
+            is_admin: boolean;
+            /**
+             * Via Dev Owner
+             * @default false
+             */
+            via_dev_owner: boolean;
+        };
         /** PageCreate */
         PageCreate: {
             /**
@@ -989,10 +1203,6 @@ export interface components {
             scene_prompt: string;
             /** Action Prompt */
             action_prompt: string;
-            /** Controlnet Strength */
-            controlnet_strength: number;
-            /** Sketch Url */
-            sketch_url: string | null;
             /** Selected Generation Id */
             selected_generation_id: number | null;
             /** Background Generation Id */
@@ -1154,6 +1364,56 @@ export interface components {
             /** Generation Id */
             generation_id: number;
         };
+        /** ShareIn */
+        ShareIn: {
+            /** Shared */
+            shared: boolean;
+        };
+        /** SharedBookDetailOut */
+        SharedBookDetailOut: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /** Author */
+            author: string;
+            paper_size: components["schemas"]["PaperSize"];
+            /** Mine */
+            mine: boolean;
+            /** Pages */
+            pages: components["schemas"]["SharedPageOut"][];
+        };
+        /**
+         * SharedBookOut
+         * @description 別人分享的書（列表項目）：只含完成的頁面數與封面頁（第一個完成的頁）。
+         */
+        SharedBookOut: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /** Author */
+            author: string;
+            paper_size: components["schemas"]["PaperSize"];
+            /** Page Count */
+            page_count: number;
+            /** Cover Page Id */
+            cover_page_id: number;
+            /**
+             * Shared At
+             * Format: date-time
+             */
+            shared_at: string;
+            /** Mine */
+            mine: boolean;
+        };
+        /** SharedPageOut */
+        SharedPageOut: {
+            /** Id */
+            id: number;
+            /** Position */
+            position: number;
+        };
         /** StrokeIn */
         StrokeIn: {
             /**
@@ -1307,6 +1567,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["BookUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_share_api_books__book_id__share_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShareIn"];
             };
         };
         responses: {
@@ -2499,6 +2794,226 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_shared_books_api_shared_books_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBookOut"][];
+                };
+            };
+        };
+    };
+    shared_book_api_shared_books__book_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBookDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    shared_page_image_api_shared_pages__page_id__image_png_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    shared_book_pdf_api_shared_books__book_id__export_pdf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_file_api_files__key__get: {
+        parameters: {
+            query?: {
+                exp?: string;
+                sig?: string;
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    me_api_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeOut"];
+                };
+            };
+        };
+    };
+    list_invites_api_admin_invites_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteOut"][];
+                };
+            };
+        };
+    };
+    create_invite_api_admin_invites_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteOut"];
                 };
             };
             /** @description Validation Error */

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from dataclasses import dataclass
 
@@ -17,15 +18,25 @@ from app.services.lineart_render import (
 )
 from app.services import qa as qa_mod
 from app.services.qa import QAReport, evaluate
-from app.storage import Storage
+from app.storage import Storage, StorageNotFound
 
 MAX_ATTEMPTS = 3
+
+
+SOURCE_MISSING = "選定的圖片檔案遺失，請重新選圖或重新生成"
 
 
 class LineartUnavailable(Exception):
     def __init__(self, message: str):
         super().__init__(message)
         self.message = message
+
+
+class LineartSourceMissing(LineartUnavailable):
+    """選定圖片的物件不在 Storage（或讀不出來）：線稿無法重算。圖片端點回 404。"""
+
+    def __init__(self, message: str = SOURCE_MISSING):
+        super().__init__(message)
 
 
 @dataclass
@@ -88,12 +99,14 @@ def _load(storage: Storage, gen: Generation):
     try:
         if not gen.image_path:
             raise FileNotFoundError(gen.image_path)
-        return lineart_post.load_image(storage.abs(gen.image_path))
-    except (FileNotFoundError, ValueError, OSError) as e:
-        raise LineartUnavailable("選定的圖片檔案遺失，請重新選圖或重新生成") from e
+        return lineart_post.load_image(io.BytesIO(storage.get(gen.image_path)))
+    except (StorageNotFound, ValueError, OSError) as e:
+        raise LineartSourceMissing() from e
 
 
-def ensure_page_lineart(session: Session, storage: Storage, page_id: int) -> PageLineart:
+def ensure_page_lineart(session: Session, storage: Storage, page_id: int, *, rerender: bool = False) -> PageLineart:
+    """確保頁面線稿與 QA 是最新的。是否已有線稿只看資料庫（lineart_key／lineart_path／qa_json），
+    不呼叫 storage.exists()；讀線稿時發現物件不見了，用 rerender=True 重算（見 read_page_lineart）。"""
     for _ in range(MAX_ATTEMPTS):
         page = session.get(Page, page_id)
         if page is None:
@@ -108,8 +121,7 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int) -> Pag
         sj = _strokes_json(session, gen.id)
         key = lineart_key(gen, page, content_px, sj)
         rel = storage.lineart(page.book_id, page.id, key)
-        if (page.lineart_key == key and page.lineart_path == rel and page.qa_json
-                and storage.abs(rel).exists()):
+        if not rerender and page.lineart_key == key and page.lineart_path == rel and page.qa_json:
             return PageLineart(rel, key, QAReport.from_dict(json.loads(page.qa_json)))
 
         color = _load(storage, gen)
@@ -118,7 +130,7 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int) -> Pag
         if strokes:
             ink = apply_strokes(ink, strokes)
         qa = evaluate(ink, page.line_width_px)
-        storage.write(rel, ink_to_png(ink))
+        storage.put(rel, ink_to_png(ink))
 
         old_path = page.lineart_path
         values = {"lineart_key": key, "lineart_path": rel, "qa_json": _dumps(qa.to_dict())}
@@ -144,14 +156,45 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int) -> Pag
     raise LineartUnavailable("線稿產生時頁面一直被更動，請稍後再試")
 
 
-def render_preview(storage: Storage, gen: Generation, content_px, detail, line_width_px) -> str:
-    """沒有修改圖層的預覽，快取到 Storage.preview。"""
+def read_page_lineart(session: Session, storage: Storage, page_id: int) -> tuple[PageLineart, bytes]:
+    """ensure_page_lineart 再讀出線稿 PNG。資料庫說有、物件卻不見了（GC 或手動刪除）就重算一次。
+    來源圖片也不見了丟 LineartSourceMissing。"""
+    lin = ensure_page_lineart(session, storage, page_id)
+    try:
+        return lin, storage.get(lin.path)
+    except StorageNotFound:
+        pass
+    lin = ensure_page_lineart(session, storage, page_id, rerender=True)
+    try:
+        return lin, storage.get(lin.path)
+    except StorageNotFound as e:  # 剛寫入又不見（同時被刪）：當成暫時失敗
+        raise LineartUnavailable("線稿產生時頁面一直被更動，請稍後再試") from e
+
+
+def render_preview(storage: Storage, gen: Generation, content_px, detail, line_width_px) -> bytes:
+    """沒有修改圖層的預覽 PNG，快取到 Storage.preview（物件不在就重算）。"""
+    rel, data = _preview(storage, gen, content_px, detail, line_width_px, want_bytes=True)
+    return data
+
+
+def ensure_preview(storage: Storage, gen: Generation, content_px, detail, line_width_px) -> str:
+    """確保預覽物件存在（不在就重算並寫入），回傳它的 key；物件已在時只做 exists，不下載。"""
+    return _preview(storage, gen, content_px, detail, line_width_px, want_bytes=False)[0]
+
+
+def _preview(storage, gen, content_px, detail, line_width_px, *, want_bytes: bool) -> tuple[str, bytes | None]:
     d = getattr(detail, "value", detail)
     key = _digest(RENDER_VERSION, gen.id, gen.image_path, str(d), line_width_px, list(content_px))
     rel = storage.preview(gen.id, key)
-    if storage.abs(rel).exists():
-        return rel
+    if want_bytes:
+        try:
+            return rel, storage.get(rel)
+        except StorageNotFound:
+            pass
+    elif storage.exists(rel):
+        return rel, None
     color = _load(storage, gen)
     ink, _ = render_base(color, tuple(content_px), detail, line_width_px)
-    storage.write(rel, ink_to_png(ink))
-    return rel
+    data = ink_to_png(ink)
+    storage.put(rel, data)
+    return rel, data

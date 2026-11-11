@@ -1,25 +1,28 @@
 """generation 查詢、圖片、捨棄、取消與佇列狀態端點。"""
 
 import io
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy import case, literal
 from sqlmodel import Session, col, func, select, update
 
-from app.api.books import _book_or_404
-from app.api.deps import get_session, get_storage, get_worker
+from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
+from app.api.files import signed_redirect
 from app.api.schemas import GenerationOut
-from app.models import Book, Generation, GenKind, GenStatus, Page, utcnow
+from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
-from app.services.worker import GenerationWorker, WorkerState
-from app.storage import Storage
+from app.services.usage import refund_generations
+from app.services.worker import GenerationWorker, WorkerState, worker_job
+from app.storage import Storage, StorageNotFound
 
 router = APIRouter(prefix="/api", tags=["generations"])
+
+IMAGE_CLEARED = "這張圖已被清理，無法還原"
 
 
 class GenerationUpdate(BaseModel):
@@ -49,12 +52,6 @@ class QueueStatus(BaseModel):
     recent: list[RecentJob]
 
 
-def _gen_or_404(session: Session, gen_id: int) -> Generation:
-    gen = session.get(Generation, gen_id)
-    if gen is None:
-        raise HTTPException(404, "找不到這筆生成紀錄")
-    return gen
-
 
 def _out(gen: Generation, worker: GenerationWorker) -> GenerationOut:
     return GenerationOut.from_generation(
@@ -67,38 +64,49 @@ def get_generation(
     gen_id: int,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    return _out(_gen_or_404(session, gen_id), worker)
+    return _out(owned_generation(session, owner, gen_id), worker)
 
 
 @router.get("/generations/{gen_id}/image")
 def get_generation_image(
+    request: Request,
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
-) -> FileResponse:
-    gen = _gen_or_404(session, gen_id)
+    owner: Owner = Depends(current_owner),
+) -> Response:
+    gen = owned_generation(session, owner, gen_id)
     if gen.status != GenStatus.SUCCEEDED or not gen.image_path:
         raise HTTPException(404, "這筆生成紀錄還沒有圖片")
-    path = storage.abs(gen.image_path)
-    if not path.is_file():
+    try:
+        found = storage.exists(gen.image_path)  # HEAD 就夠，不下載；不存在回 404 而不是轉到死網址
+    except ValueError:
+        found = False
+    if not found:
         raise HTTPException(404, "圖片檔案遺失")
-    return FileResponse(path, media_type="image/png")
+    return signed_redirect(request, storage, gen.image_path)
 
 
 @router.get("/generations/{gen_id}/mask")
 def get_generation_mask(
+    request: Request,
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
-) -> FileResponse:
-    gen = _gen_or_404(session, gen_id)
+    owner: Owner = Depends(current_owner),
+) -> Response:
+    gen = owned_generation(session, owner, gen_id)
     if not gen.mask_path:
         raise HTTPException(404, "這筆生成紀錄沒有遮罩")
-    path = storage.abs(gen.mask_path)
-    if not path.is_file():
+    try:
+        found = storage.exists(gen.mask_path)
+    except ValueError:
+        found = False
+    if not found:
         raise HTTPException(404, "遮罩檔案遺失")
-    return FileResponse(path, media_type="image/png")
+    return signed_redirect(request, storage, gen.mask_path)
 
 
 @router.get("/generations/{gen_id}/cutout")
@@ -106,15 +114,22 @@ def get_generation_cutout(
     gen_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
     """角色動作的去背圖：裁到遮罩外接框的 RGBA PNG（alpha＝遮罩）。"""
-    gen = _gen_or_404(session, gen_id)
+    gen = owned_generation(session, owner, gen_id)
     if gen.kind != GenKind.POSE or not gen.mask_path or not gen.image_path:
         raise HTTPException(404, "這筆生成紀錄沒有去背圖")
     try:
-        with Image.open(storage.abs(gen.image_path)) as pose, Image.open(storage.abs(gen.mask_path)) as mask:
+        pose_png, mask_png = storage.get(gen.image_path), storage.get(gen.mask_path)
+    except StorageNotFound:  # 物件不見了：與其他圖片端點一致
+        raise HTTPException(404, "圖片檔案遺失") from None
+    except ValueError:  # key 不合法
+        raise HTTPException(409, "圖片檔案遺失，請重新產生") from None
+    try:
+        with Image.open(io.BytesIO(pose_png)) as pose, Image.open(io.BytesIO(mask_png)) as mask:
             out = cutout(pose, mask)
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # 物件在但讀不出圖、或遮罩與圖對不上
         raise HTTPException(409, "圖片檔案遺失，請重新產生") from None
     buf = io.BytesIO()
     out.save(buf, format="PNG")
@@ -127,12 +142,13 @@ def get_generation_cutout(
 def list_generations(
     book_id: int,
     kind: GenKind | None = None,
-    page_id: int | None = None,
+    page_id: Annotated[int | None, Query(ge=SQLITE_INT_MIN, le=SQLITE_INT_MAX)] = None,
     include_discarded: bool = False,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> list[GenerationOut]:
-    _book_or_404(session, book_id)
+    owned_book(session, owner, book_id)
     stmt = select(Generation).where(col(Generation.book_id) == book_id)
     if kind is not None:
         stmt = stmt.where(col(Generation.kind) == kind)
@@ -150,8 +166,9 @@ def update_generation(
     body: GenerationUpdate,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    gen = _gen_or_404(session, gen_id)
+    gen = owned_generation(session, owner, gen_id)
     guard = col(Generation.id) == gen_id
     if body.discarded:
         in_use = (
@@ -163,7 +180,20 @@ def update_generation(
             | select(Book.id).where(col(Book.character_generation_id) == gen_id).exists()
         )
         guard = guard & ~in_use
-    values: dict = {"discarded": body.discarded}
+    else:
+        # storage_gc 已清掉圖（成功、沒有圖）的不能還原：還原後可能被選成角色，之後的任務都拿不到圖
+        cleared = (col(Generation.status) == GenStatus.SUCCEEDED) & col(Generation.image_path).is_(None)
+        guard = guard & ~cleared
+    # 保留期限（storage_gc）從 discarded_at 起算：捨棄時記下（已捨棄的不重算，期限不往後延），還原時清掉
+    discarded_at_type = Generation.__table__.c.discarded_at.type
+    values: dict = {
+        "discarded": body.discarded,
+        "discarded_at": (
+            func.coalesce(col(Generation.discarded_at), literal(utcnow(), discarded_at_type))
+            if body.discarded
+            else None
+        ),
+    }
     if body.discarded:
         # 捨棄排隊中的任務等於取消它，避免 worker 之後仍去執行
         values["status"] = case(
@@ -178,8 +208,12 @@ def update_generation(
             else_=col(Generation.finished_at),
         )
     res = session.exec(update(Generation).where(guard).values(**values))
+    if body.discarded and res.rowcount:
+        refund_generations(session, [gen_id])  # 排隊中被取消的退回額度（已退過的不再退）
     session.commit()
     if res.rowcount == 0:
+        if not body.discarded:
+            raise HTTPException(409, IMAGE_CLEARED)
         raise HTTPException(409, "這筆生成紀錄正被頁面使用或作為角色，無法捨棄")
     session.refresh(gen)
     return _out(gen, worker)
@@ -190,13 +224,16 @@ def cancel_generation(
     gen_id: int,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    gen = _gen_or_404(session, gen_id)
+    gen = owned_generation(session, owner, gen_id)
     res = session.exec(
         update(Generation)
         .where(col(Generation.id) == gen_id, col(Generation.status) == GenStatus.QUEUED)
         .values(status=GenStatus.CANCELLED, finished_at=utcnow())
     )
+    if res.rowcount:
+        refund_generations(session, [gen_id])
     session.commit()
     if res.rowcount == 0:
         raise HTTPException(409, "只有排隊中的任務可以取消")
@@ -206,19 +243,24 @@ def cancel_generation(
 
 @router.get("/system/queue", response_model=QueueStatus)
 def queue_status(
-    session: Session = Depends(get_session), worker: GenerationWorker = Depends(get_worker)
+    session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> QueueStatus:
+    """全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。
+    非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。"""
     queued = session.exec(
         select(func.count()).select_from(Generation).where(col(Generation.status) == GenStatus.QUEUED)
     ).one()
     running_id = session.exec(
-        select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING).limit(1)
+        select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job()).limit(1)
     ).first()
     pending = session.exec(
         select(Generation.kind)
         .where(
             col(Generation.status).in_([GenStatus.QUEUED, GenStatus.RUNNING]),
             col(Generation.kind).in_(_ETA_KINDS),
+            worker_job(),  # 寫到一半的上傳背景不是 GPU 任務
         )
         .order_by(col(Generation.created_at), col(Generation.id))
     ).all()
@@ -238,11 +280,12 @@ def queue_status(
             .limit(_RECENT_PER_KIND)
         ).all()
         recent += [RecentJob(kind=kind.value, elapsed_s=e) for e in rows]
+    system_error = worker.state == WorkerState.ENGINE_UNAVAILABLE
     return QueueStatus(
         state=worker.state,
-        last_error=worker.last_error,
+        last_error=worker.last_error if owner.is_admin or system_error else None,
         queued=queued,
-        running_id=running_id,
+        running_id=running_id if owner.is_admin else None,
         pending=[PendingJob(kind=k.value) for k in pending],
         recent=recent,
     )

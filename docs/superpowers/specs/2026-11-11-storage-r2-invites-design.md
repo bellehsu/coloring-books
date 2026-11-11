@@ -1,0 +1,278 @@
+# Phase 10: storage (R2 object storage + invite identity): design
+
+Date: 2026-11-11. This follows Phase 9 (all-Qwen, merged 4656443). Roadmap: Phase 9 consolidation → **storage (this phase)** → cloud (diffusers + Modal + always-on web host).
+
+## 1. Why
+
+The cloud trial (5–10 friends or parents) has three needs:
+- testers' images must live somewhere reliable that does not depend on a single machine's disk;
+- each person sees only their own books;
+- the GPU, which will run on Modal, must not touch storage.
+
+Today every file lives in the local `storage/books/**` folder. Measured: each PNG is about 800 KB, a 10-page book is about 40–50 MB, and the trial would total about 1 GB. The code reads and writes the disk directly through `Storage.abs()`/`write()` (about 27 call sites), and the engine request passes in **file paths**.
+
+## 2. User decisions (2026-11-11)
+
+| Topic | Decision |
+|---|---|
+| Image location | **R2 object storage from day one** (Cloudflare R2) |
+| Delivering images to the browser | **Short-lived signed URLs, fetched directly from R2** |
+| Local development / your own PC | **Local also uses R2** |
+| Separating environments | **Two buckets: dev and prod** |
+| Existing local data (`storage/`, 2 books) | **Not migrated; local starts from empty.** The existing files and database are kept untouched as a backup |
+| Automated tests and the e2e fake backend | **Local-folder implementation**, no network or R2 credentials needed |
+| Retention | **Discarded images are deleted 30 days after being discarded.** Everything else is kept |
+| After the trial ends | **Kept until the user deletes it by hand.** There is a command to delete everything under one invite |
+| Identity / permissions | **The invite link is the identity.** No accounts or passwords. Each link sees only its own books; the user has an admin identity that sees all books |
+
+## 3. Goals, non-goals, anti-goals
+
+**Goals**
+- Every binary file (generated images, masks, composites, line art, uploads, previews) goes into object storage. The database stores only text, settings and **object keys**.
+- One `Storage` interface with two implementations: `LocalStorage` (folder; tests, the fake backend) and `R2Storage` (S3-compatible). Selected by `settings.yaml`.
+- The browser gets images through short-lived signed URLs.
+- Engine requests and responses carry **image bytes** rather than paths, so the generation layer never touches storage. This is a precondition for the cloud phase.
+- Invite identity: `owner_id` on books. Every API call checks ownership. An admin identity can see everything.
+- Automatic cleanup: discarded images are deleted after 30 days, and orphan objects are removed.
+- Database schema cleanup: drop the columns left over from Phase 9.
+
+**Non-goals**
+- Choosing and deploying the host, Modal, or diffusers. These belong to the cloud phase. This phase only makes sure the design doesn't lock them in.
+- Accounts, passwords, OAuth, payment.
+- Migrating existing local data.
+- Moving off SQLite. SQLite stays, single worker.
+
+**Anti-goals**
+- Credentials (R2 keys, invite tokens) never go into the repo, logs or error messages.
+- Tests and the e2e fake backend never need network access or R2 credentials. CLAUDE.md requires them to be mockable.
+- No image bytes are stored in the database.
+- No tester can see or touch another person's book. That includes guessing IDs and reusing old signed URLs once they have expired.
+- The user's existing `storage/app.db` and `storage/books/` are never modified or deleted.
+
+## 4. Design
+
+### 4.1 Storage interface
+```
+class Storage(Protocol):
+    def put(self, key: str, data: bytes, content_type: str) -> None
+    def get(self, key: str) -> bytes              # missing → raises StorageNotFound
+    def delete(self, key: str) -> None             # missing → no error
+    def exists(self, key: str) -> bool
+    def signed_url(self, key: str, ttl_s: int) -> str
+    def list(self, prefix: str) -> Iterable[str]   # for orphan cleanup
+```
+- **Keys:**
+  - `books/{book_id}/generations/{gen_id}.png`
+  - `…/{gen_id}_mask.png`
+  - `books/{book_id}/pages/{page_id}/lineart_{key}.png`
+  - previews and so on, reusing today's relative paths.
+  - The database stores keys, which are today's relative paths, so the format does not change.
+- **`LocalStorage(root)`:**
+  - files under `root`;
+  - `signed_url` returns a backend route `/api/files/{key}?exp=…&sig=…`, HMAC-signed with a local key and verified on that route;
+  - used by tests and the fake backend.
+- **`R2Storage(endpoint, bucket, access_key, secret_key)`:**
+  - uses boto3 (S3 API), which needs adding as a dependency;
+  - `signed_url` is an S3 presigned GET.
+- **Settings:**
+  - `storage.backend: local | r2`
+  - `storage.r2.endpoint`, `storage.r2.bucket`
+  - credentials only through environment variables, `APP_STORAGE__R2__ACCESS_KEY` / `…__SECRET_KEY`
+  - `storage.signed_url_ttl_s` (default 600)
+- **Local cache:** line art, QA, compositing and export need the original images.
+  - `get()` goes through a size-capped local disk cache (LRU, path set in settings, default 2 GB).
+  - The cache can be deleted at any time.
+  - `LocalStorage` doesn't need the cache.
+
+### 4.2 Engine passes bytes
+- `GenerationRequest.character_image: bytes | None` (formerly a path).
+- `GenerationResult` keeps `image: bytes` and `mask: bytes | None`, as today.
+- The worker reads the character reference image from Storage and sends it in. When the result comes back, the worker `put`s it into Storage and writes the key to the database.
+- `request_json` still records the **key** of the character reference image, for provenance, not the bytes.
+
+### 4.3 Image URLs
+- `GenerationOut.image_url`, `mask_url`, `cutout_url`, `PageOut` line-art URLs and so on all become `storage.signed_url(key)`.
+- The frontend already uses the URLs returned by the API, so it barely needs to change.
+- **Expiry handling:**
+  - the frontend refreshes queries before URLs expire, or retries once on a 403 with `onError` → refetch;
+  - TTL 10 minutes; query `staleTime` is kept well under the TTL.
+- **Images that go through processing** (cutout preview, `print.png`, PDF) are still produced by the backend and streamed back as a response, after an ownership check.
+
+### 4.4 Invite identity
+- **New tables:**
+  - `owner` (`id`, `name`, `token_hash`, `is_admin`, `daily_generation_cap`, `created_at`, `revoked_at`);
+  - `usage` (`owner_id`, `day`, `generations`).
+- **Link flow:**
+  - `/i/{token}`: the backend checks the token hash, sets an httpOnly, SameSite=Lax cookie (a server-side session or a signed owner_id), then redirects to `/`.
+  - Revoked or unknown tokens → a 「連結已失效」 page.
+- **Data:** `book.owner_id` (NOT NULL; existing rows are assigned to the admin).
+- **Every API endpoint** goes through `current_owner`:
+  - books, pages and generations are filtered by owner;
+  - another person's resources return 404, not 403, so their existence is not revealed;
+  - the admin sees everything.
+- **Daily cap:** each generation enqueue (character / background / pose / batch materials) is counted. Over the cap → 429 with the zh-Hant message 「今天的生成次數已用完，明天再來」. Default 60 per day, adjustable per invite.
+- **Management:** CLI scripts `scripts/invites.py create|list|revoke|delete-data`.
+  - `create` prints the link once.
+  - `delete-data` deletes all books, rows and objects under that invite, after confirmation.
+- **Local development:** when `auth.dev_owner` is set in settings, requests without a cookie are treated as that owner (the admin), so local development needs no link.
+
+### 4.5 Cleanup
+- **`scripts/storage_gc.py`**, run on a schedule; the cloud phase decides the scheduling mechanism:
+  - deletes the image objects of generations that have been `discarded` for more than 30 days, and clears their keys;
+  - deletes orphan objects that no database row references, with `--dry-run`;
+  - discarding has to record the time, so add `generation.discarded_at`.
+- **Cascade deletion:** deleting a page or book deletes its objects too. Today it deletes files; it switches to `storage.delete`.
+
+### 4.6 Database
+- Stays on SQLite.
+- **Backups:** the prod database is replicated continuously to an R2 prefix with Litestream. The config and docs are written in this phase; enabling it happens in the cloud phase.
+- **Alembic 0006:**
+  - add `owner`, `usage`, `book.owner_id` and `generation.discarded_at`;
+  - **drop** `page.sketch_path`, `page.controlnet_strength` and other columns confirmed unused since Phase 9;
+  - existing rows (if any) are assigned to the admin.
+- **Local starts from empty:** settings point to a new database path (`storage-r2/app.db` or similar), so the existing `storage/app.db` is left untouched.
+
+### 4.7 What the user needs to prepare (listed for them, never done for them)
+- A Cloudflare account. Create R2 buckets `coloring-books-dev` and `coloring-books-prod`, and an API token for each with read/write on that bucket only.
+- Put the credentials in the local `scripts/dev.env`, which is not version-controlled.
+- Bucket CORS must allow GET from the frontend origin, for signed URLs. The docs give the configuration.
+
+### 4.8 Details settled after the builder check
+- **Same origin:** the frontend already proxies `/api/*` to the backend through Next.js rewrites (`next.config.ts`).
+  - `/i/:token` is added to the rewrite the same way. FastAPI checks the token, sets the cookie and redirects to `/`.
+  - Browser and API share one origin, so a SameSite=Lax httpOnly cookie works directly.
+  - The cloud phase keeps the same arrangement: frontend and API on one domain.
+- **Image URLs stay stable and redirect (replaces "the API returns signed URLs" in §4.3):**
+  - The existing routes stay unchanged: `/api/generations/{id}/image`, `…/mask`, `/api/pages/{id}/lineart?v=…` and so on.
+  - Each route **checks the cookie and the owner first**, then `302`s to `storage.signed_url(key, ttl)`.
+  - Images still download **directly from R2**, so the user's decision is unchanged.
+  - Benefits:
+    - the frontend barely changes;
+    - every view re-checks permissions, so an expired cookie or a revoked invite stops access straight away;
+    - expiry needs no special handling.
+  - The signed URL is used immediately, so the TTL is lowered to **120 seconds**.
+  - The 302 carries `Cache-Control: private, max-age=60`, so the browser reuses the redirect for a short while.
+  - Images the backend processes (cutout, `print.png`, PDF) are still streamed directly after the ownership check.
+  - `LocalStorage`'s `/api/files/...` is HMAC-checked only. It is used in tests and with the fake backend.
+- **Line-art existence check:** decide from the database (`page.lineart_key`/`lineart_path`) rather than calling `exists()` on every request. Fall back to regenerating only if a read fails with `StorageNotFound`.
+- **Ownership scope:**
+  - Only books have `owner_id`. Pages, generations and characters all belong to a book (characters live in the `book.character_*` fields), so ownership flows down through `book_id`.
+  - `/api/system/queue` returns only counts and the ETA, with no content.
+  - `/api/system/preflight` is **admin only**.
+- **Columns dropped in 0006:** exactly `page.sketch_path` and `page.controlnet_strength`.
+  - Use SQLite batch mode. The downgrade recreates them, nullable or with their old default.
+  - `PageUpdate.controlnet_strength` stays accepted-and-ignored.
+  - `PageOut.sketch_url` is removed, and the generated frontend types are updated.
+  - The "existing rows go to the admin" rule only matters when migrating an old database, for example a copy in tests. Locally the database starts empty.
+- **Sessions:**
+  - The cookie holds a random session id.
+  - The `owner_session` table stores only its hash, plus `owner_id`, `created_at` and `last_seen`.
+  - **Each request looks up the session and the owner.** A revoked owner, or a session that has been deleted, takes effect immediately. Session lifetime is 90 days.
+- **Daily cap:**
+  - Generations are counted **when queued**.
+  - A job that ends **failed or cancelled is refunded**.
+  - The day boundary is **Asia/Taipei**.
+  - Auto-select and composing (`compose`) are not counted, because they don't use the GPU. Pressing regenerate after a failure counts as a new job.
+- **Cache:**
+  - The local cache is only an accelerator; losing it does no harm, so it can sit on temporary disk.
+  - Writes go to a temporary file and are then renamed atomically.
+  - Eviction removes the oldest files first. An open file is unaffected (POSIX).
+
+### 4.9 Sharing finished books (user decision, 2026-11-11, added to this phase)
+- **User decisions:**
+  - Each book has a share switch. When it is on, **every invited user** (any valid, non-revoked session) can see the book. Nothing is public on the internet, and there are no anonymous share links.
+  - Others can **view and download the PDF**. They cannot edit, and viewing never counts toward anyone's daily cap.
+  - Sharing can be turned on once **at least one page is completed** (`PageStatus.PASSED`). Others see **only completed pages**, and pages completed later appear automatically.
+- **Data:** `book.shared_at: datetime | None` (null means not shared), added by Alembic 0008.
+- **API:** a separate read-only `/api/shared/...` namespace. The `owned_*` guards stay exactly as they are; the edit routes never become readable by non-owners.
+  - `PUT /api/books/{id}/share` `{shared: bool}` → `BookOut`.
+    - Owner or admin only; anyone else gets 404.
+    - Turning it on with no completed page → 409 「至少完成一頁才能分享」.
+    - Turning it off takes effect on the next request.
+  - `GET /api/shared/books` → a list of shared books, newest `shared_at` first.
+    - Each item: `id`, `title`, `author` (the owner's name), `paper_size`, `page_count` (completed pages), `cover_page_id`, `shared_at`, `mine`.
+    - Books whose owner is revoked, or that have 0 completed pages, are hidden.
+  - `GET /api/shared/books/{id}` → `{id, title, author, paper_size, mine, pages: [{id, position}]}`, with completed pages only, in order.
+  - `GET /api/shared/pages/{page_id}/image.png` → the same composed page image the PDF uses for that page (line-art edits applied), downscaled so the long edge is ≤ 1600 px. It is streamed with `Cache-Control: private, max-age=300`.
+  - `GET /api/shared/books/{id}/export.pdf` → the PDF of completed pages only, built the same way as the owner's `include=passed` export.
+  - All of these require a valid session. If the book is not shared, its owner is revoked, or the page is not completed, the response is **404** 「找不到這本分享的繪本」. Nothing reveals whether it exists.
+- **Frontend:**
+  - Home has two sections: 「我的繪本」 (my books; shared ones carry a 「已分享」 badge) and 「大家的繪本」 (other people's shared books; a cover thumbnail, title, author and page count). It shows an empty-state line when there are none.
+  - The share switch lives in the editor's 匯出 PDF drawer: 「分享給其他使用者」, with a line saying others can view and download completed pages only.
+    - When no page is completed, it is disabled and the line says 「至少完成一頁才能分享」.
+  - Read-only viewer at `/shared/{id}`:
+    - title, 「作者：名字」, the completed pages as large images in order, and a 「下載 PDF」 button;
+    - no editing UI;
+    - RWD down to 390 px;
+    - a 404 shows 「這本繪本已經不再分享」 with a link home.
+- **Author's calls:**
+  - The author shown is the invite name the admin typed.
+  - Sharing is per book, not per page.
+  - Your own shared book does not appear in 「大家的繪本」; your list shows the badge instead. `mine` exists for the admin view and the viewer.
+  - Admins see the same shared list as everyone else. Their full access stays on the owner routes.
+
+### 4.10 Invite management page (user decision, 2026-11-11, added to this phase after §4.9)
+- **User decisions:**
+  - An admin-only page can **create** an invite link and **list** all invites.
+  - The link can be **viewed again at any time**, not only once when it is created.
+  - Rotating, revoking, changing the cap and deleting data stay in the CLI, `scripts/invites.py`, for now.
+- **Storing the link (author's call, made to honor "view again" safely):**
+  - `owner.token_hash` stays the lookup key.
+  - A new column, `owner.token_encrypted: str | None` (Alembic 0009), holds the raw token **encrypted** with Fernet.
+  - The key comes from env `APP_AUTH__LINK_KEY`, or else from an auto-created `<paths.storage_dir>/.link_key` (0600), following the same pattern as the signing key.
+  - This means a leaked DB or Litestream backup alone does not expose usable links.
+  - `create` and `rotate`, in both the CLI and the API, write it.
+  - Rows created before this change, or a key that no longer decrypts, show 「這個連結無法再顯示，請用指令換發」 (`scripts/invites.py rotate --id N`).
+  - Add `cryptography` as an explicit dependency.
+- **API** (admin only; anyone else gets **404**, so the page's existence is not revealed):
+  - `GET /api/me` → `{name, is_admin}` for any valid session. The frontend uses it to show the admin link.
+  - `GET /api/admin/invites` → a list newest first. Each entry has:
+    - `id`, `name`, `is_admin`, `daily_generation_cap` (null = unlimited)
+    - `today` (generations queued today, Asia/Taipei)
+    - `book_count`, `last_seen` (latest session `last_seen`, or null), `created_at`, `revoked`
+    - `link` (the full URL, or null if it cannot be shown)
+  - `POST /api/admin/invites` `{name, is_admin=false, daily_generation_cap=60}` → the same shape, including `link`.
+    - The name is 1–40 characters after trimming and must be unique among non-revoked owners; a duplicate gets 409 「這個名字已經有邀請了」.
+    - The cap is 1–1000; admins are uncapped.
+  - The link prefix is `auth.invite_base_url`, or else the request's own origin (scheme + host as the browser sent it, honoring the `X-Forwarded-*` headers that the Next proxy forwards). Admins who open the page via the LAN IP therefore get a usable LAN link.
+- **Frontend:**
+  - Page `/admin/invites`, reached from a 「邀請管理」 link in the home header that only admins see.
+  - A form with 名字, 管理者 (checkbox) and 每日上限 (number, default 60, hidden when 管理者 is checked), and a submit button labelled 「產生連結」.
+  - The new row appears at the top of the list.
+  - The list is a table on desktop and cards at 390 px. Its columns are 名字, 身分 (管理者／使用者), 每日上限, 今天, 書, 最後使用, 狀態 (使用中／已撤銷) and 連結.
+  - 連結 shows the URL with a 「複製」 button, which shows 「已複製」 for 2 s, or the "cannot show" line.
+  - A footnote says rotating, revoking and deleting are done with `scripts/invites.py`.
+  - Non-admins who open `/admin/invites` see the normal 404 page.
+
+## 5. Success criteria
+- **Unit tests (mocked):**
+  - both implementations satisfy the same contract tests: put / get / delete / exists / list / signed_url;
+  - `R2Storage` tested against moto, or a stub of the boto3 client;
+  - the engine passes bytes;
+  - ownership filtering, including 404 when guessing someone else's ID;
+  - the daily cap gives 429;
+  - the invite link sets the cookie, and revoked links are rejected;
+  - cleanup deletes only expired discarded images and orphan objects;
+  - cascade deletion;
+  - 0006 migration upgrade and downgrade.
+  - invite page (§4.10): admin-only (404 otherwise), create returns a working link, list shows stored links decrypted, legacy rows show null, the link key comes from env or file.
+  - sharing (§4.9): toggle rules, shared list/detail/image/PDF visibility, unshare and revoke take effect immediately, viewing is not counted.
+- **e2e (fake backend + LocalStorage):** the full flow still passes; two different invites cannot see each other's books; a shared book shows up for the other invite with completed pages only and stops showing once unshared.
+- **Real run (the user provides dev bucket credentials):** start the app locally with the R2 dev bucket, run one book's full flow, and confirm:
+  - images are in the bucket;
+  - the browser loads them through signed URLs;
+  - an expired URL can no longer be opened;
+  - the PDF exports.
+
+## 6. Calls made by the author (not decided by the user)
+- Keys reuse today's relative path format.
+- `LocalStorage`'s signed URLs go through a backend HMAC route.
+- Local image cache defaults to 2 GB.
+- Signed URL TTL defaults to 10 minutes.
+- Another person's resources return 404.
+- Daily cap defaults to 60 per day.
+- `delete-data` asks for confirmation.
+- Cleanup is a script; its schedule is decided in the cloud phase.
+- Litestream config is written in this phase and enabled in the cloud phase.
+- The local new database lives at a new path.
+- boto3 is added as a dependency.

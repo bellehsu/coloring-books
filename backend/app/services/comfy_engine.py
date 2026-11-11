@@ -65,7 +65,7 @@ class ComfyEngine:
         async with self.client_factory() as client:
             values: dict = {"prompt": req.prompt, "seed": req.seed, "width": req.width, "height": req.height}
             if req.kind == GenKind.POSE:
-                values["character_image"] = await self._upload(client, req.character_image.read_bytes(), "char")
+                values["character_image"] = await self._upload(client, req.character_image, "char")
             built = entry.build_prompt(values)
 
             def progress(ev: ProgressEvent) -> None:

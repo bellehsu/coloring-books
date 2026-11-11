@@ -6,14 +6,14 @@
 import io
 
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image, ImageDraw
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, update
 
-from app.api.deps import get_session, get_storage
-from app.api.pages import _page_or_404
+from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_generation, owned_page
+from app.api.files import signed_redirect
 from app.api.schemas import (
     MAX_STROKES,
     MAX_TOTAL_POINTS,
@@ -24,7 +24,7 @@ from app.api.schemas import (
     QAOut,
     StrokeOut,
 )
-from app.models import Book, Generation, GenStatus, Page, PageStatus, utcnow
+from app.models import GenStatus, Owner, Page, PageStatus, utcnow
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
     LINE_WIDTH_DEFAULT,
@@ -35,11 +35,13 @@ from app.services.lineart_render import (
     apply_strokes,
 )
 from app.services.page_lineart import (
+    LineartSourceMissing,
     LineartUnavailable,
     PageLineart,
     ensure_page_lineart,
+    ensure_preview,
     load_strokes,
-    render_preview,
+    read_page_lineart,
     save_strokes,
     strokes_to_json,
 )
@@ -57,19 +59,36 @@ OVERLAY_TRIM_COLOR = (0, 0, 255)
 OVERLAY_SAFE_COLOR = (0, 160, 0)
 
 NO_SELECTION = "這一頁還沒有選定圖片"
+IMAGE_MISSING = "圖片檔案遺失"
 STALE_GENERATION = "這張圖已不是這一頁目前選定的圖片，請重新載入頁面"
 
 
-def _ensure(session: Session, storage: Storage, page_id: int) -> PageLineart:
-    _page_or_404(session, page_id)
+def _ensure(session: Session, storage: Storage, owner: Owner, page_id: int) -> PageLineart:
+    owned_page(session, owner, page_id)
     try:
         return ensure_page_lineart(session, storage, page_id)
     except LineartUnavailable as e:
         raise HTTPException(409, e.message) from e
 
 
-def _qa_out(session: Session, page_id: int, lin: PageLineart, cls=QAOut, **extra) -> QAOut:
-    page = session.get(Page, page_id)
+def _ensure_png(
+    session: Session, storage: Storage, owner: Owner, page_id: int, *, image_route: bool
+) -> tuple[PageLineart, bytes]:
+    """確保線稿並讀出 PNG（線稿物件不見了會重算）。選定圖片的物件遺失時：
+    圖片端點回 404「圖片檔案遺失」；JSON 端點與 _ensure 一樣回 409。"""
+    owned_page(session, owner, page_id)
+    try:
+        return read_page_lineart(session, storage, page_id)
+    except LineartSourceMissing as e:
+        if image_route:
+            raise HTTPException(404, IMAGE_MISSING) from e
+        raise HTTPException(409, e.message) from e
+    except LineartUnavailable as e:
+        raise HTTPException(409, e.message) from e
+
+
+def _qa_out(session: Session, owner: Owner, page_id: int, lin: PageLineart, cls=QAOut, **extra) -> QAOut:
+    page = owned_page(session, owner, page_id)
     session.refresh(page)  # ensure_page_lineart 可能剛把頁面退回草稿
     return cls.build(page, lin.qa, lin.key, **extra)
 
@@ -108,12 +127,23 @@ def _commit_strokes(session: Session, page_id: int, gen_id: int, strokes: list[S
 
 @router.get("/pages/{page_id}/lineart")
 def get_lineart(
+    request: Request,
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
-    lin = _ensure(session, storage, page_id)
-    return _png_response(storage.abs(lin.path).read_bytes())
+    """線稿就是一個存放的物件：確認物件在（不在就重算，來源也不見則 404）後轉到簽章網址。"""
+    owned_page(session, owner, page_id)
+    try:
+        lin = ensure_page_lineart(session, storage, page_id)
+        if not storage.exists(lin.path):  # 資料庫說有、物件卻不見了：重算一次
+            lin, _data = _ensure_png(session, storage, owner, page_id, image_route=True)
+    except LineartSourceMissing as e:
+        raise HTTPException(404, IMAGE_MISSING) from e
+    except LineartUnavailable as e:
+        raise HTTPException(409, e.message) from e
+    return signed_redirect(request, storage, lin.path)
 
 
 @router.get("/pages/{page_id}/qa", response_model=QAOut)
@@ -121,8 +151,9 @@ def get_qa(
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> QAOut:
-    return _qa_out(session, page_id, _ensure(session, storage, page_id))
+    return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id))
 
 
 @router.get("/pages/{page_id}/qa/overlay.png")
@@ -130,11 +161,12 @@ def get_qa_overlay(
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
-    lin = _ensure(session, storage, page_id)
-    page = session.get(Page, page_id)
-    book = session.get(Book, page.book_id)
-    with Image.open(io.BytesIO(storage.abs(lin.path).read_bytes())) as src:
+    lin, data = _ensure_png(session, storage, owner, page_id, image_route=True)
+    page = owned_page(session, owner, page_id)
+    book = owned_book(session, owner, page.book_id)
+    with Image.open(io.BytesIO(data)) as src:
         im = src.convert("RGB")
     draw = ImageDraw.Draw(im)
     w, h = im.size
@@ -160,8 +192,12 @@ def _edits_out(gen_id: int, strokes: list[Stroke]) -> EditsOut:
 
 
 @router.get("/pages/{page_id}/lineart/edits", response_model=EditsOut)
-def get_edits(page_id: int, session: Session = Depends(get_session)) -> EditsOut:
-    gid = _selected_or_409(_page_or_404(session, page_id))
+def get_edits(
+    page_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> EditsOut:
+    gid = _selected_or_409(owned_page(session, owner, page_id))
     return _edits_out(gid, load_strokes(session, gid))
 
 
@@ -171,8 +207,9 @@ def put_edits(
     body: EditsIn,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> QAOut:
-    gid = _selected_or_409(_page_or_404(session, page_id), body.generation_id)
+    gid = _selected_or_409(owned_page(session, owner, page_id), body.generation_id)
     strokes = [
         Stroke(s.op, float(s.width_px), tuple((float(x), float(y)) for x, y in s.points))
         for s in body.strokes
@@ -180,11 +217,11 @@ def put_edits(
     # 內容沒變（例如前端自動存檔）就不寫入、也不退回 passed
     if strokes_to_json(strokes) != strokes_to_json(load_strokes(session, gid)):
         _commit_strokes(session, page_id, gid, strokes)
-    return _qa_out(session, page_id, _ensure(session, storage, page_id))
+    return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id))
 
 
-def _read_ink(storage: Storage, rel: str) -> np.ndarray:
-    with Image.open(storage.abs(rel)) as im:
+def _read_ink(data: bytes) -> np.ndarray:
+    with Image.open(io.BytesIO(data)) as im:
         return np.asarray(im.convert("L")) < 128
 
 
@@ -203,24 +240,25 @@ def autofix(
     body: AutofixIn,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> AutofixOut:
     """對目前 QA 的每個缺口補一筆 draw（加在修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。
 
     只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。
     """
-    gid = _selected_or_409(_page_or_404(session, page_id), body.generation_id)
-    lin = _ensure(session, storage, page_id)
+    gid = _selected_or_409(owned_page(session, owner, page_id), body.generation_id)
+    lin, data = _ensure_png(session, storage, owner, page_id, image_route=False)
     if not lin.qa.bridges:
-        return _qa_out(session, page_id, lin, AutofixOut, autofix_added=0)
+        return _qa_out(session, owner, page_id, lin, AutofixOut, autofix_added=0)
 
-    page = session.get(Page, page_id)
+    page = owned_page(session, owner, page_id)
     width = page.line_width_px
     existing = load_strokes(session, gid)
     points_left = MAX_TOTAL_POINTS - sum(len(s.points) for s in existing)
     if len(existing) >= MAX_STROKES or points_left < 2:
         raise HTTPException(409, f"修改圖層已達上限（{MAX_STROKES} 筆／{MAX_TOTAL_POINTS} 點），無法自動補線")
 
-    ink = _read_ink(storage, lin.path)
+    ink = _read_ink(data)
     h, w = ink.shape
     added: list[Stroke] = []
     gap_count, bridges = lin.qa.gap_count, lin.qa.bridges
@@ -239,30 +277,30 @@ def autofix(
             break
 
     if not added:
-        return _qa_out(session, page_id, lin, AutofixOut, autofix_added=0)
+        return _qa_out(session, owner, page_id, lin, AutofixOut, autofix_added=0)
     _commit_strokes(session, page_id, gid, existing + added)
-    return _qa_out(session, page_id, _ensure(session, storage, page_id), AutofixOut,
+    return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id), AutofixOut,
                    autofix_added=len(added))
 
 
 @router.get("/generations/{gen_id}/lineart-preview")
 def lineart_preview(
+    request: Request,
     gen_id: int,
     detail: LineDetail = LineDetail.STANDARD,
     line_width_px: int = Query(LINE_WIDTH_DEFAULT, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX),
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> Response:
     """角色或頁面候選的線稿預覽（不含修改圖層），依所屬繪本目前的內容尺寸。"""
-    gen = session.get(Generation, gen_id)
-    if gen is None:
-        raise HTTPException(404, "找不到這筆生成紀錄")
+    gen = owned_generation(session, owner, gen_id)
     if gen.status != GenStatus.SUCCEEDED or not gen.image_path:
         raise HTTPException(404, "這筆生成紀錄還沒有圖片")
-    book = session.get(Book, gen.book_id)
+    book = owned_book(session, owner, gen.book_id)
     content_px = compute_layout(book.paper_size, book.print_mode).content_px
     try:
-        rel = render_preview(storage, gen, content_px, detail, line_width_px)
+        key = ensure_preview(storage, gen, content_px, detail, line_width_px)
     except LineartUnavailable as e:
-        raise HTTPException(404, "圖片檔案遺失") from e
-    return _png_response(storage.abs(rel).read_bytes())
+        raise HTTPException(404, IMAGE_MISSING) from e
+    return signed_redirect(request, storage, key)

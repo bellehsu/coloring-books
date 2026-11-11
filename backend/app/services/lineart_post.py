@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import cv2
 import numpy as np
@@ -102,8 +102,8 @@ class LineartResult:
 
 # ---- 各步驟 -------------------------------------------------------------------
 
-def load_image(path: str | Path) -> np.ndarray:
-    """讀成 RGB uint8；有透明度時合成到白底。"""
+def load_image(path: str | Path | BinaryIO) -> np.ndarray:
+    """讀成 RGB uint8；有透明度時合成到白底。path 可以是檔案路徑或 file-like（例如 io.BytesIO）。"""
     with Image.open(path) as im:
         im.load()
         if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):

@@ -69,7 +69,7 @@ def test_export_errors(client, app):
     make_passed(app, ps[1]["id"])
     with app.state.sessions() as s:
         s2 = s.get(Generation, ps[1]["selected_generation_id"])
-        app.state.storage.abs(s2.image_path).unlink()
+        app.state.storage.delete(s2.image_path)
     r = client.get(f"/api/books/{b['id']}/export.pdf")
     assert r.status_code == 409 and "第 2 頁" in r.json()["detail"]
 

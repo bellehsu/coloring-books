@@ -7,7 +7,7 @@ import random
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlmodel import Session, col, select, update
 
-from app.api.deps import get_session, get_worker
+from app.api.deps import current_owner, get_session, get_worker, owned_book, owned_generation
 from app.api.schemas import (
     BookCreate,
     BookOut,
@@ -16,10 +16,12 @@ from app.api.schemas import (
     CharacterCandidatesCreate,
     CharacterSelect,
     GenerationOut,
+    ShareIn,
 )
-from app.models import Book, Generation, GenKind, GenStatus, Page, PageStatus, utcnow
+from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
 from app.services.layout import PaperSize, ratio_group
 from app.services.page_lineart import ensure_page_lineart
+from app.services import usage
 from app.services.prompts import QWEN_CHARACTER_SIZE, pick_character_variation, qwen_character_prompt
 from app.services.worker import GenerationWorker, encode_request
 
@@ -29,12 +31,6 @@ router = APIRouter(prefix="/api/books", tags=["books"])
 CHARACTER_SIZE = QWEN_CHARACTER_SIZE
 MAX_SEED = 2**32 - 1
 
-
-def _book_or_404(session: Session, book_id: int) -> Book:
-    book = session.get(Book, book_id)
-    if book is None:
-        raise HTTPException(404, "找不到這本繪本")
-    return book
 
 
 def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
@@ -79,22 +75,36 @@ def book_out(session: Session, book: Book) -> BookOut:
 
 
 @router.post("", status_code=201, response_model=BookOut)
-def create_book(body: BookCreate, session: Session = Depends(get_session)) -> BookOut:
-    book = Book(title=body.title, paper_size=body.paper_size, print_mode=body.print_mode)
+def create_book(
+    body: BookCreate,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> BookOut:
+    book = Book(title=body.title, paper_size=body.paper_size, print_mode=body.print_mode, owner_id=owner.id)
     session.add(book)
     session.commit()
     return book_out(session, book)
 
 
 @router.get("", response_model=list[BookOut])
-def list_books(session: Session = Depends(get_session)) -> list[BookOut]:
-    books = session.exec(select(Book).order_by(col(Book.id).desc())).all()
+def list_books(
+    session: Session = Depends(get_session), owner: Owner = Depends(current_owner)
+) -> list[BookOut]:
+    """自己的書；admin 看全部。"""
+    stmt = select(Book)
+    if not owner.is_admin:
+        stmt = stmt.where(col(Book.owner_id) == owner.id)
+    books = session.exec(stmt.order_by(col(Book.id).desc())).all()
     return book_outs(session, list(books))
 
 
 @router.get("/{book_id}", response_model=BookOut)
-def get_book(book_id: int, session: Session = Depends(get_session)) -> BookOut:
-    return book_out(session, _book_or_404(session, book_id))
+def get_book(
+    book_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> BookOut:
+    return book_out(session, owned_book(session, owner, book_id))
 
 
 def _recompute_book_lineart(sessions, storage, book_id: int) -> None:
@@ -120,8 +130,9 @@ def update_book(
     request: Request,
     background: BackgroundTasks,
     session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> BookOut:
-    book = _book_or_404(session, book_id)
+    book = owned_book(session, owner, book_id)
     if body.paper_size is not None and ratio_group(body.paper_size) != ratio_group(book.paper_size):
         same = "、".join(
             s.name if s.name[0] != "S" else s.value
@@ -149,6 +160,33 @@ def update_book(
     return book_out(session, book)
 
 
+NEED_PASSED_PAGE = "至少完成一頁才能分享"
+
+
+@router.put("/{book_id}/share", response_model=BookOut)
+def set_share(
+    book_id: int,
+    body: ShareIn,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> BookOut:
+    """分享開關（擁有者或 admin）：開啟需要至少一個完成的頁面；關閉下一個請求就生效。"""
+    book = owned_book(session, owner, book_id)
+    if body.shared:
+        passed = session.exec(
+            select(Page.id).where(col(Page.book_id) == book_id, col(Page.status) == PageStatus.PASSED).limit(1)
+        ).first()
+        if passed is None:
+            raise HTTPException(409, NEED_PASSED_PAGE)
+        if book.shared_at is None:
+            book.shared_at = utcnow()
+    else:
+        book.shared_at = None
+    session.add(book)
+    session.commit()
+    return book_out(session, book)
+
+
 def _last_character_variation(session: Session, book_id: int) -> str | None:
     """這本書最近一筆有變化語的角色候選（依 id，不論狀態、是否丟棄）用的變化語；沒有回 None。
     沒有變化語的舊列（SDXL 時代）略過。"""
@@ -172,9 +210,10 @@ def create_character_candidates(
     body: CharacterCandidatesCreate,
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
 ) -> list[GenerationOut]:
     """產生一張角色候選圖（Qwen 純文字生圖）；描述不翻譯、原樣放進樣板。回傳只含這一張的清單。"""
-    book = _book_or_404(session, book_id)
+    book = owned_book(session, owner, book_id)
     if book.character_generation_id is not None:
         raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
     # 一次一張：body.count 是舊前端送的，忽略。再按一次＝再產生一張，變化語不重複這本書上一張
@@ -184,6 +223,20 @@ def create_character_candidates(
     )
     prompt = qwen_character_prompt(body.description, variation)
     width, height = CHARACTER_SIZE
+    # 先以條件式 UPDATE 取得寫入鎖並確認角色仍未設定，與 set_character 互斥
+    res = session.exec(
+        update(Book)
+        .where(col(Book.id) == book_id, col(Book.character_generation_id).is_(None))
+        .values(updated_at=utcnow())
+    )
+    if res.rowcount == 0:
+        session.rollback()
+        raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
+    try:
+        day = usage.reserve(session, owner, 1, usage.clock())  # 同一個交易：429 時什麼都不寫
+    except HTTPException:
+        session.rollback()
+        raise
     gen = Generation(
         book_id=book_id,
         kind=GenKind.CHARACTER,
@@ -201,17 +254,9 @@ def create_character_candidates(
             width=width,
             height=height,
             variation=variation,
+            extra=usage.usage_extra(owner, day),
         ),
     )
-    # 先以條件式 UPDATE 取得寫入鎖並確認角色仍未設定，與 set_character 互斥
-    res = session.exec(
-        update(Book)
-        .where(col(Book.id) == book_id, col(Book.character_generation_id).is_(None))
-        .values(updated_at=utcnow())
-    )
-    if res.rowcount == 0:
-        session.rollback()
-        raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
     session.add(gen)
     session.commit()
     worker.notify()
@@ -225,14 +270,15 @@ def create_character_candidates(
 
 @router.post("/{book_id}/character", response_model=BookOut)
 def set_character(
-    book_id: int, body: CharacterSelect, session: Session = Depends(get_session)
+    book_id: int,
+    body: CharacterSelect,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> BookOut:
-    book = _book_or_404(session, book_id)
+    book = owned_book(session, owner, book_id)
     if book.character_generation_id is not None:
         raise HTTPException(409, "這本繪本的角色已經設定")
-    gen = session.get(Generation, body.generation_id)
-    if gen is None:
-        raise HTTPException(404, "找不到這筆生成紀錄")
+    gen = owned_generation(session, owner, body.generation_id)  # 別人的與不存在一樣 404
     if gen.book_id != book_id:
         raise HTTPException(409, "這筆生成紀錄不屬於這本繪本")
     if gen.kind != GenKind.CHARACTER:
@@ -241,6 +287,8 @@ def set_character(
         raise HTTPException(409, "這張候選圖尚未成功生成")
     if gen.discarded:
         raise HTTPException(409, "這張候選圖已被捨棄")
+    if gen.image_path is None:
+        raise HTTPException(409, "這張候選圖已被清理")
     # 同一條 UPDATE 再確認候選圖仍可用，避免與捨棄競爭而指向已捨棄的 generation
     still_valid = (
         select(Generation.id)
@@ -250,6 +298,7 @@ def set_character(
             col(Generation.kind) == GenKind.CHARACTER,
             col(Generation.status) == GenStatus.SUCCEEDED,
             col(Generation.discarded).is_(False),
+            col(Generation.image_path).is_not(None),  # storage_gc 清掉圖的不能當角色
         )
         .exists()
     )
@@ -270,7 +319,7 @@ def set_character(
         session.rollback()
         raise HTTPException(409, "這本繪本的角色已經設定，或這張候選圖已不可用")
     # 角色已定案：同本書其餘排隊中的角色候選不再需要，同一交易取消（執行中的不動）
-    session.exec(
+    cancelled = session.exec(
         update(Generation)
         .where(
             col(Generation.book_id) == book_id,
@@ -278,7 +327,9 @@ def set_character(
             col(Generation.status) == GenStatus.QUEUED,
         )
         .values(status=GenStatus.CANCELLED, finished_at=utcnow())
-    )
+        .returning(Generation.id)
+    ).scalars().all()
+    usage.refund_generations(session, cancelled)  # 取消的候選退回額度
     session.commit()
     session.refresh(book)
     return book_out(session, book)

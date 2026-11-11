@@ -9,6 +9,7 @@ import logging
 from collections.abc import Callable
 from enum import Enum
 
+from sqlalchemy import or_
 from sqlmodel import Session, col, select, update
 
 from app.models import Generation, GenKind, GenStatus, utcnow
@@ -21,7 +22,8 @@ from app.services.engine import (
 )
 from app.services.autoselect import autoselect
 from app.services.compose import largest_component
-from app.storage import Storage
+from app.services.usage import refund_generations
+from app.storage import Storage, StorageNotFound
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +33,18 @@ class WorkerState(str, Enum):
     RUNNING = "running"
     ENGINE_UNAVAILABLE = "engine_unavailable"
     STOPPED = "stopped"
+
+
+# 後端在請求裡自己產生的生成紀錄（上傳背景、確認合成）。寫物件期間這一列以 RUNNING、沒有圖暫存
+# （api/compose.py：storage I/O 不在寫入交易裡做），它不是 worker 的 GPU 任務：佇列狀態與排隊位置不算它，
+# 重啟時也不可放回佇列
+LOCAL_ENGINES = ("upload", "compose")
+LOCAL_INTERRUPTED = "處理中斷（伺服器重新啟動），請重新上傳或合成"
+
+
+def worker_job():
+    """SQL 條件：這一列是 worker 的任務（engine 還沒寫入，或不是後端自己產生的）。"""
+    return or_(col(Generation.engine).is_(None), col(Generation.engine).not_in(LOCAL_ENGINES))
 
 
 # request_json 的核心欄位（extra 不能蓋掉）
@@ -50,7 +64,7 @@ def encode_request(
     variation: str | None = None,
     extra: dict | None = None,
 ) -> str:
-    """產生 Generation.request_json；character_image 為 storage 相對路徑，variation 一律寫入（可為 null）。
+    """產生 Generation.request_json；character_image 為 Storage 的物件 key（來源紀錄，不存 bytes），variation 一律寫入（可為 null）。
     extra 併入 JSON，只當來源紀錄（例如 pose_mode、background_style）；引擎不讀，不能蓋掉核心欄位。"""
     d = {
         "kind": GenKind(kind).value,
@@ -77,8 +91,12 @@ def _is_retired(d: dict) -> bool:
         or d.get("background_style") == "detailed"
 
 
+CHARACTER_MISSING = "角色參考圖檔案遺失，請重新選擇角色"
+
+
 def decode_request(text: str, storage: Storage) -> GenerationRequest:
-    """還原 GenerationRequest；相對路徑轉絕對路徑，超出 storage 根目錄會丟 ValueError。
+    """還原 GenerationRequest；character_image 的 key 從 Storage 讀成 bytes。
+    key 不合法丟 ValueError；物件不存在丟 StorageNotFound。
     需要已停用路線的請求丟 ValueError(RETIRED)。舊列多出的 structure_* 等欄位忽略。"""
     d = json.loads(text)
     if _is_retired(d):
@@ -91,7 +109,7 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
         seed=d["seed"],
         width=d["width"],
         height=d["height"],
-        character_image=None if rel is None else storage.abs(rel),
+        character_image=None if rel is None else storage.get(rel),
         variation=d.get("variation"),
     )
 
@@ -151,18 +169,26 @@ class GenerationWorker:
 
     # ---- 資料庫操作（同步，每次新 session）----
     def requeue_interrupted(self) -> int:
+        """上次執行到一半的 GPU 任務放回佇列；寫到一半的上傳／合成（沒有圖）標成失敗。回傳放回佇列的數量。"""
+        running = col(Generation.status) == GenStatus.RUNNING
         with self.sessions() as s:
+            s.exec(
+                update(Generation)
+                .where(running, ~worker_job())
+                .values(status=GenStatus.FAILED, error=LOCAL_INTERRUPTED, finished_at=utcnow())
+            )
             res = s.exec(
                 update(Generation)
-                .where(col(Generation.status) == GenStatus.RUNNING)
+                .where(running, worker_job())
                 .values(status=GenStatus.QUEUED, started_at=None)
             )
             s.commit()
             return res.rowcount
 
     def cancel_retired(self) -> int:
-        """把 QUEUED 且需要已停用路線（舊整頁、SDXL 快速動作／細緻背景）的列標為 CANCELLED。"""
+        """把 QUEUED 且需要已停用路線（舊整頁、SDXL 快速動作／細緻背景）的列標為 CANCELLED（退回當天額度）。"""
         n = 0
+        cancelled: list[int] = []
         with self.sessions() as s:
             rows = s.exec(
                 select(Generation).where(col(Generation.status) == GenStatus.QUEUED)
@@ -177,7 +203,10 @@ class GenerationWorker:
                     gen.error = RETIRED
                     gen.finished_at = utcnow()
                     s.add(gen)
+                    cancelled.append(gen.id)
                     n += 1
+            s.flush()
+            refund_generations(s, cancelled)
             s.commit()
         return n
 
@@ -193,7 +222,9 @@ class GenerationWorker:
             order = self._plan(s)
             if gen_id not in order:  # 讀取之間狀態剛好改變
                 return None
-            running = s.exec(select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING)).first()
+            running = s.exec(
+                select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job())
+            ).first()
             return order.index(gen_id) + (1 if running is not None else 0)
 
     def _plan(self, s: Session) -> list[int]:
@@ -225,13 +256,16 @@ class GenerationWorker:
                     return s.get(Generation, gen_id)
 
     def _finish(self, gen_id: int, **values) -> None:
-        """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋）。"""
+        """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋）。
+        改成 FAILED 時在同一個交易退回當天額度（只有真的改到這一列才退）。"""
         with self.sessions() as s:
-            s.exec(
+            res = s.exec(
                 update(Generation)
                 .where(col(Generation.id) == gen_id, col(Generation.status) == GenStatus.RUNNING)
                 .values(**values)
             )
+            if res.rowcount == 1 and values.get("status") == GenStatus.FAILED:
+                refund_generations(s, [gen_id])
             s.commit()
 
     # ---- 執行 ----
@@ -243,7 +277,11 @@ class GenerationWorker:
         self.state = WorkerState.RUNNING
         try:
             try:
-                req = decode_request(gen.request_json, self.storage)
+                # Storage 可能是遠端（R2）：讀寫放到 thread，不卡住 event loop
+                req = await asyncio.to_thread(decode_request, gen.request_json, self.storage)
+            except StorageNotFound:
+                self._fail(gen_id, CHARACTER_MISSING)
+                return True
             except ValueError as e:
                 if str(e) == RETIRED:  # 已停用的路線：只回報原因
                     self._fail(gen_id, RETIRED)
@@ -257,14 +295,14 @@ class GenerationWorker:
                 req, lambda value, maximum: self.progress.__setitem__(gen_id, (value, maximum))
             )
             rel = self.storage.generation_image(gen.book_id, gen_id)
-            self.storage.write(rel, result.image)
+            await asyncio.to_thread(self.storage.put, rel, result.image)
             mask_rel = None
             if result.extra_images.get("mask"):
                 mask_rel = self.storage.generation_mask(gen.book_id, gen_id)
                 mask_png = result.extra_images["mask"]
                 if req.kind == GenKind.POSE:
                     mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
-                self.storage.write(mask_rel, mask_png)
+                await asyncio.to_thread(self.storage.put, mask_rel, mask_png)
             self._finish(
                 gen_id,
                 mask_path=mask_rel,

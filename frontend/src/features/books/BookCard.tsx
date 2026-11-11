@@ -23,7 +23,10 @@ export function BookCard({ book }: { book: Book }) {
       </div>
       <div className={styles.body}>
         <div className={styles.titles}>
-          <b className={styles.title}>{book.title}</b>
+          <b className={styles.title}>
+            {book.title}
+            {book.shared_at && <span className={styles.badge}>已分享</span>}
+          </b>
           <span className={styles.meta}>
             {PAPER_LABELS[book.paper_size]}・{PRINT_MODE_LABELS[book.print_mode]}
           </span>

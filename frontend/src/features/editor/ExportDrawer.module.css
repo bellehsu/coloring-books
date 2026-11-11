@@ -116,3 +116,29 @@
   text-align: center;
   margin: 0;
 }
+.share {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+}
+.shareRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.shareRow input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+.shareNote {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted-2);
+}

@@ -5,30 +5,23 @@ Phase 9 移除了構圖草圖（`/pages/{id}/sketch`）與舊整頁流程的建�
 """
 
 import logging
-import shutil
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, literal, null
 from sqlmodel import Session, col, delete, func, select, update
 
-from app.api.books import _book_or_404
-from app.api.deps import get_session, get_storage
+from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_page
 from app.api.schemas import PageCreate, PageOrder, PageOut, PageUpdate
-from app.models import Book, Generation, GenStatus, LineartEdit, Page, PageStatus, utcnow
+from app.models import Book, Generation, GenStatus, LineartEdit, Owner, Page, PageStatus, utcnow
 from app.services.compose import composite_matches, page_placement
 from app.services.layout import compute_layout
 from app.services.page_lineart import lineart_key
+from app.services.usage import refund_generations
 from app.storage import Storage
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["pages"])
 
-
-def _page_or_404(session: Session, page_id: int) -> Page:
-    page = session.get(Page, page_id)
-    if page is None:
-        raise HTTPException(404, "找不到這一頁")
-    return page
 
 
 def reset_review_when(cond) -> dict:
@@ -105,9 +98,12 @@ def page_out(session: Session, page: Page) -> PageOut:
 
 @router.post("/books/{book_id}/pages", status_code=201, response_model=PageOut)
 def create_page(
-    book_id: int, body: PageCreate, session: Session = Depends(get_session)
+    book_id: int,
+    body: PageCreate,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    _book_or_404(session, book_id)
+    owned_book(session, owner, book_id)
     top = session.exec(select(func.max(Page.position)).where(Page.book_id == book_id)).one()
     page = Page(book_id=book_id, position=0 if top is None else top + 1, scene_prompt=body.scene_prompt, action_prompt=body.action_prompt)
     session.add(page)
@@ -116,8 +112,12 @@ def create_page(
 
 
 @router.get("/books/{book_id}/pages", response_model=list[PageOut])
-def list_pages(book_id: int, session: Session = Depends(get_session)) -> list[PageOut]:
-    _book_or_404(session, book_id)
+def list_pages(
+    book_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> list[PageOut]:
+    owned_book(session, owner, book_id)
     pages = session.exec(
         select(Page).where(Page.book_id == book_id).order_by(col(Page.position), col(Page.id))
     ).all()
@@ -126,9 +126,12 @@ def list_pages(book_id: int, session: Session = Depends(get_session)) -> list[Pa
 
 @router.post("/books/{book_id}/pages/order", response_model=list[PageOut])
 def reorder_pages(
-    book_id: int, body: PageOrder, session: Session = Depends(get_session)
+    book_id: int,
+    body: PageOrder,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> list[PageOut]:
-    _book_or_404(session, book_id)
+    owned_book(session, owner, book_id)
     pages = {
         p.id: p for p in session.exec(select(Page).where(Page.book_id == book_id)).all()
     }
@@ -145,9 +148,12 @@ def reorder_pages(
 
 @router.patch("/pages/{page_id}", response_model=PageOut)
 def update_page(
-    page_id: int, body: PageUpdate, session: Session = Depends(get_session)
+    page_id: int,
+    body: PageUpdate,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     if body.scene_prompt is not None:
         page.scene_prompt = body.scene_prompt
     if body.action_prompt is not None:
@@ -175,15 +181,18 @@ def delete_page(
     page_id: int,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
 ) -> None:
-    page = _page_or_404(session, page_id)
+    page = owned_page(session, owner, page_id)
     book_id = page.book_id
     # 先取消排隊中的（條件式 UPDATE 取得寫入鎖，worker 之後無法再認領），再檢查有沒有執行中的
-    session.exec(
+    cancelled = session.exec(
         update(Generation)
         .where(col(Generation.page_id) == page_id, col(Generation.status) == GenStatus.QUEUED)
         .values(status=GenStatus.CANCELLED, error="頁面已刪除", finished_at=utcnow())
-    )
+        .returning(Generation.id)
+    ).scalars().all()
+    refund_generations(session, cancelled)  # 排隊中被取消的退回額度（頁面若刪不掉會一起 rollback）
     running = session.exec(
         select(
             select(Generation.id)
@@ -208,14 +217,25 @@ def delete_page(
             p.position = i
             session.add(p)
     session.commit()
-    # 檔案在交易提交後才刪（盡力而為）
-    try:
-        for rel in image_paths:
-            storage.delete(rel)
-        shutil.rmtree(storage.abs(f"books/{book_id}/pages/{page_id}"), ignore_errors=True)
-        previews = storage.abs("cache/previews")
-        for gid in gen_ids:
-            for f in previews.glob(f"{gid}_*.png"):
-                f.unlink(missing_ok=True)
-    except OSError:
-        log.warning("刪除頁面 %s 的檔案時發生錯誤", page_id, exc_info=True)
+    # 物件在交易提交後才刪（盡力而為）：每個刪除各自處理錯誤，一個失敗不影響其他的；
+    # 資料庫已提交，失敗只記 log、不回 500，留下的孤兒物件由 storage_gc 清
+    def attempt(what: str, fn, *args) -> None:
+        try:
+            fn(*args)
+        except Exception:  # noqa: BLE001
+            log.warning("刪除頁面 %s 的物件失敗：%s", page_id, what, exc_info=True)
+
+    for key in image_paths:
+        attempt(key, storage.delete, key)
+    # 結尾的 / 不可省：books/1/pages/1 會連 books/1/pages/10 一起刪
+    page_prefix = f"books/{book_id}/pages/{page_id}/"
+    attempt(page_prefix, storage.delete_prefix, page_prefix)
+    for gid in gen_ids:
+        prefix = f"cache/previews/{gid}_"
+        try:
+            keys = list(storage.list(prefix))
+        except Exception:  # noqa: BLE001
+            log.warning("刪除頁面 %s 的物件失敗：列出 %s", page_id, prefix, exc_info=True)
+            continue
+        for key in keys:
+            attempt(key, storage.delete, key)
