@@ -153,3 +153,27 @@ for (const vp of VIEWPORTS) {
     });
   });
 }
+
+test.describe("動作卡片：表情與面向（390 px）", () => {
+  test.use({ viewport: PHONE });
+
+  test("加揮手、大笑、朝左，再改選難過：只剩一個表情；沒有水平捲動", async ({ page }) => {
+    await page.goto(`/books/${bookId}/editor?page=${draftId}`);
+    await page.getByRole("button", { name: /^角色動作/, expanded: false }).click();
+    await page.getByText(/^動作：/).click(); // 展開 <details>
+    const text = page.getByLabel("動作描述");
+    await page.getByRole("group", { name: "常用動作" }).getByRole("button", { name: "揮手" }).click();
+    const expr = page.getByRole("group", { name: "表情" });
+    const facing = page.getByRole("group", { name: "面向" });
+    await expr.getByRole("button", { name: "大笑" }).click();
+    await facing.getByRole("button", { name: "朝左" }).click();
+    await expr.getByRole("button", { name: "難過" }).click();
+    const value = await text.inputValue();
+    expect(value).toContain("with a sad expression");
+    expect(value).not.toContain("laughing");
+    expect(value).toContain("facing toward the left side of the picture");
+    expect(value).toContain("waving one hand");
+    await expect(page.getByText("臉會轉向，身體可能仍偏正面；不夠時可在構圖用左右翻轉")).toBeVisible();
+    await expectNoHorizontalScroll(page);
+  });
+});

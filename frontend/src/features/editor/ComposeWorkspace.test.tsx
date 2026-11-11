@@ -298,6 +298,88 @@ describe("ComposeWorkspace", () => {
     expect(order.indexOf("PATCH /api/pages/1")).toBeLessThan(order.indexOf("POST /api/pages/1/poses"));
   });
 
+  it("點晶片立即存 action_prompt（不用等 blur）：動作、表情、面向、取代表情", async () => {
+    setup();
+    const pose = card("角色動作");
+    await userEvent.click(within(pose).getByRole("button", { name: "揮手" }));
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+    expect(calledWith("PATCH", "/api/pages/1")[0].body).toEqual({ action_prompt: "抱著一本書往上爬, waving one hand" });
+    const expr = within(pose).getByRole("group", { name: "表情" });
+    await userEvent.click(within(expr).getByRole("button", { name: "大笑" }));
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(2));
+    expect(calledWith("PATCH", "/api/pages/1")[1].body).toEqual({
+      action_prompt: "抱著一本書往上爬, waving one hand, with a big laughing expression",
+    });
+    await userEvent.click(within(expr).getByRole("button", { name: "難過" })); // 取代
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(3));
+    expect(calledWith("PATCH", "/api/pages/1")[2].body).toEqual({
+      action_prompt: "抱著一本書往上爬, waving one hand, with a sad expression",
+    });
+    await userEvent.click(within(pose).getByRole("group", { name: "面向" }).querySelector("button") as HTMLElement);
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(4));
+    expect((calledWith("PATCH", "/api/pages/1")[3].body as { action_prompt: string }).action_prompt).toContain(
+      "facing toward the left side of the picture",
+    );
+  });
+
+  it("連續儲存依序送出：第一筆還沒回來，第二筆不送，最後落地的是新的文字", async () => {
+    setup();
+    let release!: () => void;
+    gate["PATCH /api/pages/1"] = new Promise<void>((r) => (release = r));
+    const pose = card("角色動作");
+    const box = within(pose).getByLabelText("動作描述");
+    await userEvent.clear(box);
+    await userEvent.type(box, "X");
+    await userEvent.click(within(pose).getByRole("button", { name: "揮手" })); // blur 送 "X"，點擊送 "X, waving one hand"
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1);
+    release();
+    await waitFor(() => expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(2));
+    const bodies = calledWith("PATCH", "/api/pages/1").map((c) => c.body);
+    expect(bodies[0]).toEqual({ action_prompt: "X" });
+    expect(bodies[1]).toEqual({ action_prompt: "X, waving one hand" });
+  });
+
+  it("表情與面向：單選、再按一次取消、超過長度停用、面向提示", async () => {
+    setup();
+    const pose = card("角色動作");
+    const box = within(pose).getByLabelText("動作描述");
+    const expr = within(pose).getByRole("group", { name: "表情" });
+    const facing = within(pose).getByRole("group", { name: "面向" });
+    expect(within(pose).getByText("臉會轉向，身體可能仍偏正面；不夠時可在構圖用左右翻轉")).toBeInTheDocument();
+    await userEvent.click(within(expr).getByRole("button", { name: "開心" }));
+    await userEvent.click(within(expr).getByRole("button", { name: "大笑" }));
+    expect(box).toHaveValue("抱著一本書往上爬, with a big laughing expression");
+    expect(within(expr).getByRole("button", { name: "大笑" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(expr).getByRole("button", { name: "開心" })).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(within(facing).getByRole("button", { name: "朝左" }));
+    expect(box).toHaveValue("抱著一本書往上爬, with a big laughing expression, facing toward the left side of the picture");
+    await userEvent.click(within(expr).getByRole("button", { name: "大笑" }));
+    expect(box).toHaveValue("抱著一本書往上爬, facing toward the left side of the picture");
+    await userEvent.click(within(facing).getByRole("button", { name: "朝右" }));
+    expect(box).toHaveValue("抱著一本書往上爬, facing toward the right side of the picture");
+  });
+
+  it("表情：加入會超過 300 字的晶片停用，但作用中的晶片仍可取消", async () => {
+    setup({ page: mkPage({ action_prompt: "x".repeat(270) }) });
+    const pose = card("角色動作");
+    const expr = within(pose).getByRole("group", { name: "表情" });
+    expect(within(expr).getByRole("button", { name: "大笑" })).toBeDisabled();
+  });
+
+  it("表情：接近 300 字時，作用中的晶片仍可按下取消", async () => {
+    const base = "x".repeat(260);
+    setup({ page: mkPage({ action_prompt: `${base}, with a sad expression` }) });
+    const pose = card("角色動作");
+    const expr = within(pose).getByRole("group", { name: "表情" });
+    const sad = within(expr).getByRole("button", { name: "難過" });
+    expect(sad).toHaveAttribute("aria-pressed", "true");
+    expect(sad).toBeEnabled();
+    await userEvent.click(sad);
+    expect(within(pose).getByLabelText("動作描述")).toHaveValue(base);
+  });
+
   it("動作描述提示：地點寫在背景的場景描述，用 aria-describedby 連到動作欄位", () => {
     setup();
     const pose = card("角色動作");

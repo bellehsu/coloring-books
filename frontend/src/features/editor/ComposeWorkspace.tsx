@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/Button";
 import { CaptionField, captionError } from "@/components/ui/CaptionField";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
-import { ACTION_HINT, ACTIONS, appendPhrase, hasPhrase } from "@/lib/actions";
+import {
+  ACTION_HINT, ACTIONS, activePhrase, appendPhrase, EXPRESSIONS, FACING_HINT, FACINGS, hasPhrase, setExclusivePhrase,
+} from "@/lib/actions";
 import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import { errMsg } from "./errMsg";
@@ -135,19 +137,31 @@ function usePageText(serverValue: string, send: (v: string) => Promise<unknown>)
   const sent = useRef<{ value: string; p: Promise<unknown> } | null>(null);
   const value = edited ?? serverValue;
 
-  const save = (): Promise<unknown> => {
-    if (edited === null) return Promise.resolve();
-    if (sent.current?.value === edited) return sent.current.p;
-    if (!sent.current && edited === serverValue) return Promise.resolve();
-    const p = send(edited);
-    const entry = { value: edited, p };
+  // 送出一律串在前一筆之後（忽略前一筆的失敗），伺服器依點擊順序收到，最後落地的一定是最新的文字。
+  const enqueue = (v: string): Promise<unknown> => {
+    if (sent.current?.value === v) return sent.current.p;
+    const prev = sent.current?.p;
+    const p = (prev ? prev.catch(() => {}) : Promise.resolve()).then(() => send(v));
+    const entry = { value: v, p };
     sent.current = entry;
     p.catch(() => {
       if (sent.current === entry) sent.current = null;
     });
     return p;
   };
-  return { value, setValue: setEdited, save };
+
+  const save = (): Promise<unknown> => {
+    if (edited === null) return Promise.resolve();
+    if (sent.current?.value !== edited && !sent.current && edited === serverValue) return Promise.resolve();
+    return enqueue(edited);
+  };
+  /** 設定值並立刻送出（晶片點擊用）；送的是 v，不是還沒更新的 edited。 */
+  const setNow = (v: string): Promise<unknown> => {
+    setEdited(v);
+    if (!sent.current && v === serverValue) return Promise.resolve();
+    return enqueue(v);
+  };
+  return { value, setValue: setEdited, setNow, save };
 }
 
 /** 一次只跑一個（整段 await 期間停用按鈕；ref 擋住同一輪 render 前的第二次點擊）。 */
@@ -447,7 +461,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
                   disabled={added || tooLong}
                   aria-label={added ? `${a.label}（已加入）` : undefined}
                   title={tooLong ? `再加入會超過 ${MAX_ACTION} 字` : undefined}
-                  onClick={() => action.setValue(appendPhrase(action.value, a.phrase))}
+                  onClick={() => void action.setNow(appendPhrase(action.value, a.phrase)).catch(() => {})}
                 >
                   {added ? <span aria-hidden="true">✓ </span> : null}
                   {a.label}
@@ -455,9 +469,61 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
               );
             })}
           </div>
+          <ExclusiveChips label="表情" group={EXPRESSIONS} text={action.value} onChange={(v) => void action.setNow(v).catch(() => {})} />
+          <ExclusiveChips
+            label="面向"
+            group={FACINGS}
+            text={action.value}
+            onChange={(v) => void action.setNow(v).catch(() => {})}
+            hint={FACING_HINT}
+          />
           <p className={styles.hint}>改動作文字後按「換一張」。</p>
         </div>
       </details>
     </section>
+  );
+}
+
+/** 單選的片語晶片群組（表情、面向）：再按一次作用中的取消；改選另一個會取代原本的。 */
+function ExclusiveChips({
+  label, group, text, onChange, hint,
+}: {
+  label: string;
+  group: { label: string; phrase: string }[];
+  text: string;
+  onChange: (v: string) => void;
+  hint?: string;
+}) {
+  const hintId = useId();
+  const active = activePhrase(text, group);
+  return (
+    <>
+      <div className={panel.presets} role="group" aria-label={label} aria-describedby={hint ? hintId : undefined}>
+        {group.map((g) => {
+          const on = g.phrase === active;
+          const tooLong = !on && setExclusivePhrase(text, group, g.phrase).length > MAX_ACTION;
+          return (
+            <button
+              key={g.phrase}
+              type="button"
+              className={panel.preset}
+              data-added={on}
+              aria-pressed={on}
+              disabled={tooLong}
+              title={tooLong ? `再加入會超過 ${MAX_ACTION} 字` : undefined}
+              onClick={() => onChange(setExclusivePhrase(text, group, on ? null : g.phrase))}
+            >
+              {on ? <span aria-hidden="true">✓ </span> : null}
+              {g.label}
+            </button>
+          );
+        })}
+      </div>
+      {hint ? (
+        <p id={hintId} className={styles.hint}>
+          {hint}
+        </p>
+      ) : null}
+    </>
   );
 }

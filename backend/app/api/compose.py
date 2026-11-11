@@ -50,6 +50,7 @@ from app.services.compose import (
 from app.services.layout import compute_layout
 from app.services.prompts import (
     POSE_SIZE,
+    has_facing,
     pick_background_variation,
     pick_pose_variation,
     qwen_background_prompt,
@@ -171,6 +172,25 @@ def _last_simple_variation(session: Session, page_id: int) -> str | None:
             v = d.get("variation")
             return v if isinstance(v, str) else None
     return None
+
+
+def _last_pose_variations(session: Session, page_id: int, n: int = 2) -> list[str]:
+    """這頁最近 n 張角色動作（依 id 由新到舊，不論狀態、是否丟棄）的變化語；沒有變化語或格式壞掉的略過。"""
+    out: list[str] = []
+    for rj in session.exec(
+        select(Generation.request_json)
+        .where(Generation.page_id == page_id, Generation.kind == GenKind.POSE)
+        .order_by(col(Generation.id).desc())
+    ):
+        try:
+            d = json.loads(rj)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(d, dict) and isinstance(d.get("variation"), str):
+            out.append(d["variation"])
+            if len(out) >= n:
+                break
+    return out
 
 
 def _background_job(session: Session, book: Book, page: Page) -> _Job:
@@ -308,7 +328,9 @@ def create_materials_batch(
 def _pose_job(session: Session, book: Book, page: Page, action: str) -> _Job:
     """角色動作（Qwen）：以角色參考圖編輯出新動作；呼叫端負責確認有角色。"""
     char = session.get(Generation, book.character_generation_id)
-    variation = pick_pose_variation(random.Random())
+    variation = pick_pose_variation(
+        random.Random(), exclude=_last_pose_variations(session, page.id), facing=has_facing(action)
+    )
     width, height = POSE_SIZE
     gen = Generation(
         book_id=book.id,
