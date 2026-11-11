@@ -469,6 +469,107 @@ describe("C 處理一頁：圖下方的字（原本在故事頁的規則）", ()
   });
 });
 
+describe("C 處理一頁：圖下方的字要印哪幾行（中文／英文）", () => {
+  const patches = () => posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH").map((c) => c.body);
+  /** PATCH 套用到 page（伺服器存了開關）。 */
+  function serverApplies() {
+    respond["PATCH /api/pages/5?oneclick=true"] = () => {
+      page = { ...page, ...(calls[calls.length - 1].body as Partial<Page>), can_undo: true };
+      return json(page);
+    };
+  }
+  const chips = async () => {
+    const group = within(await findRow("圖下方的字")).getByRole("group", { name: "要印哪幾行" });
+    return {
+      zh: within(group).getByRole("button", { name: /中文/ }),
+      en: within(group).getByRole("button", { name: /英文/ }),
+    };
+  };
+
+  it("two toggle chips, both on by default, with the hint; no need to open 改字", async () => {
+    setup();
+    const { zh, en } = await chips();
+    expect(zh).toHaveAttribute("aria-pressed", "true");
+    expect(en).toHaveAttribute("aria-pressed", "true");
+    expect(within(row("圖下方的字")).getByText("兩個都不選＝圖下方留白，讓小朋友自己寫")).toBeInTheDocument();
+    expect(within(row("圖下方的字")).getByRole("button", { name: "把這個選擇套用到整本書" })).toBeInTheDocument();
+  });
+
+  it("turning 英文 off saves with oneclick, the chip and summary follow, and the preview reloads", async () => {
+    serverApplies();
+    const user = userEvent.setup();
+    setup();
+    const before = (await screen.findByRole("img", { name: "要印的線稿" })).getAttribute("src");
+    await user.click((await chips()).en);
+    await waitFor(() => expect(patches()).toEqual([{ caption_show_en: false }]));
+    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).toHaveAttribute("aria-pressed", "false"));
+    expect(screen.getByRole("button", { name: /中文/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(row("圖下方的字")).getByText("消防車")).toBeInTheDocument();
+    const after = screen.getByRole("img", { name: "要印的線稿" }).getAttribute("src");
+    expect(after).not.toBe(before);
+    expect(after).toMatch(/^\/api\/pages\/5\/print\.png\?v=/);
+  });
+
+  it("both off: summary says the space under the art is left blank", async () => {
+    serverApplies();
+    const user = userEvent.setup();
+    setup();
+    await user.click((await chips()).zh);
+    await waitFor(() => expect(screen.getByRole("button", { name: /中文/ })).toHaveAttribute("aria-pressed", "false"));
+    await user.click(screen.getByRole("button", { name: /英文/ }));
+    await waitFor(() => expect(patches()).toEqual([{ caption_show_zh: false }, { caption_show_en: false }]));
+    expect(await within(row("圖下方的字")).findByText("不印字・圖下方留白")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /中文/ }));
+    await waitFor(() => expect(patches()).toHaveLength(3));
+    expect(patches()[2]).toEqual({ caption_show_zh: true });
+  });
+
+  it("把這個選擇套用到整本書 posts this page's toggles and toasts", async () => {
+    page = mkPage({ caption_show_zh: false });
+    respond["POST /api/books/1/caption-display"] = () => json([page, mkPage({ id: 6, position: 2, caption_show_zh: false })]);
+    const user = userEvent.setup();
+    setup();
+    await user.click(within(await findRow("圖下方的字")).getByRole("button", { name: "把這個選擇套用到整本書" }));
+    await waitFor(() => expect(posted(/^\/api\/books\/1\/caption-display$/)).toHaveLength(1));
+    expect(posted(/caption-display/)[0].body).toEqual({ show_zh: false, show_en: true });
+    expect(await screen.findByText("整本書都改成「只印英文」了")).toBeInTheDocument();
+  });
+
+  it("套用到整本書 failing shows an error toast", async () => {
+    respond["POST /api/books/1/caption-display"] = () => json({ detail: "找不到這本繪本" }, 404);
+    const user = userEvent.setup();
+    setup();
+    await user.click(within(await findRow("圖下方的字")).getByRole("button", { name: "把這個選擇套用到整本書" }));
+    expect(await screen.findByText("找不到這本繪本")).toBeInTheDocument();
+  });
+
+  it("toggles and 套用 are off while the page is being re-composed", async () => {
+    page = mkPage({ recompose_pending: true });
+    setup();
+    const { zh, en } = await chips();
+    expect(zh).toBeDisabled();
+    expect(en).toBeDisabled();
+    expect(within(row("圖下方的字")).getByRole("button", { name: "把這個選擇套用到整本書" })).toBeDisabled();
+  });
+
+  it("toggles wait while a placement save is in flight", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const realFetch = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/pages/5/placement")) await gate;
+      return realFetch(url, init);
+    });
+    const user = userEvent.setup();
+    setup();
+    await user.click(await screen.findByRole("radio", { name: "彩色原圖" }));
+    await user.click(within(await screen.findByTestId("compose")).getByRole("button", { name: "stub-drag" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).toBeDisabled());
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).toBeEnabled());
+  });
+});
+
 describe("C 處理一頁：改場景", () => {
   it("改場景：離開欄位就存（oneclick PATCH scene_prompt）", async () => {
     setup();

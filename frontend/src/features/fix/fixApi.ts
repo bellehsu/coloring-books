@@ -91,11 +91,24 @@ export const useRetryPage = (bookId: number, pageId: number) =>
 export const useSavePlacementC = (bookId: number, pageId: number) =>
   usePageMutation<Placement>(bookId, pageId, (p) => api.put<Page>(`/pages/${pageId}/placement${C}`, p));
 
-/** 改場景、改動作文字、改字（PATCH ?oneclick=true：動作或字變了先存快照；場景只給之後的「AI 再畫一張」用）。 */
+/** 改場景、改動作文字、改字、要印哪幾行（PATCH ?oneclick=true：動作、字或開關變了先存快照；
+ * 場景只給之後的「AI 再畫一張」用）。 */
 export const usePatchPageC = (bookId: number, pageId: number) =>
-  usePageMutation<Pick<S["PageUpdate"], "scene_prompt" | "action_prompt" | "caption_zh" | "caption_en">>(bookId, pageId, (body) =>
-    api.patch<Page>(`/pages/${pageId}${C}`, body),
-  );
+  usePageMutation<
+    Pick<S["PageUpdate"], "scene_prompt" | "action_prompt" | "caption_zh" | "caption_en" | "caption_show_zh" | "caption_show_en">
+  >(bookId, pageId, (body) => api.patch<Page>(`/pages/${pageId}${C}`, body));
+
+/** 「把這個選擇套用到整本書」：每一頁的要印哪幾行都設成一樣（不存復原快照）；回傳整本書的頁面。 */
+export function useCaptionDisplay(bookId: number, pageId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: S["CaptionDisplay"]) => api.post<Page[]>(`/books/${bookId}/caption-display`, v),
+    onSuccess: (pages) => {
+      qc.setQueryData<Page[]>(qk.pages(bookId), pages);
+      return refreshFix(qc, bookId, pageId);
+    },
+  });
+}
 
 /** 上傳圖片當背景（等於換背景：存快照、重新合成）。 */
 export const useUploadBackgroundC = (bookId: number, pageId: number) =>

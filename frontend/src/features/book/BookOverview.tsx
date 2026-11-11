@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { errMsg } from "@/features/editor/errMsg";
+import { printedCaptions } from "@/features/fix/fixState";
 import { formatRemaining } from "@/lib/eta";
 import { ExportSheet } from "./ExportSheet";
 import {
@@ -324,6 +325,8 @@ function PageCard({
   const src = p.lineart_url ?? p.thumb_url;
   const note = softNote(p);
   const [cw, ch] = aspect;
+  // 卡片下方的字＝這頁真的會印的字（中文優先）；兩個都不印時說圖下方留白
+  const printed = printedCaptions(p);
   return (
     <li className={styles.cell}>
       <Link
@@ -340,7 +343,11 @@ function PageCard({
               <span className={styles.noArt}>{p.state === "working" ? "製作中…" : "還沒有圖"}</span>
             )}
           </div>
-          {p.caption_zh && <b className={styles.caption}>{p.caption_zh}</b>}
+          {printed === "blank" ? (
+            <span className={styles.captionBlank}>圖下方留白</span>
+          ) : (
+            (printed.zh || printed.en) && <b className={styles.caption}>{printed.zh || printed.en}</b>
+          )}
         </div>
         <span className={`${styles.pill} ${styles[`pill_${p.state}`]}`}>{STATE_LABEL[p.state]}</span>
         {note && <span className={p.state === "attention" ? styles.noteWarn : styles.note}>{note}</span>}

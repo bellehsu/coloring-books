@@ -1385,6 +1385,26 @@ describe("EditorPage", () => {
       expect(screen.getAllByRole("link", { name: "預覽列印頁" })).toHaveLength(1);
     });
 
+    it("只顯示會印的行（C 的中文／英文開關）", async () => {
+      pages[0] = mkPage(1, { caption_zh: "消防車", caption_en: "Fire Engine", caption_show_zh: false, selected_generation_id: 5 });
+      gens = [mkGen(5)];
+      setup();
+      await screen.findAllByRole("tab");
+      const pv = await screen.findByRole("group", { name: "圖下方的文字預覽" });
+      expect(within(pv).getByText("Fire Engine")).toBeInTheDocument();
+      expect(within(pv).queryByText("消防車")).not.toBeInTheDocument();
+    });
+
+    it("兩行都不印（即使沒有字）：說圖下方留白", async () => {
+      pages[0] = mkPage(1, { caption_zh: null, caption_en: null, caption_show_zh: false, caption_show_en: false, selected_generation_id: 5 });
+      gens = [mkGen(5)];
+      setup();
+      await screen.findAllByRole("tab");
+      const pv = await screen.findByRole("group", { name: "圖下方的文字預覽" });
+      expect(within(pv).getByText("不印字・圖下方留白")).toBeInTheDocument();
+      expect(within(pv).getByRole("link", { name: "預覽列印頁" })).toBeInTheDocument();
+    });
+
     it("有文字但還沒選圖：顯示文字，不顯示連結（print.png 會回 409）", async () => {
       pages[0] = mkPage(1, { caption_zh: "消防車" });
       setup();

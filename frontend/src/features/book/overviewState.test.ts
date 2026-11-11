@@ -9,6 +9,8 @@ const pg = (id: number, state: OverviewPage["state"], extra: Partial<OverviewPag
   gap_count: null,
   caption_zh: null,
   caption_en: null,
+  caption_show_zh: true,
+  caption_show_en: true,
   thumb_url: null,
   lineart_url: null,
   attention_detail: null,

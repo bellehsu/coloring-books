@@ -26,6 +26,8 @@ const pg = (id: number, state: OverviewPage["state"], extra: Partial<OverviewPag
   gap_count: null,
   caption_zh: `第${id}張`,
   caption_en: null,
+  caption_show_zh: true,
+  caption_show_en: true,
   thumb_url: `/api/generations/${100 + id}/image`,
   lineart_url: `/api/pages/${id}/lineart?v=k${id}`,
   attention_detail: null,
@@ -124,6 +126,25 @@ describe("B 整本書：頁首與頁面卡", () => {
     expect(cards[1]).toHaveTextContent("3 處線沒接起來（可以不管）");
     expect(cards[1]).toHaveTextContent("第2張");
     expect(within(cards[1]).getByRole("img", { name: "第 2 頁" })).toHaveAttribute("src", "/api/pages/2/lineart?v=k2");
+  });
+
+  it("the card's caption follows what the page prints (中文／英文 toggles; both off = 圖下方留白)", async () => {
+    overview = ov([
+      pg(1, "ready", { caption_en: "Bus" }),
+      pg(2, "ready", { caption_en: "Train", caption_show_zh: false }),
+      pg(3, "ready", { caption_show_zh: false, caption_show_en: false }),
+      pg(4, "ready", { caption_show_zh: false }),
+    ]);
+    setup();
+    const list = await screen.findByRole("list", { name: "頁面" });
+    const cards = within(list).getAllByRole("link");
+    expect(cards[0]).toHaveTextContent("第1張");
+    expect(cards[1]).toHaveTextContent("Train");
+    expect(cards[1]).not.toHaveTextContent("第2張");
+    expect(cards[2]).toHaveTextContent("圖下方留白");
+    expect(cards[2]).not.toHaveTextContent("第3張");
+    expect(cards[3]).not.toHaveTextContent("第4張");
+    expect(cards[3]).not.toHaveTextContent("圖下方留白");
   });
 
   it("working and todo pages show 製作中 and 還沒做完", async () => {

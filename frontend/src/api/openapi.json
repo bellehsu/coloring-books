@@ -531,13 +531,70 @@
         }
       }
     },
+    "/api/books/{book_id}/caption-display": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Set Caption Display",
+        "description": "C 的「把這個選擇套用到整本書」：每一頁的要印哪幾行都設成一樣。不存復原快照（不是這一頁的修改）、\n不動線稿、QA 與頁面狀態。回傳整本書的頁面（依頁序）。",
+        "operationId": "set_caption_display_api_books__book_id__caption_display_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptionDisplay"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PageOut"
+                  },
+                  "title": "Response Set Caption Display Api Books  Book Id  Caption Display Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/pages/{page_id}": {
       "patch": {
         "tags": [
           "pages"
         ],
         "summary": "Update Page",
-        "description": "oneclick（C 的改動作文字、改字）：動作文字或圖下方的字變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。",
+        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。",
         "operationId": "update_page_api_pages__page_id__patch",
         "parameters": [
           {
@@ -3317,6 +3374,25 @@
         "type": "object",
         "title": "BookUpdate"
       },
+      "CaptionDisplay": {
+        "properties": {
+          "show_zh": {
+            "type": "boolean",
+            "title": "Show Zh"
+          },
+          "show_en": {
+            "type": "boolean",
+            "title": "Show En"
+          }
+        },
+        "type": "object",
+        "required": [
+          "show_zh",
+          "show_en"
+        ],
+        "title": "CaptionDisplay",
+        "description": "整本書套用同一個「要印哪幾行」：兩個都 false＝每頁圖下方留白給小朋友寫。"
+      },
       "CharacterCandidatesCreate": {
         "properties": {
           "description": {
@@ -4075,6 +4151,14 @@
             ],
             "title": "Caption En"
           },
+          "caption_show_zh": {
+            "type": "boolean",
+            "title": "Caption Show Zh"
+          },
+          "caption_show_en": {
+            "type": "boolean",
+            "title": "Caption Show En"
+          },
           "thumb_url": {
             "anyOf": [
               {
@@ -4117,6 +4201,8 @@
           "gap_count",
           "caption_zh",
           "caption_en",
+          "caption_show_zh",
+          "caption_show_en",
           "thumb_url",
           "lineart_url",
           "attention_detail"
@@ -4202,6 +4288,14 @@
               }
             ],
             "title": "Caption En"
+          },
+          "caption_show_zh": {
+            "type": "boolean",
+            "title": "Caption Show Zh"
+          },
+          "caption_show_en": {
+            "type": "boolean",
+            "title": "Caption Show En"
           },
           "selected_generation_id": {
             "anyOf": [
@@ -4376,6 +4470,8 @@
           "action_prompt",
           "caption_zh",
           "caption_en",
+          "caption_show_zh",
+          "caption_show_en",
           "selected_generation_id",
           "background_generation_id",
           "pose_generation_id",
@@ -4491,6 +4587,14 @@
               }
             ],
             "title": "Caption En"
+          },
+          "caption_show_zh": {
+            "type": "boolean",
+            "title": "Caption Show Zh"
+          },
+          "caption_show_en": {
+            "type": "boolean",
+            "title": "Caption Show En"
           },
           "controlnet_strength": {
             "anyOf": [
@@ -4949,6 +5053,14 @@
             ],
             "title": "Caption En"
           },
+          "caption_show_zh": {
+            "type": "boolean",
+            "title": "Caption Show Zh"
+          },
+          "caption_show_en": {
+            "type": "boolean",
+            "title": "Caption Show En"
+          },
           "selected_generation_id": {
             "anyOf": [
               {
@@ -5137,6 +5249,8 @@
           "action_prompt",
           "caption_zh",
           "caption_en",
+          "caption_show_zh",
+          "caption_show_en",
           "selected_generation_id",
           "background_generation_id",
           "pose_generation_id",
