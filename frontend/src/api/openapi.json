@@ -5395,6 +5395,10 @@
             "type": "integer",
             "title": "Cover Page Id"
           },
+          "cover_image_url": {
+            "type": "string",
+            "title": "Cover Image Url"
+          },
           "shared_at": {
             "type": "string",
             "format": "date-time",
@@ -5413,6 +5417,7 @@
           "paper_size",
           "page_count",
           "cover_page_id",
+          "cover_image_url",
           "shared_at",
           "mine"
         ],
@@ -5428,12 +5433,17 @@
           "position": {
             "type": "integer",
             "title": "Position"
+          },
+          "image_url": {
+            "type": "string",
+            "title": "Image Url"
           }
         },
         "type": "object",
         "required": [
           "id",
-          "position"
+          "position",
+          "image_url"
         ],
         "title": "SharedPageOut"
       },

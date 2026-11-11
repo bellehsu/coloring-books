@@ -376,10 +376,11 @@
   text-align: left;
   cursor: pointer;
 }
-.applyAll:hover:not(:disabled) {
+.applyAll:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--sky);
 }
-.applyAll:disabled {
+.applyAll:disabled,
+.applyAll[aria-disabled="true"] {
   color: var(--muted-3);
   cursor: not-allowed;
 }

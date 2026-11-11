@@ -8,7 +8,7 @@ export function SharedBookCard({ book }: { book: SharedBook }) {
     <Link href={`/shared/${book.id}`} className={styles.card}>
       <div className={styles.stage}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`/api/shared/pages/${book.cover_page_id}/image.png`} alt="" className={styles.cover} loading="lazy" />
+        <img src={book.cover_image_url} alt="" className={styles.cover} loading="lazy" />
       </div>
       <div className={styles.body}>
         <b className={styles.title}>{book.title}</b>

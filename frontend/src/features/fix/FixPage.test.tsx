@@ -543,13 +543,43 @@ describe("C 處理一頁：圖下方的字要印哪幾行（中文／英文）",
     expect(await screen.findByText("找不到這本繪本")).toBeInTheDocument();
   });
 
-  it("toggles and 套用 are off while the page is being re-composed", async () => {
+  it("toggles and 套用 are off while the page is being re-composed (aria-disabled, clicks ignored)", async () => {
     page = mkPage({ recompose_pending: true });
+    const user = userEvent.setup();
     setup();
     const { zh, en } = await chips();
-    expect(zh).toBeDisabled();
-    expect(en).toBeDisabled();
-    expect(within(row("圖下方的字")).getByRole("button", { name: "把這個選擇套用到整本書" })).toBeDisabled();
+    const apply = within(row("圖下方的字")).getByRole("button", { name: "把這個選擇套用到整本書" });
+    for (const b of [zh, en, apply]) expect(b).toHaveAttribute("aria-disabled", "true");
+    await user.click(en);
+    await user.click(apply);
+    expect(patches()).toEqual([]);
+    expect(posted(/caption-display/)).toEqual([]);
+  });
+
+  it("a chip keeps keyboard focus while its save is in flight, and a second press is ignored", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    serverApplies();
+    const realFetch = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/pages/5?oneclick=true") && init?.method === "PATCH") await gate;
+      return realFetch(url, init);
+    });
+    const user = userEvent.setup();
+    setup();
+    const { en } = await chips();
+    en.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).toHaveAttribute("aria-disabled", "true"));
+    const saving = screen.getByRole("button", { name: /英文/ });
+    expect(saving).not.toBeDisabled();
+    expect(saving).toHaveFocus();
+    await user.keyboard("{Enter}");
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).toHaveAttribute("aria-pressed", "false"));
+    expect(screen.getByRole("button", { name: /英文/ })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /英文/ })).not.toHaveAttribute("aria-disabled", "true");
+    expect(patches()).toEqual([{ caption_show_en: false }]);
   });
 
   it("toggles wait while a placement save is in flight", async () => {
@@ -564,9 +594,9 @@ describe("C 處理一頁：圖下方的字要印哪幾行（中文／英文）",
     setup();
     await user.click(await screen.findByRole("radio", { name: "彩色原圖" }));
     await user.click(within(await screen.findByTestId("compose")).getByRole("button", { name: "stub-drag" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).toHaveAttribute("aria-disabled", "true"));
     release();
-    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /英文/ })).not.toHaveAttribute("aria-disabled", "true"));
   });
 });
 

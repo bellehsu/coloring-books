@@ -143,9 +143,11 @@
   border-color: var(--accent);
   color: var(--accent-ink);
 }
-.preset:disabled {
+.preset:disabled,
+.preset[aria-disabled="true"] {
   cursor: not-allowed;
 }
-.preset:disabled:not([data-added="true"]) {
+.preset:disabled:not([data-added="true"]),
+.preset[aria-disabled="true"]:not([data-added="true"]) {
   color: var(--muted-3);
 }

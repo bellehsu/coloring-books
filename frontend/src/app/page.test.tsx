@@ -98,6 +98,7 @@ describe("大家的繪本", () => {
     paper_size: "a4",
     page_count: 3,
     cover_page_id: 77,
+    cover_image_url: "/api/shared/pages/77/image.png?v=abc123",
     shared_at: "2026-11-11T01:00:00Z",
     mine: false,
   };
@@ -109,7 +110,7 @@ describe("大家的繪本", () => {
     expect(link).toHaveAttribute("href", "/shared/9");
     expect(link).toHaveTextContent("作者：小華");
     expect(link).toHaveTextContent("3 頁");
-    expect(link.querySelector("img")).toHaveAttribute("src", "/api/shared/pages/77/image.png");
+    expect(link.querySelector("img")).toHaveAttribute("src", "/api/shared/pages/77/image.png?v=abc123");
   });
   it("沒有人分享時顯示空狀態", async () => {
     mockBooks([], 200, []);

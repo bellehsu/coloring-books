@@ -10,8 +10,8 @@ const detail = {
   paper_size: "a4",
   mine: false,
   pages: [
-    { id: 70, position: 0 },
-    { id: 72, position: 2 },
+    { id: 70, position: 0, image_url: "/api/shared/pages/70/image.png?v=aa" },
+    { id: 72, position: 2, image_url: "/api/shared/pages/72/image.png?v=bb" },
   ],
 };
 
@@ -41,8 +41,8 @@ describe("SharedBookView", () => {
     expect(screen.getByText("作者：小華")).toBeInTheDocument();
     const imgs = screen.getAllByRole("img");
     expect(imgs.map((i) => i.getAttribute("src"))).toEqual([
-      "/api/shared/pages/70/image.png",
-      "/api/shared/pages/72/image.png",
+      "/api/shared/pages/70/image.png?v=aa",
+      "/api/shared/pages/72/image.png?v=bb",
     ]);
     expect(imgs[0]).toHaveAttribute("alt", "第 1 頁");
     expect(screen.getByRole("link", { name: /下載 PDF/ })).toHaveAttribute("href", "/api/shared/books/9/export.pdf");
