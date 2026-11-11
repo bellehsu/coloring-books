@@ -27,13 +27,15 @@ export interface ModalProps {
   children: ReactNode;
   /** 進行中不能關（例如匯入中）：× 停用，Esc 與點背景不關閉。 */
   closeDisabled?: boolean;
+  /** wide：說明圖這種寬內容（最寬 1320px）；預設 640px。 */
+  size?: "md" | "wide";
 }
 
 /**
  * Dialog 與 Drawer 共用：role=dialog、Esc／點背景關閉、焦點進入第一個可聚焦元素、
  * Tab 循環、關閉後焦點回到開啟前的元素。
  */
-export function Modal({ open, onClose, title, children, variant, closeDisabled = false }: ModalProps & { variant: "dialog" | "drawer" }) {
+export function Modal({ open, onClose, title, children, variant, closeDisabled = false, size = "md" }: ModalProps & { variant: "dialog" | "drawer" }) {
   const panel = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
   const closeDisabledRef = useRef(closeDisabled);
@@ -106,7 +108,7 @@ export function Modal({ open, onClose, title, children, variant, closeDisabled =
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`${styles.panel} ${styles[`${variant}Panel`]}`}
+        className={`${styles.panel} ${styles[`${variant}Panel`]} ${size === "wide" ? styles.wide : ""}`}
       >
         <div className={styles.head}>
           <h2 id={titleId} className={styles.title}>

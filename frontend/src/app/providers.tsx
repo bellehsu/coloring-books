@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { onApiError } from "@/api/client";
+import { HelpOverlay } from "@/components/help/HelpOverlay";
 import { ToastProvider } from "@/components/ui/Toast";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -36,6 +37,7 @@ export function Providers({ children }: { children: ReactNode }) {
       <ToastProvider>
         <GlobalApiErrors />
         {children}
+        <HelpOverlay />
       </ToastProvider>
     </QueryClientProvider>
   );
