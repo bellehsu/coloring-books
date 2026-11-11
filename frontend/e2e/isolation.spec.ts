@@ -15,8 +15,8 @@ async function inviteContext(browser: Browser, baseURL: string, name: string): P
 }
 
 test("邀請 A 的書，邀請 B 看不到、也打不開；圖片走 302 → /api/files", async ({ browser, baseURL }) => {
-  const a = await inviteContext(browser, baseURL!, "e2e-A");
-  const b = await inviteContext(browser, baseURL!, "e2e-B");
+  const a = await inviteContext(browser, baseURL!, uniqueTitle("e2e-A"));
+  const b = await inviteContext(browser, baseURL!, uniqueTitle("e2e-B"));
   // 沒有 cookie 的 context：假後端以 --dev-owner admin 啟動，所以它是 admin
   const anon = await browser.newContext({ baseURL });
   try {

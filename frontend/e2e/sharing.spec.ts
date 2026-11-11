@@ -18,8 +18,8 @@ test("A 完成 2 頁中的 1 頁並分享；B 看得到那 1 頁、能下載 PDF
   browser,
   baseURL,
 }) => {
-  const a = await inviteContext(browser, baseURL!, "e2e-分享者");
-  const b = await inviteContext(browser, baseURL!, "e2e-讀者");
+  const a = await inviteContext(browser, baseURL!, uniqueTitle("e2e-分享者"));
+  const b = await inviteContext(browser, baseURL!, uniqueTitle("e2e-讀者"));
   const anon = await browser.newContext({ baseURL });
   try {
     // A 的 cookie 真的生效（不是 dev admin）：和 isolation.spec 同樣的證明

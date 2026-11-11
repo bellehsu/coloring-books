@@ -309,7 +309,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `e2e/invite-links.spec.ts`：無效 token、截斷（`/i`、`/i/`）或多段（`/i/a/b`）的連結都到「連結已失效」頁；
   壞掉的 cookie 到 `/invalid-link?reason=missing`（「請用邀請連結開啟」）。
 - 全域錯誤處理（vitest `providers.test.tsx`）：API 回 401 就轉到 `/invalid-link`：detail「請用邀請連結開啟」（這個瀏覽器沒有 session）
-  帶 `?reason=missing`，其他（owner 被撤銷）帶 `?reason=revoked`。429 不在全域處理：各呼叫端的錯誤 toast 顯示後端訊息（「今天的生成次數已用完，明天再來」）。
+  帶 `?reason=missing`，其他（owner 被撤銷）帶 `?reason=revoked`。429 不在全域處理：各呼叫端的錯誤 toast 顯示後端訊息（「今天的生成次數已用完，明天再來」；批次超過剩下的次數時整批不排，訊息是「今天只剩 X 次，這次需要 N 次」）。
 - `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色、故事（含貼上對話框）、頁面編輯器 ① 構圖與 ② 補線，整頁不可水平捲動。
   390 時：故事每列上下堆疊；頁面清單變成「第 N 頁 / M」下拉選單（用它換頁）；背景與角色動作是舞台下方並排的精簡卡片，點了才展開、可收合；
   舞台照樣可以拖曳角色。1440 時：頁面清單在左、卡片完整顯示。

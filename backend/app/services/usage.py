@@ -58,7 +58,7 @@ def reserve(session: Session, owner: Owner, n: int, now: datetime) -> date:
     day = taipei_day(now)
     cap = None if owner.is_admin else owner.daily_generation_cap
     if cap is not None and n > cap:
-        raise HTTPException(429, DAILY_CAP_REACHED)
+        raise HTTPException(429, _over_cap_detail(session, owner, day, cap, n))
     table = Usage.__table__
     stmt = insert(table).values(owner_id=owner.id, day=day, generations=n)
     stmt = stmt.on_conflict_do_update(
@@ -68,8 +68,17 @@ def reserve(session: Session, owner: Owner, n: int, now: datetime) -> date:
     )
     res = session.exec(stmt)
     if res.rowcount != 1:
-        raise HTTPException(429, DAILY_CAP_REACHED)
+        raise HTTPException(429, _over_cap_detail(session, owner, day, cap, n))
     return day
+
+
+def _over_cap_detail(session: Session, owner: Owner, day: date, cap: int, n: int) -> str:
+    """還剩幾次但不夠這一批（使用者決定：整批擋下、說清楚）；一次都不剩就是原本的「明天再來」。"""
+    used = session.exec(
+        select(Usage.generations).where(col(Usage.owner_id) == owner.id, col(Usage.day) == day)
+    ).first() or 0
+    remaining = max(cap - used, 0)
+    return f"今天只剩 {remaining} 次，這次需要 {n} 次" if remaining > 0 else DAILY_CAP_REACHED
 
 
 def refund(session: Session, owner_id: int, day: date, n: int = 1) -> None:

@@ -285,7 +285,7 @@ def test_batch_reserves_n_atomically(client, app):
     # 2 頁 × (背景＋動作) = 4，只剩 3：整批不排
     r = client.post(f"/api/books/{b['id']}/materials/batch", json={})
     assert r.status_code == 429
-    assert r.json()["detail"] == CAP_MSG
+    assert r.json()["detail"] == "今天只剩 3 次，這次需要 4 次"  # 使用者決定：整批擋下、說清楚
     assert len(gens(app, book_id=b["id"])) == before
     assert used(app, owner_id) == 1
 
@@ -392,6 +392,33 @@ def test_reserve_n_over_cap_writes_nothing(tmp_path):
         s.rollback()
         assert s.get(Usage, (owner_id, TODAY)).generations == 2
 
+
+
+def test_reserve_batch_over_remaining_says_how_many_left(tmp_path):
+    # 使用者決定（2026-11-11）：批次超過今天剩下的次數 → 整批擋下，訊息說清楚剩幾次、需要幾次；
+    # 剩 0 次時維持「今天的生成次數已用完，明天再來」
+    sessions, owner_id = _db(tmp_path, cap=5)
+    with sessions() as s:
+        owner = s.get(Owner, owner_id)
+        with pytest.raises(HTTPException) as e:
+            usage.reserve(s, owner, 7, NOW)  # 一列都還沒有：剩 5 次
+        assert e.value.status_code == 429 and e.value.detail == "今天只剩 5 次，這次需要 7 次"
+        s.rollback()
+        usage.reserve(s, owner, 2, NOW)
+        s.commit()
+        with pytest.raises(HTTPException) as e:
+            usage.reserve(s, owner, 4, NOW)
+        assert e.value.status_code == 429 and e.value.detail == "今天只剩 3 次，這次需要 4 次"
+        s.rollback()
+        assert s.get(Usage, (owner_id, TODAY)).generations == 2
+        usage.reserve(s, owner, 3, NOW)
+        s.commit()
+        for n in (1, 4):  # 用完了：不論要幾次都是原本的訊息
+            with pytest.raises(HTTPException) as e:
+                usage.reserve(s, owner, n, NOW)
+            assert e.value.detail == usage.DAILY_CAP_REACHED
+            s.rollback()
+        assert s.get(Usage, (owner_id, TODAY)).generations == 5
 
 # ---- worker 的退回路徑 ------------------------------------------------------------------
 
