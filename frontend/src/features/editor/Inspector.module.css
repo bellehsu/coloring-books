@@ -50,10 +50,12 @@
 .mark[data-state="done"] {
   background: var(--ok);
   border-color: var(--ok);
+  color: var(--on-danger);
 }
 .mark[data-state="warn"] {
   background: var(--warn);
   border-color: var(--warn);
+  color: var(--on-danger);
 }
 .mark[data-state="skip"] {
   background: var(--chip-bg);

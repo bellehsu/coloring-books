@@ -13,7 +13,8 @@ const book = (id: number, charId: number | null) => ({
   character_generation_id: charId,
   cover_url: null,
   layout: { content_px: [2244, 3272] },
-  stats: { pages: 4, passed: 1, needs_fix: 0, no_selection: 0 },
+  // 2 頁 PASSED，其中 1 頁「請看一下」（失敗後還是 PASSED）；needs_fix（線沒接起來）不影響書卡
+  stats: { pages: 4, passed: 2, needs_fix: 2, no_selection: 0, ready: 1, attention: 1, working: 0, todo: 2 },
 });
 
 function mockBooks(body: unknown, status = 200, shared: unknown = [], me: unknown = { name: "小明", is_admin: false, via_dev_owner: false }) {
@@ -45,19 +46,33 @@ function setup() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("我的繪本", () => {
-  it("列出書並依角色狀態連結", async () => {
+  it("列出書，每本都連到 B 整本書", async () => {
     mockBooks([book(1, null), book(2, 5)]);
     setup();
     expect(screen.getByRole("heading", { name: "我的繪本" })).toBeInTheDocument();
-    expect(await screen.findByRole("link", { name: /書1/ })).toHaveAttribute("href", "/books/1/character");
-    expect(screen.getByRole("link", { name: /書2/ })).toHaveAttribute("href", "/books/2/editor");
+    expect(await screen.findByRole("link", { name: /書1/ })).toHaveAttribute("href", "/books/1");
+    expect(screen.getByRole("link", { name: /書2/ })).toHaveAttribute("href", "/books/2");
     expect(screen.getByText("2 本")).toBeInTheDocument();
-    expect(screen.getAllByText("1 / 4 頁完成")).toHaveLength(2);
+    expect(screen.getAllByText("1 / 4 頁可以印")).toHaveLength(2);
+    // 書卡和 B 同一套說法：請看一下的頁不算做好；線沒接起來不是「需要修線」
+    expect(screen.getByRole("link", { name: /書1/ })).toHaveTextContent("下一步：先設定主角");
+    expect(screen.getByRole("link", { name: /書2/ })).toHaveTextContent("1 頁請你看一下");
+    expect(screen.queryByText(/需要修線|頁完成|可以匯出/)).not.toBeInTheDocument();
   });
   it("空狀態只有一個建立入口", async () => {
     mockBooks([]);
     setup();
     expect(await screen.findByText(/還沒有繪本/)).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "建立新繪本" })).toHaveLength(1);
+  });
+
+  it("「建立新繪本」到 A 做一本新的著色書（/books/new）", async () => {
+    mockBooks([book(1, 5)]);
+    setup();
+    await screen.findByRole("link", { name: /書1/ });
+    const links = screen.getAllByRole("link", { name: "建立新繪本" });
+    expect(links).toHaveLength(2);
+    for (const a of links) expect(a).toHaveAttribute("href", "/books/new");
   });
   it("錯誤顯示訊息", async () => {
     mockBooks({ detail: "資料庫壞了" }, 500);

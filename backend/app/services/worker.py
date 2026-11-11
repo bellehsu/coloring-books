@@ -1,4 +1,7 @@
 """單一背景生成 worker：依建立時間（最舊的先）逐筆執行 QUEUED 的 Generation（單 GPU，絕不並行）。
+
+每做完一張生成（以及閒置時），先把排隊的頁面流程（page_task，services/pipeline.py：CPU 工作）做完，
+再做下一張生成。頁面的背景／角色動作生成成功時自動選用並排這頁的流程；失敗時頁面 attention="failed"。
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from enum import Enum
 from sqlalchemy import or_
 from sqlmodel import Session, col, select, update
 
-from app.models import Generation, GenKind, GenStatus, utcnow
+from app.models import Generation, GenKind, GenStatus, PageTaskStatus, utcnow
 from app.services.engine import (
     RETIRED,
     EngineError,
@@ -20,7 +23,7 @@ from app.services.engine import (
     GenerationEngine,
     GenerationRequest,
 )
-from app.services.autoselect import autoselect
+from app.services import pipeline
 from app.services.compose import largest_component
 from app.services.usage import refund_generations
 from app.storage import Storage, StorageNotFound
@@ -138,14 +141,18 @@ class GenerationWorker:
         if self._task is not None and not self._task.done():
             return
         self.requeue_interrupted()
+        self.requeue_page_tasks()
         self.cancel_retired()
         self.state = WorkerState.IDLE
         self._event_loop = asyncio.get_running_loop()
         self._wakeup.set()
         self._task = asyncio.create_task(self._loop(), name="generation-worker")
+        pipeline.set_wakeup(self.notify)  # 不經 API 排的頁面流程（例如線稿的 key 變了）也叫得醒
 
     async def stop(self) -> None:
         task, self._task = self._task, None
+        if pipeline._wakeup == self.notify:
+            pipeline.set_wakeup(None)
         if task is not None:
             task.cancel()
             try:
@@ -184,6 +191,11 @@ class GenerationWorker:
             )
             s.commit()
             return res.rowcount
+
+    def requeue_page_tasks(self) -> int:
+        """上次執行到一半的頁面流程放回佇列（確定性、便宜，重跑就好；不像生成標成失敗）。回傳數量。"""
+        with self.sessions() as s:
+            return pipeline.requeue_page_tasks(s)
 
     def cancel_retired(self) -> int:
         """把 QUEUED 且需要已停用路線（舊整頁、SDXL 快速動作／細緻背景）的列標為 CANCELLED（退回當天額度）。"""
@@ -255,8 +267,8 @@ class GenerationWorker:
                 if res.rowcount == 1:
                     return s.get(Generation, gen_id)
 
-    def _finish(self, gen_id: int, **values) -> None:
-        """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋）。
+    def _finish(self, gen_id: int, **values) -> bool:
+        """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋），回傳有沒有改到。
         改成 FAILED 時在同一個交易退回當天額度（只有真的改到這一列才退）。"""
         with self.sessions() as s:
             res = s.exec(
@@ -267,6 +279,7 @@ class GenerationWorker:
             if res.rowcount == 1 and values.get("status") == GenStatus.FAILED:
                 refund_generations(s, [gen_id])
             s.commit()
+            return res.rowcount == 1
 
     # ---- 執行 ----
     async def run_once(self) -> bool:
@@ -303,7 +316,7 @@ class GenerationWorker:
                 if req.kind == GenKind.POSE:
                     mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
                 await asyncio.to_thread(self.storage.put, mask_rel, mask_png)
-            self._finish(
+            done = self._finish(
                 gen_id,
                 mask_path=mask_rel,
                 status=GenStatus.SUCCEEDED,
@@ -318,10 +331,8 @@ class GenerationWorker:
                 error=None,
                 finished_at=utcnow(),
             )
-            with self.sessions() as s:
-                done = s.get(Generation, gen_id)
-                if done is not None:
-                    autoselect(s, done)
+            if done:
+                self._after_success(gen_id)
             self.last_error = None
             self.state = WorkerState.IDLE
         except EngineUnavailable as e:
@@ -338,9 +349,55 @@ class GenerationWorker:
         return True
 
     def _fail(self, gen_id: int, message: str) -> None:
-        self._finish(gen_id, status=GenStatus.FAILED, error=message, finished_at=utcnow())
+        if self._finish(gen_id, status=GenStatus.FAILED, error=message, finished_at=utcnow()):
+            try:
+                with self.sessions() as s:
+                    pipeline.on_generation_failed(s, gen_id)
+            except Exception:  # noqa: BLE001  只記 log：生成已標成失敗
+                log.exception("記下頁面需要注意失敗（generation %s）", gen_id)
         self.last_error = message
         self.state = WorkerState.IDLE
+
+    def _after_success(self, gen_id: int) -> None:
+        """頁面的背景／角色動作：自動選用並排頁面流程；任何失敗只記 log（生成已經成功）。"""
+        try:
+            with self.sessions() as s:
+                pipeline.on_generation_succeeded(s, gen_id)
+        except Exception:  # noqa: BLE001
+            log.exception("自動選用／排頁面流程失敗（generation %s）", gen_id)
+
+    # ---- 頁面流程（CPU 工作，排在生成之間）----
+    async def run_page_tasks(self) -> int:
+        """把排隊的頁面流程一個個做完（包括執行中新排進來的），回傳做了幾個。
+        流程在 thread 裡跑（線稿是 CPU 工作，不卡 event loop）；工作的結束狀態也在 thread 裡寫，
+        所以 stop() 取消等待時，跑到一半的流程仍會正常收尾。"""
+        n = 0
+        while True:
+            with self.sessions() as s:
+                task = pipeline.claim_page_task(s)
+                if task is None:
+                    return n
+                task_id, page_id = task.id, task.page_id
+            await asyncio.to_thread(self._run_page_task, task_id, page_id)
+            n += 1
+
+    def _run_page_task(self, task_id: int, page_id: int) -> None:
+        status, error = PageTaskStatus.SUCCEEDED, None
+        with self.sessions() as s:
+            try:
+                pipeline.run_page_pipeline(s, self.storage, page_id)
+            except pipeline.PipelineFailed as e:
+                status, error = PageTaskStatus.FAILED, e.error
+            except Exception as e:  # noqa: BLE001  run_page_pipeline 自己會轉成 PipelineFailed；保險
+                log.exception("page task %s crashed", task_id)
+                status, error = PageTaskStatus.FAILED, f"{type(e).__name__}: {e}"
+        for attempt in range(2):  # 收尾失敗（例如資料庫暫時鎖住）再試一次；仍失敗就留 RUNNING，重啟時重排
+            try:
+                with self.sessions() as s:
+                    pipeline.finish_page_task(s, task_id, status, error)
+                return
+            except Exception:  # noqa: BLE001
+                log.exception("page task %s：無法記下結果（第 %d 次）", task_id, attempt + 1)
 
     async def _loop(self) -> None:
         while True:
@@ -348,6 +405,7 @@ class GenerationWorker:
             self._wakeup.clear()
             try:
                 did = await self.run_once()
+                await self.run_page_tasks()  # 每張生成之後（與閒置時）先做完排隊的頁面流程
             except Exception:  # noqa: BLE001  例如資料庫暫時錯誤；退避後繼續
                 log.exception("worker loop error")
                 self.state = WorkerState.IDLE

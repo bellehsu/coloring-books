@@ -61,7 +61,7 @@
 }
 .badgeDone {
   background: var(--ok);
-  color: var(--on-accent);
+  color: var(--on-danger);
 }
 .now {
   background: var(--accent-soft);

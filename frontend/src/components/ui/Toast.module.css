@@ -6,13 +6,22 @@
   z-index: 100;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   width: min(440px, calc(100% - 32px));
   pointer-events: none;
 }
+/* 兩個常駐的 live region（polite／assertive）；空的時候不佔空間 */
+.region {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.region + .region:not(:empty) {
+  margin-top: 8px;
+}
 .toast {
   padding: 12px 16px;
-  border-radius: var(--radius-md);
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-lg);
   background: var(--ink);
   color: var(--surface);
   box-shadow: var(--shadow-toast);
@@ -20,9 +29,10 @@
   pointer-events: auto;
 }
 .success {
-  background: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ink);
 }
 .error {
   background: var(--danger);
-  color: var(--on-accent);
+  color: var(--on-danger);
 }

@@ -4,12 +4,13 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app.db import init_db, make_engine, session_factory
-from app.models import (Book, GenKind, Generation, GenStatus, Owner, Page, PageStatus, utcnow)
+from app.models import (Book, GenKind, Generation, GenStatus, LineartEdit, Owner, Page, PageStatus, StrokeLayer, utcnow)
 from app.services import page_lineart
 from app.services.layout import PaperSize, PrintMode
 from app.services.lineart_render import Stroke
 from app.services.qa import QAReport
 from app.storage import LocalStorage
+from sqlmodel import select
 
 
 def _color_png() -> bytes:
@@ -92,13 +93,89 @@ def test_strokes_change_key_and_output(env):
         r1 = page_lineart.ensure_page_lineart(s, storage, pid)
         before = storage.get(r1.path)
         page_lineart.save_strokes(
-            s, pid, gid, [Stroke("draw", 12.0, ((0.1, 0.1), (0.9, 0.9)))]
+            s, pid, gid, [Stroke("draw", 12.0, ((0.1, 0.1), (0.9, 0.9)))], layer=StrokeLayer.USER
         )
         s.commit()
-        assert len(page_lineart.load_strokes(s, gid)) == 1
+        assert len(page_lineart.load_strokes(s, gid, layer=StrokeLayer.USER)) == 1
         r2 = page_lineart.ensure_page_lineart(s, storage, pid)
         assert r2.key != r1.key
         assert storage.get(r2.path) != before
+
+
+# 線稿上方的空白處（彩色方塊從 40/256 開始）：一條橫線，與在線上擦掉一塊
+TOP_LINE = Stroke("draw", 16.0, ((0.1, 0.08), (0.9, 0.08)))
+TOP_ERASE = Stroke("erase", 64.0, ((0.5, 0.08),))
+
+
+def _ink_at(storage, path, x, y) -> bool:
+    with Image.open(io.BytesIO(storage.get(path))) as im:
+        g = im.convert("L")
+        w, h = g.size
+        return g.getpixel((round(x * (w - 1)), round(y * (h - 1)))) < 128
+
+
+def test_stroke_layers_stored_separately(env):
+    make, storage, pid, gid = env
+    with make() as s:
+        assert page_lineart.load_strokes(s, gid, layer=StrokeLayer.AUTO) == []
+        page_lineart.save_strokes(s, pid, gid, [TOP_LINE], layer=StrokeLayer.AUTO)
+        page_lineart.save_strokes(s, pid, gid, [TOP_ERASE, TOP_ERASE], layer=StrokeLayer.USER)
+        s.commit()
+    with make() as s:
+        assert page_lineart.load_strokes(s, gid, layer=StrokeLayer.AUTO) == [TOP_LINE]
+        assert page_lineart.load_strokes(s, gid, layer=StrokeLayer.USER) == [TOP_ERASE, TOP_ERASE]
+        rows = {(e.generation_id, e.layer, e.page_id) for e in s.exec(select(LineartEdit)).all()}
+        assert rows == {(gid, StrokeLayer.AUTO, pid), (gid, StrokeLayer.USER, pid)}
+        # 改寫一層不動另一層
+        page_lineart.save_strokes(s, pid, gid, [], layer=StrokeLayer.USER)
+        s.commit()
+        assert page_lineart.load_strokes(s, gid, layer=StrokeLayer.AUTO) == [TOP_LINE]
+        assert page_lineart.load_strokes(s, gid, layer=StrokeLayer.USER) == []
+
+
+def test_render_applies_auto_then_user_layer(env):
+    make, storage, pid, gid = env
+    with make() as s:
+        base = page_lineart.ensure_page_lineart(s, storage, pid)
+        assert not _ink_at(storage, base.path, 0.5, 0.08)
+        page_lineart.save_strokes(s, pid, gid, [TOP_LINE], layer=StrokeLayer.AUTO)
+        s.commit()
+        auto = page_lineart.ensure_page_lineart(s, storage, pid)
+        assert auto.key != base.key
+        assert _ink_at(storage, auto.path, 0.5, 0.08) and _ink_at(storage, auto.path, 0.2, 0.08)
+        # 使用者的橡皮擦在補線之後套用：擦得掉補上的線
+        page_lineart.save_strokes(s, pid, gid, [TOP_ERASE], layer=StrokeLayer.USER)
+        s.commit()
+        both = page_lineart.ensure_page_lineart(s, storage, pid)
+        assert both.key not in (base.key, auto.key)
+        assert not _ink_at(storage, both.path, 0.5, 0.08) and _ink_at(storage, both.path, 0.2, 0.08)
+
+
+def test_combined_strokes_json_keeps_single_layer_text(env):
+    """只有一層時沿用那一層存的原文：既有頁面（只有 user 層）的 lineart_key 不變，不必重算線稿。"""
+    make, storage, pid, gid = env
+    user_text = page_lineart.strokes_to_json([TOP_LINE])
+    auto_text = page_lineart.strokes_to_json([TOP_ERASE])
+    with make() as s:
+        assert page_lineart.combined_strokes_json(s, gid) == "[]"
+        s.add(LineartEdit(generation_id=gid, page_id=pid, strokes_json=user_text))  # 0011 之前的資料
+        s.commit()
+        assert page_lineart.combined_strokes_json(s, gid) == user_text
+        page = s.get(Page, pid)
+        gen = s.get(Generation, gid)
+        book = s.get(Book, page.book_id)
+        from app.services.layout import compute_layout
+        content_px = compute_layout(book.paper_size, book.print_mode).content_px
+        assert page_lineart.ensure_page_lineart(s, storage, pid).key == page_lineart.lineart_key(
+            gen, page, content_px, user_text)
+        page_lineart.save_strokes(s, pid, gid, [TOP_ERASE], layer=StrokeLayer.AUTO)
+        s.commit()
+        combined = page_lineart.combined_strokes_json(s, gid)
+        assert page_lineart.strokes_from_json(combined) == [TOP_ERASE, TOP_LINE]
+        assert page_lineart.strokes_json_by_generation(s, [gid, gid + 99]) == {gid: combined}
+        page_lineart.save_strokes(s, pid, gid, [], layer=StrokeLayer.USER)
+        s.commit()
+        assert page_lineart.combined_strokes_json(s, gid) == auto_text
 
 
 def _set_passed(make, pid):

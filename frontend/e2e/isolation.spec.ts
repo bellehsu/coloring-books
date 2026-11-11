@@ -47,7 +47,7 @@ test("邀請 A 的書，邀請 B 看不到、也打不開；圖片走 302 → /a
     // B 的書單是空的，看不到 A 的書
     const pageB = await b.newPage();
     await pageB.goto("/");
-    await expect(pageB.getByRole("button", { name: "建立新繪本" }).first()).toBeVisible();
+    await expect(pageB.getByRole("link", { name: "建立新繪本" }).first()).toBeVisible();
     await expect(pageB.getByText(title)).toHaveCount(0);
     expect(await ok<unknown[]>(await b.request.get("/api/books"))).toEqual([]);
 

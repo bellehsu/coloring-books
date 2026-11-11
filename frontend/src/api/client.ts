@@ -13,6 +13,10 @@ export type QA = S["QAOut"];
 export type Edits = S["EditsOut"];
 export type QueueStatus = S["QueueStatus"];
 export type BatchMaterials = S["BatchMaterialsOut"];
+export type BookOverview = S["BookOverviewOut"];
+export type OverviewPage = S["OverviewPageOut"];
+export type ProducePlan = S["ProducePlanOut"];
+export type ProduceResult = S["ProduceOut"];
 /** 角色在背景上的位置（相對背景）：cx、cy 為角色中心 0–1，height 為角色高／背景高 0.1–1.0。 */
 export interface Placement {
   cx: number;
@@ -27,6 +31,8 @@ export interface ExportSummary {
   total: number;
   passed: number;
   exportable_ids: number[];
+  /** include=ready 會印的頁：通過而且沒有「請看一下」（B 的「印出這本書」預設）。 */
+  ready_ids: number[];
   skipped: { page_id: number; position: number; reason: "no_selection" | "not_passed" }[];
 }
 
@@ -127,10 +133,11 @@ export const api = {
   put: <T>(path: string, body?: unknown) => json<T>("PUT", path, body),
   /** 204 回 undefined；有 JSON body 則回傳之。 */
   del: <T = void>(path: string) => json<T>("DELETE", path),
-  /** multipart 上傳（欄位名 `file`），回 JSON；非 2xx 丟 ApiError（後端的中文訊息）。 */
-  async upload<T>(path: string, file: Blob): Promise<T> {
+  /** multipart 上傳（欄位名 `file`，fields 是其他表單欄位），回 JSON；非 2xx 丟 ApiError（後端的中文訊息）。 */
+  async upload<T>(path: string, file: Blob, fields: Record<string, string> = {}): Promise<T> {
     const form = new FormData();
     form.append("file", file, file instanceof File && file.name ? file.name : "file.png");
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
     const res = await request(path, { method: "POST", body: form });
     return (await res.json()) as T;
   },

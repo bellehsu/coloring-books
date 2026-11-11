@@ -2,7 +2,7 @@
 """清理儲存空間（排程執行；排程方式由雲端階段決定）。
 
 1. 過期的捨棄圖：`discarded_at` 早於 --days 天（預設 30）的生成紀錄，刪掉它的圖片、遮罩與預覽物件，
-   並清空 image_path／mask_path。頁面選用中（selected／background／pose）、書的角色、
+   並清空 image_path／mask_path。頁面選用中（selected／background／pose／auto_*）、復原快照用到的、有進行中頁面任務的頁面、書的角色、
    排隊中任務要用的角色圖，捨棄再久也不刪。
 2. 孤兒物件：books/ 底下沒有任何資料列指到的物件（生成圖、遮罩、頁面線稿 lineart_path），
    以及 cache/previews/ 底下生成紀錄已不存在（或已捨棄且圖已清掉）的預覽。
@@ -42,7 +42,7 @@ from sqlmodel import Session, col, select, update  # noqa: E402
 
 from app.config import SettingsError, load_settings  # noqa: E402
 from app.db import make_engine, schema_revisions, session_factory  # noqa: E402
-from app.models import Book, Generation, GenStatus, Page, utcnow  # noqa: E402
+from app.models import Book, Generation, GenStatus, Page, PageHistory, PageTask, PageTaskStatus, utcnow  # noqa: E402
 from app.services import instance  # noqa: E402
 from app.storage import Storage, make_storage  # noqa: E402
 
@@ -121,12 +121,35 @@ def _character_refs(gens: Sequence[Generation]) -> set[str]:
     return refs
 
 
+_SNAPSHOT_GEN_FIELDS = ("background_generation_id", "pose_generation_id", "selected_generation_id",
+                        "composite_generation_id")
+
+
+def _snapshot_gen_ids(snapshot_json: str) -> set[int]:
+    """復原快照裡的生成紀錄 id（筆畫、位置、文字都存在 DB／JSON 裡，不指到 storage 物件）。"""
+    try:
+        snap = json.loads(snapshot_json)
+    except (TypeError, ValueError):
+        return set()
+    if not isinstance(snap, dict):
+        return set()
+    return {v for k in _SNAPSHOT_GEN_FIELDS if isinstance((v := snap.get(k)), int) and not isinstance(v, bool)}
+
+
 def _protected_gen_ids(s: Session) -> set[int]:
+    """捨棄再久也不刪的生成紀錄：選用中、自動選的（auto_*）、書的角色、復原快照裡用到的，
+    以及有排隊中／執行中頁面任務的頁面的全部生成紀錄（流程正在選圖／合成）。"""
     ids: set[int] = set()
     for row in s.exec(select(Page.selected_generation_id, Page.background_generation_id,
-                             Page.pose_generation_id)).all():
+                             Page.pose_generation_id, Page.auto_background_generation_id,
+                             Page.auto_pose_generation_id)).all():
         ids.update(i for i in row if i is not None)
     ids.update(i for i in s.exec(select(Book.character_generation_id)).all() if i is not None)
+    for snap in s.exec(select(PageHistory.snapshot_json)).all():
+        ids |= _snapshot_gen_ids(snap)
+    active_pages = select(PageTask.page_id).where(
+        col(PageTask.status).in_([PageTaskStatus.QUEUED.value, PageTaskStatus.RUNNING.value]))
+    ids.update(s.exec(select(Generation.id).where(col(Generation.page_id).in_(active_pages))).all())
     return ids
 
 
@@ -169,12 +192,18 @@ def _clear_expired(s: Session, ids: Sequence[int], cutoff: datetime) -> set[int]
     """清空過期捨棄圖的 key。條件在 UPDATE 裡重新檢查（讀完之後才被選用／還原的不清），回傳真的清掉的 id。"""
     if not ids:
         return set()
+    protected = _protected_gen_ids(s)
+    ids = [i for i in ids if i not in protected]  # 讀完之後才被快照／任務用到的也不清
+    if not ids:
+        return set()
     gid = col(Generation.id)
     in_use = (
         select(Page.id).where(
             (col(Page.selected_generation_id) == gid)
             | (col(Page.background_generation_id) == gid)
             | (col(Page.pose_generation_id) == gid)
+            | (col(Page.auto_background_generation_id) == gid)
+            | (col(Page.auto_pose_generation_id) == gid)
         ).exists()
         | select(Book.id).where(col(Book.character_generation_id) == gid).exists()
     )

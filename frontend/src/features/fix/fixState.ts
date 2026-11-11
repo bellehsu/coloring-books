@@ -1,0 +1,80 @@
+import type { OverviewPage, Page } from "@/api/client";
+import { normalizeCaption } from "@/lib/limits";
+import type { PageState } from "@/features/book/overviewState";
+
+/** C 是從 B 的哪個篩選打開的：「請看一下」時上一頁／下一頁只在要看的頁之間跳。 */
+export type FixFilter = "attention" | null;
+
+export const parseFilter = (v: string | null | undefined): FixFilter => (v === "attention" ? "attention" : null);
+
+export function fixHref(bookId: number, pageId: number, filter: FixFilter = null): string {
+  return `/books/${bookId}/page/${pageId}${filter ? `?filter=${filter}` : ""}`;
+}
+
+export type RestoreItem = "background" | "pose" | "lines";
+
+/**
+ * 「↺ 還原成自動畫的那張」：背景／角色動作選的不是自動畫的那張（auto_* 有值、而且不同）；
+ * 線條有使用者自己畫／擦的線。
+ */
+export function showRestore(page: Page, item: RestoreItem): boolean {
+  if (item === "lines") return page.has_user_strokes;
+  const [selected, auto] =
+    item === "background"
+      ? [page.background_generation_id, page.auto_background_generation_id]
+      : [page.pose_generation_id, page.auto_pose_generation_id];
+  return selected != null && auto != null && selected !== auto;
+}
+
+export const RECOMPOSE_PENDING = "這一頁正在重新合成，請稍候再畫";
+export const RECOMPOSE_FAILED = "這一頁合成失敗，請先按「再試一次」";
+
+/** 畫筆／擦除不能用的原因（等著重新合成時後端會拒絕筆畫）；可以畫時 null。 */
+export function penBlocked(page: Page): string | null {
+  if (!page.recompose_pending) return null;
+  return page.attention === "failed" ? RECOMPOSE_FAILED : RECOMPOSE_PENDING;
+}
+
+/**
+ * 上一頁／下一頁（依頁序）。filter="attention"：只在「請看一下」的頁之間跳（目前這頁不論狀態都當成起點）；
+ * 其他：全部的頁。沒有就是 null。
+ */
+export function neighbours(
+  pages: readonly OverviewPage[],
+  pageId: number,
+  filter: FixFilter,
+): { prev: OverviewPage | null; next: OverviewPage | null } {
+  const sorted = [...pages].sort((a, b) => a.position - b.position || a.id - b.id);
+  const i = sorted.findIndex((p) => p.id === pageId);
+  if (i < 0) return { prev: null, next: null };
+  const ok = (p: OverviewPage) => !filter || p.state === filter;
+  const prev = sorted.slice(0, i).reverse().find(ok) ?? null;
+  const next = sorted.slice(i + 1).find(ok) ?? null;
+  return { prev, next };
+}
+
+/** 頁首標題：「第 1 頁・消防車」（沒有圖下方的中文字就只有頁碼）。 */
+export function pageTitle(page: Pick<Page, "position" | "caption_zh">): string {
+  const zh = normalizeCaption(page.caption_zh ?? "");
+  return zh ? `第 ${page.position + 1} 頁・${zh}` : `第 ${page.position + 1} 頁`;
+}
+
+/** 頁首的狀態：以 B 的總覽為準（含製作中）；總覽還沒載入時由頁面推。 */
+export function pageState(page: Page, ov: OverviewPage | undefined): PageState {
+  if (ov) return ov.state;
+  if (page.attention) return "attention";
+  return page.status === "passed" ? "ready" : "todo";
+}
+
+/** 圖下方的字（一行摘要）：「消防車・Fire Engine」。 */
+export function captionSummary(page: Pick<Page, "caption_zh" | "caption_en">): string {
+  const parts = [normalizeCaption(page.caption_zh ?? ""), normalizeCaption(page.caption_en ?? "")].filter(Boolean);
+  return parts.length ? parts.join("・") : "沒有字";
+}
+
+/** 列印頁預覽網址：線稿 key（lineart_url 的 ?v=）加上文字，任何一個改了就重新載入。 */
+export function printUrl(page: Pick<Page, "id" | "lineart_url" | "caption_zh" | "caption_en">): string {
+  const key = page.lineart_url?.split("?v=")[1] ?? "";
+  const v = `${key}|${page.caption_zh ?? ""}|${page.caption_en ?? ""}`;
+  return `/api/pages/${page.id}/print.png?v=${encodeURIComponent(v)}`;
+}

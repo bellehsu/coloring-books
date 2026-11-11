@@ -289,19 +289,13 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `playwright.config.ts` 會自動啟動兩個服務：假後端（`127.0.0.1:8010`，每次執行用新的暫存 storage）與 `next dev -p 3010`（`BACKEND_URL=http://127.0.0.1:8010`）。
   非 CI 時若這兩個埠已有服務就直接重用（資料會累積；測試不依賴既有資料）。
 - 只用 chromium，並以 `--disable-gpu --disable-software-rasterizer` 啟動：WSL2 上 headless chromium 的 GPU 行程常卡住，`requestAnimationFrame` 不觸發、點擊一直等不到。
-- `e2e/flow.spec.ts`：建 A4 印刷廠書 → 「產生角色」（一次一張，按鈕改叫「再產生一張」）→ 選它、「用這個角色，開始寫故事 →」→
-  故事頁「＋ 新增一頁」、寫場景與中文動作（「抱著一顆紅色的球開心地跳」，檢查動作欄位連到「只寫動作，地點寫在背景…」提示）→
-  「產生全部素材（還有 2 張）」→ 縮圖出現、角色動作的 `user_text` 是原本的中文 → 頁面 ① 構圖：素材已自動選用、開頁自動合成 →
-  拖曳角色，放開後存位置並自動合成（「✓ 線稿已自動更新」）→ 「下一步：補線 →」→ ② 補線看到 1 個橘色圈 → 「自動補線」→
-  「✓ 線條都接好了」→ 「角色看起來對嗎？」按「對」→ 「完成這一頁 ✓」→ 頁面清單標「完成」→ 匯出抽屜下載 PDF（檢查檔頭 `%PDF`）。
-  另外：構圖「上傳背景圖」傳 4000×800 的 PNG → 縮圖標「上傳」、舞台的背景已裁成頁面比例；
-  故事頁「產生全部素材」後素材還沒好就打開頁面 → worker 自動選用後不用重新整理，舞台填上並「✓ 線稿已自動更新」；
-  角色動作自動選用 → 上傳背景圖 → 打開頁面自動合成 → 「下一步：補線 →」看到 ② 補線的完成面板；
-  沒設角色時角色動作「換一張」停用，前端資料過期時後端 409「請先設定角色」原樣顯示。
-- `e2e/story.spec.ts`：「貼上整本故事」貼 3 頁（第 1 頁 CRLF 換行、全形數字）→ 預覽表 3 列拆對 → 匯入 → 3 列填好 →
-  「產生全部素材（還有 6 張）」→ 每頁的背景與角色動作縮圖都出現。
+- `e2e/oneclick.spec.ts`（一鍵做完整本書）：做一本新的著色書（A）→ 主角 → 主題包 → 第 3 頁上傳背景 → 「開始做這本書」→ B 做到「整本做好了」→
+  「這頁可以印了」→ 印出 PDF；390 px 沒有水平捲動。另有：已經有的書列出現有頁、貼上的故事（CRLF、全形數字）只填空欄位並補頁；C 改字重新整理還在、改場景後「AI 再畫一張」用新場景。
+- `e2e/book-overview.spec.ts`（B 整本書）：卡片、篩選、「印出這本書先看一眼」、「進階編輯」連到舊編輯器；390 px 兩欄、底部固定列、沒有水平捲動、按鈕至少 44 px。
+- `e2e/fix-page.spec.ts`（C 處理一頁）：換背景 → 復原 → 重做 → 畫線再還原 → 這頁可以印了到下一頁；390 px 單欄、沒有水平捲動、按鈕至少 44 px。
+- `e2e/flow.spec.ts`：進階編輯（舊編輯器）完整流程：（以 API 備好的書）構圖拖曳自動合成 → 補線 → 完成 → 匯出 PDF；另含上傳背景與素材晚到的自動選用。
 - `e2e/batch.spec.ts`：`POST /books/{id}/materials/batch`（`upload_page_ids` 的頁略過背景、沒場景的頁略過）→ 排入的項目與略過原因 →
-  worker 完成後自動選用（只填空的欄位）→ 再呼叫一次不再排。
+  worker 完成後自動選用（自己選的不換）→ 再呼叫一次不再排。
 - `e2e/isolation.spec.ts`：邀請 A 建書；邀請 B（全新的瀏覽器 context 開 `/i/{token}`）書單是空的，開 A 的編輯器網址顯示錯誤（API 404）；
   圖片 API 302 到 `/api/files/...?exp&sig` 後取得 image/png。也確認 A 的 cookie 真的生效（不是沒有 cookie 而被當成 dev admin）：
   有 `cb_session`、preflight 403、書單只有自己的書（沒有 admin 剛建的書）。
@@ -311,8 +305,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
   壞掉的 cookie 到 `/invalid-link?reason=missing`（「請用邀請連結開啟」）。
 - 全域錯誤處理（vitest `providers.test.tsx`）：API 回 401 就轉到 `/invalid-link`：detail「請用邀請連結開啟」（這個瀏覽器沒有 session）
   帶 `?reason=missing`，其他（owner 被撤銷）帶 `?reason=revoked`。429 不在全域處理：各呼叫端的錯誤 toast 顯示後端訊息（「今天的生成次數已用完，明天再來」；批次超過剩下的次數時整批不排，訊息是「今天只剩 X 次，這次需要 N 次」）。
-- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、角色、故事（含貼上對話框）、頁面編輯器 ① 構圖與 ② 補線，整頁不可水平捲動。
-  390 時：故事每列上下堆疊；頁面清單變成「第 N 頁 / M」下拉選單（用它換頁）；背景與角色動作是舞台下方並排的精簡卡片，點了才展開、可收合；
+- `e2e/rwd.spec.ts`：390×844 與 1440×900 開我的繪本、主角與故事（舊的 `/character`、`/story` 轉到這裡；含主題包對話框）、進階編輯 ① 構圖與 ② 補線，整頁不可水平捲動。
+  390 時：主角與故事的每頁文字在上、背景切換在下；頁面清單變成「第 N 頁 / M」下拉選單（用它換頁）；背景與角色動作是舞台下方並排的精簡卡片，點了才展開、可收合；
   舞台照樣可以拖曳角色。1440 時：頁面清單在左、卡片完整顯示。
 - `next dev` 同一個 `frontend/` 只能跑一份：`scripts/dev.sh`（或其他 `next dev`）還開著時 e2e 會出現「Another next dev server is already running」，先關掉它再跑。
 - 全部約 35 秒（第一次 `next dev` 編譯會再久一點）。
@@ -321,12 +315,54 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 
 正式建置、systemd 常駐與 Windows 埠轉發見 [docs/deploy-intranet.md](docs/deploy-intranet.md)（範本在 `deploy/`）。
 
-## 頁面流程（故事 → ① 構圖 → ② 補線）
+## 一鍵做一本書（Phase 13，主要流程）
+
+**做一本新的著色書 → 開始做這本書 → 整本書 → 處理一頁**。不需要懂「構圖」「補線」：
+
+1. **做一本新的著色書**（A，`/books/new`；已有的書是「主角與故事」`/books/{id}/setup`）：選紙張與列印方式，設定主角
+   （用 AI 產生一張，或上傳自己的角色圖），貼上整本故事或選主題包，每頁有場景與角色動作；背景可以改成「上傳圖片」。
+2. **開始做這本書**：按一次，後端依頁面順序排好整本書缺的背景與角色動作（每頁背景在前、動作在後；估計時間、今天剩餘次數會先列出，
+   今天的次數不夠時只排放得下的部分，剩下的頁面列為「延後」，不算錯誤；剩 0 次回 429「今天的生成次數已用完，明天再來」）。
+   連按兩次不會重複排隊。
+3. **整本書**（B，`/books/{id}`）：每頁一張卡片，顯示做到哪裡（可以印 ✓／製作中／請看一下／還沒做完），可以篩選；
+   延後的頁面在次數恢復後按 **繼續做** 接著排（也會補上「兩張圖都有、還沒合成」的頁面）；
+   全部做好時顯示「整本做好了」，並可「印出這本書先看一眼」與匯出 PDF（預設只含可以印的頁面；「請看一下」的頁列出來，勾選「這些頁也一起印」才印）。
+4. **處理一頁**（C，`/books/{id}/page/{pageId}`）：預覽加一列修改（換一張背景或動作、改場景與動作文字、移動角色、手畫線、改圖下方的字）。
+   每個修改之前會存快照：**復原／重做**（最多保留 50 步；做了新修改就截掉重做），**還原**可以把背景或角色動作還原成「自動畫的那張」。
+   修改後頁面自動重新合成、補線，成功就自動標成 **可以印**（不用另外按「角色看起來對嗎」；使用者手畫的線在獨立的 user 層，自動補的線在 auto 層，互不覆蓋）。
+   失敗的頁面標「請看一下」並寫出原因；「再試一次」只重做這一頁，「這頁可以印了 ✓」由使用者自己確認。
+5. **進階編輯**：C 與 B 都有連結，開啟舊的編輯器（① 構圖、② 補線；下一節）。舊編輯器行為不變，也可以對同一本書照常使用。
+
+新增的 endpoints（皆需擁有者，別人的 id 一律 404）：
+
+| Method | Path | 說明 |
+|---|---|---|
+| GET | `/books/{id}/produce/plan` | 開始前的預估：缺的背景／動作張數、`estimate_s`、今天 `remaining`、放得下幾張 `fits` |
+| POST | `/books/{id}/produce` | 開始／繼續做（202）：回傳 `{queued, deferred_pages, pipeline_pages}`（`pipeline_pages`：兩張圖都有、排了頁面流程的頁，不計次數）；剩 0 次而且沒有頁面流程可排才 429，有的話照樣 202 |
+| GET | `/books/{id}/overview` | B 的資料：每頁 `state`（ready／attention／working／todo）、`gap_count`、`thumb_url`、`lineart_url`、`attention_detail`；整本的 `progress`、`estimate_s`、`deferred_count`、`run_started_at` |
+| POST | `/pages/{id}/undo`、`/redo` | 復原／重做（回 PageOut，含 `can_undo`／`can_redo`） |
+| POST | `/pages/{id}/restore` | 還原成自動畫的那張：`item` 是 `background`、`pose` 或 `lines`（清掉手畫的線） |
+| POST | `/pages/{id}/accept` | 「這頁可以印了 ✓」：清掉「請看一下」、標成可以印；還在重新合成時 409 |
+| POST | `/pages/{id}/retry` | 「再試一次」，只處理這一頁：最新一張背景／角色動作失敗就重排那一種（算 1 次，用完 429），否則重跑這頁的頁面流程（不計次數）；同時按兩次只排一次 |
+| POST | `/books/{id}/character/upload` | 上傳自己的角色圖當主角 |
+
+下列既有端點加上 `?oneclick=true` 就是 C 用的版本（改動前先存快照、結果進頁面流程）；不帶的就是進階編輯：
+`POST /pages/{id}/backgrounds`、`/poses`（換一張）、`POST /pages/{id}/background`、`/pose`（選用）、`POST /pages/{id}/backgrounds/upload`、
+`PUT /pages/{id}/placement`、`PUT /pages/{id}/lineart/edits`、`POST /pages/{id}/lineart/autofix`、`PATCH /pages/{id}`（改動作文字、圖下方的字）。
+合成（`POST /pages/{id}/compose`）沒有這個參數：C 不直接呼叫，由頁面流程合成。
+頁面流程的工作存在 `page_task` 表，由同一個 worker 在排隊的生成之後執行；重啟時執行中的工作重新排隊。
+
+`scripts/storage_gc.py` 不會刪掉：頁面的 `auto_background_generation_id`／`auto_pose_generation_id`、復原快照（`page_history`）裡用到的生成紀錄，
+以及有排隊中／執行中頁面任務的頁面的生成紀錄（捨棄再久也一樣）。
+
+## 進階編輯（舊編輯器：① 構圖 → ② 補線）
 
 設定好角色之後：
 
-1. **故事**：每一頁寫場景描述（中文或英文）與角色動作（只寫動作，地點寫在場景；也可以點常用動作），背景可改選「上傳圖片」。
-   按「產生全部素材（還有 K 張）」一次排好整本書缺的背景與角色動作（見下方「一次做很多頁時」）；完成的素材會自動選用到空的欄位。
+1. **故事**：舊的故事頁在 Phase 13 移除（`/books/{id}/story` 轉到「主角與故事」A）。每一頁的場景描述（中文或英文）與角色動作
+   （只寫動作，地點寫在場景）都在 A 寫，背景可改選「上傳圖片」。按 B 的「開始做這本書」／「繼續做」排好整本書缺的背景與角色動作；
+   完成的素材會自動選用（最新一張；自己點選或上傳的不會被換掉），背景與角色動作都有了之後，後端的頁面流程自動合成、補線並標成可以印
+   （`backend/app/services/pipeline.py`）。
 2. **① 構圖**（頁面編輯器）：背景與角色動作各一張卡片，縮圖單選；不滿意就按卡片上的「換一張」，每次產生一張。
    - **背景**（約 20 秒，不用角色參考圖，提示詞要求無人物）：`qwen_background`，Qwen-Image-Edit-2511 GGUF＋Lightning 4 步，不給參考圖；
      每張隨機挑一種構圖變化，且不會和本頁上一張背景相同（再產生時構圖一定換一種）。
@@ -342,7 +378,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
      `selected_generation_id`。這頁補過線時，擺位置後第一次自動合成前會先問「清掉補過的線？」；改選縮圖或上傳背景則直接換、不另外詢問。
 3. **② 補線**：xdog 擷取線稿 → 後處理 → 「自動補線」或手動補線 → 「角色看起來對嗎？」按「對」→ 「完成這一頁 ✓」→ 匯出 PDF。
 
-**一次做很多頁時**：到「故事」頁寫好每一頁的場景與角色動作（或選「上傳圖片」當背景），按一次「產生全部素材」，整本書缺的背景與角色動作依頁面順序排好；已有素材、沒有描述、產生中的會略過並在提示中列出。連按兩次、或兩個分頁同時按，也不會重複排隊（後端以鎖序列化）。
+**一次做很多頁時**：到「主角與故事」（A）寫好每一頁的場景與角色動作（或選「上傳圖片」當背景），按一次「開始做這本書」，整本書缺的背景與角色動作依頁面順序排好；已有素材、沒有描述、產生中的會略過。連按兩次、或兩個分頁同時按，也不會重複排隊（後端以鎖序列化）。
+舊的 `POST /books/{id}/materials/batch`（「產生全部素材」）仍保留給 API 與 `e2e/batch.spec.ts`，網頁已經不再呼叫。
 
 背景與角色動作的歷史紀錄每頁各自保存。改選另一張背景或角色動作時，若本頁目前用的是合成圖，會清除選定並退回草稿；
 同一組背景、角色、位置再合成時會重用原本的合成圖（補過的線一起回來）。
@@ -393,8 +430,8 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | POST | `/pages/{page_id}/character-check` | 標記角色是否一致（需帶 `generation_id`，選定圖片已更換則 409） |
 | POST | `/pages/{page_id}/pass` | 完成頁面（body 可以是 `{}`；QA 有缺口時後端自動記錄原因「使用者確認完成（N 個缺口）」，也可自帶 `force_reason`） |
 | POST | `/pages/{page_id}/unpass` | 取消完成 |
-| GET | `/books/{book_id}/export/summary` | 匯出摘要（可匯出頁、略過原因） |
-| GET | `/books/{book_id}/export.pdf` | 匯出書本 PDF（`include=passed|all`） |
+| GET | `/books/{book_id}/export/summary` | 匯出摘要（`exportable_ids` 通過的頁、`ready_ids` 通過而且沒有「請看一下」的頁、略過原因） |
+| GET | `/books/{book_id}/export.pdf` | 匯出書本 PDF（`include=passed`（預設，進階編輯）、`ready`（B：去掉「請看一下」的頁）或 `all`（有選定圖的頁）） |
 | GET | `/pages/{page_id}/print.png` | 單頁完整版面 1-bit PNG（300 DPI） |
 | GET | `/system/queue` | 佇列狀態（worker 狀態、排隊數、執行中任務）；`pending` 列出排隊中／執行中的角色、背景、角色動作（舊→新），`recent` 是各類型最近 10 筆成功的 Qwen 生成耗時（新→舊，不含上傳），供估算剩餘時間 |
 | GET | `/system/preflight` | ComfyUI 連線、模型與節點檢查（並更新快取） |

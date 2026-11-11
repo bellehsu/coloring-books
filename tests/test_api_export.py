@@ -138,3 +138,23 @@ def test_summary_counts_after_rerender(client, app, monkeypatch):
     set_page(app, ps[0]["id"], lineart_key=None)
     d = client.get(f"/api/books/{b['id']}/export/summary").json()
     assert d["passed"] == 0 and d["skipped"][0]["reason"] == "not_passed"
+
+
+def test_include_ready_leaves_out_attention_pages_and_summary_lists_them(client, app):
+    """B 的「印出這本書」預設只印可以印的頁（spec §4.3：請看一下的頁列出來、勾了才一起印）。
+    換一張失敗的頁還是 PASSED 但標了請看一下：include=ready 不印它，ready_ids 也不算它。"""
+    b, ps = book_pages(client, app)
+    for p in ps:
+        make_passed(app, p["id"])
+    set_page(app, ps[1]["id"], attention="failed", attention_detail="圖片產生失敗")
+    d = client.get(f"/api/books/{b['id']}/export/summary").json()
+    assert d["exportable_ids"] == [p["id"] for p in ps]  # passed（進階編輯）照舊
+    assert d["ready_ids"] == [ps[0]["id"], ps[2]["id"]]
+    r = client.get(f"/api/books/{b['id']}/export.pdf?include=ready")
+    assert r.status_code == 200 and npages(r.content) == 2
+    assert npages(client.get(f"/api/books/{b['id']}/export.pdf").content) == 3
+    assert npages(client.get(f"/api/books/{b['id']}/export.pdf?include=all").content) == 3
+    # 全部都請看一下：沒有可以印的頁 409
+    for p in ps:
+        set_page(app, p["id"], attention="failed")
+    assert client.get(f"/api/books/{b['id']}/export.pdf?include=ready").status_code == 409

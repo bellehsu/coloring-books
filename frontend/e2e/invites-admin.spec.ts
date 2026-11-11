@@ -25,7 +25,7 @@ test("管理者產生邀請連結、複製、新的瀏覽器用它登入；連�
     try {
       const anonPage = await anon.newPage();
       await anonPage.goto("/");
-      await expect(anonPage.getByRole("button", { name: "建立新繪本" }).first()).toBeVisible();
+      await expect(anonPage.getByRole("link", { name: "建立新繪本" }).first()).toBeVisible();
       await expect(anonPage.getByRole("link", { name: "邀請管理" })).toHaveCount(0);
       expect((await anon.request.get("/api/admin/invites")).status()).toBe(404);
     } finally {

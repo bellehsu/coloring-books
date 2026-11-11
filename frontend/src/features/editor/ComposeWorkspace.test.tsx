@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Generation, Page } from "@/api/client";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ComposeWorkspace } from "./ComposeWorkspace";
+import { alertToasts } from "@/components/ui/toastTesting";
 
 type O = Record<string, unknown>;
 const mkPage = (o: O = {}): Page =>
@@ -217,7 +218,7 @@ describe("ComposeWorkspace", () => {
     failWith["POST /api/pages/1/backgrounds/upload"] = 400;
     setup();
     await userEvent.upload(within(card("背景")).getByLabelText("上傳背景圖"), new File(["x"], "a.png", { type: "image/png" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("伺服器壞了");
+    await waitFor(() => expect(alertToasts()).toHaveTextContent("伺服器壞了"));
   });
 
   it("背景「換一張」送出空 body（不帶風格）；改過的場景先存（PATCH）再產生", async () => {
@@ -252,7 +253,7 @@ describe("ComposeWorkspace", () => {
     const bg = card("背景");
     await userEvent.type(within(bg).getByLabelText("場景描述"), "！");
     await userEvent.click(within(bg).getByRole("button", { name: "換一張背景" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("伺服器壞了");
+    await waitFor(() => expect(alertToasts()).toHaveTextContent("伺服器壞了"));
     expect(calledWith("POST", "/api/pages/1/backgrounds")).toHaveLength(0);
   });
 
@@ -403,7 +404,7 @@ describe("ComposeWorkspace", () => {
     hasCharacter = false;
     setup();
     const pose = card("角色動作");
-    expect(await within(pose).findByRole("link", { name: "先設定角色" })).toHaveAttribute("href", "/books/1/character");
+    expect(await within(pose).findByRole("link", { name: "先設定角色" })).toHaveAttribute("href", "/books/1/setup");
     expect(within(pose).getByRole("button", { name: "換一張角色動作" })).toBeDisabled();
   });
 

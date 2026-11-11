@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/hooks";
 import { ToastProvider } from "@/components/ui/Toast";
 import { EditorPage } from "./EditorPage";
+import { alertToasts } from "@/components/ui/toastTesting";
 
 // ---------- next/navigation ----------
 const replace = vi.fn();
@@ -308,7 +309,7 @@ beforeEach(() => {
       }
       m = url.match(/^\/api\/pages\/(\d+)\/lineart\/autofix$/);
       if (m) {
-        edits = [...edits, { op: "draw", width_px: 11, points: [[0.1, 0.1], [0.2, 0.2]] }];
+        // 補線寫進伺服器的 auto 圖層：edits（user 圖層）不變，只有線稿網址換新
         return j({ ...mkQA({ gap_count: 0, gaps: [], lineart_url: "/api/pages/1/lineart?v=c" }), autofix_added: 1 });
       }
       m = url.match(/^\/api\/generations\/(\d+)$/);
@@ -514,7 +515,7 @@ describe("EditorPage", () => {
     expect(bgCard()).toBeInTheDocument();
   });
 
-  it("修線：每筆依序 PUT（帶 generation_id），回應更新 QA；面板的自動補線顯示「已補 N 條線」並併入畫布筆畫", async () => {
+  it("修線：每筆依序 PUT（帶 generation_id），回應更新 QA；面板的自動補線顯示「已補 N 條線」，補線不併入使用者筆畫", async () => {
     search = "page=1&mode=line";
     pages[0] = mkPage(1, { selected_generation_id: 5 });
     gens = [mkGen(5)];
@@ -529,13 +530,14 @@ describe("EditorPage", () => {
     expect(await screen.findByText("已補 1 條線")).toBeInTheDocument();
     expect(calledWith("POST", "/api/pages/1/lineart/autofix")).toHaveLength(1);
     expect(calledWith("POST", "/api/pages/1/lineart/autofix")[0].body).toEqual({ generation_id: 5 });
-    await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "2"));
-    expect(screen.getByTestId("linefix")).toHaveAttribute("data-gaps", "0");
+    await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-gaps", "0"));
+    expect(screen.getByTestId("linefix")).toHaveAttribute("data-url", "/api/pages/1/lineart?v=c");
+    expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1");
     expect(within(screen.getByTestId("finish-panel")).getByText("✓ 線條都接好了")).toBeInTheDocument();
-    // 補上的線已在畫布上：下一筆送出的是 2＋1 筆，不會蓋掉補上的線
+    // 補上的線在伺服器的 auto 圖層（線稿圖已含）：下一筆送出的只有使用者的 2 筆，PUT 只覆蓋 user 圖層
     await userEvent.click(within(screen.getByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
     await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(2));
-    expect((calledWith("PUT", "/api/pages/1/lineart/edits")[1].body as { strokes: unknown[] }).strokes).toHaveLength(3);
+    expect((calledWith("PUT", "/api/pages/1/lineart/edits")[1].body as { strokes: unknown[] }).strokes).toHaveLength(2);
   });
 
   it("修線寫入中切走再回來：沿用同一個佇列，不從伺服器舊資料重設筆畫", async () => {
@@ -914,7 +916,7 @@ describe("EditorPage", () => {
 
     genStatus = 409;
     await userEvent.click(within(bgCard()).getByRole("button", { name: "換一張背景" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("請先設定角色");
+    await waitFor(() => expect(alertToasts()).toHaveTextContent("請先設定角色"));
   });
 
   it("上傳背景圖：POST upload 後變成本頁背景，縮圖有「上傳」標記", async () => {
@@ -1003,7 +1005,7 @@ describe("EditorPage", () => {
     await screen.findAllByRole("tab");
     expect(composeTab()).toHaveAttribute("aria-selected", "true");
     const links = screen.getAllByRole("link", { name: /角色工作室|先設定角色/ });
-    expect(links[0]).toHaveAttribute("href", "/books/1/character");
+    expect(links[0]).toHaveAttribute("href", "/books/1/setup");
     expect(within(poseCard()).getByRole("button", { name: "換一張角色動作" })).toBeDisabled();
     expect(within(bgCard()).getByRole("button", { name: "換一張背景" })).not.toBeDisabled();
   });
@@ -1211,7 +1213,7 @@ describe("EditorPage", () => {
     expect(screen.queryByText("載入修線圖層中…")).not.toBeInTheDocument();
     await act(async () => release());
     expect(await screen.findByText("已補 1 條線")).toBeInTheDocument();
-    expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1");
+    expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "0"); // 補線在 auto 圖層，不在使用者筆畫
   });
 
   it("修線中改線寬：edits 背景重抓（pending）時畫布不卸載", async () => {

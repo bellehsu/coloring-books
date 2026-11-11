@@ -74,6 +74,15 @@ describe("api", () => {
     expect(init.headers?.["Content-Type"]).toBeUndefined();
   });
 
+  it("upload sends extra form fields next to the file", async () => {
+    const f = vi.fn().mockResolvedValue(jsonRes(201, { id: 1 }));
+    vi.stubGlobal("fetch", f);
+    await api.upload("/books/1/character/upload", new File(["x"], "me.png"), { confirm_change: "true" });
+    const form = f.mock.calls[0][1].body as FormData;
+    expect(form.get("confirm_change")).toBe("true");
+    expect((form.get("file") as File).name).toBe("me.png");
+  });
+
   it("upload errors become ApiError with the backend message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(422, { detail: "圖片像素太多（最多 6400 萬像素）" })));
     const err = await api.upload("/pages/1/backgrounds/upload", new Blob(["x"])).catch((e: unknown) => e);

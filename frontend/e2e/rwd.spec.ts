@@ -8,7 +8,7 @@ const PLACEMENT = { cx: 0.45, cy: 0.66, height: 0.6, flip: false };
 let bookId = 0;
 /** 已合成（有選定的合成圖）：補線能用。 */
 let doneId = 0;
-/** 背景＋角色動作已選、位置存好，還沒合成（開頁時會自動合成）。 */
+/** 背景＋角色動作已選；頁面流程合成後才改了位置，所以選定圖不是目前位置的合成圖（開頁時會自動合成）。 */
 let draftId = 0;
 
 test.beforeAll(async ({ playwright }, testInfo) => {
@@ -51,32 +51,28 @@ for (const vp of VIEWPORTS) {
       await expectNoHorizontalScroll(page);
     });
 
-    test("角色", async ({ page }) => {
+    test("主角與故事（舊的 /character、/story 轉到這裡）", async ({ page }) => {
       await page.goto(`/books/${bookId}/character`);
-      await expect(page.getByRole("img", { name: "已設定的角色" })).toBeVisible();
-      await expect(page.getByRole("link", { name: "用這個角色，開始寫故事 →" })).toBeVisible();
-      await expectNoHorizontalScroll(page);
-    });
-
-    test("故事", async ({ page }) => {
-      await page.goto(`/books/${bookId}/story`);
-      const row = page.getByRole("article", { name: "第 2 頁" });
-      const scene = (await row.getByRole("textbox", { name: "第 2 頁場景" }).boundingBox())!;
-      const action = (await row.getByRole("textbox", { name: "第 2 頁角色動作" }).boundingBox())!;
-      const thumb = (await row.getByRole("img", { name: "第 2 頁背景" }).boundingBox())!;
+      await expect(page).toHaveURL(new RegExp(`/books/${bookId}/setup$`));
+      await expect(page.getByRole("heading", { level: 1, name: "主角與故事" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "就是牠 ✓" })).toBeVisible();
+      const row = page.getByRole("listitem", { name: "第 2 頁" });
+      await expect(row).toContainText("一段很長很長的場景描述");
+      const text = (await row.getByText(/一段很長很長/).boundingBox())!;
+      const toggle = (await row.getByRole("group", { name: "第 2 頁的背景" }).boundingBox())!;
       if (phone) {
-        // 手機：場景、動作、縮圖上下堆疊
-        expect(action.y).toBeGreaterThanOrEqual(scene.y + scene.height);
-        expect(thumb.y).toBeGreaterThanOrEqual(action.y + action.height);
+        // 手機：文字在上，背景切換在下面
+        expect(toggle.y).toBeGreaterThanOrEqual(text.y + text.height - 1);
       } else {
-        // 桌機：同一列左右排
-        expect(action.x).toBeGreaterThan(scene.x + scene.width);
-        expect(thumb.x).toBeGreaterThan(action.x + action.width);
+        // 桌機：同一列，切換在右邊
+        expect(toggle.x).toBeGreaterThan(text.x + text.width - 1);
       }
       await expectNoHorizontalScroll(page);
 
-      await page.getByRole("button", { name: "貼上整本故事" }).click();
-      await expect(page.getByRole("dialog", { name: "貼上整本故事" })).toBeVisible();
+      await page.goto(`/books/${bookId}/story`);
+      await expect(page).toHaveURL(new RegExp(`/books/${bookId}/setup$`));
+      await page.getByRole("button", { name: "套用主題包" }).click();
+      await expect(page.getByRole("dialog", { name: "套用主題包" })).toBeVisible();
       await expectNoHorizontalScroll(page);
     });
 

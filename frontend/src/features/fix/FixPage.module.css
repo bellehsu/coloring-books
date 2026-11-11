@@ -1,0 +1,478 @@
+/* C 處理一頁（spec §4.4、mockups/3_fix.png）。≤ 900 px：單欄，預覽在上、修改列在下。 */
+.main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.loadMsg {
+  margin: 48px 0;
+  text-align: center;
+  color: var(--muted-2);
+}
+
+/* ---------- 頁首 ---------- */
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+.back,
+.pagerLink,
+.advanced {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.back:hover,
+.pagerLink:hover,
+.advanced:hover {
+  background: var(--accent-softer);
+}
+.pagerOff,
+.pagerOff:hover {
+  opacity: 0.45;
+  background: var(--surface);
+  cursor: default;
+}
+.h1 {
+  margin: 0;
+  min-width: 0;
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.pill {
+  padding: 3px 12px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.pill_ready {
+  background: var(--ok-soft);
+}
+.pill_attention {
+  background: var(--warn-soft);
+}
+.pill_working {
+  background: var(--sky);
+}
+.pill_todo {
+  background: var(--chip-bg);
+}
+.headActions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.headBtn {
+  box-shadow: var(--shadow-hard-sm);
+}
+.headBtn:disabled {
+  box-shadow: none;
+}
+.pager {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- 版面 ---------- */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  gap: 24px;
+  align-items: start;
+}
+.previewCard,
+.items,
+.reason {
+  background: var(--surface);
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-hard);
+}
+.previewCard {
+  min-width: 0;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.previewBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.gapToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.gapToggle input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--warn-strong);
+}
+.stage {
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-softer);
+}
+.printImg {
+  display: block;
+  max-width: 100%;
+  max-height: min(72vh, 760px);
+  height: auto;
+  background: var(--surface);
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-paper);
+}
+.paper {
+  --ar: 0.7; /* 線稿寬／高：元件以 style 設定實際比例 */
+  position: relative;
+  width: 100%;
+  max-width: calc(min(72vh, 760px) * var(--ar));
+  aspect-ratio: var(--ar);
+  background: var(--surface);
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-paper);
+  overflow: hidden;
+}
+.paperImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.gap {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border: 4px dotted var(--warn-strong);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.colorWrap {
+  width: 100%;
+  max-width: 560px;
+}
+.empty {
+  margin: 48px 12px;
+  text-align: center;
+  color: var(--muted-2);
+}
+.working {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted-2);
+}
+/* 沒在做的時候是空的：不佔版面，但留在無障礙樹裡（live region 要一直在） */
+.working:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.drawWrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.drawBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.drawHint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-2);
+}
+/* 修線畫布的工具與縮放按鈕：觸控至少 44 px */
+.drawWrap button {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* ---------- 右欄 ---------- */
+.side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.reason {
+  padding: 18px 20px;
+  background: var(--warn-soft);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.reasonKicker {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 900;
+}
+.reasonText {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.reasonHint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--warn-ink);
+}
+.items {
+  margin: 0;
+  padding: 4px 18px;
+  list-style: none;
+}
+.row {
+  padding: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.row + .row {
+  border-top: 2px dashed var(--line);
+}
+.rowHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+}
+.dot {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 50%;
+}
+.dot_pink {
+  background: var(--tint-pink);
+}
+.dot_sky {
+  background: var(--sky);
+}
+.dot_yellow {
+  background: var(--tint-yellow);
+}
+.dot_green {
+  background: var(--ok-soft);
+}
+.rowText {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.rowTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 900;
+}
+.rowSub {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--muted-2);
+  overflow-wrap: anywhere;
+}
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.rowNote {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-2);
+}
+.rowWarn {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--warn-ink);
+}
+.restore {
+  align-self: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--focus);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.restore:hover {
+  background: var(--sky);
+}
+.upload {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  background: var(--sky);
+  color: var(--ink);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.upload:focus-within {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.upload[data-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--accent-softer);
+}
+/* 表情／面向等晶片：觸控至少 44 px */
+.panel button {
+  min-height: 44px;
+}
+.panelLabel {
+  font-size: 14px;
+  font-weight: 700;
+}
+.textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--ink);
+  resize: vertical;
+}
+.note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-2);
+}
+.accept {
+  width: 100%;
+  min-height: 60px;
+  background: var(--ok-strong);
+  color: var(--ink);
+  font-size: 18px;
+  box-shadow: var(--shadow-hard);
+}
+.accept:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.advanced {
+  align-self: center;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .main {
+    padding: 16px 16px 40px;
+    gap: 16px;
+  }
+  .headActions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .pager {
+    margin-left: auto;
+  }
+  /* 手機：上一頁／下一頁只留箭頭（文字留給螢幕閱讀器），和復原／重做排在同一列 */
+  .pagerLink {
+    min-width: 44px;
+    padding: 0 12px;
+    font-size: 18px;
+  }
+  .pagerText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  .previewCard {
+    padding: 12px;
+  }
+  .stage {
+    padding: 10px;
+  }
+  .items {
+    padding: 4px 14px;
+  }
+  .rowActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

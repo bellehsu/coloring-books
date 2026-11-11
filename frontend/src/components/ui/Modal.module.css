@@ -23,7 +23,8 @@
 }
 .dialogPanel {
   width: min(640px, 100%);
-  border-radius: 16px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow-pop);
   padding: clamp(18px, 3vw, 28px);
   gap: 22px;
@@ -31,6 +32,7 @@
 .drawerPanel {
   width: min(440px, 100%);
   height: 100%;
+  border-left: var(--border-w) solid var(--ink);
   box-shadow: var(--shadow-drawer);
   padding: 22px;
   gap: 18px;
@@ -44,14 +46,15 @@
 .title {
   margin: 0;
   font-size: 20px;
+  font-weight: 900;
 }
 .close {
   margin-left: auto;
   width: 44px;
   height: 44px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--bg);
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
   color: var(--ink);
   display: grid;
   place-items: center;

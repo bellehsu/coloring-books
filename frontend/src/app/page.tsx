@@ -1,20 +1,17 @@
 "use client";
 
-import { useState } from "react";
 import { AppBar } from "@/components/shell/AppBar";
-import { Button } from "@/components/ui/Button";
+import buttonStyles from "@/components/ui/Button.module.css";
 import { Icons } from "@/components/ui/Icons";
 import { ApiError } from "@/api/client";
 import Link from "next/link";
 import { useBooks, useMe, useSharedBooks } from "@/api/hooks";
 import { BookCard } from "@/features/books/BookCard";
-import { CreateBookDialog } from "@/features/books/CreateBookDialog";
 import { SharedBookCard } from "@/features/shared/SharedBookCard";
 import styles from "./page.module.css";
 
 export default function Home() {
   const books = useBooks();
-  const [creating, setCreating] = useState(false);
   const shared = useSharedBooks();
   const me = useMe();
   const list = books.data;
@@ -34,9 +31,11 @@ export default function Home() {
               邀請管理
             </Link>
           )}
-          <Button variant="primary" icon={<Icons.plus size={18} />} onClick={() => setCreating(true)} className={styles.create}>
+          {/* A 做一本新的著色書（spec §4.5） */}
+          <Link href="/books/new" className={`${buttonStyles.btn} ${buttonStyles.primary} ${buttonStyles.md} ${styles.create}`}>
+            <Icons.plus size={18} />
             建立新繪本
-          </Button>
+          </Link>
         </div>
 
         {books.isPending && (
@@ -61,12 +60,12 @@ export default function Home() {
             {list.map((b) => (
               <BookCard key={b.id} book={b} />
             ))}
-            <button type="button" className={styles.newCard} onClick={() => setCreating(true)}>
+            <Link href="/books/new" className={styles.newCard}>
               <span className={styles.plus}>
                 <Icons.plus size={22} />
               </span>
               建立新繪本
-            </button>
+            </Link>
           </div>
         )}
 
@@ -95,7 +94,6 @@ export default function Home() {
           )}
         </section>
       </main>
-      {creating && <CreateBookDialog open onClose={() => setCreating(false)} />}
     </>
   );
 }

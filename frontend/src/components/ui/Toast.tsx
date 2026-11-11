@@ -43,12 +43,23 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={api}>
       {children}
+      {/* 常駐的 live region（一開始就在、空的）：訊息是加進去的，螢幕閱讀器才會唸。
+          一個一個插入已經填好字的 role=status／alert 節點，很多螢幕閱讀器不會唸。 */}
       <div className={styles.stack}>
-        {items.map((t) => (
-          <div key={t.id} role={t.tone === "error" ? "alert" : "status"} className={`${styles.toast} ${styles[t.tone]}`}>
-            {t.message}
-          </div>
-        ))}
+        <div aria-live="polite" aria-relevant="additions text" data-testid="toast-polite" className={styles.region}>
+          {items.filter((t) => t.tone !== "error").map((t) => (
+            <div key={t.id} className={`${styles.toast} ${styles[t.tone]}`}>
+              {t.message}
+            </div>
+          ))}
+        </div>
+        <div aria-live="assertive" aria-relevant="additions text" data-testid="toast-assertive" className={styles.region}>
+          {items.filter((t) => t.tone === "error").map((t) => (
+            <div key={t.id} className={`${styles.toast} ${styles[t.tone]}`}>
+              {t.message}
+            </div>
+          ))}
+        </div>
       </div>
     </Ctx.Provider>
   );

@@ -116,6 +116,7 @@
           "books"
         ],
         "summary": "Update Book",
+        "description": "改尺寸／列印方式：頁面流程做的可以印的頁排流程重跑（跑完仍可以印，不悄悄退回「還沒做完」），\n其他有選圖的頁在背景重算線稿（舊編輯器的規則：可以印的頁有缺口就退回草稿）。",
         "operationId": "update_book_api_books__book_id__patch",
         "parameters": [
           {
@@ -278,6 +279,7 @@
           "books"
         ],
         "summary": "Set Character",
+        "description": "選角色。已設定角色時要 confirm_change=true（換角色：既有的角色動作留著），否則 409。",
         "operationId": "set_character_api_books__book_id__character_post",
         "parameters": [
           {
@@ -302,6 +304,59 @@
         },
         "responses": {
           "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/character/upload": {
+      "post": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Upload Character",
+        "description": "「↑ 上傳自己的主角」：驗證同上傳背景，等比例縮放到角色尺寸、置中貼在白底（不去背），\n存成 engine=\"upload\"、request_json.uploaded=true 的 CHARACTER 並設為角色。\n已設定角色時要 confirm_change=true（表單欄位），否則 409。不計當日生成次數。",
+        "operationId": "upload_character_api_books__book_id__character_upload_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_character_api_books__book_id__character_upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -482,6 +537,7 @@
           "pages"
         ],
         "summary": "Update Page",
+        "description": "oneclick（C 的改動作文字、改字）：動作文字或圖下方的字變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。",
         "operationId": "update_page_api_pages__page_id__patch",
         "parameters": [
           {
@@ -492,6 +548,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
           }
         ],
         "requestBody": {
@@ -567,7 +635,7 @@
           "compose"
         ],
         "summary": "Create Background",
-        "description": "產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。",
+        "description": "產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。\noneclick（C 的「AI 再畫一張」）：好了一定換上去（上傳的背景也換回 AI 畫的）。",
         "operationId": "create_background_api_pages__page_id__backgrounds_post",
         "parameters": [
           {
@@ -578,6 +646,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
           }
         ],
         "requestBody": {
@@ -687,7 +767,7 @@
           "compose"
         ],
         "summary": "Create Pose",
-        "description": "產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出\n新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。",
+        "description": "產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出\n新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。\noneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。",
         "operationId": "create_pose_api_pages__page_id__poses_post",
         "parameters": [
           {
@@ -698,6 +778,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
           }
         ],
         "requestBody": {
@@ -750,6 +842,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
           }
         ],
         "requestBody": {
@@ -803,6 +907,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
           }
         ],
         "requestBody": {
@@ -855,6 +971,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
           }
         ],
         "requestBody": {
@@ -897,7 +1025,7 @@
           "compose"
         ],
         "summary": "Save Placement",
-        "description": "位置草稿（拖拉時自動存）；不產生合成圖、不改頁面狀態。",
+        "description": "位置草稿（拖拉時自動存）；不產生合成圖、不改頁面狀態。\noneclick（C：放開拖拉時存一次）：位置變了就先存快照、筆畫清掉，排頁面流程重新合成。",
         "operationId": "save_placement_api_pages__page_id__placement_put",
         "parameters": [
           {
@@ -908,6 +1036,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
           }
         ],
         "requestBody": {
@@ -1523,6 +1663,7 @@
           "lineart"
         ],
         "summary": "Put Edits",
+        "description": "使用者的筆畫（user 層）。oneclick（C 的畫筆／擦除）：先存復原快照；流程做的頁不退回草稿，\n排頁面流程重算補線（跑完仍可以印）。等著重新合成時不能畫（409）。",
         "operationId": "put_edits_api_pages__page_id__lineart_edits_put",
         "parameters": [
           {
@@ -1533,6 +1674,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
           }
         ],
         "requestBody": {
@@ -1575,7 +1728,7 @@
           "lineart"
         ],
         "summary": "Autofix",
-        "description": "對目前 QA 的每個缺口補一筆 draw（加在修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。",
+        "description": "對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪\n（services/autofix.plan_autofix）。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。\n使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），\n會被使用者橡皮擦擦到的補線不補。\noneclick（C 的「自動補線」）：流程做的頁不退回草稿（之後流程重算 auto 層時仍會補上）。",
         "operationId": "autofix_api_pages__page_id__lineart_autofix_post",
         "parameters": [
           {
@@ -1586,6 +1739,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：流程做的頁補了線也不退回草稿",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：流程做的頁補了線也不退回草稿"
           }
         ],
         "requestBody": {
@@ -1898,6 +2063,7 @@
             "schema": {
               "enum": [
                 "passed",
+                "ready",
                 "all"
               ],
               "type": "string",
@@ -1952,6 +2118,358 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/produce/plan": {
+      "get": {
+        "tags": [
+          "produce"
+        ],
+        "summary": "Produce Plan",
+        "operationId": "produce_plan_api_books__book_id__produce_plan_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProducePlanOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/produce": {
+      "post": {
+        "tags": [
+          "produce"
+        ],
+        "summary": "Produce",
+        "operationId": "produce_api_books__book_id__produce_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProduceOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/overview": {
+      "get": {
+        "tags": [
+          "produce"
+        ],
+        "summary": "Book Overview",
+        "description": "只讀資料庫：不算線稿、不碰存放的物件。",
+        "operationId": "book_overview_api_books__book_id__overview_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOverviewOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/undo": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Undo",
+        "description": "回到上一個快照；沒有可復原的 409「沒有可以復原的步驟」。",
+        "operationId": "undo_api_pages__page_id__undo_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/redo": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Redo",
+        "description": "回到復原前的下一個快照；沒有可重做的（或復原之後又改過）409「沒有可以重做的步驟」。",
+        "operationId": "redo_api_pages__page_id__redo_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/restore": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Restore",
+        "description": "背景／角色動作換回自動畫的那張（auto_* 不能用了就用最新一張能用的 AI 圖；都沒有 409），\n線條清掉使用者筆畫。有改動才存快照；已經是自動的那張就什麼都不做。",
+        "operationId": "restore_api_pages__page_id__restore_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/accept": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Accept",
+        "description": "C 的「這頁可以印了 ✓」：有選定圖（合成圖；舊流程的整頁圖也算）就清掉 attention、標成可以印。\n沒有選定圖 409。不需要角色檢查（新流程的頁面自動可以印，spec §4.1）。",
+        "operationId": "accept_api_pages__page_id__accept_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/retry": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Retry",
+        "description": "C 的「再試一次」，只處理這一頁（見模組說明）。重排失敗的圖：額度不夠 429、什麼都不排；\n沒有失敗的圖、也沒有背景＋角色動作 409。\n與「繼續做」共用 _BATCH_LOCK：兩個分頁同時按，第二個在鎖裡重看時那一種已經在排隊、不再算失敗，\n不會重複排、重複算額度。",
+        "operationId": "retry_api_pages__page_id__retry_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryOut"
+                }
               }
             }
           },
@@ -2530,6 +3048,25 @@
         ],
         "title": "Body_upload_background_api_pages__page_id__backgrounds_upload_post"
       },
+      "Body_upload_character_api_books__book_id__character_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "confirm_change": {
+            "type": "boolean",
+            "title": "Confirm Change",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_character_api_books__book_id__character_upload_post"
+      },
       "BookCreate": {
         "properties": {
           "title": {
@@ -2647,6 +3184,54 @@
         ],
         "title": "BookOut"
       },
+      "BookOverviewOut": {
+        "properties": {
+          "book_id": {
+            "type": "integer",
+            "title": "Book Id"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/OverviewPageOut"
+            },
+            "type": "array",
+            "title": "Pages"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/RunProgress"
+          },
+          "estimate_s": {
+            "type": "integer",
+            "title": "Estimate S"
+          },
+          "deferred_count": {
+            "type": "integer",
+            "title": "Deferred Count"
+          },
+          "run_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Started At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "book_id",
+          "pages",
+          "progress",
+          "estimate_s",
+          "deferred_count",
+          "run_started_at"
+        ],
+        "title": "BookOverviewOut"
+      },
       "BookStats": {
         "properties": {
           "pages": {
@@ -2667,6 +3252,26 @@
           "no_selection": {
             "type": "integer",
             "title": "No Selection",
+            "default": 0
+          },
+          "ready": {
+            "type": "integer",
+            "title": "Ready",
+            "default": 0
+          },
+          "attention": {
+            "type": "integer",
+            "title": "Attention",
+            "default": 0
+          },
+          "working": {
+            "type": "integer",
+            "title": "Working",
+            "default": 0
+          },
+          "todo": {
+            "type": "integer",
+            "title": "Todo",
             "default": 0
           }
         },
@@ -2739,6 +3344,11 @@
               }
             ],
             "title": "Seed"
+          },
+          "confirm_change": {
+            "type": "boolean",
+            "title": "Confirm Change",
+            "default": false
           }
         },
         "type": "object",
@@ -2785,6 +3395,11 @@
             "maximum": 9.223372036854776e+18,
             "minimum": -9.223372036854776e+18,
             "title": "Generation Id"
+          },
+          "confirm_change": {
+            "type": "boolean",
+            "title": "Confirm Change",
+            "default": false
           }
         },
         "type": "object",
@@ -3407,6 +4022,107 @@
         ],
         "title": "MeOut"
       },
+      "OverviewPageOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "attention",
+              "working",
+              "todo"
+            ],
+            "title": "State"
+          },
+          "gap_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap Count"
+          },
+          "caption_zh": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption Zh"
+          },
+          "caption_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption En"
+          },
+          "thumb_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumb Url"
+          },
+          "lineart_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineart Url"
+          },
+          "attention_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "position",
+          "state",
+          "gap_count",
+          "caption_zh",
+          "caption_en",
+          "thumb_url",
+          "lineart_url",
+          "attention_detail"
+        ],
+        "title": "OverviewPageOut"
+      },
       "PageCreate": {
         "properties": {
           "scene_prompt": {
@@ -3580,6 +4296,66 @@
             "type": "boolean",
             "title": "Compose Pending"
           },
+          "attention": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention"
+          },
+          "attention_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention Detail"
+          },
+          "auto_background_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Background Generation Id"
+          },
+          "auto_pose_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Pose Generation Id"
+          },
+          "has_user_strokes": {
+            "type": "boolean",
+            "title": "Has User Strokes"
+          },
+          "recompose_pending": {
+            "type": "boolean",
+            "title": "Recompose Pending"
+          },
+          "can_undo": {
+            "type": "boolean",
+            "title": "Can Undo"
+          },
+          "can_redo": {
+            "type": "boolean",
+            "title": "Can Redo"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -3612,6 +4388,14 @@
           "needs_fix",
           "aspect_mismatch",
           "compose_pending",
+          "attention",
+          "attention_detail",
+          "auto_background_generation_id",
+          "auto_pose_generation_id",
+          "has_user_strokes",
+          "recompose_pending",
+          "can_undo",
+          "can_redo",
           "created_at",
           "updated_at"
         ],
@@ -3827,6 +4611,83 @@
         ],
         "title": "PrintMode"
       },
+      "ProduceOut": {
+        "properties": {
+          "queued": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Queued"
+          },
+          "deferred_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Deferred Pages"
+          },
+          "pipeline_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Pipeline Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "deferred_pages",
+          "pipeline_pages"
+        ],
+        "title": "ProduceOut"
+      },
+      "ProducePlanOut": {
+        "properties": {
+          "backgrounds": {
+            "type": "integer",
+            "title": "Backgrounds"
+          },
+          "poses": {
+            "type": "integer",
+            "title": "Poses"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "estimate_s": {
+            "type": "integer",
+            "title": "Estimate S"
+          },
+          "remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining"
+          },
+          "fits": {
+            "type": "integer",
+            "title": "Fits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "backgrounds",
+          "poses",
+          "total",
+          "estimate_s",
+          "remaining",
+          "fits"
+        ],
+        "title": "ProducePlanOut"
+      },
       "QAMessage": {
         "properties": {
           "code": {
@@ -4024,6 +4885,308 @@
           "elapsed_s"
         ],
         "title": "RecentJob"
+      },
+      "RestoreIn": {
+        "properties": {
+          "item": {
+            "type": "string",
+            "enum": [
+              "background",
+              "pose",
+              "lines"
+            ],
+            "title": "Item"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item"
+        ],
+        "title": "RestoreIn",
+        "description": "C 的「還原成自動畫的那張」：背景、角色動作或線條（清掉使用者筆畫）。"
+      },
+      "RetryOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "book_id": {
+            "type": "integer",
+            "title": "Book Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "scene_prompt": {
+            "type": "string",
+            "title": "Scene Prompt"
+          },
+          "action_prompt": {
+            "type": "string",
+            "title": "Action Prompt"
+          },
+          "caption_zh": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption Zh"
+          },
+          "caption_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption En"
+          },
+          "selected_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Generation Id"
+          },
+          "background_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Generation Id"
+          },
+          "pose_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pose Generation Id"
+          },
+          "placement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PagePlacement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/PageStatus"
+          },
+          "line_detail": {
+            "$ref": "#/components/schemas/LineDetail"
+          },
+          "line_width_px": {
+            "type": "integer",
+            "title": "Line Width Px"
+          },
+          "character_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lineart_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineart Url"
+          },
+          "needs_fix": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Fix"
+          },
+          "aspect_mismatch": {
+            "type": "boolean",
+            "title": "Aspect Mismatch"
+          },
+          "compose_pending": {
+            "type": "boolean",
+            "title": "Compose Pending"
+          },
+          "attention": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention"
+          },
+          "attention_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention Detail"
+          },
+          "auto_background_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Background Generation Id"
+          },
+          "auto_pose_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Pose Generation Id"
+          },
+          "has_user_strokes": {
+            "type": "boolean",
+            "title": "Has User Strokes"
+          },
+          "recompose_pending": {
+            "type": "boolean",
+            "title": "Recompose Pending"
+          },
+          "can_undo": {
+            "type": "boolean",
+            "title": "Can Undo"
+          },
+          "can_redo": {
+            "type": "boolean",
+            "title": "Can Redo"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "requeued": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "background",
+                "pose"
+              ]
+            },
+            "type": "array",
+            "title": "Requeued"
+          },
+          "pipeline": {
+            "type": "boolean",
+            "title": "Pipeline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "book_id",
+          "position",
+          "scene_prompt",
+          "action_prompt",
+          "caption_zh",
+          "caption_en",
+          "selected_generation_id",
+          "background_generation_id",
+          "pose_generation_id",
+          "placement",
+          "status",
+          "line_detail",
+          "line_width_px",
+          "character_check",
+          "lineart_url",
+          "needs_fix",
+          "aspect_mismatch",
+          "compose_pending",
+          "attention",
+          "attention_detail",
+          "auto_background_generation_id",
+          "auto_pose_generation_id",
+          "has_user_strokes",
+          "recompose_pending",
+          "can_undo",
+          "can_redo",
+          "created_at",
+          "updated_at",
+          "requeued",
+          "pipeline"
+        ],
+        "title": "RetryOut",
+        "description": "C 的「再試一次」：頁面，加上這次做了什麼（重排了哪幾種圖、有沒有重跑頁面流程）。"
+      },
+      "RunProgress": {
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "running": {
+            "type": "integer",
+            "title": "Running"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "running",
+          "done"
+        ],
+        "title": "RunProgress"
       },
       "SelectGeneration": {
         "properties": {

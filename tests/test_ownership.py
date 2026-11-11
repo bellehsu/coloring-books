@@ -66,6 +66,21 @@ SHARED = {
     ("GET", "/api/shared/books/{book_id}/export.pdf"),
 }
 ID_ROUTES = [(m, p) for m, p, params in ROUTES if (m, p) not in NO_OWNED_ID | SHARED]
+# Phase 13 新增的擁有者路由：明列，確認它們都在 ID_ROUTES（由下面的參數化測試逐一測 404）
+PHASE13_ROUTES = {
+    ("GET", "/api/books/{book_id}/produce/plan"),
+    ("POST", "/api/books/{book_id}/produce"),
+    ("GET", "/api/books/{book_id}/overview"),
+    # Task 4：C 的復原／重做／還原，上傳自己的主角
+    ("POST", "/api/pages/{page_id}/undo"),
+    ("POST", "/api/pages/{page_id}/redo"),
+    ("POST", "/api/pages/{page_id}/restore"),
+    ("POST", "/api/books/{book_id}/character/upload"),
+    # Task 7：C 的「這頁可以印了 ✓」
+    ("POST", "/api/pages/{page_id}/accept"),
+    # Task 7 fix round 1：C 的「再試一次」（只處理這一頁）
+    ("POST", "/api/pages/{page_id}/retry"),
+}
 
 
 def test_route_inventory_is_explicit():
@@ -77,6 +92,7 @@ def test_route_inventory_is_explicit():
             assert params <= OWNED_PARAMS, (m, p, params)
     assert SHARED <= {(m, p) for m, p, _ in ROUTES}  # 清單裡的路由都真的存在
     assert len(ID_ROUTES) >= 35  # 防呆：路由表讀錯會變成空的參數化
+    assert PHASE13_ROUTES <= set(ID_ROUTES)
 
 
 @pytest.fixture
@@ -210,7 +226,8 @@ def test_admin_gets_200(world):
     as_(client, sids["admin"])
     b, p, g = ids["book_id"], ids["page_id"], ids["gen_id"]
     for url in (f"/api/books/{b}", f"/api/books/{b}/pages", f"/api/books/{b}/generations",
-                f"/api/generations/{g}", f"/api/pages/{p}/qa", f"/api/books/{b}/export/summary"):
+                f"/api/generations/{g}", f"/api/pages/{p}/qa", f"/api/books/{b}/export/summary",
+                f"/api/books/{b}/produce/plan", f"/api/books/{b}/overview"):
         assert client.get(url).status_code == 200, url
     for url in (f"/api/generations/{g}/image", f"/api/pages/{p}/lineart"):
         r = client.get(url, follow_redirects=False)

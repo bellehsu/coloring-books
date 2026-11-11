@@ -3,30 +3,34 @@
   max-width: 100%;
   gap: 2px;
   padding: 3px;
-  border-radius: var(--radius-md);
-  background: var(--chip-bg);
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
 }
 .item {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-height: 44px;
-  padding: 0 14px;
+  padding: 0 16px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   background: transparent;
   color: var(--muted-2);
+  font-weight: 700;
   cursor: pointer;
+}
+.item:hover:not(:disabled):not([data-on="true"]) {
+  background: var(--accent-softer);
 }
 .item:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 .item[data-on="true"] {
-  background: var(--surface);
-  color: var(--ink);
-  font-weight: 500;
-  box-shadow: var(--shadow-tab);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 900;
 }
 .badge {
   display: inline-grid;
@@ -36,6 +40,6 @@
   padding: 0 6px;
   border-radius: 999px;
   background: var(--danger);
-  color: var(--on-accent);
+  color: var(--on-danger);
   font-size: 12px;
 }

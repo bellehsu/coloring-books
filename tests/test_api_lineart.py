@@ -8,8 +8,9 @@ from sqlmodel import select
 from app.config import load_settings
 from app.main import create_app
 from app.models import (
-    Book, CharacterCheck, Generation, GenKind, GenStatus, LineartEdit, Page, PageStatus, utcnow,
+    Book, CharacterCheck, Generation, GenKind, GenStatus, LineartEdit, Page, PageStatus, StrokeLayer, utcnow,
 )
+from app.services.lineart_render import Stroke
 from app.services.layout import PrintMode
 from app.services.qa import QA_MESSAGES, QAReport
 from tests.fake_engine import FakeEngine
@@ -331,11 +332,15 @@ def test_autofix_appends_bridges(client, app):
     assert out["autofix_added"] == 1
     assert out["gap_count"] == 0 and out["errors"] == []
     assert out["status"] == "draft" and out["character_check"] == "consistent"
-    strokes = client.get(edits).json()["strokes"]
-    assert strokes[0] == user and len(strokes) == 2
-    assert strokes[1]["op"] == "draw" and strokes[1]["width_px"] == 11
-    assert len(strokes[1]["points"]) == 2
-    assert all(0 <= v <= 1 for pt in strokes[1]["points"] for v in pt)
+    # 補線寫進 auto 層；使用者的修線（edits API 讀寫的 user 層）不變
+    assert client.get(edits).json()["strokes"] == [user]
+    strokes = layer_strokes(app, ids[0], StrokeLayer.AUTO)
+    assert len(strokes) == 1
+    assert strokes[0].op == "draw" and strokes[0].width_px == 11
+    assert len(strokes[0].points) == 2
+    assert all(0 <= v <= 1 for pt in strokes[0].points for v in pt)
+    assert [(x.op, x.width_px, x.points) for x in layer_strokes(app, ids[0], StrokeLayer.USER)] == [
+        ("erase", 4.0, ((0.01, 0.01),))]
     assert out["lineart_url"] == page_out(client, b["id"], p["id"])["lineart_url"]
 
     # 已經沒有缺口：200，不新增筆畫，也不退回
@@ -343,7 +348,13 @@ def test_autofix_appends_bridges(client, app):
     r = client.post(url, json={"generation_id": ids[0]})
     assert r.status_code == 200 and r.json()["autofix_added"] == 0
     assert r.json()["status"] == "passed"
-    assert len(client.get(edits).json()["strokes"]) == 2
+    assert len(layer_strokes(app, ids[0], StrokeLayer.AUTO)) == 1
+
+    # 使用者之後的修線只改 user 層，補線（auto 層）還在、線稿仍沒有缺口
+    r = client.put(edits, json=edits_body(ids[0], []))
+    assert r.status_code == 200 and r.json()["gap_count"] == 0
+    assert client.get(edits).json()["strokes"] == []
+    assert len(layer_strokes(app, ids[0], StrokeLayer.AUTO)) == 1
 
 
 def _fake_report(n):
@@ -359,7 +370,7 @@ def _fake_report(n):
     ([2, 0], 2),
 ])
 def test_autofix_passes(client, app, monkeypatch, counts, added):
-    from app.api import lineart as lineart_api
+    from app.services import autofix as autofix_mod
     from app.services import page_lineart
 
     _, p, ids = selected_page(client, app)
@@ -375,15 +386,16 @@ def test_autofix_passes(client, app, monkeypatch, counts, added):
         rep = pass_reports.pop(0)
         return rep
 
-    monkeypatch.setattr(lineart_api, "evaluate", fake_eval)
+    monkeypatch.setattr(autofix_mod, "evaluate", fake_eval)
     client.get(f"/api/pages/{p['id']}/qa")
     final["n"] = 0
     r = client.post(f"/api/pages/{p['id']}/lineart/autofix", json={"generation_id": ids[0]})
     assert r.status_code == 200, r.text
     assert r.json()["autofix_added"] == added
-    strokes = client.get(f"/api/pages/{p['id']}/lineart/edits").json()["strokes"]
+    assert client.get(f"/api/pages/{p['id']}/lineart/edits").json()["strokes"] == []
+    strokes = layer_strokes(app, ids[0], StrokeLayer.AUTO)
     assert len(strokes) == added
-    assert all(s["op"] == "draw" and s["width_px"] == 11 for s in strokes)
+    assert all(s.op == "draw" and s.width_px == 11 for s in strokes)
 
 
 def test_autofix_respects_edit_layer_limits(client, app, monkeypatch):
@@ -391,11 +403,95 @@ def test_autofix_respects_edit_layer_limits(client, app, monkeypatch):
 
     _, p, ids = selected_page(client, app)
     monkeypatch.setattr(page_lineart, "evaluate", lambda ink, lw: _fake_report(3))
+    full = [Stroke("erase", 4.0, ((0.01, 0.01),))] * 500
+    with app.state.sessions() as s:  # auto 層已滿（上限是每一層各自的）
+        page_lineart.save_strokes(s, p["id"], ids[0], full, layer=StrokeLayer.AUTO)
+        s.commit()
+    r = client.post(f"/api/pages/{p['id']}/lineart/autofix", json={"generation_id": ids[0]})
+    assert r.status_code == 409 and "上限" in r.json()["detail"]
+    assert len(layer_strokes(app, ids[0], StrokeLayer.AUTO)) == 500
+
+
+def test_autofix_limit_ignores_full_user_layer(client, app, monkeypatch):
+    from app.services import autofix as autofix_mod
+    from app.services import page_lineart
+
+    _, p, ids = selected_page(client, app)
+    # user 層已滿（500 筆）；存檔後的線稿還有一個缺口，補一筆就接好
+    reports = iter([_fake_report(1)])
+    monkeypatch.setattr(page_lineart, "evaluate", lambda ink, lw: next(reports, _fake_report(0)))
+    monkeypatch.setattr(autofix_mod, "evaluate", lambda ink, lw: _fake_report(0))
     full = [{"op": "erase", "width_px": 4, "points": [[0.01, 0.01]]}] * 500
     assert client.put(f"/api/pages/{p['id']}/lineart/edits", json=edits_body(ids[0], full)).status_code == 200
     r = client.post(f"/api/pages/{p['id']}/lineart/autofix", json={"generation_id": ids[0]})
-    assert r.status_code == 409 and "上限" in r.json()["detail"]
-    assert len(client.get(f"/api/pages/{p['id']}/lineart/edits").json()["strokes"]) == 500
+    assert r.status_code == 200, r.text
+    assert r.json()["autofix_added"] == 1
+    assert len(layer_strokes(app, ids[0], StrokeLayer.USER)) == 500
+    assert len(layer_strokes(app, ids[0], StrokeLayer.AUTO)) == 1
+
+
+@pytest.mark.parametrize("erase_px", [24, 30, 40])
+def test_autofix_respects_user_eraser(client, app, erase_px):
+    """使用者用橡皮擦擦開外框（1 個缺口）再按自動補線：渲染是 auto 再 user，所以被擦掉的補線不算。
+    一次就接好，或什麼都不補（回 0）；再按一次不再新增 auto 筆畫，也不退回 passed。"""
+    _, p, ids = selected_page(client, app)
+    edits = f"/api/pages/{p['id']}/lineart/edits"
+    url = f"/api/pages/{p['id']}/lineart/autofix"
+    for y in (0.170, 0.172, 0.174, 0.176):  # 外框上緣附近：找一個會擦出缺口的位置
+        erase = {"op": "erase", "width_px": erase_px, "points": [[0.5, y]]}
+        r = client.put(edits, json=edits_body(ids[0], [erase]))
+        assert r.status_code == 200, r.text
+        if r.json()["gap_count"]:
+            break
+    assert r.json()["gap_count"] == 1
+
+    out = client.post(url, json={"generation_id": ids[0]}).json()
+    if out["autofix_added"]:
+        assert out["gap_count"] == 0
+    else:
+        assert out["gap_count"] == 1
+    auto_after_first = layer_strokes(app, ids[0], StrokeLayer.AUTO)
+    assert len(auto_after_first) == out["autofix_added"]
+
+    make_passed(app, p["id"])
+    again = client.post(url, json={"generation_id": ids[0]}).json()
+    assert again["autofix_added"] == 0
+    assert again["status"] == "passed"
+    assert layer_strokes(app, ids[0], StrokeLayer.AUTO) == auto_after_first
+    assert client.get(edits).json()["strokes"] == [erase]
+
+
+def test_edits_api_writes_user_layer_only(client, app):
+    _, p, ids = selected_page(client, app)
+    url = f"/api/pages/{p['id']}/lineart/edits"
+    auto = [Stroke("draw", 11.0, ((0.3, 0.3), (0.4, 0.4)))]
+    with app.state.sessions() as s:
+        page_lineart_mod().save_strokes(s, p["id"], ids[0], auto, layer=StrokeLayer.AUTO)
+        s.commit()
+    with_auto = client.get(f"/api/pages/{p['id']}/lineart").content
+    # GET 只回 user 層（使用者自己的筆畫），auto 層不出現在畫布上可撤銷的筆畫裡
+    assert client.get(url).json() == {"generation_id": ids[0], "strokes": []}
+    r = client.put(url, json=edits_body(ids[0], [DRAW]))
+    assert r.status_code == 200, r.text
+    assert {(e.layer, e.generation_id) for e in edit_rows(app)} == {
+        (StrokeLayer.AUTO, ids[0]), (StrokeLayer.USER, ids[0])}
+    assert layer_strokes(app, ids[0], StrokeLayer.AUTO) == auto
+    assert client.get(url).json() == {"generation_id": ids[0], "strokes": [DRAW]}
+    # 線稿兩層都套用：清掉 user 層就回到只有 auto 層的線稿
+    assert client.get(r.json()["lineart_url"]).content != with_auto
+    r = client.put(url, json=edits_body(ids[0], []))
+    assert client.get(r.json()["lineart_url"]).content == with_auto
+
+
+def page_lineart_mod():
+    from app.services import page_lineart
+
+    return page_lineart
+
+
+def layer_strokes(app, gen_id, layer):
+    with app.state.sessions() as s:
+        return page_lineart_mod().load_strokes(s, gen_id, layer=layer)
 
 
 def test_overlay_png(client, app):

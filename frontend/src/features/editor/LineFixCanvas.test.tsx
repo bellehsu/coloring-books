@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
 import type { Stroke } from "@/lib/strokes";
 import { LineFixCanvas, ZoomControls, type LineFixCanvasProps } from "./LineFixCanvas";
+import { alertToasts } from "@/components/ui/toastTesting";
 
 /**
  * jsdom 沒有 canvas：假 2D context 只記錄呼叫。紙張的 getBoundingClientRect 固定成
@@ -331,7 +332,7 @@ describe("LineFixCanvas", () => {
     const { surface, onChange } = setup({ strokes });
     drag(surface, [10, 10], [50, 50]);
     expect(onChange).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent(/500/);
+    expect(alertToasts()).toHaveTextContent(/500/);
   });
 
   it("非受控縮放：工具列有 縮小／放大，50%–400%", () => {

@@ -8,6 +8,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 from pydantic_core import PydanticCustomError
 
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
+from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS  # noqa: F401  (re-export)
 from app.services.caption_text import normalize_caption
 from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
@@ -72,8 +73,13 @@ class LayoutOut(BaseModel):
 class BookStats(BaseModel):
     pages: int = 0
     passed: int = 0
-    needs_fix: int = 0  # 已選圖且目前 QA 有錯誤的頁數
+    needs_fix: int = 0  # 已選圖且目前 QA 有錯誤的頁數（進階編輯用；線沒接起來也算，首頁書卡不用）
     no_selection: int = 0
+    # B 的每頁狀態（GET /books/{id}/overview 的 state）各幾頁，首頁書卡用；加起來等於 pages
+    ready: int = 0
+    attention: int = 0
+    working: int = 0
+    todo: int = 0
 
 
 class ShareIn(BaseModel):
@@ -157,10 +163,18 @@ class CharacterCandidatesCreate(BaseModel):
     description: DescriptionStr
     count: int = Field(default=4, ge=1, le=8)
     seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
+    confirm_change: bool = False  # 已設定角色時：使用者確認要換角色（A 的「再畫一隻」）
 
 
 class CharacterSelect(BaseModel):
     generation_id: DbId
+    confirm_change: bool = False  # 已設定角色時：使用者確認要換（既有的角色動作留著）
+
+
+class RestoreIn(BaseModel):
+    """C 的「還原成自動畫的那張」：背景、角色動作或線條（清掉使用者筆畫）。"""
+
+    item: Literal["background", "pose", "lines"]
 
 
 # 角色動作模式與背景風格：新列一律 precise／simple（Qwen）；fast／detailed 只出現在 Phase 9 以前的 SDXL 舊列，
@@ -326,6 +340,17 @@ class PageOut(BaseModel):
     aspect_mismatch: bool  # 選定圖的寬高 ≠ 繪本目前的 generation_size
     # 已選背景與角色動作，但選定圖不是用目前背景＋角色動作＋位置合成的（需要按「確認合成」）
     compose_pending: bool
+    # Phase 13：「請看一下」（目前只有 "failed"）與中文說明；None＝不需要
+    attention: str | None
+    attention_detail: str | None
+    # 頁面流程自動選的背景／角色動作（C 的「還原成自動畫的那張」：與目前選的不同時顯示）
+    auto_background_generation_id: int | None
+    auto_pose_generation_id: int | None
+    has_user_strokes: bool  # 有使用者自己畫／擦的線（C 的線條「還原成自動畫的那張」）
+    # 使用者筆畫等著頁面流程重新合成後寫回（C 這時停用畫筆；attention="failed" 時要先「再試一次」）
+    recompose_pending: bool
+    can_undo: bool  # C 的「↶ 復原」／「↷ 重做」
+    can_redo: bool
     created_at: datetime
     updated_at: datetime
 
@@ -337,6 +362,9 @@ class PageOut(BaseModel):
         current_lineart_key: str | None = None,
         aspect_mismatch: bool = False,
         compose_pending: bool = False,
+        has_user_strokes: bool = False,
+        can_undo: bool = False,
+        can_redo: bool = False,
     ) -> "PageOut":
         """current_lineart_key：依目前選圖／參數／修改圖層算出的 key（pages.page_outs 會給）。
         沒給時退回頁面上快取的 key，needs_fix 直接看 qa_json。"""
@@ -367,17 +395,31 @@ class PageOut(BaseModel):
             needs_fix=needs_fix,
             aspect_mismatch=aspect_mismatch if selected else False,
             compose_pending=compose_pending,
+            attention=page.attention,
+            attention_detail=page.attention_detail,
+            auto_background_generation_id=page.auto_background_generation_id,
+            auto_pose_generation_id=page.auto_pose_generation_id,
+            has_user_strokes=has_user_strokes,
+            recompose_pending=page.pending_user_strokes is not None,
+            can_undo=can_undo,
+            can_redo=can_redo,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )
+
+
+class RetryOut(PageOut):
+    """C 的「再試一次」：頁面，加上這次做了什麼（重排了哪幾種圖、有沒有重跑頁面流程）。"""
+
+    requeued: list[Literal["background", "pose"]]
+    pipeline: bool
 
 
 # ---- 修改圖層與 QA ---------------------------------------------------------------
 
 STROKE_WIDTH_MIN, STROKE_WIDTH_MAX = 2, 64
 MAX_STROKE_POINTS = 2000
-MAX_STROKES = 500
-MAX_TOTAL_POINTS = 20000
+# MAX_STROKES／MAX_TOTAL_POINTS（每一層的上限）定義在 services/autofix.py，頁面流程也用
 
 # 相對座標：有限浮點數、落在 [0, 1]（"NaN"/"inf" 字串也會被 float 接受，所以明確拒絕非有限值）
 UnitFloat = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
@@ -476,6 +518,52 @@ class BatchMaterialsIn(BaseModel):
 class BatchMaterialsOut(BaseModel):
     queued: list[GenerationOut]
     skipped: list[BatchSkip]
+
+
+# ---- 開始做這本書（/produce）與 B 整本書（/overview）---------------------------------
+
+
+class ProducePlanOut(BaseModel):
+    backgrounds: int  # AI 背景：有場景描述、沒選背景（也沒上傳）、沒有排隊中的
+    poses: int  # 角色動作：有動作描述、沒選、沒有排隊中的（要先有角色）
+    total: int
+    estimate_s: int  # 這次按下去會做的張數（min(total, fits)）× 每張約 22 秒
+    remaining: int | None  # 今天還能排幾次；admin 不設上限為 None
+    fits: int  # total 裡今天放得下的張數
+
+
+class ProduceOut(BaseModel):
+    queued: list[int]  # 新排的生成 id（依頁面順序，每頁先背景再角色動作）
+    deferred_pages: list[int]  # 今天放不下、明天繼續的頁面 id（依頁面順序）
+    pipeline_pages: list[int]  # 已有兩張圖、排了頁面流程的頁面 id（不計次數）
+
+
+class OverviewPageOut(BaseModel):
+    id: int
+    position: int
+    state: Literal["ready", "attention", "working", "todo"]
+    gap_count: int | None  # 快取的 QA 是目前線稿的才有（GET 不算線稿）
+    caption_zh: str | None
+    caption_en: str | None
+    thumb_url: str | None  # 選定圖（合成圖；舊書是整頁圖）
+    lineart_url: str | None  # 目前線稿（?v= 為目前的 key）；沒選定圖為 None
+    attention_detail: str | None
+
+
+class RunProgress(BaseModel):
+    queued: int  # 現在排隊中的生成＋頁面流程（不論哪一輪）
+    running: int
+    done: int  # 本輪（produce_started_at 之後建立）已結束的生成（不含合成圖、上傳）＋頁面流程
+
+
+class BookOverviewOut(BaseModel):
+    book_id: int
+    pages: list[OverviewPageOut]
+    progress: RunProgress
+    estimate_s: int  # 排隊中與執行中的生成 × 每張約 22 秒（頁面流程很快，不算）
+    # 還有素材沒排（也沒有排隊中的那種）的頁數：上一輪放不下的（「還有 N 頁明天繼續」），沒按過時是全部缺的頁
+    deferred_count: int
+    run_started_at: datetime | None  # 最近一輪的開始時間；null＝還沒按過「開始做這本書」
 
 
 InviteNameStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]

@@ -6,36 +6,26 @@ Phase 9 移除了構圖草圖（`/pages/{id}/sketch`）與舊整頁流程的建�
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case, literal, null
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, col, delete, func, select, update
 
-from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_page
+from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_page
 from app.api.schemas import PageCreate, PageOrder, PageOut, PageUpdate
-from app.models import Book, Generation, GenStatus, LineartEdit, Owner, Page, PageStatus, utcnow
+from app.models import (
+    Book, Generation, GenStatus, LineartEdit, Owner, Page, PageHistory, PageStatus, PageTask, PageTaskStatus,
+    StrokeLayer, utcnow,
+)
+from app.services import history
+from app.services.pipeline import enqueue_page_task
 from app.services.compose import composite_matches, page_placement
 from app.services.layout import compute_layout
-from app.services.page_lineart import lineart_key
+from app.services.page_lineart import lineart_key, on_pipeline, strokes_json_by_generation
 from app.services.usage import refund_generations
+from app.services.worker import GenerationWorker
 from app.storage import Storage
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["pages"])
-
-
-
-def reset_review_when(cond) -> dict:
-    """條件式 UPDATE 用的 SET 片段：cond 成立（以寫入當下的舊值判斷）時退回草稿，
-    角色檢查、通過時間與強制通過原因作廢；不成立時保持原值。"""
-    return {
-        "status": case(
-            (cond, literal(PageStatus.DRAFT, Page.__table__.c.status.type)),
-            else_=col(Page.status),
-        ),
-        "passed_at": case((cond, null()), else_=col(Page.passed_at)),
-        "character_check": case((cond, null()), else_=col(Page.character_check)),
-        "forced_pass_reason": case((cond, null()), else_=col(Page.forced_pass_reason)),
-    }
 
 
 def compose_pending(page: Page, selected: Generation | None) -> bool:
@@ -63,24 +53,27 @@ def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
         if gen_ids
         else {}
     )
-    edits = (
-        {
-            e.generation_id: e.strokes_json
-            for e in session.exec(
-                select(LineartEdit).where(col(LineartEdit.generation_id).in_(gen_ids))
-            ).all()
-        }
-        if gen_ids
-        else {}
-    )
+    edits = strokes_json_by_generation(session, gen_ids)
+    with_user = set(session.exec(
+        select(LineartEdit.generation_id).where(col(LineartEdit.generation_id).in_(gen_ids),
+                                                col(LineartEdit.layer) == StrokeLayer.USER,
+                                                col(LineartEdit.strokes_json) != "[]")
+    ).all()) if gen_ids else set()
+    flags = history.history_flags(session, pages)
     layouts = {bid: compute_layout(b.paper_size, b.print_mode) for bid, b in books.items()}
     out = []
     for page in pages:
         gen = gens.get(page.selected_generation_id)
         lay = layouts[page.book_id]
         pending = compose_pending(page, gen)
+        can_undo, can_redo = flags[page.id]
+        if page.pending_user_strokes is not None:
+            has_user = history.user_strokes_json(session, page) != history.CLEARED
+        else:
+            has_user = page.selected_generation_id in with_user
+        extra = {"can_undo": can_undo, "can_redo": can_redo, "has_user_strokes": has_user}
         if gen is None:
-            out.append(PageOut.from_page(page, compose_pending=pending))
+            out.append(PageOut.from_page(page, compose_pending=pending, **extra))
             continue
         key = lineart_key(gen, page, lay.content_px, edits.get(gen.id, "[]"))
         out.append(PageOut.from_page(
@@ -88,6 +81,7 @@ def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
             current_lineart_key=key,
             aspect_mismatch=(gen.width, gen.height) != tuple(lay.generation_size),
             compose_pending=pending,
+            **extra,
         ))
     return out
 
@@ -150,10 +144,22 @@ def reorder_pages(
 def update_page(
     page_id: int,
     body: PageUpdate,
+    oneclick: bool = Query(False, description="C 處理一頁：先存復原快照、排頁面流程"),
     session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> PageOut:
+    """oneclick（C 的改動作文字、改字）：動作文字或圖下方的字變了就先存復原快照；
+    線條設定變了，流程做的頁排流程重跑（不退回草稿）。"""
     page = owned_page(session, owner, page_id)
+    fields = body.model_fields_set
+    if oneclick and (
+        (body.action_prompt is not None and body.action_prompt != page.action_prompt)
+        or ("caption_zh" in fields and body.caption_zh != page.caption_zh)
+        or ("caption_en" in fields and body.caption_en != page.caption_en)
+    ):
+        history.push_snapshot(session, page)
+        session.refresh(page)
     if body.scene_prompt is not None:
         page.scene_prompt = body.scene_prompt
     if body.action_prompt is not None:
@@ -171,14 +177,25 @@ def update_page(
     if body.line_width_px is not None and body.line_width_px != page.line_width_px:
         page.line_width_px = body.line_width_px
         lines_changed = True
-    if lines_changed and page.status == PageStatus.PASSED:
+    rerun = False
+    if lines_changed and oneclick and _on_pipeline(session, page):
+        enqueue_page_task(session, page_id)  # 流程重算補線，跑完仍可以印
+        rerun = True
+    elif lines_changed and page.status == PageStatus.PASSED:
         # 線稿變了要重新檢查；彩圖沒變，所以角色檢查保留
         page.status = PageStatus.DRAFT
         page.passed_at = None
     page.updated_at = utcnow()
     session.add(page)
     session.commit()
+    if rerun:
+        worker.notify()
     return page_out(session, page)
+
+
+def _on_pipeline(session: Session, page: Page) -> bool:
+    gen = session.get(Generation, page.selected_generation_id) if page.selected_generation_id else None
+    return gen is not None and on_pipeline(page, gen)
 
 
 @router.delete("/pages/{page_id}", status_code=204)
@@ -208,10 +225,17 @@ def delete_page(
     if running:
         session.rollback()
         raise HTTPException(409, "這一頁還有圖片正在生成，請稍後再刪")
+    if session.exec(select(select(PageTask.id).where(
+        col(PageTask.page_id) == page_id, col(PageTask.status) == PageTaskStatus.RUNNING.value
+    ).exists())).one():
+        session.rollback()  # 頁面流程正在寫這頁的合成圖與線稿
+        raise HTTPException(409, "這一頁正在自動處理，請稍後再刪")
     gens = session.exec(select(Generation).where(col(Generation.page_id) == page_id)).all()
     gen_ids = [g.id for g in gens]
     image_paths = [p for g in gens for p in (g.image_path, g.mask_path) if p]
     session.exec(delete(LineartEdit).where(col(LineartEdit.page_id) == page_id))
+    session.exec(delete(PageTask).where(col(PageTask.page_id) == page_id))
+    session.exec(delete(PageHistory).where(col(PageHistory.page_id) == page_id))
     session.exec(delete(Generation).where(col(Generation.page_id) == page_id))
     session.exec(delete(Page).where(col(Page.id) == page_id))
     rest = session.exec(

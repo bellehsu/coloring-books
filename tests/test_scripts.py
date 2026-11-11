@@ -2,6 +2,7 @@
 
 import importlib.util
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -330,6 +331,16 @@ def test_fake_backend_test_invite_route(settings_file, tmp_path):
     assert "/api/_test/invite" not in set(real.openapi()["paths"])
 
 
+def _wait_page(c, book_id, page_id, pred, timeout_s=20):
+    deadline = time.monotonic() + timeout_s
+    while True:
+        page = next(p for p in c.get(f"/api/books/{book_id}/pages").json() if p["id"] == page_id)
+        if pred(page):
+            return page
+        assert time.monotonic() < deadline, page
+        time.sleep(0.05)
+
+
 def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
     """假後端可啟動：角色 → 背景 → 角色動作（有遮罩、去背圖）→ 合成 → QA 有缺口 → 自動補線後 0；
     資料寫在 --storage，不碰設定的 storage。"""
@@ -369,6 +380,14 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert c.get(pose["cutout_url"]).status_code == 200
         assert c.post(f"/api/pages/{page['id']}/pose", json={"generation_id": pose["id"]}).status_code == 200
 
+        # 頁面流程（Phase 13）：背景與角色動作都好了 → 自動合成、補線、可以印
+        done = _wait_page(c, book["id"], page["id"], lambda p: p["status"] == "passed")
+        assert done["selected_generation_id"] is not None and done["compose_pending"] is False
+        assert c.get(f"/api/pages/{page['id']}/qa").json()["gap_count"] == 0
+
+        # 舊編輯器：拖了角色再確認合成 → 新的合成圖（退回草稿）→ 自動補線
+        assert c.put(f"/api/pages/{page['id']}/placement",
+                     json={"cx": 0.45, "cy": 0.66, "height": 0.6, "flip": False}).status_code == 200
         composed = c.post(f"/api/pages/{page['id']}/compose")
         assert composed.status_code == 200, composed.text
         sel = composed.json()["selected_generation_id"]
@@ -420,16 +439,17 @@ def test_fake_backend_story_flow(settings_file, tmp_path, monkeypatch):
         assert {g["user_text"] for g in poses} == {"抱著球開心地跳", "看書"}
         _wait_succeeded(c, book["id"], "background", 1)
 
-        deadline = time.monotonic() + 10
-        while True:
-            pages = {p["id"]: p for p in c.get(f"/api/books/{book['id']}/pages").json()}
-            if pages[p1["id"]]["background_generation_id"] and pages[p1["id"]]["pose_generation_id"]:
-                break
-            assert time.monotonic() < deadline, pages
-            time.sleep(0.05)
-        assert pages[p1["id"]]["compose_pending"] is True
+        # 素材自動選用後，頁面流程（Phase 13）自動合成、補線並標成可以印
+        done = _wait_page(c, book["id"], p1["id"], lambda p: p["status"] == "passed")
+        assert done["background_generation_id"] and done["pose_generation_id"]
+        assert done["compose_pending"] is False and done["selected_generation_id"] is not None
 
-        sel = c.post(f"/api/pages/{p1['id']}/compose").json()["selected_generation_id"]
+        # 舊編輯器照舊：換位置再確認合成 → 草稿、有缺口 → 「對」→ 完成這一頁
+        assert c.put(f"/api/pages/{p1['id']}/placement",
+                     json={"cx": 0.45, "cy": 0.66, "height": 0.6, "flip": False}).status_code == 200
+        composed = c.post(f"/api/pages/{p1['id']}/compose").json()
+        assert composed["status"] == "draft"
+        sel = composed["selected_generation_id"]
         assert c.get(f"/api/pages/{p1['id']}/qa").json()["gap_count"] == 1
         c.post(f"/api/pages/{p1['id']}/character-check", json={"generation_id": sel, "result": "consistent"})
         passed = c.post(f"/api/pages/{p1['id']}/pass", json={})
@@ -916,7 +936,7 @@ def test_invites_rotate_issues_new_link_and_drops_sessions(invites, settings_fil
 
 def _owner_with_data(sessions, storage, name, **kw) -> dict:
     """一個 owner：兩本書（一本有頁面、生成紀錄、修線、線稿、預覽），一個 session，兩天的用量。"""
-    from app.models import LineartEdit, Owner, Page, Usage
+    from app.models import LineartEdit, Owner, Page, PageHistory, PageTask, StrokeLayer, Usage
     from app.services import auth
     from app.services.usage import taipei_day
 
@@ -932,6 +952,9 @@ def _owner_with_data(sessions, storage, name, **kw) -> dict:
          selected_generation_id=g)
     with sessions() as s:
         s.add(LineartEdit(generation_id=g, page_id=p, strokes_json="[]"))
+        s.add(LineartEdit(generation_id=g, page_id=p, layer=StrokeLayer.AUTO, strokes_json="[]"))
+        s.add(PageTask(page_id=p))
+        s.add(PageHistory(page_id=p, seq=1, snapshot_json="{}"))
         owner = s.get(Owner, oid)
         auth.start_session(s, owner)
         s.add(Usage(owner_id=oid, day=taipei_day(auth.utcnow()), generations=3))
@@ -942,7 +965,7 @@ def _owner_with_data(sessions, storage, name, **kw) -> dict:
 def _counts(sessions, d) -> dict:
     from sqlmodel import col, select
 
-    from app.models import Book, Generation, LineartEdit, Owner, OwnerSession, Page, Usage
+    from app.models import Book, Generation, LineartEdit, Owner, OwnerSession, Page, PageHistory, PageTask, Usage
 
     with sessions() as s:
         return {
@@ -951,6 +974,8 @@ def _counts(sessions, d) -> dict:
             "pages": len(s.exec(select(Page).where(col(Page.book_id).in_(d["books"]))).all()),
             "gens": len(s.exec(select(Generation).where(col(Generation.book_id).in_(d["books"]))).all()),
             "edits": len(s.exec(select(LineartEdit).where(LineartEdit.page_id == d["page"])).all()),
+            "tasks": len(s.exec(select(PageTask).where(PageTask.page_id == d["page"])).all()),
+            "history": len(s.exec(select(PageHistory).where(PageHistory.page_id == d["page"])).all()),
             "sessions": len(s.exec(select(OwnerSession).where(OwnerSession.owner_id == d["owner"])).all()),
             "usage": len(s.exec(select(Usage).where(Usage.owner_id == d["owner"])).all()),
         }
@@ -971,8 +996,9 @@ def test_delete_data_removes_rows_and_objects_only_for_that_owner(invites, setti
     assert len(_owned_keys(storage, a)) == 4 and len(keys_b) == 4
 
     assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]) == 0
+    assert before_b["edits"] == 2 and before_b["tasks"] == 1 and before_b["history"] == 1
     assert _counts(sessions, a) == {"owner": False, "books": 0, "pages": 0, "gens": 0, "edits": 0,
-                                    "sessions": 0, "usage": 0}
+                                    "tasks": 0, "history": 0, "sessions": 0, "usage": 0}
     assert _owned_keys(storage, a) == set()
     assert _counts(sessions, b) == before_b and _owned_keys(storage, b) == keys_b
     assert "小明" in capsys.readouterr().out
@@ -1031,6 +1057,35 @@ def test_delete_data_refuses_while_generating(invites, settings_file):
     with sessions() as s:
         assert s.get(Generation, a["gens"][1]).status == GenStatus.QUEUED  # 取消已 rollback
     assert invites.main(["--settings", str(settings_file), "delete-data", "--id", "999", "--yes"]) == 1
+
+
+def test_delete_data_refuses_while_page_pipeline_running(invites, settings_file):
+    """頁面流程（page_task）執行中也拒絕：它正在寫這個 owner 的合成圖與線稿。"""
+    from sqlmodel import select
+
+    from app.models import Generation, GenStatus, PageTask
+
+    _, sessions, storage = _env(settings_file)
+    _owner(sessions, "管理員", is_admin=True)
+    a = _owner_with_data(sessions, storage, "小明")
+    with sessions() as s:
+        t = s.exec(select(PageTask).where(PageTask.page_id == a["page"])).one()
+        t.status = "running"
+        s.add(t)
+        s.commit()
+        tid = t.id
+    before = _counts(sessions, a)
+    keys = _owned_keys(storage, a)
+    args = ["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]
+    assert invites.main(args) == 1
+    assert _counts(sessions, a) == before and _owned_keys(storage, a) == keys
+    with sessions() as s:
+        assert s.get(Generation, a["gens"][1]).status == GenStatus.QUEUED  # 取消已 rollback
+        t = s.get(PageTask, tid)
+        t.status = "succeeded"
+        s.add(t)
+        s.commit()
+    assert invites.main(args) == 0
 
 
 # --- storage_gc.py ---
@@ -1126,6 +1181,72 @@ def test_gc_deletes_only_expired_discarded_and_orphans(storage_gc, settings_file
     # 再跑一次：沒有東西可刪
     rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=False)
     assert (rep.expired_generations, rep.expired_objects, rep.orphan_objects, rep.orphan_previews) == (0, 0, 0, 0)
+
+
+def _gc_ref_world(settings_file):
+    from app.models import Page
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "管理員", is_admin=True)
+    b = _book(sessions, oid)
+    p = _page(sessions, b)
+    old = _gen(sessions, storage, b, p, kind="pose", discarded_days=40)
+    return sessions, storage, b, p, old, Page
+
+
+def _gc_kept(storage_gc, sessions, storage, old) -> bool:
+    storage_gc.run_gc(sessions, storage, days=30, dry_run=False)
+    return _paths(sessions)[old][0] is not None
+
+
+def _gc_unreferenced_deleted(storage_gc, settings_file) -> None:
+    sessions, storage, b, p, old, _ = _gc_ref_world(settings_file)
+    assert not _gc_kept(storage_gc, sessions, storage, old)
+
+
+@pytest.mark.parametrize("field", ["auto_background_generation_id", "auto_pose_generation_id"])
+def test_gc_keeps_auto_selected_generations(storage_gc, settings_file, field):
+    sessions, storage, b, p, old, Page = _gc_ref_world(settings_file)
+    _set(sessions, Page, p, **{field: old})
+    assert _gc_kept(storage_gc, sessions, storage, old)
+    assert storage.exists(storage.generation_image(b, old))
+
+
+@pytest.mark.parametrize("field", ["background_generation_id", "pose_generation_id", "composite_generation_id"])
+def test_gc_keeps_generations_referenced_by_history_snapshots(storage_gc, settings_file, field):
+    from app.models import PageHistory
+
+    sessions, storage, b, p, old, _ = _gc_ref_world(settings_file)
+    with sessions() as s:
+        s.add(PageHistory(page_id=p, seq=1, snapshot_json=_json.dumps({field: old, "user_strokes": []})))
+        s.commit()
+    assert _gc_kept(storage_gc, sessions, storage, old)
+
+
+@pytest.mark.parametrize("status,kept", [("queued", True), ("running", True), ("succeeded", False), ("failed", False)])
+def test_gc_keeps_generations_of_pages_with_active_tasks(storage_gc, settings_file, status, kept):
+    from app.models import PageTask
+
+    sessions, storage, b, p, old, _ = _gc_ref_world(settings_file)
+    with sessions() as s:
+        s.add(PageTask(page_id=p, status=status))
+        s.commit()
+    assert _gc_kept(storage_gc, sessions, storage, old) is kept
+
+
+def test_gc_deletes_unreferenced_old_discarded_generation(storage_gc, settings_file):
+    _gc_unreferenced_deleted(storage_gc, settings_file)
+
+
+def test_gc_snapshot_with_garbage_json_is_ignored(storage_gc, settings_file):
+    from app.models import PageHistory
+
+    sessions, storage, b, p, old, _ = _gc_ref_world(settings_file)
+    with sessions() as s:
+        s.add(PageHistory(page_id=p, seq=1, snapshot_json="not json"))
+        s.add(PageHistory(page_id=p, seq=2, snapshot_json="[1]"))
+        s.commit()
+    assert not _gc_kept(storage_gc, sessions, storage, old)
 
 
 def test_gc_days_option(storage_gc, settings_file):

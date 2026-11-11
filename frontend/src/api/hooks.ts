@@ -11,6 +11,7 @@ import type { components } from "./schema";
 import type {
   BatchMaterials,
   Book,
+  BookOverview,
   Edits,
   ExportSummary,
   Generation,
@@ -18,6 +19,8 @@ import type {
   InviteCreate,
   Me,
   Page,
+  ProducePlan,
+  ProduceResult,
   QA,
   SharedBook,
   SharedBookDetail,
@@ -39,6 +42,8 @@ export const qk = {
   qa: (pageId: number) => ["qa", pageId] as const,
   edits: (pageId: number) => ["edits", pageId] as const,
   exportSummary: (bookId: number) => ["exportSummary", bookId] as const,
+  overview: (bookId: number) => ["overview", bookId] as const,
+  producePlan: (bookId: number) => ["producePlan", bookId] as const,
   sharedBooks: () => ["sharedBooks"] as const,
   sharedBook: (id: number) => ["sharedBook", id] as const,
   me: () => ["me"] as const,
@@ -57,8 +62,9 @@ const isActive = (g: Generation) => g.status === "queued" || g.status === "runni
 
 export const useBooks = () => useQuery({ queryKey: qk.books(), queryFn: () => api.get<Book[]>("/books") });
 
-export const useBook = (id: number) =>
-  useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`) });
+/** enabled＝false：還沒有書（A 的 /books/new 在書建立前）。 */
+export const useBook = (id: number, enabled = true) =>
+  useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`), enabled });
 
 /** 目前的使用者（名字與是否為管理者）；首頁用它決定要不要顯示「邀請管理」。 */
 export const useMe = () => useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me"), retry: false });
@@ -90,12 +96,13 @@ export const useSharedBook = (id: number) =>
     retry: false,
   });
 
-export const usePages = (bookId: number) =>
-  useQuery({ queryKey: qk.pages(bookId), queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`) });
+export const usePages = (bookId: number, enabled = true) =>
+  useQuery({ queryKey: qk.pages(bookId), queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`), enabled });
 
 /** 有 queued/running 的 generation 時每 2 秒輪詢，否則停止。 */
-export function useGenerations(bookId: number, f: GenFilter = {}) {
+export function useGenerations(bookId: number, f: GenFilter = {}, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: qk.generations(bookId, f),
     queryFn: () => {
       const q = new URLSearchParams();
@@ -152,6 +159,37 @@ export const useExportSummary = (bookId: number, enabled = true) =>
     queryKey: qk.exportSummary(bookId),
     queryFn: () => api.get<ExportSummary>(`/books/${bookId}/export/summary`),
     enabled,
+  });
+
+/** 書還在做（有排隊中／執行中的工作，或有頁面製作中）。 */
+export const overviewActive = (o: BookOverview) =>
+  o.progress.queued + o.progress.running > 0 || o.pages.some((p) => p.state === "working");
+
+/**
+ * 整本書總覽（B）：還在做時每 3 秒輪詢，做完就停。分頁在背景時也照樣輪詢（只在還在做時）：
+ * 「可以先去忙，好了會通知你」的分頁標題「✓ 做好了」就是給在別的分頁的人看的。
+ */
+export const OVERVIEW_POLL_MS = 3000;
+export const useBookOverview = (bookId: number) =>
+  useQuery({
+    queryKey: qk.overview(bookId),
+    queryFn: () => api.get<BookOverview>(`/books/${bookId}/overview`),
+    refetchInterval: (query) => (query.state.data && overviewActive(query.state.data) ? OVERVIEW_POLL_MS : false),
+    refetchIntervalInBackground: true,
+  });
+
+/**
+ * 「開始做這本書」要排幾張、今天還剩幾次（remaining null＝不限）。
+ * 回到這個分頁就重抓（開著過夜，隔天次數恢復「繼續做」才會亮）；今天用完（remaining 0）時每分鐘再看一次。
+ */
+export const PLAN_RECHECK_MS = 60_000;
+export const useProducePlan = (bookId: number, enabled = true) =>
+  useQuery({
+    enabled,
+    queryKey: qk.producePlan(bookId),
+    queryFn: () => api.get<ProducePlan>(`/books/${bookId}/produce/plan`),
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => (query.state.data?.remaining === 0 ? PLAN_RECHECK_MS : false),
   });
 
 // ---------- mutations ----------
@@ -223,10 +261,57 @@ export function useShareBook(bookId: number) {
 export function useCharacterCandidates(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (b: Omit<S["CharacterCandidatesCreate"], "count">) =>
+    mutationFn: (
+      b: Omit<S["CharacterCandidatesCreate"], "count" | "confirm_change"> & { confirm_change?: boolean },
+    ) =>
       api.post<Generation[]>(`/books/${bookId}/character/candidates`, b),
-    onSuccess: () => invalidateJobs(qc, bookId),
+    onSuccess: () =>
+      Promise.all([invalidateJobs(qc, bookId), qc.invalidateQueries({ queryKey: qk.producePlan(bookId) })]),
   });
+}
+
+/** 主角換了（選定或上傳）：book（回應直接寫進快取）, books, generations, producePlan。 */
+function afterCharacterSet(qc: QueryClient, book: Book) {
+  qc.setQueryData(qk.book(book.id), book);
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: qk.book(book.id) }),
+    qc.invalidateQueries({ queryKey: qk.books() }),
+    qc.invalidateQueries({ queryKey: qk.generationsOf(book.id) }),
+    qc.invalidateQueries({ queryKey: qk.producePlan(book.id) }),
+  ]);
+}
+
+/**
+ * A 的主角（spec §4.5）：bookId 放在 variables，因為 /books/new 的書是在第一次動作時才建立的。
+ * - generate：產生一張候選（已有主角時要 confirm＝true，後端才不會 409；這只是多一張候選，主角還沒換）
+ * - choose：選這隻（已有主角時 confirm＝true：使用者已確認「換主角？」）
+ * - upload：↑ 上傳自己的主角（multipart；confirm 同上）
+ */
+export function useSetupCharacter() {
+  const qc = useQueryClient();
+  const generate = useMutation({
+    mutationFn: ({ bookId, description, confirm }: { bookId: number; description: string; confirm: boolean }) =>
+      api.post<Generation[]>(`/books/${bookId}/character/candidates`, {
+        description,
+        ...(confirm ? { confirm_change: true } : {}),
+      }),
+    onSuccess: (_d, v) =>
+      Promise.all([invalidateJobs(qc, v.bookId), qc.invalidateQueries({ queryKey: qk.producePlan(v.bookId) })]),
+  });
+  const choose = useMutation({
+    mutationFn: ({ bookId, generationId, confirm }: { bookId: number; generationId: number; confirm: boolean }) =>
+      api.post<Book>(`/books/${bookId}/character`, {
+        generation_id: generationId,
+        ...(confirm ? { confirm_change: true } : {}),
+      }),
+    onSuccess: (book) => afterCharacterSet(qc, book),
+  });
+  const upload = useMutation({
+    mutationFn: ({ bookId, file, confirm }: { bookId: number; file: File; confirm: boolean }) =>
+      api.upload<Book>(`/books/${bookId}/character/upload`, file, confirm ? { confirm_change: "true" } : {}),
+    onSuccess: (book) => afterCharacterSet(qc, book),
+  });
+  return { generate, choose, upload };
 }
 
 /** invalidate: book, books, generations */
@@ -325,12 +410,14 @@ export function useCancelGeneration(bookId: number) {
   });
 }
 
-/** autofix → qa, edits, pages, book, exportSummary */
+/** autofix → qa, edits, pages, book, exportSummary。oneclick（C）：流程做的頁補了線也不退回草稿。 */
 export function useAutofix(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pageId, generationId }: { pageId: number; generationId: number }) =>
-      api.post<S["AutofixOut"]>(`/pages/${pageId}/lineart/autofix`, { generation_id: generationId }),
+    mutationFn: ({ pageId, generationId, oneclick }: { pageId: number; generationId: number; oneclick?: boolean }) =>
+      api.post<S["AutofixOut"]>(`/pages/${pageId}/lineart/autofix${oneclick ? "?oneclick=true" : ""}`, {
+        generation_id: generationId,
+      }),
     onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
   });
 }
@@ -459,5 +546,29 @@ export function useCompose(bookId: number) {
         invalidatePage(qc, bookId, v.pageId),
         qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
       ]),
+  });
+}
+
+/**
+ * 開始做這本書／繼續做：補排缺的素材與頁面流程（放得下多少做多少）。0 次可用時後端回 429。
+ * → overview, producePlan, queue, generations, pages, book, books（失敗時只重抓 producePlan）
+ */
+export function useProduce(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<ProduceResult>(`/books/${bookId}/produce`),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.overview(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.producePlan(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.pages(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.book(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.books() }),
+        invalidateJobs(qc, bookId),
+      ]),
+    // 失敗（429）也重抓剩餘次數：「繼續做」與「今天的生成次數已用完」才會跟著變。不 await：錯誤訊息不用等它
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: qk.producePlan(bookId) });
+    },
   });
 }
