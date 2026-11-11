@@ -45,3 +45,15 @@ def test_cover_crop_never_stretches():
     ch = inner_run([out.getpixel((5, y)) for y in range(out.height)])
     assert abs(cw / ch - 1) <= 0.02
     assert abs(cw - cell * scale) <= 3
+
+
+def test_letterbox_fits_without_cropping_on_white():
+    from app.services.upload_bg import letterbox
+
+    out, box = letterbox(Image.new("RGB", (2000, 900), "red"), (832, 1216))
+    assert out.size == (832, 1216) and out.mode == "RGB"
+    l, t, r, b = box
+    assert (l, r) == (0, 832) and abs((b - t) - round(832 * 900 / 2000)) <= 1 and t == (1216 - (b - t)) // 2
+    assert out.getpixel((416, 2)) == (255, 255, 255) and out.getpixel((416, 1213)) == (255, 255, 255)
+    tall, box = letterbox(Image.new("RGB", (300, 3000), "blue"), (832, 1216))
+    assert box[1] == 0 and box[3] == 1216 and tall.getpixel((5, 600)) == (255, 255, 255)

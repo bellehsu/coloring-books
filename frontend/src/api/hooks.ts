@@ -223,7 +223,9 @@ export function useShareBook(bookId: number) {
 export function useCharacterCandidates(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (b: Omit<S["CharacterCandidatesCreate"], "count">) =>
+    mutationFn: (
+      b: Omit<S["CharacterCandidatesCreate"], "count" | "confirm_change"> & { confirm_change?: boolean },
+    ) =>
       api.post<Generation[]>(`/books/${bookId}/character/candidates`, b),
     onSuccess: () => invalidateJobs(qc, bookId),
   });

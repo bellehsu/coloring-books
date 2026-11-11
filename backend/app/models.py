@@ -169,6 +169,11 @@ class Page(SQLModel, table=True):
     # 頁面流程自動選的背景／角色動作（「還原成自動畫的那張」用）；使用者自己選的仍在 background／pose_generation_id
     auto_background_generation_id: int | None = None
     auto_pose_generation_id: int | None = None
+    # 復原紀錄（page_history）目前所在的 seq；None＝在最新狀態（沒有可重做的）。見 services/history.py
+    history_cursor: int | None = None
+    # 等頁面流程重新合成後要寫進新合成圖 user 層的筆畫（JSON）；None＝沒有。重新合成清掉筆畫時是 "[]"，
+    # 復原／重做回到別的圖或位置時是快照裡的筆畫。見 services/history.py
+    pending_user_strokes: str | None = None
     created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
 

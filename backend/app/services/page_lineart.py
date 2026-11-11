@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from sqlalchemy import update
 from sqlmodel import Session, col, select
 
-from app.models import Book, Generation, LineartEdit, Page, PageStatus, StrokeLayer, utcnow
+from app.models import Book, Generation, GenKind, LineartEdit, Page, PageStatus, StrokeLayer, utcnow
 from app.services import lineart_post
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
@@ -113,16 +113,20 @@ def save_strokes(session: Session, page_id: int, gen_id: int, strokes: list[Stro
         session.add(edit)
 
 
-def commit_layer(session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer) -> bool:
-    """整份覆寫一層修線，並在同一個交易以條件式 UPDATE 確認頁面仍選定這張圖；修線後 passed 退回 draft。
+def commit_layer(
+    session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer, demote: bool = True
+) -> bool:
+    """整份覆寫一層修線，並在同一個交易以條件式 UPDATE 確認頁面仍選定這張圖；修線後 passed 退回 draft
+    （demote=False：不退回，由呼叫端排頁面流程重跑）。同一個交易裡呼叫端之前的寫入一起提交／rollback。
     頁面已不再選定這張圖時 rollback、回 False。兩個請求同時建立同一層丟 IntegrityError（已 rollback）。"""
     try:
         save_strokes(session, page_id, gen_id, strokes, layer=layer)
         session.flush()
+        values = {"status": PageStatus.DRAFT, "passed_at": None} if demote else {}
         res = session.exec(
             update(Page)
             .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gen_id)
-            .values(status=PageStatus.DRAFT, passed_at=None, updated_at=utcnow())
+            .values(**values, updated_at=utcnow())
         )
         if res.rowcount == 0:
             session.rollback()
@@ -152,9 +156,19 @@ def _load(storage: Storage, gen: Generation):
         raise LineartSourceMissing() from e
 
 
-def ensure_page_lineart(session: Session, storage: Storage, page_id: int, *, rerender: bool = False) -> PageLineart:
+def on_pipeline(page: Page, gen: Generation) -> bool:
+    """頁面流程處理得了的頁：選了背景與角色動作、選定圖是合成圖（舊流程的整頁圖不算）。"""
+    return (page.background_generation_id is not None and page.pose_generation_id is not None
+            and gen.kind == GenKind.COMPOSITE)
+
+
+def ensure_page_lineart(
+    session: Session, storage: Storage, page_id: int, *, rerender: bool = False, from_pipeline: bool = False
+) -> PageLineart:
     """確保頁面線稿與 QA 是最新的。是否已有線稿只看資料庫（lineart_key／lineart_path／qa_json），
-    不呼叫 storage.exists()；讀線稿時發現物件不見了，用 rerender=True 重算（見 read_page_lineart）。"""
+    不呼叫 storage.exists()；讀線稿時發現物件不見了，用 rerender=True 重算（見 read_page_lineart）。
+    PASSED 的頁面重算後有錯誤：頁面流程做的頁（on_pipeline）排流程重跑、維持 PASSED，其他頁退回草稿。
+    from_pipeline=True（頁面流程自己呼叫，接著會設 PASSED）兩者都不做。"""
     for _ in range(MAX_ATTEMPTS):
         page = session.get(Page, page_id)
         if page is None:
@@ -182,8 +196,15 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int, *, rer
 
         old_path = page.lineart_path
         values = {"lineart_key": key, "lineart_path": rel, "qa_json": _dumps(qa.to_dict())}
-        demote = page.status == PageStatus.PASSED and bool(qa.errors)
-        if demote:
+        demote = page.status == PageStatus.PASSED and bool(qa.errors) and not from_pipeline
+        rerun = demote and on_pipeline(page, gen)
+        if rerun:
+            # 頁面流程做的頁（背景＋角色動作的合成圖）：線稿的 key 變了（紙張、版本）不悄悄退回「還沒做完」，
+            # 改排頁面流程重新補線，跑完仍是可以印（或「請看一下」）
+            from app.services.pipeline import enqueue_page_task  # pipeline 匯入本模組
+
+            enqueue_page_task(session, page_id)
+        elif demote:
             values.update(status=PageStatus.DRAFT, passed_at=None)
         res = session.exec(
             update(Page)
@@ -193,6 +214,10 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int, *, rer
             .values(**values)
         )
         session.commit()
+        if rerun:
+            from app.services.pipeline import wake
+
+            wake()
         if res.rowcount:
             if old_path and old_path != rel:
                 storage.delete(old_path)

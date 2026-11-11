@@ -11,7 +11,9 @@ from PIL import Image, ImageDraw
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
-from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_generation, owned_page
+from app.api.deps import (
+    current_owner, get_session, get_storage, get_worker, owned_book, owned_generation, owned_page,
+)
 from app.api.files import signed_redirect
 from app.api.schemas import (
     AutofixIn,
@@ -21,7 +23,10 @@ from app.api.schemas import (
     QAOut,
     StrokeOut,
 )
-from app.models import GenStatus, Owner, Page, StrokeLayer
+from app.models import Generation, GenStatus, Owner, Page, StrokeLayer
+from app.services import history
+from app.services.pipeline import enqueue_page_task
+from app.services.worker import GenerationWorker
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix, read_ink
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
@@ -40,6 +45,7 @@ from app.services.page_lineart import (
     ensure_preview,
     ink_before_user_layer,
     load_strokes,
+    on_pipeline,
     read_page_lineart,
     strokes_to_json,
 )
@@ -103,11 +109,11 @@ def _selected_or_409(page: Page, generation_id: int | None = None) -> int:
 
 
 def _commit_strokes(
-    session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer
+    session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer, demote: bool = True
 ) -> None:
-    """一層修改圖層與「頁面仍選定這張圖」的條件式 UPDATE 在同一個交易；修線後 passed 退回 draft。"""
+    """一層修改圖層與「頁面仍選定這張圖」的條件式 UPDATE 在同一個交易；修線後 passed 退回 draft（demote）。"""
     try:
-        ok = commit_layer(session, page_id, gen_id, strokes, layer=layer)
+        ok = commit_layer(session, page_id, gen_id, strokes, layer=layer, demote=demote)
     except IntegrityError as e:  # 兩個請求同時建立同一張圖的修改圖層
         raise HTTPException(409, "修改圖層剛被另一個請求更新，請重試") from e
     if not ok:
@@ -194,18 +200,32 @@ def get_edits(
 def put_edits(
     page_id: int,
     body: EditsIn,
+    oneclick: bool = Query(False, description="C 處理一頁：先存復原快照、排頁面流程"),
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> QAOut:
-    gid = _selected_or_409(owned_page(session, owner, page_id), body.generation_id)
+    """使用者的筆畫（user 層）。oneclick（C 的畫筆／擦除）：先存復原快照；流程做的頁不退回草稿，
+    排頁面流程重算補線（跑完仍可以印）。等著重新合成時不能畫（409）。"""
+    page = owned_page(session, owner, page_id)
+    gid = _selected_or_409(page, body.generation_id)
+    if oneclick and page.pending_user_strokes is not None:
+        raise HTTPException(409, history.RECOMPOSE_PENDING)
     strokes = [
         Stroke(s.op, float(s.width_px), tuple((float(x), float(y)) for x, y in s.points))
         for s in body.strokes
     ]
     # 內容沒變（例如前端自動存檔）就不寫入、也不退回 passed
     if strokes_to_json(strokes) != strokes_to_json(load_strokes(session, gid, layer=StrokeLayer.USER)):
-        _commit_strokes(session, page_id, gid, strokes, layer=StrokeLayer.USER)
+        rerun = oneclick and on_pipeline(page, session.get(Generation, gid))
+        if oneclick:
+            history.push_snapshot(session, page)  # 與筆畫同一個交易（_commit_strokes 提交）
+        if rerun:
+            enqueue_page_task(session, page_id)
+        _commit_strokes(session, page_id, gid, strokes, layer=StrokeLayer.USER, demote=not rerun)
+        if rerun:
+            worker.notify()
     return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id))
 
 

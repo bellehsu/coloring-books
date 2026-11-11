@@ -2,6 +2,10 @@
 
 合成圖寫成一筆 `composite` generation 並設為頁面的 selected_generation_id，
 所以線稿、修線圖層（以 generation 為 key）、QA、匯出都沿用既有流程。
+
+C 處理一頁（Phase 13）呼叫同樣的端點並帶 `?oneclick=true`：改動前先存復原快照（services/history），
+會重新合成的改動清掉使用者筆畫（快照裡留著）並排頁面流程；「換一張／AI 再畫一張」的新圖好了一定換上去。
+不帶 oneclick 的是舊編輯器（進階編輯），行為不變。
 """
 
 import io
@@ -11,7 +15,7 @@ import random
 import threading
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from sqlmodel import Session, col, select, update
 
 from app.api.books import MAX_SEED
@@ -38,7 +42,8 @@ from app.api.schemas import (
 )
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services import usage
-from app.services.pipeline import UPLOAD_ENGINE
+from app.services import history
+from app.services.pipeline import TAKE, UPLOAD_ENGINE, enqueue_page_task
 from app.services.page_compose import (
     ComposeError,
     abandon,
@@ -49,6 +54,7 @@ from app.services.page_compose import (
     store_outside_tx,
     usable_conditions,
 )
+from app.services.compose import page_placement
 from app.services.layout import compute_layout
 from app.services.prompts import (
     POSE_SIZE,
@@ -71,6 +77,8 @@ MAX_BG_UPLOAD_BYTES = 10_000_000
 _BATCH_LOCK = threading.Lock()
 
 _LABEL = {GenKind.BACKGROUND: "背景", GenKind.POSE: "角色動作"}
+# C 處理一頁的請求帶 ?oneclick=true（見模組說明）
+OneClick = Query(False, description="C 處理一頁：先存復原快照、排頁面流程")
 _PAGE_FIELD = {GenKind.BACKGROUND: "background_generation_id", GenKind.POSE: "pose_generation_id"}
 
 
@@ -192,15 +200,23 @@ def _background_job(session: Session, book: Book, page: Page) -> _Job:
 def create_background(
     page_id: int,
     body: BackgroundCreate | None = None,
+    oneclick: bool = OneClick,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    """產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。"""
+    """產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。
+    oneclick（C 的「AI 再畫一張」）：好了一定換上去（上傳的背景也換回 AI 畫的）。"""
     page = owned_page(session, owner, page_id)
     book = owned_book(session, owner, page.book_id)
-    return _enqueue_jobs(session, worker, owner, [_background_job(session, book, page)])[0]
+    return _enqueue_jobs(session, worker, owner, [_take(_background_job(session, book, page), oneclick)])[0]
+
+
+def _take(job: "_Job", oneclick: bool) -> "_Job":
+    if oneclick:
+        job.extra[TAKE] = True
+    return job
 
 
 class _BookState:
@@ -348,13 +364,15 @@ def _pose_job(session: Session, book: Book, page: Page, action: str) -> _Job:
 def create_pose(
     page_id: int,
     body: PoseCreate,
+    oneclick: bool = OneClick,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
     """產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
-    新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。"""
+    新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。
+    oneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。"""
     page = owned_page(session, owner, page_id)
     book = owned_book(session, owner, page.book_id)
     char = (
@@ -364,10 +382,12 @@ def create_pose(
     )
     if char is None or not char.image_path:
         raise HTTPException(409, "請先設定角色")
-    return _enqueue_jobs(session, worker, owner, [_pose_job(session, book, page, body.action)])[0]
+    return _enqueue_jobs(session, worker, owner, [_take(_pose_job(session, book, page, body.action), oneclick)])[0]
 
 
-def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKind) -> PageOut:
+def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKind,
+          oneclick: bool = False, worker: GenerationWorker | None = None) -> PageOut:
+    """選用背景／角色動作。oneclick：先存快照、筆畫清掉（重新合成）、排頁面流程；選的就是目前那張則什麼都不做。"""
     label = _LABEL[kind]
     page = owned_page(session, owner, page_id)
     gen = owned_generation(session, owner, gen_id)  # 別人的與不存在一樣 404
@@ -382,6 +402,12 @@ def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKi
     if kind == GenKind.POSE and not gen.mask_path:
         raise HTTPException(409, "這個角色動作沒有去背遮罩，請重新產生")
     field = _PAGE_FIELD[kind]
+    if oneclick:
+        session.refresh(page)
+        if getattr(page, field) == gen.id:
+            return page_out(session, page)
+        history.push_snapshot(session, page)
+        history.set_pending_strokes(session, page_id, history.CLEARED)
     still_valid = (
         select(Generation.id)
         .where(col(Generation.id) == gen.id, col(Generation.page_id) == page_id,
@@ -393,9 +419,14 @@ def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKi
         .where(col(Page.id) == page_id, still_valid)
         .values(**slot_change_values(field, gen.id))
     )
-    session.commit()
     if res.rowcount == 0:
+        session.rollback()
         raise HTTPException(409, f"這張{label}已無法選用（可能剛被捨棄）")
+    if oneclick:
+        enqueue_page_task(session, page_id)
+    session.commit()
+    if oneclick and worker is not None:
+        worker.notify()
     session.refresh(page)
     return page_out(session, page)
 
@@ -404,38 +435,30 @@ def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKi
 def select_background(
     page_id: int,
     body: SelectGeneration,
+    oneclick: bool = OneClick,
     session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    return _pick(session, owner, page_id, body.generation_id, GenKind.BACKGROUND)
+    return _pick(session, owner, page_id, body.generation_id, GenKind.BACKGROUND, oneclick, worker)
 
 
 @router.post("/pages/{page_id}/backgrounds/upload", status_code=201, response_model=PageOut)
 def upload_background(
     page_id: int,
     file: UploadFile,
+    oneclick: bool = OneClick,
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
+    worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> PageOut:
     """上傳圖片直接當這頁的背景：置中裁切成書的生成尺寸，存成 engine="upload" 的背景並選用。"""
     page = owned_page(session, owner, page_id)
     book = owned_book(session, owner, page.book_id)
     started = time.monotonic()
-    data = file.file.read(MAX_BG_UPLOAD_BYTES + 1)
-    if len(data) > MAX_BG_UPLOAD_BYTES:
-        raise HTTPException(400, f"檔案過大，上限 {MAX_BG_UPLOAD_BYTES} bytes")
     width, height = compute_layout(book.paper_size, book.print_mode).generation_size
-    try:
-        # JPEG 縮小解碼到約兩倍目標尺寸（LANCZOS 縮放仍有餘裕），不先整張轉成 PNG 再解回來
-        src, original_size = load_rgb(
-            data, max_bytes=MAX_BG_UPLOAD_BYTES, max_pixels=UPLOAD_MAX_PIXELS,
-            draft_size=(2 * width, 2 * height),
-        )
-    except TooManyPixels as e:
-        raise HTTPException(422, str(e)) from e
-    except ImageRejected as e:
-        raise HTTPException(400, str(e)) from e
+    src, original_size = read_upload(file, (width, height))
     out, crop_box = cover_crop(src, (width, height))
     buf = io.BytesIO()
     out.save(buf, "PNG")
@@ -467,7 +490,26 @@ def upload_background(
     gen_id, rel = store_outside_tx(session, storage, gen, buf.getvalue())
     _mark_stored(session, storage, gen, rel, "上傳的背景剛被移除，請重新上傳")
     # 背景已經是一筆有圖的成功紀錄：之後選用失敗（例如剛被捨棄）也不刪它的物件
-    return _pick(session, owner, page_id, gen_id, GenKind.BACKGROUND)
+    return _pick(session, owner, page_id, gen_id, GenKind.BACKGROUND, oneclick, worker)
+
+
+def read_upload(file: UploadFile, size: tuple[int, int]):
+    """上傳圖片的共同驗證（背景與主角）：大小上限、格式、像素數；回傳 (RGB 圖, 原尺寸)。
+    超過像素上限 422，其他不接受的檔案 400。"""
+    data = file.file.read(MAX_BG_UPLOAD_BYTES + 1)
+    if len(data) > MAX_BG_UPLOAD_BYTES:
+        raise HTTPException(400, f"檔案過大，上限 {MAX_BG_UPLOAD_BYTES} bytes")
+    width, height = size
+    try:
+        # JPEG 縮小解碼到約兩倍目標尺寸（LANCZOS 縮放仍有餘裕），不先整張轉成 PNG 再解回來
+        return load_rgb(
+            data, max_bytes=MAX_BG_UPLOAD_BYTES, max_pixels=UPLOAD_MAX_PIXELS,
+            draft_size=(2 * width, 2 * height),
+        )
+    except TooManyPixels as e:
+        raise HTTPException(422, str(e)) from e
+    except ImageRejected as e:
+        raise HTTPException(400, str(e)) from e
 
 
 def _mark_stored(session: Session, storage: Storage, gen: Generation, rel: str, gone: str) -> None:
@@ -488,22 +530,44 @@ def _mark_stored(session: Session, storage: Storage, gen: Generation, rel: str, 
 def select_pose(
     page_id: int,
     body: SelectGeneration,
+    oneclick: bool = OneClick,
     session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    return _pick(session, owner, page_id, body.generation_id, GenKind.POSE)
+    return _pick(session, owner, page_id, body.generation_id, GenKind.POSE, oneclick, worker)
 
 
 @router.put("/pages/{page_id}/placement", response_model=PageOut)
 def save_placement(
     page_id: int,
     body: PagePlacement,
+    oneclick: bool = OneClick,
     session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> PageOut:
-    """位置草稿（拖拉時自動存）；不產生合成圖、不改頁面狀態。"""
+    """位置草稿（拖拉時自動存）；不產生合成圖、不改頁面狀態。
+    oneclick（C：放開拖拉時存一次）：位置變了就先存快照、筆畫清掉，排頁面流程重新合成。"""
     page = owned_page(session, owner, page_id)
-    page.placement_json = json.dumps(body.to_placement().to_dict())
+    placement = body.to_placement().to_dict()
+    if oneclick:
+        session.refresh(page)
+        if page_placement(page.placement_json).key() == body.to_placement().key():
+            return page_out(session, page)  # 位置沒變：不重新合成、不存快照
+        try:
+            history.push_snapshot(session, page)
+            session.exec(update(Page).where(col(Page.id) == page_id).values(
+                placement_json=json.dumps(placement), pending_user_strokes=history.CLEARED, updated_at=utcnow()))
+            enqueue_page_task(session, page_id)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        worker.notify()
+        session.refresh(page)
+        return page_out(session, page)
+    page.placement_json = json.dumps(placement)
     page.updated_at = utcnow()
     session.add(page)
     session.commit()

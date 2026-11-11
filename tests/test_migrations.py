@@ -580,3 +580,33 @@ def test_0012_book_produce_started_at_roundtrip(tmp_path):
         assert c.exec_driver_sql("SELECT count(*) FROM page").scalar() == 1
         assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
     command.upgrade(alembic_config(eng), "head")
+
+
+def test_0013_page_history_cursor_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0012")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, action_prompt, status, line_detail, line_width_px, "
+            "qa_note, created_at, updated_at) VALUES (1, 0, 's', 'a', 'DRAFT', 'STANDARD', 11, '', "
+            "'2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "0013")
+    with eng.connect() as c:
+        cols = _cols(c, "page")
+        assert cols["history_cursor"]["nullable"] is True and cols["pending_user_strokes"]["nullable"] is True
+        assert c.exec_driver_sql("SELECT history_cursor, pending_user_strokes FROM page").one() == (None, None)
+    command.downgrade(alembic_config(eng), "0012")
+    with eng.connect() as c:
+        assert "history_cursor" not in _cols(c, "page") and "pending_user_strokes" not in _cols(c, "page")
+        assert c.exec_driver_sql("SELECT scene_prompt FROM page").scalar() == "s"
+        sql = c.exec_driver_sql("SELECT sql FROM sqlite_master WHERE name = 'page'").scalar()
+        assert "AUTOINCREMENT" in sql
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")

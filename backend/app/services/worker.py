@@ -147,9 +147,12 @@ class GenerationWorker:
         self._event_loop = asyncio.get_running_loop()
         self._wakeup.set()
         self._task = asyncio.create_task(self._loop(), name="generation-worker")
+        pipeline.set_wakeup(self.notify)  # 不經 API 排的頁面流程（例如線稿的 key 變了）也叫得醒
 
     async def stop(self) -> None:
         task, self._task = self._task, None
+        if pipeline._wakeup == self.notify:
+            pipeline.set_wakeup(None)
         if task is not None:
             task.cancel()
             try:

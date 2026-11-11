@@ -71,6 +71,11 @@ PHASE13_ROUTES = {
     ("GET", "/api/books/{book_id}/produce/plan"),
     ("POST", "/api/books/{book_id}/produce"),
     ("GET", "/api/books/{book_id}/overview"),
+    # Task 4：C 的復原／重做／還原，上傳自己的主角
+    ("POST", "/api/pages/{page_id}/undo"),
+    ("POST", "/api/pages/{page_id}/redo"),
+    ("POST", "/api/pages/{page_id}/restore"),
+    ("POST", "/api/books/{book_id}/character/upload"),
 }
 
 

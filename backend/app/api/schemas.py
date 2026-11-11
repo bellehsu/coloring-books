@@ -158,10 +158,18 @@ class CharacterCandidatesCreate(BaseModel):
     description: DescriptionStr
     count: int = Field(default=4, ge=1, le=8)
     seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
+    confirm_change: bool = False  # 已設定角色時：使用者確認要換角色（A 的「再畫一隻」）
 
 
 class CharacterSelect(BaseModel):
     generation_id: DbId
+    confirm_change: bool = False  # 已設定角色時：使用者確認要換（既有的角色動作留著）
+
+
+class RestoreIn(BaseModel):
+    """C 的「還原成自動畫的那張」：背景、角色動作或線條（清掉使用者筆畫）。"""
+
+    item: Literal["background", "pose", "lines"]
 
 
 # 角色動作模式與背景風格：新列一律 precise／simple（Qwen）；fast／detailed 只出現在 Phase 9 以前的 SDXL 舊列，
@@ -327,6 +335,15 @@ class PageOut(BaseModel):
     aspect_mismatch: bool  # 選定圖的寬高 ≠ 繪本目前的 generation_size
     # 已選背景與角色動作，但選定圖不是用目前背景＋角色動作＋位置合成的（需要按「確認合成」）
     compose_pending: bool
+    # Phase 13：「請看一下」（目前只有 "failed"）與中文說明；None＝不需要
+    attention: str | None
+    attention_detail: str | None
+    # 頁面流程自動選的背景／角色動作（C 的「還原成自動畫的那張」：與目前選的不同時顯示）
+    auto_background_generation_id: int | None
+    auto_pose_generation_id: int | None
+    has_user_strokes: bool  # 有使用者自己畫／擦的線（C 的線條「還原成自動畫的那張」）
+    can_undo: bool  # C 的「↶ 復原」／「↷ 重做」
+    can_redo: bool
     created_at: datetime
     updated_at: datetime
 
@@ -338,6 +355,9 @@ class PageOut(BaseModel):
         current_lineart_key: str | None = None,
         aspect_mismatch: bool = False,
         compose_pending: bool = False,
+        has_user_strokes: bool = False,
+        can_undo: bool = False,
+        can_redo: bool = False,
     ) -> "PageOut":
         """current_lineart_key：依目前選圖／參數／修改圖層算出的 key（pages.page_outs 會給）。
         沒給時退回頁面上快取的 key，needs_fix 直接看 qa_json。"""
@@ -368,6 +388,13 @@ class PageOut(BaseModel):
             needs_fix=needs_fix,
             aspect_mismatch=aspect_mismatch if selected else False,
             compose_pending=compose_pending,
+            attention=page.attention,
+            attention_detail=page.attention_detail,
+            auto_background_generation_id=page.auto_background_generation_id,
+            auto_pose_generation_id=page.auto_pose_generation_id,
+            has_user_strokes=has_user_strokes,
+            can_undo=can_undo,
+            can_redo=can_redo,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )

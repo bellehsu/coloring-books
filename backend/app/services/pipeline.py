@@ -13,11 +13,17 @@
 （在舊編輯器點選、上傳背景、Phase 13 之前就選好的頁面），流程永遠不換掉它，auto_* 也不動；
 欄位是空的，或等於 auto_* ＝ 自動選的，有更新的成功生成就換成最新的那張並同時記到 auto_*。
 上傳的背景（engine="upload"）一律不當自動選圖的候選。
+
+C 處理一頁的「換一張／AI 再畫一張」（request_json 的 take=true）：好了就換上去並記成 auto_*，連使用者之前選的
+也換掉（使用者要的就是這張新圖），換之前存一份復原快照（services/history.take_generation）。
+重新合成後，page.pending_user_strokes（C 的修改與復原／重做留下的使用者筆畫）寫進新合成圖的 user 層。
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from typing import Callable
 
 from sqlalchemy import case, func, insert, literal
 from sqlalchemy.exc import IntegrityError
@@ -26,13 +32,15 @@ from sqlmodel import Session, col, or_, select, update
 from app.models import (
     Generation, GenKind, GenStatus, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer, utcnow,
 )
+from app.services import history
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix
 from app.services.lineart_render import apply_strokes
 from app.services.page_compose import (
-    INPUTS_CHANGED, ComposeError, compose_page, slot_change_values, usable_conditions,
+    INPUTS_CHANGED, ComposeError, compose_page, is_usable, slot_change_values, usable_conditions,
 )
 from app.services.page_lineart import (
-    LineartUnavailable, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes, strokes_to_json,
+    LineartUnavailable, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes, save_strokes,
+    strokes_from_json, strokes_to_json,
 )
 from app.services.qa import evaluate
 from app.storage import Storage
@@ -50,12 +58,9 @@ UNEXPECTED = "自動處理這一頁時發生錯誤，請再試一次"
 GENERATION_FAILED = "圖片產生失敗，請重新產生"
 REQUEUE_DUPLICATE = "伺服器重新啟動；這一頁已有排隊中的工作"
 
-UPLOAD_ENGINE = "upload"  # 上傳的背景（api/compose.upload_background）：使用者的選擇，不是自動選圖的候選
-
-SLOTS = {
-    GenKind.BACKGROUND: ("background_generation_id", "auto_background_generation_id"),
-    GenKind.POSE: ("pose_generation_id", "auto_pose_generation_id"),
-}
+UPLOAD_ENGINE = history.UPLOAD_ENGINE  # 上傳的背景（api/compose.upload_background）：使用者的選擇，不是自動選圖的候選
+SLOTS = history.SLOTS
+TAKE = "take"  # request_json 的旗標：C 的「換一張／AI 再畫一張」，好了一定換上去
 
 _QUEUED = PageTaskStatus.QUEUED.value
 _RUNNING = PageTaskStatus.RUNNING.value
@@ -86,6 +91,27 @@ def _has_queued_task(session: Session, page_id: int) -> bool:
     return session.exec(
         select(PageTask.id).where(col(PageTask.page_id) == page_id, col(PageTask.status) == _QUEUED)
     ).first() is not None
+
+
+# ---- 喚醒 worker ----------------------------------------------------------------------
+
+_wakeup: Callable[[], None] | None = None
+
+
+def set_wakeup(fn: Callable[[], None] | None) -> None:
+    """worker 啟動時登記自己的 notify（停止時清掉）：不經 API 的地方（例如線稿的 key 變了）排了流程後叫醒它。"""
+    global _wakeup
+    _wakeup = fn
+
+
+def wake() -> None:
+    """排了流程並提交之後呼叫；沒有 worker（測試、腳本）就什麼都不做。"""
+    fn = _wakeup
+    if fn is not None:
+        try:
+            fn()
+        except Exception:  # noqa: BLE001  叫不醒只影響何時處理，工作已經在佇列
+            log.warning("無法喚醒 worker", exc_info=True)
 
 
 # ---- 排隊 ----------------------------------------------------------------------------
@@ -166,14 +192,31 @@ def requeue_page_tasks(session: Session) -> int:
 # ---- worker 的生成結果 -------------------------------------------------------------------
 
 
+def wants_take(gen: Generation) -> bool:
+    try:
+        d = json.loads(gen.request_json or "{}")
+    except (TypeError, ValueError):
+        return False
+    return isinstance(d, dict) and d.get(TAKE) is True
+
+
 def on_generation_succeeded(session: Session, gen_id: int) -> bool:
     """頁面的背景／角色動作生成成功：馬上自動選用（舊編輯器不用等流程就看得到），並排這頁的流程。
-    回傳有沒有排（其他種類的生成不排）。"""
+    C 的「換一張」（take）直接換上這張（先存復原快照）。回傳有沒有排（其他種類的生成不排）。"""
     gen = session.get(Generation, gen_id)
     if gen is None or gen.page_id is None or gen.kind not in SLOTS:
         return False
     page_id = gen.page_id
-    auto_select(session, page_id)
+    if wants_take(gen) and is_usable(gen, gen.kind, page_id):
+        try:
+            history.take_generation(session, gen)
+            session.commit()
+        except Exception:  # noqa: BLE001  換不上去（例如同時被改）：退回一般的自動選圖
+            session.rollback()
+            log.warning("換上新圖失敗（generation %s）", gen_id, exc_info=True)
+            auto_select(session, page_id)
+    else:
+        auto_select(session, page_id)
     enqueue_page_task(session, page_id)
     session.commit()
     return True
@@ -284,6 +327,31 @@ def _set_failed(session: Session, page_id: int, message: str) -> None:
         log.exception("無法記下頁面 %s 的失敗", page_id)
 
 
+def _write_pending(session: Session, page_id: int, gid: int, pending: str) -> None:
+    """pending_user_strokes 寫進 gid 的 user 層並清掉欄位；條件式 UPDATE 確認頁面仍選定 gid、欄位沒被改，
+    否則（被改了）整個流程重跑。內容跟現有的一樣就不寫（不為空筆畫多建一列）。"""
+    strokes = strokes_from_json(pending)
+    try:
+        if strokes_to_json(strokes) != strokes_to_json(load_strokes(session, gid, layer=StrokeLayer.USER)):
+            save_strokes(session, page_id, gid, strokes, layer=StrokeLayer.USER)
+            session.flush()
+        res = session.exec(
+            update(Page)
+            .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid,
+                   col(Page.pending_user_strokes) == pending)
+            .values(pending_user_strokes=None)
+        )
+        if res.rowcount != 1:
+            raise _Stale()
+        session.commit()
+    except IntegrityError as e:  # 同時有請求建立同一層
+        session.rollback()
+        raise _Stale() from e
+    except _Stale:
+        session.rollback()
+        raise
+
+
 def _attempt(session: Session, storage: Storage, page_id: int) -> str:
     if session.get(Page, page_id) is None:
         raise _PageGone()
@@ -302,8 +370,12 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
         if e.message == INPUTS_CHANGED:
             raise _Stale() from e
         raise
-    # 3–4. 線稿＋自動補線：以「底稿＋user 層」重算整層 auto（覆寫，不附加）
+    # 2b. C 的修改／復原留下的使用者筆畫：寫進新合成圖的 user 層
     session.refresh(page)
+    if page.pending_user_strokes is not None:
+        _write_pending(session, page_id, gid, page.pending_user_strokes)
+        session.refresh(page)
+    # 3–4. 線稿＋自動補線：以「底稿＋user 層」重算整層 auto（覆寫，不附加）
     width = page.line_width_px
     user = load_strokes(session, gid, layer=StrokeLayer.USER)
     pre = ink_before_user_layer(session, storage, page_id, gid, with_auto=False)
@@ -317,7 +389,7 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
                 raise _Stale()
         except IntegrityError as e:  # 同時有請求建立同一層（例如舊編輯器的自動補線）
             raise _Stale() from e
-    lin = ensure_page_lineart(session, storage, page_id)
+    lin = ensure_page_lineart(session, storage, page_id, from_pipeline=True)
     # 5. 可以印（已經是 PASSED 的保留原本的通過時間）
     now = utcnow()
     already = col(Page.status) == PageStatus.PASSED

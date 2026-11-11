@@ -39,7 +39,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update Book */
+        /**
+         * Update Book
+         * @description 改尺寸／列印方式：頁面流程做的可以印的頁排流程重跑（跑完仍可以印，不悄悄退回「還沒做完」），
+         *     其他有選圖的頁在背景重算線稿（舊編輯器的規則：可以印的頁有缺口就退回草稿）。
+         */
         patch: operations["update_book_api_books__book_id__patch"];
         trace?: never;
     };
@@ -92,8 +96,33 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Set Character */
+        /**
+         * Set Character
+         * @description 選角色。已設定角色時要 confirm_change=true（換角色：既有的角色動作留著），否則 409。
+         */
         post: operations["set_character_api_books__book_id__character_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/{book_id}/character/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Character
+         * @description 「↑ 上傳自己的主角」：驗證同上傳背景，等比例縮放到角色尺寸、置中貼在白底（不去背），
+         *     存成 engine="upload"、request_json.uploaded=true 的 CHARACTER 並設為角色。
+         *     已設定角色時要 confirm_change=true（表單欄位），否則 409。不計當日生成次數。
+         */
+        post: operations["upload_character_api_books__book_id__character_upload_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -149,7 +178,11 @@ export interface paths {
         delete: operations["delete_page_api_pages__page_id__delete"];
         options?: never;
         head?: never;
-        /** Update Page */
+        /**
+         * Update Page
+         * @description oneclick（C 的改動作文字、改字）：動作文字或圖下方的字變了就先存復原快照；
+         *     線條設定變了，流程做的頁排流程重跑（不退回草稿）。
+         */
         patch: operations["update_page_api_pages__page_id__patch"];
         trace?: never;
     };
@@ -165,6 +198,7 @@ export interface paths {
         /**
          * Create Background
          * @description 產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。
+         *     oneclick（C 的「AI 再畫一張」）：好了一定換上去（上傳的背景也換回 AI 畫的）。
          */
         post: operations["create_background_api_pages__page_id__backgrounds_post"];
         delete?: never;
@@ -208,6 +242,7 @@ export interface paths {
          * Create Pose
          * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
          *     新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。
+         *     oneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。
          */
         post: operations["create_pose_api_pages__page_id__poses_post"];
         delete?: never;
@@ -281,6 +316,7 @@ export interface paths {
         /**
          * Save Placement
          * @description 位置草稿（拖拉時自動存）；不產生合成圖、不改頁面狀態。
+         *     oneclick（C：放開拖拉時存一次）：位置變了就先存快照、筆畫清掉，排頁面流程重新合成。
          */
         put: operations["save_placement_api_pages__page_id__placement_put"];
         post?: never;
@@ -501,7 +537,11 @@ export interface paths {
         };
         /** Get Edits */
         get: operations["get_edits_api_pages__page_id__lineart_edits_get"];
-        /** Put Edits */
+        /**
+         * Put Edits
+         * @description 使用者的筆畫（user 層）。oneclick（C 的畫筆／擦除）：先存復原快照；流程做的頁不退回草稿，
+         *     排頁面流程重算補線（跑完仍可以印）。等著重新合成時不能畫（409）。
+         */
         put: operations["put_edits_api_pages__page_id__lineart_edits_put"];
         post?: never;
         delete?: never;
@@ -705,6 +745,67 @@ export interface paths {
         get: operations["book_overview_api_books__book_id__overview_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo
+         * @description 回到上一個快照；沒有可復原的 409「沒有可以復原的步驟」。
+         */
+        post: operations["undo_api_pages__page_id__undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/redo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redo
+         * @description 回到復原前的下一個快照；沒有可重做的（或復原之後又改過）409「沒有可以重做的步驟」。
+         */
+        post: operations["redo_api_pages__page_id__redo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore
+         * @description 背景／角色動作換回自動畫的那張（auto_* 不能用了就用最新一張能用的 AI 圖；都沒有 409），
+         *     線條清掉使用者筆畫。有改動才存快照；已經是自動的那張就什麼都不做。
+         */
+        post: operations["restore_api_pages__page_id__restore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -931,6 +1032,16 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_upload_character_api_books__book_id__character_upload_post */
+        Body_upload_character_api_books__book_id__character_upload_post: {
+            /** File */
+            file: string;
+            /**
+             * Confirm Change
+             * @default false
+             */
+            confirm_change: boolean;
+        };
         /** BookCreate */
         BookCreate: {
             /** Title */
@@ -1022,6 +1133,11 @@ export interface components {
             count: number;
             /** Seed */
             seed?: number | null;
+            /**
+             * Confirm Change
+             * @default false
+             */
+            confirm_change: boolean;
         };
         /**
          * CharacterCheck
@@ -1043,6 +1159,11 @@ export interface components {
         CharacterSelect: {
             /** Generation Id */
             generation_id: number;
+            /**
+             * Confirm Change
+             * @default false
+             */
+            confirm_change: boolean;
         };
         /** EditsIn */
         EditsIn: {
@@ -1322,6 +1443,20 @@ export interface components {
             aspect_mismatch: boolean;
             /** Compose Pending */
             compose_pending: boolean;
+            /** Attention */
+            attention: string | null;
+            /** Attention Detail */
+            attention_detail: string | null;
+            /** Auto Background Generation Id */
+            auto_background_generation_id: number | null;
+            /** Auto Pose Generation Id */
+            auto_pose_generation_id: number | null;
+            /** Has User Strokes */
+            has_user_strokes: boolean;
+            /** Can Undo */
+            can_undo: boolean;
+            /** Can Redo */
+            can_redo: boolean;
             /**
              * Created At
              * Format: date-time
@@ -1485,6 +1620,17 @@ export interface components {
             kind: "character" | "background" | "pose";
             /** Elapsed S */
             elapsed_s: number;
+        };
+        /**
+         * RestoreIn
+         * @description C 的「還原成自動畫的那張」：背景、角色動作或線條（清掉使用者筆畫）。
+         */
+        RestoreIn: {
+            /**
+             * Item
+             * @enum {string}
+             */
+            item: "background" | "pose" | "lines";
         };
         /** RunProgress */
         RunProgress: {
@@ -1831,6 +1977,41 @@ export interface operations {
             };
         };
     };
+    upload_character_api_books__book_id__character_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_character_api_books__book_id__character_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_pages_api_books__book_id__pages_get: {
         parameters: {
             query?: never;
@@ -1963,7 +2144,10 @@ export interface operations {
     };
     update_page_api_pages__page_id__patch: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -1998,7 +2182,10 @@ export interface operations {
     };
     create_background_api_pages__page_id__backgrounds_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -2068,7 +2255,10 @@ export interface operations {
     };
     create_pose_api_pages__page_id__poses_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -2103,7 +2293,10 @@ export interface operations {
     };
     select_background_api_pages__page_id__background_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -2138,7 +2331,10 @@ export interface operations {
     };
     upload_background_api_pages__page_id__backgrounds_upload_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -2173,7 +2369,10 @@ export interface operations {
     };
     select_pose_api_pages__page_id__pose_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -2208,7 +2407,10 @@ export interface operations {
     };
     save_placement_api_pages__page_id__placement_put: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -2643,7 +2845,10 @@ export interface operations {
     };
     put_edits_api_pages__page_id__lineart_edits_put: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -3023,6 +3228,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BookOverviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_api_pages__page_id__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    redo_api_pages__page_id__redo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_api_pages__page_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
                 };
             };
             /** @description Validation Error */
