@@ -22,7 +22,7 @@ from .services.engine import GenerationEngine
 from .services.preflight import format_report, run_preflight
 from .services.worker import GenerationWorker
 from .services.workflow_registry import WorkflowRegistry
-from .storage import Storage
+from .storage import make_storage
 
 log = logging.getLogger("app")
 
@@ -43,7 +43,7 @@ def create_app(
         init_db(db)
         app.state.db = db
         app.state.sessions = session_factory(db)
-        app.state.storage = Storage(s.paths.storage_dir)
+        app.state.storage = make_storage(s)
         gen_engine = engine or ComfyEngine(
             client_factory=lambda: ComfyClient(
                 s.comfy.url, request_timeout_s=s.comfy.request_timeout_s
