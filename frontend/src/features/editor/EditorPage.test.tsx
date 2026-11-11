@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/hooks";
 import { ToastProvider } from "@/components/ui/Toast";
 import { EditorPage } from "./EditorPage";
+import { alertToasts } from "@/components/ui/toastTesting";
 
 // ---------- next/navigation ----------
 const replace = vi.fn();
@@ -915,7 +916,7 @@ describe("EditorPage", () => {
 
     genStatus = 409;
     await userEvent.click(within(bgCard()).getByRole("button", { name: "換一張背景" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("請先設定角色");
+    await waitFor(() => expect(alertToasts()).toHaveTextContent("請先設定角色"));
   });
 
   it("上傳背景圖：POST upload 後變成本頁背景，縮圖有「上傳」標記", async () => {

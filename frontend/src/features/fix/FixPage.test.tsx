@@ -578,3 +578,17 @@ describe("C 處理一頁：復原／重做／還原之後文字欄位跟著伺�
     await waitFor(() => expect(screen.getByRole("textbox", { name: "中文字" })).toHaveValue("消防車"));
   });
 });
+
+describe("C 處理一頁：製作中的提示", () => {
+  it("live region 一直都在：沒在做時是空的，在做時才放進文字", async () => {
+    setup();
+    await screen.findByRole("heading", { level: 1, name: "第 2 頁・消防車" });
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("重新合成中：同一個 status 裡寫出正在重新做", async () => {
+    page = mkPage({ recompose_pending: true });
+    setup();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("正在重新做這一頁…好了會自動更新"));
+  });
+});

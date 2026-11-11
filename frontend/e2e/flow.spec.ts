@@ -189,5 +189,6 @@ test("沒設角色：角色動作「換一張」停用；前端資料過期時�
   const rejected = page.waitForResponse((r) => r.url().endsWith(`/api/pages/${p.id}/poses`));
   await regenerate.click();
   expect((await rejected).status()).toBe(409);
-  await expect(page.getByRole("alert").filter({ hasText: "請先設定角色" })).toBeVisible();
+  // 錯誤 toast 在常駐的 assertive live region 裡
+  await expect(page.getByTestId("toast-assertive")).toContainText("請先設定角色");
 });

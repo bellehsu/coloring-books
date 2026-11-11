@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
 import type { BookOverview as Overview, OverviewPage, ProducePlan } from "@/api/client";
 import { BookOverview } from "./BookOverview";
+import { alertToasts, politeToasts } from "@/components/ui/toastTesting";
 
 const book = {
   id: 1,
@@ -263,7 +264,7 @@ describe("B 整本書：狀態卡", () => {
     const go = within(card).getByRole("button", { name: "繼續做" });
     await waitFor(() => expect(go).toBeEnabled());
     await userEvent.click(go);
-    expect(await screen.findByRole("alert")).toHaveTextContent("今天的生成次數已用完，明天再來");
+    await waitFor(() => expect(alertToasts()).toHaveTextContent("今天的生成次數已用完，明天再來"));
   });
 });
 
@@ -300,7 +301,7 @@ describe("B 整本書：輪詢", () => {
     await act(() => vi.advanceTimersByTimeAsync(3100));
     await screen.findByRole("region", { name: "整本做好了！" });
     expect(calls.filter((c) => c.url === "/api/books/1/overview").length).toBeGreaterThan(before);
-    expect(screen.getByRole("status")).toHaveTextContent("整本做好了！");
+    expect(politeToasts()).toHaveTextContent("整本做好了！");
     expect(document.title).toContain("✓ 做好了");
 
     // 做完就不再輪詢
@@ -335,7 +336,7 @@ describe("B 整本書：輪詢", () => {
     overview = ov([pg(1, "ready"), pg(2, "todo")], { deferred_count: 1 });
     await act(() => vi.advanceTimersByTimeAsync(3100));
     await screen.findByRole("region", { name: "還有 1 頁明天繼續" });
-    expect(screen.getByRole("status")).toHaveTextContent("今天的做好了，還有 1 頁明天繼續");
+    expect(politeToasts()).toHaveTextContent("今天的做好了，還有 1 頁明天繼續");
   });
 
   it("繼續做 whose work finishes before the next poll still toasts", async () => {
@@ -350,14 +351,14 @@ describe("B 整本書：輪詢", () => {
     await waitFor(() => expect(go).toBeEnabled());
     await userEvent.click(go);
     await screen.findByRole("region", { name: "整本做好了！" });
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("整本做好了！"));
+    await waitFor(() => expect(politeToasts()).toHaveTextContent("整本做好了！"));
     expect(document.title).toContain("✓ 做好了");
   });
 
   it("does not toast when the book was already done on load", async () => {
     setup();
     await screen.findByRole("region", { name: "整本做好了！" });
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(politeToasts()).toBeEmptyDOMElement();
     expect(document.title).not.toContain("✓ 做好了");
   });
 });

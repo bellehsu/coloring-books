@@ -285,11 +285,10 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               <ColorPreview page={page} bgGen={bgGen} poseGen={poseGen} draft={placement.draft} onChange={placement.save} />
             )}
           </div>
-          {working && (
-            <p role="status" className={styles.working}>
-              正在重新做這一頁…好了會自動更新
-            </p>
-          )}
+          {/* 常駐的 live region：文字是之後放進去的，螢幕閱讀器才會唸 */}
+          <p role="status" className={styles.working}>
+            {working && "正在重新做這一頁…好了會自動更新"}
+          </p>
         </section>
 
         <div className={styles.side}>

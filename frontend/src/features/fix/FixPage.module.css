@@ -199,6 +199,14 @@
   font-weight: 700;
   color: var(--muted-2);
 }
+/* 沒在做的時候是空的：不佔版面，但留在無障礙樹裡（live region 要一直在） */
+.working:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
 .drawWrap {
   width: 100%;
   display: flex;

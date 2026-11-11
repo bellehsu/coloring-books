@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Generation } from "@/api/client";
 import { ToastProvider } from "@/components/ui/Toast";
 import { Thumbs, type ThumbKind } from "./Thumbs";
+import { alertToasts } from "@/components/ui/toastTesting";
 
 type O = Record<string, unknown>;
 const gen = (id: number, o: O = {}): O => ({
@@ -164,7 +165,7 @@ describe("Thumbs", () => {
     failWith["PATCH /api/generations/3"] = 409;
     setup();
     await userEvent.click(await screen.findByRole("button", { name: "捨棄背景第 1 張" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("正被頁面使用或作為角色");
+    await waitFor(() => expect(alertToasts()).toHaveTextContent("正被頁面使用或作為角色"));
   });
 
   it("選用進行中：其他張 aria-disabled、點了不選；不用 disabled，鍵盤焦點留在原地", async () => {

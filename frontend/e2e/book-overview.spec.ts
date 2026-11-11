@@ -45,7 +45,8 @@ test("開始做這本書 → 做好了：卡片可以印、篩選、印出這本
   expect((await produced).status()).toBe(202);
 
   // 做完：toast、分頁標題、狀態卡（空白那頁還沒做完）
-  await expect(page.getByRole("status").filter({ hasText: "做好了，還有 1 頁還沒做完" })).toBeVisible({ timeout: 30_000 });
+  // toast 在常駐的 polite live region 裡
+  await expect(page.getByTestId("toast-polite")).toContainText("做好了，還有 1 頁還沒做完", { timeout: 30_000 });
   await expect(page).toHaveTitle(/✓ 做好了/);
   const card = page.getByRole("region", { name: "還有 1 頁還沒做完" });
   await expect(card).toContainText("2 頁可以印・1 頁還沒做完");
