@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/Button";
 import { CaptionField, captionError } from "@/components/ui/CaptionField";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
-import { ACTION_HINT, ACTIONS, appendPhrase, hasPhrase } from "@/lib/actions";
+import {
+  ACTION_HINT, ACTIONS, activePhrase, appendPhrase, EXPRESSIONS, FACING_HINT, FACINGS, hasPhrase, setExclusivePhrase,
+} from "@/lib/actions";
 import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import { errMsg } from "./errMsg";
@@ -455,9 +457,61 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
               );
             })}
           </div>
+          <ExclusiveChips label="表情" group={EXPRESSIONS} text={action.value} onChange={action.setValue} />
+          <ExclusiveChips
+            label="面向"
+            group={FACINGS}
+            text={action.value}
+            onChange={action.setValue}
+            hint={FACING_HINT}
+          />
           <p className={styles.hint}>改動作文字後按「換一張」。</p>
         </div>
       </details>
     </section>
+  );
+}
+
+/** 單選的片語晶片群組（表情、面向）：再按一次作用中的取消；改選另一個會取代原本的。 */
+function ExclusiveChips({
+  label, group, text, onChange, hint,
+}: {
+  label: string;
+  group: { label: string; phrase: string }[];
+  text: string;
+  onChange: (v: string) => void;
+  hint?: string;
+}) {
+  const hintId = useId();
+  const active = activePhrase(text, group);
+  return (
+    <>
+      <div className={panel.presets} role="group" aria-label={label} aria-describedby={hint ? hintId : undefined}>
+        {group.map((g) => {
+          const on = g.phrase === active;
+          const tooLong = !on && setExclusivePhrase(text, group, g.phrase).length > MAX_ACTION;
+          return (
+            <button
+              key={g.phrase}
+              type="button"
+              className={panel.preset}
+              data-added={on}
+              aria-pressed={on}
+              disabled={tooLong}
+              title={tooLong ? `再加入會超過 ${MAX_ACTION} 字` : undefined}
+              onClick={() => onChange(setExclusivePhrase(text, group, on ? null : g.phrase))}
+            >
+              {on ? <span aria-hidden="true">✓ </span> : null}
+              {g.label}
+            </button>
+          );
+        })}
+      </div>
+      {hint ? (
+        <p id={hintId} className={styles.hint}>
+          {hint}
+        </p>
+      ) : null}
+    </>
   );
 }

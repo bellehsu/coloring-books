@@ -298,6 +298,33 @@ describe("ComposeWorkspace", () => {
     expect(order.indexOf("PATCH /api/pages/1")).toBeLessThan(order.indexOf("POST /api/pages/1/poses"));
   });
 
+  it("表情與面向：單選、再按一次取消、超過長度停用、面向提示", async () => {
+    setup();
+    const pose = card("角色動作");
+    const box = within(pose).getByLabelText("動作描述");
+    const expr = within(pose).getByRole("group", { name: "表情" });
+    const facing = within(pose).getByRole("group", { name: "面向" });
+    expect(within(pose).getByText("臉會轉向，身體可能仍偏正面；不夠時可在構圖用左右翻轉")).toBeInTheDocument();
+    await userEvent.click(within(expr).getByRole("button", { name: "開心" }));
+    await userEvent.click(within(expr).getByRole("button", { name: "大笑" }));
+    expect(box).toHaveValue("抱著一本書往上爬, with a big laughing expression");
+    expect(within(expr).getByRole("button", { name: "大笑" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(expr).getByRole("button", { name: "開心" })).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(within(facing).getByRole("button", { name: "朝左" }));
+    expect(box).toHaveValue("抱著一本書往上爬, with a big laughing expression, facing toward the left side of the picture");
+    await userEvent.click(within(expr).getByRole("button", { name: "大笑" }));
+    expect(box).toHaveValue("抱著一本書往上爬, facing toward the left side of the picture");
+    await userEvent.click(within(facing).getByRole("button", { name: "朝右" }));
+    expect(box).toHaveValue("抱著一本書往上爬, facing toward the right side of the picture");
+  });
+
+  it("表情：加入會超過 300 字的晶片停用，但作用中的晶片仍可取消", async () => {
+    setup({ page: mkPage({ action_prompt: "x".repeat(270) }) });
+    const pose = card("角色動作");
+    const expr = within(pose).getByRole("group", { name: "表情" });
+    expect(within(expr).getByRole("button", { name: "大笑" })).toBeDisabled();
+  });
+
   it("動作描述提示：地點寫在背景的場景描述，用 aria-describedby 連到動作欄位", () => {
     setup();
     const pose = card("角色動作");
