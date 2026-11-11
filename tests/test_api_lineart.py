@@ -370,7 +370,7 @@ def _fake_report(n):
     ([2, 0], 2),
 ])
 def test_autofix_passes(client, app, monkeypatch, counts, added):
-    from app.api import lineart as lineart_api
+    from app.services import autofix as autofix_mod
     from app.services import page_lineart
 
     _, p, ids = selected_page(client, app)
@@ -386,7 +386,7 @@ def test_autofix_passes(client, app, monkeypatch, counts, added):
         rep = pass_reports.pop(0)
         return rep
 
-    monkeypatch.setattr(lineart_api, "evaluate", fake_eval)
+    monkeypatch.setattr(autofix_mod, "evaluate", fake_eval)
     client.get(f"/api/pages/{p['id']}/qa")
     final["n"] = 0
     r = client.post(f"/api/pages/{p['id']}/lineart/autofix", json={"generation_id": ids[0]})
@@ -413,14 +413,14 @@ def test_autofix_respects_edit_layer_limits(client, app, monkeypatch):
 
 
 def test_autofix_limit_ignores_full_user_layer(client, app, monkeypatch):
-    from app.api import lineart as lineart_api
+    from app.services import autofix as autofix_mod
     from app.services import page_lineart
 
     _, p, ids = selected_page(client, app)
     # user 層已滿（500 筆）；存檔後的線稿還有一個缺口，補一筆就接好
     reports = iter([_fake_report(1)])
     monkeypatch.setattr(page_lineart, "evaluate", lambda ink, lw: next(reports, _fake_report(0)))
-    monkeypatch.setattr(lineart_api, "evaluate", lambda ink, lw: _fake_report(0))
+    monkeypatch.setattr(autofix_mod, "evaluate", lambda ink, lw: _fake_report(0))
     full = [{"op": "erase", "width_px": 4, "points": [[0.01, 0.01]]}] * 500
     assert client.put(f"/api/pages/{p['id']}/lineart/edits", json=edits_body(ids[0], full)).status_code == 200
     r = client.post(f"/api/pages/{p['id']}/lineart/autofix", json={"generation_id": ids[0]})

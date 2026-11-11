@@ -8,6 +8,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 from pydantic_core import PydanticCustomError
 
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
+from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS  # noqa: F401  (re-export)
 from app.services.caption_text import normalize_caption
 from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
@@ -376,8 +377,7 @@ class PageOut(BaseModel):
 
 STROKE_WIDTH_MIN, STROKE_WIDTH_MAX = 2, 64
 MAX_STROKE_POINTS = 2000
-MAX_STROKES = 500
-MAX_TOTAL_POINTS = 20000
+# MAX_STROKES／MAX_TOTAL_POINTS（每一層的上限）定義在 services/autofix.py，頁面流程也用
 
 # 相對座標：有限浮點數、落在 [0, 1]（"NaN"/"inf" 字串也會被 float 接受，所以明確拒絕非有限值）
 UnitFloat = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]

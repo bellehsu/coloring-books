@@ -42,6 +42,7 @@ from app.models import (  # noqa: E402
     Page,
     PageHistory,
     PageTask,
+    PageTaskStatus,
     Usage,
     utcnow,
 )
@@ -233,6 +234,15 @@ def cmd_delete_data(args: argparse.Namespace, settings: Settings, sessions) -> i
         if running:
             s.rollback()
             raise CliError("這個 owner 還有圖片正在生成，請稍後再刪")
+        processing = s.exec(
+            select(func.count()).select_from(PageTask).where(
+                col(PageTask.page_id).in_(select(Page.id).where(col(Page.book_id).in_(owned))),
+                col(PageTask.status) == PageTaskStatus.RUNNING.value,
+            )
+        ).one()
+        if processing:  # 頁面流程正在寫這個 owner 的合成圖與線稿
+            s.rollback()
+            raise CliError("這個 owner 還有頁面正在自動處理，請稍後再刪")
         book_ids = list(s.exec(owned).all())
         gen_ids = set(s.exec(select(Generation.id).where(col(Generation.book_id).in_(book_ids))).all())
         n_pages = s.exec(select(func.count()).select_from(Page).where(col(Page.book_id).in_(book_ids))).one()

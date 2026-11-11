@@ -7,13 +7,13 @@ Phase 9 移除了構圖草圖（`/pages/{id}/sketch`）與舊整頁流程的建�
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case, literal, null
 from sqlmodel import Session, col, delete, func, select, update
 
 from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_page
 from app.api.schemas import PageCreate, PageOrder, PageOut, PageUpdate
 from app.models import (
-    Book, Generation, GenStatus, LineartEdit, Owner, Page, PageHistory, PageStatus, PageTask, utcnow,
+    Book, Generation, GenStatus, LineartEdit, Owner, Page, PageHistory, PageStatus, PageTask, PageTaskStatus,
+    utcnow,
 )
 from app.services.compose import composite_matches, page_placement
 from app.services.layout import compute_layout
@@ -23,21 +23,6 @@ from app.storage import Storage
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["pages"])
-
-
-
-def reset_review_when(cond) -> dict:
-    """條件式 UPDATE 用的 SET 片段：cond 成立（以寫入當下的舊值判斷）時退回草稿，
-    角色檢查、通過時間與強制通過原因作廢；不成立時保持原值。"""
-    return {
-        "status": case(
-            (cond, literal(PageStatus.DRAFT, Page.__table__.c.status.type)),
-            else_=col(Page.status),
-        ),
-        "passed_at": case((cond, null()), else_=col(Page.passed_at)),
-        "character_check": case((cond, null()), else_=col(Page.character_check)),
-        "forced_pass_reason": case((cond, null()), else_=col(Page.forced_pass_reason)),
-    }
 
 
 def compose_pending(page: Page, selected: Generation | None) -> bool:
@@ -201,6 +186,11 @@ def delete_page(
     if running:
         session.rollback()
         raise HTTPException(409, "這一頁還有圖片正在生成，請稍後再刪")
+    if session.exec(select(select(PageTask.id).where(
+        col(PageTask.page_id) == page_id, col(PageTask.status) == PageTaskStatus.RUNNING.value
+    ).exists())).one():
+        session.rollback()  # 頁面流程正在寫這頁的合成圖與線稿
+        raise HTTPException(409, "這一頁正在自動處理，請稍後再刪")
     gens = session.exec(select(Generation).where(col(Generation.page_id) == page_id)).all()
     gen_ids = [g.id for g in gens]
     image_paths = [p for g in gens for p in (g.image_path, g.mask_path) if p]

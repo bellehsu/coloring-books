@@ -12,6 +12,7 @@ export interface Page {
   background_generation_id: number | null;
   pose_generation_id: number | null;
   selected_generation_id: number | null;
+  status: string;
 }
 export interface Generation {
   id: number;
@@ -68,8 +69,8 @@ export async function setCharacter(request: APIRequestContext, bookId: number): 
 }
 
 /**
- * 產生 1 張背景、1 個角色動作（需已設定角色）。成功後 worker 自動選用（欄位是空的才選），
- * 這裡等兩個欄位都選好；有給 placement 就存位置；compose 時再合成（頁面有選定的合成圖）。
+ * 產生 1 張背景、1 個角色動作（需已設定角色）。成功後 worker 自動選用，頁面流程（Phase 13）接著自動合成、
+ * 補線並標成可以印；這裡等流程做完（不和它同時改這一頁），有給 placement 就存位置；compose 時再合成。
  */
 export async function composePage(
   request: APIRequestContext,
@@ -93,6 +94,9 @@ export async function composePage(
       return [p?.background_generation_id, p?.pose_generation_id];
     })
     .toEqual([bg.id, pose.id]);
+  await expect
+    .poll(async () => (await getPages(request, bookId)).find((x) => x.id === pageId)?.status, { timeout: 20_000 })
+    .toBe("passed");
   if (placement) await ok(await request.put(`/api/pages/${pageId}/placement`, { data: placement }));
   if (compose) await ok(await request.post(`/api/pages/${pageId}/compose`));
 }

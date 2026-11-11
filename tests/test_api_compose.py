@@ -694,6 +694,8 @@ def test_cutout_404_and_409(client, app):
 def test_pick_validation(client, app):
     b, p, bg, pose = compose_ready(client, app)
     pid = p["id"]
+    # 當成使用者自己選的（沒有自動選圖紀錄）：之後完成的生成不會自動換掉，最後才能確認頁面沒被動到
+    set_page(app, pid, auto_background_generation_id=None, auto_pose_generation_id=None)
     # 種類不對
     assert pick(client, pid, "background", pose).status_code == 409
     assert pick(client, pid, "pose", bg).status_code == 409
@@ -1053,12 +1055,13 @@ def _files(storage):
 
 def test_compose_race_inputs_changed(client, app, monkeypatch):
     import app.api.compose as compose_api
+    import app.services.page_compose as page_compose
 
     b, p, bg, pose = compose_ready(client, app)
     pid = p["id"]
     gid = confirm(client, pid)["selected_generation_id"]
     client.put(f"/api/pages/{pid}/placement", json={"cx": 0.3, "cy": 0.6, "height": 0.5, "flip": True})
-    real = compose_api.compose
+    real = page_compose.compose
     raced = {"cx": 0.7, "cy": 0.5, "height": 0.4, "flip": False}
 
     def racing_compose(*args, **kwargs):
@@ -1070,7 +1073,7 @@ def test_compose_race_inputs_changed(client, app, monkeypatch):
             s.commit()
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(compose_api, "compose", racing_compose)
+    monkeypatch.setattr(page_compose, "compose", racing_compose)
     root = app.state.storage
     before_files = _files(root)
     before_rows = {g.id for g in composites(app, pid)}

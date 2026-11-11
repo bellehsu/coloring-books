@@ -8,7 +8,7 @@ const PLACEMENT = { cx: 0.45, cy: 0.66, height: 0.6, flip: false };
 let bookId = 0;
 /** 已合成（有選定的合成圖）：補線能用。 */
 let doneId = 0;
-/** 背景＋角色動作已選、位置存好，還沒合成（開頁時會自動合成）。 */
+/** 背景＋角色動作已選；頁面流程合成後才改了位置，所以選定圖不是目前位置的合成圖（開頁時會自動合成）。 */
 let draftId = 0;
 
 test.beforeAll(async ({ playwright }, testInfo) => {

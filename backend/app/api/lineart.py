@@ -5,18 +5,15 @@
 
 import io
 
-import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image, ImageDraw
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, update
+from sqlmodel import Session
 
 from app.api.deps import current_owner, get_session, get_storage, owned_book, owned_generation, owned_page
 from app.api.files import signed_redirect
 from app.api.schemas import (
-    MAX_STROKES,
-    MAX_TOTAL_POINTS,
     AutofixIn,
     AutofixOut,
     EditsIn,
@@ -24,7 +21,8 @@ from app.api.schemas import (
     QAOut,
     StrokeOut,
 )
-from app.models import GenStatus, Owner, Page, PageStatus, StrokeLayer, utcnow
+from app.models import GenStatus, Owner, Page, StrokeLayer
+from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix, read_ink
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
     LINE_WIDTH_DEFAULT,
@@ -32,26 +30,23 @@ from app.services.lineart_render import (
     LINE_WIDTH_MIN,
     LineDetail,
     Stroke,
-    apply_strokes,
 )
 from app.services.page_lineart import (
     LineartSourceMissing,
     LineartUnavailable,
     PageLineart,
+    commit_layer,
     ensure_page_lineart,
     ensure_preview,
     ink_before_user_layer,
     load_strokes,
     read_page_lineart,
-    save_strokes,
     strokes_to_json,
 )
-from app.services.qa import evaluate
 from app.storage import Storage
 
 router = APIRouter(prefix="/api", tags=["lineart"])
 
-AUTOFIX_MAX_PASSES = 3  # ruling 2026-11-06：補線會讓別的近缺口變成缺口，所以重複幾輪
 OVERLAY_GAP_RADIUS_PX = 40
 OVERLAY_GAP_LINE_PX = 6
 OVERLAY_BOX_LINE_PX = 4
@@ -112,20 +107,11 @@ def _commit_strokes(
 ) -> None:
     """一層修改圖層與「頁面仍選定這張圖」的條件式 UPDATE 在同一個交易；修線後 passed 退回 draft。"""
     try:
-        save_strokes(session, page_id, gen_id, strokes, layer=layer)
-        session.flush()
-        res = session.exec(
-            update(Page)
-            .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gen_id)
-            .values(status=PageStatus.DRAFT, passed_at=None, updated_at=utcnow())
-        )
-        if res.rowcount == 0:
-            session.rollback()
-            raise HTTPException(409, STALE_GENERATION)
-        session.commit()
+        ok = commit_layer(session, page_id, gen_id, strokes, layer=layer)
     except IntegrityError as e:  # 兩個請求同時建立同一張圖的修改圖層
-        session.rollback()
         raise HTTPException(409, "修改圖層剛被另一個請求更新，請重試") from e
+    if not ok:
+        raise HTTPException(409, STALE_GENERATION)
 
 
 @router.get("/pages/{page_id}/lineart")
@@ -223,20 +209,6 @@ def put_edits(
     return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id))
 
 
-def _read_ink(data: bytes) -> np.ndarray:
-    with Image.open(io.BytesIO(data)) as im:
-        return np.asarray(im.convert("L")) < 128
-
-
-def _bridge_stroke(bridge, w: int, h: int, width_px: int) -> Stroke:
-    """QA 的相對座標是 x/w；apply_strokes 用 x*(w-1)，換算成同一個像素。"""
-    def conv(x: float, y: float) -> tuple[float, float]:
-        return (min(1.0, max(0.0, round(x * w) / (w - 1))), min(1.0, max(0.0, round(y * h) / (h - 1))))
-
-    (ex, ey), (qx, qy) = bridge
-    return Stroke("draw", float(width_px), (conv(ex, ey), conv(qx, qy)))
-
-
 @router.post("/pages/{page_id}/lineart/autofix", response_model=AutofixOut)
 def autofix(
     page_id: int,
@@ -245,7 +217,8 @@ def autofix(
     storage: Storage = Depends(get_storage),
     owner: Owner = Depends(current_owner),
 ) -> AutofixOut:
-    """對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。
+    """對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪
+    （services/autofix.plan_autofix）。
 
     只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。
     使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），
@@ -270,30 +243,10 @@ def autofix(
             pre = ink_before_user_layer(session, storage, page_id, gid)
         except LineartUnavailable as e:
             raise HTTPException(409, e.message) from e
-        erased = ~apply_strokes(np.ones_like(pre), user)  # user 層最後會擦成白的像素
     else:
-        pre, erased = _read_ink(data), None  # 沒有 user 層：線稿圖就是底稿＋auto 層
-    h, w = pre.shape
-
-    def survives(stroke: Stroke) -> bool:
-        """補線有任何一點會被 user 層擦掉就不補（補了也接不起來，只會一直累積無用的 auto 筆畫）。"""
-        return erased is None or not (apply_strokes(np.zeros_like(pre), [stroke]) & erased).any()
-
-    added: list[Stroke] = []
-    gap_count, bridges = lin.qa.gap_count, lin.qa.bridges
-    for _ in range(AUTOFIX_MAX_PASSES):
-        room = min(MAX_STROKES - len(existing) - len(added), (points_left - 2 * len(added)) // 2)
-        batch = [s for s in (_bridge_stroke(b, w, h, width) for b in bridges[:max(0, room)]) if survives(s)]
-        if not batch:
-            break
-        trial_pre = apply_strokes(pre, batch)
-        report = evaluate(apply_strokes(trial_pre, user) if user else trial_pre, width)
-        if report.gap_count >= gap_count:
-            break  # 這一輪沒有進展：不留它的筆畫
-        pre, added = trial_pre, added + batch
-        gap_count, bridges = report.gap_count, report.bridges
-        if gap_count == 0:
-            break
+        pre = read_ink(data)  # 沒有 user 層：線稿圖就是底稿＋auto 層
+    added = plan_autofix(pre, user, lin.qa.gap_count, lin.qa.bridges, width,
+                         room_strokes=MAX_STROKES - len(existing), room_points=points_left)
 
     if not added:
         return _qa_out(session, owner, page_id, lin, AutofixOut, autofix_added=0)

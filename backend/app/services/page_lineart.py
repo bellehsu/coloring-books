@@ -113,6 +113,27 @@ def save_strokes(session: Session, page_id: int, gen_id: int, strokes: list[Stro
         session.add(edit)
 
 
+def commit_layer(session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer) -> bool:
+    """整份覆寫一層修線，並在同一個交易以條件式 UPDATE 確認頁面仍選定這張圖；修線後 passed 退回 draft。
+    頁面已不再選定這張圖時 rollback、回 False。兩個請求同時建立同一層丟 IntegrityError（已 rollback）。"""
+    try:
+        save_strokes(session, page_id, gen_id, strokes, layer=layer)
+        session.flush()
+        res = session.exec(
+            update(Page)
+            .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gen_id)
+            .values(status=PageStatus.DRAFT, passed_at=None, updated_at=utcnow())
+        )
+        if res.rowcount == 0:
+            session.rollback()
+            return False
+        session.commit()
+        return True
+    except Exception:
+        session.rollback()
+        raise
+
+
 def _digest(*parts) -> str:
     return hashlib.sha256(_dumps(list(parts)).encode()).hexdigest()[:16]
 
@@ -183,9 +204,10 @@ def ensure_page_lineart(session: Session, storage: Storage, page_id: int, *, rer
     raise LineartUnavailable("線稿產生時頁面一直被更動，請稍後再試")
 
 
-def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_id: int):
+def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_id: int, *, with_auto: bool = True):
     """選定圖的底稿＋auto 層（還沒套 user 層）的墨水陣列，與 ensure_page_lineart 同樣的設定。
-    自動補線要依渲染順序（auto 再 user）試補線時用。來源圖片不見丟 LineartSourceMissing。"""
+    自動補線要依渲染順序（auto 再 user）試補線時用；with_auto=False 只回底稿（頁面流程重算整層 auto）。
+    來源圖片不見丟 LineartSourceMissing。"""
     page = session.get(Page, page_id)
     gen = session.get(Generation, gen_id)
     if page is None or gen is None:
@@ -193,7 +215,7 @@ def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_
     book = session.get(Book, page.book_id)
     content_px = compute_layout(book.paper_size, book.print_mode).content_px
     ink, _metrics = render_base(_load(storage, gen), content_px, page.line_detail, page.line_width_px)
-    auto = load_strokes(session, gen_id, layer=StrokeLayer.AUTO)
+    auto = load_strokes(session, gen_id, layer=StrokeLayer.AUTO) if with_auto else []
     return apply_strokes(ink, auto) if auto else ink
 
 

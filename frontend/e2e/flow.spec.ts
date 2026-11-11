@@ -64,7 +64,8 @@ test("完整流程：建書 → 角色 → 故事 → 產生全部素材 → 構
   expect(pose.user_text).toBe(ACTION);
 
   // ---- 頁面 ① 構圖：素材已自動選用 → 開頁自動合成；拖曳角色 → 放開後再自動合成 ----
-  await page.getByRole("link", { name: /頁面 0 \/ 1/ }).click();
+  // 頁面流程（Phase 13）在素材都好了之後自動合成並標成可以印，所以完成數可能已經是 1
+  await page.getByRole("link", { name: /頁面 [01] \/ 1/ }).click();
   await expect(page).toHaveURL(/\/books\/\d+\/editor/);
   await expect(page.getByRole("tab", { name: "① 構圖" })).toHaveAttribute("aria-selected", "true");
   const status = page.getByRole("status").filter({ hasText: /線稿已自動更新|更新中/ });

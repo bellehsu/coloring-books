@@ -301,7 +301,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 - `e2e/story.spec.ts`：「貼上整本故事」貼 3 頁（第 1 頁 CRLF 換行、全形數字）→ 預覽表 3 列拆對 → 匯入 → 3 列填好 →
   「產生全部素材（還有 6 張）」→ 每頁的背景與角色動作縮圖都出現。
 - `e2e/batch.spec.ts`：`POST /books/{id}/materials/batch`（`upload_page_ids` 的頁略過背景、沒場景的頁略過）→ 排入的項目與略過原因 →
-  worker 完成後自動選用（只填空的欄位）→ 再呼叫一次不再排。
+  worker 完成後自動選用（自己選的不換）→ 再呼叫一次不再排。
 - `e2e/isolation.spec.ts`：邀請 A 建書；邀請 B（全新的瀏覽器 context 開 `/i/{token}`）書單是空的，開 A 的編輯器網址顯示錯誤（API 404）；
   圖片 API 302 到 `/api/files/...?exp&sig` 後取得 image/png。也確認 A 的 cookie 真的生效（不是沒有 cookie 而被當成 dev admin）：
   有 `cb_session`、preflight 403、書單只有自己的書（沒有 admin 剛建的書）。
@@ -326,7 +326,7 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 設定好角色之後：
 
 1. **故事**：每一頁寫場景描述（中文或英文）與角色動作（只寫動作，地點寫在場景；也可以點常用動作），背景可改選「上傳圖片」。
-   按「產生全部素材（還有 K 張）」一次排好整本書缺的背景與角色動作（見下方「一次做很多頁時」）；完成的素材會自動選用到空的欄位。
+   按「產生全部素材（還有 K 張）」一次排好整本書缺的背景與角色動作（見下方「一次做很多頁時」）；完成的素材會自動選用（最新一張；自己點選或上傳的不會被換掉），背景與角色動作都有了之後，後端的頁面流程（Phase 13）自動合成、補線並標成可以印（`backend/app/services/pipeline.py`）。
 2. **① 構圖**（頁面編輯器）：背景與角色動作各一張卡片，縮圖單選；不滿意就按卡片上的「換一張」，每次產生一張。
    - **背景**（約 20 秒，不用角色參考圖，提示詞要求無人物）：`qwen_background`，Qwen-Image-Edit-2511 GGUF＋Lightning 4 步，不給參考圖；
      每張隨機挑一種構圖變化，且不會和本頁上一張背景相同（再產生時構圖一定換一種）。
