@@ -16,6 +16,7 @@ describe("normalizeCaption（與後端 normalize_caption 同一套規則）", ()
     ["﻿消防﻿", "消防"],
     ["消\u0000防\u001b", "消防"],
     ["  Fire   Engine ", "Fire Engine"],
+    ["a \u0001 b", "a b"], // 控制字元夾在兩個空白之間：與後端一樣只留一個空白
     ["​", ""],
     [" \n ", ""],
     ["", ""],

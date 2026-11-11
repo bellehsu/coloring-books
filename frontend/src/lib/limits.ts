@@ -15,4 +15,5 @@ export const normalizeCaption = (s: string): string =>
     .replace(/\p{Cf}/gu, "")
     .replace(/[\s\u001c-\u001f\u0085]+/g, " ")
     .replace(/\p{Cc}/gu, "")
+    .replace(/ {2,}/g, " ")
     .trim();
