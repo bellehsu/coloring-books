@@ -80,9 +80,16 @@ def has_facing(action: str) -> bool:
     return any(p in low for p in FACING_PHRASES)
 
 
-def pick_pose_variation(rng: random.Random, exclude: str | None = None, facing: bool = False) -> str | None:
+def pick_pose_variation(
+    rng: random.Random, exclude: str | Sequence[str] | None = None, facing: bool = False
+) -> str | None:
+    """exclude：這頁最近用過的變化語（字串或由新到舊的清單）。候選有 3 個以上（沒有面向語）就排除最近兩個，
+    只剩 2 個（有面向語）就只排除最近一個，避免 A-B-A 或兩個輪流重複。"""
     options = QWEN_POSE_VARIATIONS[2:] if facing else QWEN_POSE_VARIATIONS
-    return pick_variation(options, rng, exclude)
+    recent = [exclude] if isinstance(exclude, str) else list(exclude or [])
+    keep = 2 if len(options) >= 3 else 1
+    choices = [v for v in options if v not in recent[:keep]] or list(options)
+    return rng.choice(choices)
 
 
 # --- 簡潔背景（qwen_background）：Qwen-Image-Edit-2511 當純文字生圖 ---

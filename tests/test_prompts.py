@@ -12,8 +12,6 @@ def test_pose_size():
 
 
 def test_qwen_pose_prompt():
-    import random
-
     from app.services.prompts import qwen_pose_prompt
 
     p = qwen_pose_prompt("  waving one hand ")
@@ -61,6 +59,18 @@ def test_pick_pose_variation_excludes(v):
         assert prompts.pick_pose_variation(random.Random(seed), exclude=v) not in (v, None)
 
 
+def test_pick_pose_variation_excludes_last_two_without_facing():
+    for a, b in [(POSE_VARIATIONS[0], POSE_VARIATIONS[1]), (POSE_VARIATIONS[3], POSE_VARIATIONS[2])]:
+        seen = {prompts.pick_pose_variation(random.Random(s), exclude=[a, b]) for s in range(60)}
+        assert seen == set(POSE_VARIATIONS) - {a, b}
+
+
+def test_pick_pose_variation_facing_excludes_only_last_of_list():
+    got = {prompts.pick_pose_variation(random.Random(s), exclude=[POSE_VARIATIONS[2], POSE_VARIATIONS[3]], facing=True)
+           for s in range(60)}
+    assert got == {POSE_VARIATIONS[3]}
+
+
 @pytest.mark.parametrize("v", [None, *POSE_VARIATIONS])
 def test_pick_pose_variation_facing_only_3_and_4(v):
     seen = set()
@@ -102,8 +112,6 @@ def test_qwen_background_prompt():
 
 
 def test_pick_background_variation_empty_returns_none(monkeypatch):
-    import random
-
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ())
     assert prompts.pick_background_variation(random.Random(1)) is None
@@ -123,8 +131,6 @@ def test_background_variations_calibrated():
 
 
 def test_pick_background_variation_uses_list(monkeypatch):
-    import random
-
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b"))
     assert prompts.pick_background_variation(random.Random(1)) in ("a", "b")
@@ -132,8 +138,6 @@ def test_pick_background_variation_uses_list(monkeypatch):
 
 def test_pick_background_variation_excludes_previous(monkeypatch):
     # 「再產生一張」：排除上一張的構圖變化語，避免連續兩張構圖幾乎一樣
-    import random
-
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a", "b", "c"))
     for seed in range(50):
@@ -146,8 +150,6 @@ def test_pick_background_variation_excludes_previous(monkeypatch):
 
 
 def test_pick_background_variation_exclude_everything_falls_back(monkeypatch):
-    import random
-
 
     monkeypatch.setattr(prompts, "QWEN_BACKGROUND_VARIATIONS", ("a",))
     assert prompts.pick_background_variation(random.Random(1), exclude="a") == "a"
@@ -194,8 +196,6 @@ def test_qwen_character_prompt_inserts_description():
 
 
 def test_pick_character_variation(monkeypatch):
-    import random
-
 
     picks = {prompts.pick_character_variation(random.Random(s)) for s in range(80)}
     assert picks == set(prompts.QWEN_CHARACTER_VARIATIONS)
@@ -211,8 +211,6 @@ def test_pick_character_variation(monkeypatch):
 
 @pytest.mark.parametrize("options", [(), ("a",), ("a", "b", "c")])
 def test_pick_variation_shared_helper(options):
-    import random
-
     from app.services.prompts import pick_variation
 
     if not options:

@@ -8,7 +8,7 @@
 ## 結果
 | 項目 | 變化語 | 結果 |
 |---|---|---|
-| 揮手 × 3 | V4 → V1 → V4 | ✓ 連續兩張都明顯不同（側身、動作大小）。△ 第 1 張用 V4「calmer」，嘴角變成微皺眉 |
+| 揮手 × 3 | V4 → V1 → V4 | △ consecutive shots differ; shots 1 and 3 shared V4 and looked similar → fixed by excluding the last two variations (I3). 第 1 張用 V4「calmer」，嘴角變成微皺眉 |
 | 揮手＋大笑 | V1 | ✓ 大笑＋側身揮手 |
 | 跳舞＋害羞 | V4 | ✓ 腮紅、瞇眼、跳舞 |
 | 走路＋朝左 × 3 | V4 → V3 → V4 | ✓ 三張都朝左；只換動作大小（facing 時只用 V3／V4），三張可分辨 |

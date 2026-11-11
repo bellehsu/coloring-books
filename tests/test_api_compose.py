@@ -506,13 +506,13 @@ def test_pose_excludes_latest_pose_any_status(client, app, monkeypatch):
     p = new_page(client, b["id"])
     other = new_page(client, b["id"])
     first = _pose_post(client, p["id"])
-    assert calls == [None]
+    assert calls == [[]]
     v1 = request_of(app, first["id"])["variation"]
     _set_status(app, first["id"], GenStatus.FAILED, discarded=True)
     second = _pose_post(client, p["id"])
-    assert calls[-1] == v1 and request_of(app, second["id"])["variation"] != v1
+    assert calls[-1] == [v1] and request_of(app, second["id"])["variation"] != v1
     _pose_post(client, other["id"])  # 只看同一頁
-    assert calls[-1] is None
+    assert calls[-1] == []
 
 
 def test_batch_pose_excludes_latest_pose_per_page(client, app, monkeypatch):
@@ -536,8 +536,56 @@ def test_batch_pose_excludes_latest_pose_per_page(client, app, monkeypatch):
     assert out.status_code == 202, out.text
     poses = [g for g in out.json()["queued"] if g["kind"] == "pose"]
     assert [g["page_id"] for g in poses] == [p1["id"], p2["id"]]
-    assert calls == [prior_v, None]
+    assert calls == [[prior_v], []]
     assert request_of(app, poses[0]["id"])["variation"] != prior_v
+
+
+def test_three_consecutive_poses_all_differ(client, app):
+    b, _ = book_with_character(client, app)
+    for _ in range(15):
+        p = new_page(client, b["id"])
+        vs = [request_of(app, _pose_post(client, p["id"])["id"])["variation"] for _ in range(3)]
+        assert len(set(vs)) == 3
+
+
+def test_poses_with_facing_alternate(client, app):
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    vs = [request_of(app, _pose_post(client, p["id"], "waving, facing the viewer")["id"])["variation"] for _ in range(5)]
+    assert all(a != b for a, b in zip(vs, vs[1:]))
+    assert len(set(vs)) == 2
+
+
+def test_last_pose_variations_newest_first_skips_malformed(client, app):
+    from app.api.compose import _last_pose_variations
+
+    b, _ = book_with_character(client, app)
+    p = new_page(client, b["id"])
+    ids = [_pose_post(client, p["id"])["id"] for _ in range(3)]
+    other = new_page(client, b["id"])
+    _pose_post(client, other["id"])
+    with app.state.sessions() as s:
+        row = s.get(Generation, ids[2])
+        row.request_json = "not json"
+        s.add(row)
+        s.commit()
+        got = _last_pose_variations(s, p["id"])
+        assert got == [request_of(app, ids[1])["variation"], request_of(app, ids[0])["variation"]]
+        assert _last_pose_variations(s, p["id"], n=1) == got[:1]
+
+
+def test_batch_pose_with_facing_phrase_only_energy_variations(client, app):
+    from app.services.prompts import QWEN_POSE_VARIATIONS
+
+    b, _ = book_with_character(client, app, **A5_HOME)
+    for i in range(6):
+        new_page(client, b["id"], scene_prompt=f"公園{i}", action_prompt="waving, Facing the viewer")
+    out = client.post(f"/api/books/{b['id']}/materials/batch")
+    assert out.status_code == 202, out.text
+    poses = [g for g in out.json()["queued"] if g["kind"] == "pose"]
+    assert len(poses) == 6
+    for g in poses:
+        assert request_of(app, g["id"])["variation"] in QWEN_POSE_VARIATIONS[2:]
 
 
 @pytest.mark.parametrize("phrase", [
