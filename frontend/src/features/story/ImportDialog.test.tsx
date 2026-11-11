@@ -138,6 +138,15 @@ describe("ImportDialog", () => {
       expect(screen.getByRole("button", { name: "匯入（新增 0 頁、填入 5 格）" })).toBeEnabled();
     });
 
+    it("只有文字欄的試算表標題：場景與動作欄是空的", () => {
+      pages = [pg(11, 1, "", "")];
+      setup("中文\t英文\n消防車\tFire Engine");
+      const rows = screen.getAllByRole("row");
+      expect(within(rows[1]).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+        "1", "", "", "消防車", "Fire Engine", "填入中文字、英文字",
+      ]);
+    });
+
     it("沒有任何文字時不顯示這兩欄", () => {
       setup(TEXT_OK);
       expect(screen.queryByRole("columnheader", { name: "中文字" })).not.toBeInTheDocument();

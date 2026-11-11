@@ -56,19 +56,24 @@ test("圖下方的文字：在故事列輸入、離開欄位就存，重新整�
   await createPage(request, book.id, "消防局門口", "開著紅色消防車");
   await page.goto(`/books/${book.id}/story`);
   const row = page.getByRole("article", { name: "第 1 頁" });
-  await row.getByRole("textbox", { name: "中文字" }).fill("消防車");
+  const savedZh = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && r.url().includes("/api/pages/") && (r.request().postData() ?? "").includes("caption_zh"),
+  );
+  await row.getByRole("textbox", { name: "第 1 頁中文字" }).fill("消防車");
   await expect(row.getByText("還可 9 字")).toBeVisible();
-  const saved = page.waitForResponse((r) => r.request().method() === "PATCH" && r.url().includes("/api/pages/"));
-  await row.getByRole("textbox", { name: "英文字" }).fill("Fire Engine");
-  await row.getByRole("textbox", { name: "中文字" }).focus(); // 離開英文欄位 → 存
-  await saved;
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && r.url().includes("/api/pages/") && (r.request().postData() ?? "").includes("Fire Engine"),
+  );
+  await row.getByRole("textbox", { name: "第 1 頁英文字" }).fill("Fire Engine");
+  await row.getByRole("textbox", { name: "第 1 頁中文字" }).focus(); // 離開英文欄位 → 存
+  await Promise.all([saved, savedZh]);
   await page.reload();
   const again = page.getByRole("article", { name: "第 1 頁" });
-  await expect(again.getByRole("textbox", { name: "中文字" })).toHaveValue("消防車");
-  await expect(again.getByRole("textbox", { name: "英文字" })).toHaveValue("Fire Engine");
+  await expect(again.getByRole("textbox", { name: "第 1 頁中文字" })).toHaveValue("消防車");
+  await expect(again.getByRole("textbox", { name: "第 1 頁英文字" })).toHaveValue("Fire Engine");
 
   // 超過上限：訊息出現，不存
-  await again.getByRole("textbox", { name: "英文字" }).fill("x".repeat(40));
+  await again.getByRole("textbox", { name: "第 1 頁英文字" }).fill("x".repeat(40));
   await expect(again.getByText("英文字最多 28 個字元")).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });

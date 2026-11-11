@@ -13,9 +13,11 @@ export function CaptionPreview({ page }: { page: Page }) {
     <div role="group" aria-label="圖下方的文字預覽" className={styles.box}>
       {zh && <p className={styles.zh}>{zh}</p>}
       {en && <p className={styles.en}>{en}</p>}
-      <a href={`/api/pages/${page.id}/print.png`} target="_blank" rel="noopener noreferrer" className={styles.link}>
-        預覽列印頁
-      </a>
+      {page.selected_generation_id != null && (
+        <a href={`/api/pages/${page.id}/print.png`} target="_blank" rel="noopener noreferrer" className={styles.link}>
+          預覽列印頁
+        </a>
+      )}
     </div>
   );
 }

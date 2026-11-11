@@ -237,13 +237,19 @@ function parseTsv(lines: string[]): RawRow[] {
     const s = head.findIndex((c) => SCENE_COLS.has(c));
     const a = head.findIndex((c) => ACTION_COLS.has(c));
     const free = head.map((_, i) => i).filter((i) => i !== s && i !== a && !PAGE_COLS.has(head[i]) && !isCap(lower[i]));
-    sceneCol = s >= 0 ? s : (free.shift() ?? 0);
-    actionCol = a >= 0 ? a : (free.find((i) => i !== sceneCol) ?? sceneCol + 1);
+    if (s < 0 && a < 0 && (zhCol >= 0 || enCol >= 0)) {
+      // 只有文字欄的標題列：沒有場景／動作欄，不要拿別的欄位當場景或動作
+      sceneCol = -1;
+      actionCol = -1;
+    } else {
+      sceneCol = s >= 0 ? s : (free.shift() ?? 0);
+      actionCol = a >= 0 ? a : (free.find((i) => i !== sceneCol) ?? sceneCol + 1);
+    }
   }
   return rows.map((l) => {
     const cells = l.split("\t");
-    const scene = (cells[sceneCol] ?? "").trim();
-    const action = (cells[actionCol] ?? "").trim();
+    const scene = (sceneCol >= 0 ? (cells[sceneCol] ?? "") : "").trim();
+    const action = (actionCol >= 0 ? (cells[actionCol] ?? "") : "").trim();
     const zh = zhCol >= 0 ? (cells[zhCol] ?? "").trim() : "";
     const en = enCol >= 0 ? (cells[enCol] ?? "").trim() : "";
     return { scene, action, zh, en, labelled: scene !== "" || action !== "" || zh !== "" || en !== "", raw: l };

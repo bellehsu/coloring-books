@@ -266,6 +266,17 @@ describe("captions", () => {
     expect(r2.pages).toEqual([{ n: 1, scene: "a", action: "b", captionZh: "火", captionEn: "Fire" }]);
   });
 
+  it("caption-only spreadsheet header: no positional fallback, scene and action stay empty", () => {
+    const r = parseStory("中文\t英文\n消防車\tFire Engine\n救護車\tAmbulance");
+    expect(r.errors).toEqual([]);
+    expect(r.pages).toEqual([
+      { n: 1, scene: "", action: "", captionZh: "消防車", captionEn: "Fire Engine" },
+      { n: 2, scene: "", action: "", captionZh: "救護車", captionEn: "Ambulance" },
+    ]);
+    const rows = planImport(r.pages, []);
+    expect(rows[0]).toMatchObject({ scene: "", action: "", fill: { scene: false, action: false, captionZh: true, captionEn: true } });
+  });
+
   const ex = [{ position: 1, scene_prompt: "", action_prompt: "", caption_zh: "舊", caption_en: null }];
   it("fills captions only where empty", () => {
     const rows = planImport([{ n: 1, scene: "s", action: "a", captionZh: "新", captionEn: "New" }], ex);

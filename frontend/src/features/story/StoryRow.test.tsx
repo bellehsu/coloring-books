@@ -88,8 +88,8 @@ describe("StoryRow", () => {
     expect(screen.getByLabelText("第 1 頁背景圖片")).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
   });
   describe("圖下方的文字", () => {
-    const zh = () => screen.getByRole("textbox", { name: "中文字" });
-    const en = () => screen.getByRole("textbox", { name: "英文字" });
+    const zh = () => screen.getByRole("textbox", { name: "第 1 頁中文字" });
+    const en = () => screen.getByRole("textbox", { name: "第 1 頁英文字" });
 
     it("兩個欄位顯示剩餘字數，離開欄位時存", async () => {
       const { onSave } = setup({ page: page({ caption_zh: "消防車", caption_en: null }) });
@@ -101,6 +101,14 @@ describe("StoryRow", () => {
       expect(screen.getByText("還可 17 字元")).toBeInTheDocument();
       await userEvent.tab();
       expect(onSave).toHaveBeenCalledWith({ caption_en: "Fire Engine" });
+    });
+
+    it("尾端空白不算字數（和後端一樣先 trim）", async () => {
+      const { onSave } = setup();
+      fireEvent.change(zh(), { target: { value: `${"字".repeat(12)}  ` } });
+      fireEvent.blur(zh());
+      expect(screen.queryByText("中文字最多 12 個字")).not.toBeInTheDocument();
+      expect(onSave).toHaveBeenCalledTimes(1);
     });
 
     it("清空會存空字串", async () => {

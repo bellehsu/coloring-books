@@ -1349,7 +1349,8 @@ describe("EditorPage", () => {
     const preview = () => screen.queryByRole("group", { name: "圖下方的文字預覽" });
 
     it("構圖：預覽顯示兩行文字，「預覽列印頁」開新分頁指向 print.png", async () => {
-      pages[0] = mkPage(1, { caption_zh: "消防車", caption_en: "Fire Engine" });
+      pages[0] = mkPage(1, { caption_zh: "消防車", caption_en: "Fire Engine", selected_generation_id: 5 });
+      gens = [mkGen(5)];
       setup();
       await screen.findAllByRole("tab");
       const pv = await screen.findByRole("group", { name: "圖下方的文字預覽" });
@@ -1373,12 +1374,21 @@ describe("EditorPage", () => {
     });
 
     it("只有一行也可以（空白不算）", async () => {
-      pages[0] = mkPage(1, { caption_zh: "  ", caption_en: "Bus" });
+      pages[0] = mkPage(1, { caption_zh: "  ", caption_en: "Bus", selected_generation_id: 5 });
+      gens = [mkGen(5)];
       setup();
       await screen.findAllByRole("tab");
       const pv = await screen.findByRole("group", { name: "圖下方的文字預覽" });
       expect(within(pv).getByText("Bus")).toBeInTheDocument();
       expect(screen.getAllByRole("link", { name: "預覽列印頁" })).toHaveLength(1);
+    });
+
+    it("有文字但還沒選圖：顯示文字，不顯示連結（print.png 會回 409）", async () => {
+      pages[0] = mkPage(1, { caption_zh: "消防車" });
+      setup();
+      const pv = await screen.findByRole("group", { name: "圖下方的文字預覽" });
+      expect(within(pv).getByText("消防車")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "預覽列印頁" })).not.toBeInTheDocument();
     });
 
     it("沒有文字：不顯示預覽與連結", async () => {

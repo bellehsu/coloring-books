@@ -13,11 +13,13 @@ const SPEC: Record<CaptionKind, { label: string; max: number; unit: string; erro
 
 /** 超過上限時回傳規格訊息（以 Unicode code point 計，與後端一致），否則 null。 */
 export function captionError(kind: CaptionKind, value: string): string | null {
-  return countChars(value) > SPEC[kind].max ? SPEC[kind].error : null;
+  return countChars(value.trim()) > SPEC[kind].max ? SPEC[kind].error : null;
 }
 
 export interface CaptionFieldProps {
   kind: CaptionKind;
+  /** 輸入框的無障礙名稱（可見標籤仍是「中文字」「英文字」）；沒給就用可見標籤。 */
+  ariaLabel?: string;
   value: string;
   onChange: (v: string) => void;
   onBlur: () => void;
@@ -27,11 +29,11 @@ export interface CaptionFieldProps {
  * 圖下方的文字輸入。不用 maxLength（它以 UTF-16 計，會誤擋「𠮷」）：超過上限照樣可以輸入，
  * 但顯示訊息，呼叫端在超過時不存（captionError）。
  */
-export function CaptionField({ kind, value, onChange, onBlur }: CaptionFieldProps) {
+export function CaptionField({ kind, ariaLabel, value, onChange, onBlur }: CaptionFieldProps) {
   const id = useId();
   const { label, max, unit } = SPEC[kind];
   const err = captionError(kind, value);
-  const left = max - countChars(value);
+  const left = max - countChars(value.trim());
   return (
     <div className={styles.field}>
       <label htmlFor={id} className={styles.lbl}>
@@ -40,6 +42,7 @@ export function CaptionField({ kind, value, onChange, onBlur }: CaptionFieldProp
       <input
         id={id}
         type="text"
+        aria-label={ariaLabel}
         className={styles.input}
         value={value}
         aria-invalid={!!err}

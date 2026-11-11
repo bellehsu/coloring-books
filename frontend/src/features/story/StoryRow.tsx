@@ -230,8 +230,8 @@ export function StoryRow({ n, page, mode, onModeChange, fileName, uploaded = fal
         <Thumb label="角色動作" alt={`第 ${n} 頁角色動作`} view={pose} onRetry={onRetry} contain />
       </div>
       <div className={styles.captions}>
-        <CaptionField kind="zh" value={captionZh.value} onChange={captionZh.onChange} onBlur={captionZh.onBlur} />
-        <CaptionField kind="en" value={captionEn.value} onChange={captionEn.onChange} onBlur={captionEn.onBlur} />
+        <CaptionField kind="zh" ariaLabel={`第 ${n} 頁中文字`} value={captionZh.value} onChange={captionZh.onChange} onBlur={captionZh.onBlur} />
+        <CaptionField kind="en" ariaLabel={`第 ${n} 頁英文字`} value={captionEn.value} onChange={captionEn.onChange} onBlur={captionEn.onBlur} />
       </div>
     </article>
   );
