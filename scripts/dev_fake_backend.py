@@ -45,7 +45,6 @@ from app.services.engine import GenerationRequest, GenerationResult, ProgressFn 
 from app.services.prompts import POSE_SIZE  # noqa: E402
 
 
-
 class InviteIn(BaseModel):
     name: str = "e2e"
 

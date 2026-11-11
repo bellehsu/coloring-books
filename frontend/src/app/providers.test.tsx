@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/api/client";
 import { Providers } from "@/app/providers";
@@ -34,15 +34,5 @@ describe("Providers 全域錯誤處理", () => {
       await api.get("/books").catch(() => {});
     });
     expect(replace).not.toHaveBeenCalled();
-  });
-
-  it("429 用 toast 顯示後端訊息", async () => {
-    const msg = "今天的生成次數已用完，明天再來";
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(429, { detail: msg })));
-    render(<Providers>x</Providers>);
-    await act(async () => {
-      await api.post("/pages/1/backgrounds").catch(() => {});
-    });
-    expect(await screen.findByText(msg)).toBeTruthy();
   });
 });

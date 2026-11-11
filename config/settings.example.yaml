@@ -60,5 +60,5 @@ auth:
   cookie_secure: false
   # scripts/invites.py 印出的邀請連結前綴（網站對外網址）；null＝http://localhost:3000。可用 --base-url 覆寫
   invite_base_url: null
-  # 每日生成上限不是這裡的設定：每個邀請各自有「每日生成次數」（台北時間，預設 60），
+  # 每日生成上限不是這裡的設定：每個邀請各自有「每日生成次數」（台北時間，預設 60；admin 邀請沒有每日上限，但用量仍會計入），
   # 用 scripts/invites.py create --cap N 設定；超過時 API 回 429「今天的生成次數已用完，明天再來」。

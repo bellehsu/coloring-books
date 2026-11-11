@@ -78,7 +78,7 @@ cp config/settings.example.yaml config/settings.yaml   # 再依環境修改
 2. 兩個 bucket：開發用 `coloring-books-dev`、正式用 `coloring-books-prod`（兩個環境不要共用，見下方警告）。
 3. 每個 bucket 各一個 API token（R2 → Manage API tokens → Object Read & Write，只套用到那個 bucket），記下 Access Key ID 與 Secret Access Key。
 4. 每個 bucket 的 CORS 規則：允許網站來源（例如 `http://localhost:3000`、正式網址）的 `GET`（`AllowedHeaders: *`），
-   瀏覽器才能載入 302 轉址後的簽章網址（canvas 讀圖需要 CORS）。
+   目前圖片只用 `<img>` 載入，不設 CORS 也能顯示；之後若要從瀏覽器直接讀取圖檔內容（canvas、fetch）才需要，先設好避免日後出錯。
 5. `scripts/dev.env`（不進版控）加上憑證，或在雲端用環境變數：
    ```
    APP_STORAGE__BACKEND=r2
@@ -133,7 +133,7 @@ env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance --adopt-bucket-id  #
   頁面線稿（備份之後重算過的會被當成孤兒刪掉，下次讀取時自動重算）；備份之後才產生的生成圖 id 大於 DB 的
   `sqlite_sequence`，會當成「可能正在寫入」略過、不刪。備份之後新建的書（書號大於 DB 最大的書）也一律略過。
 - **GC 與本機快取：** `storage_gc.py` 在另一台機器執行時，不會讓網站主機的磁碟快取失效：被刪的物件可能還留在
-  那台的 `<storage.cache_dir>/<bucket>`（快取只是加速，圖片網址仍受權限檢查）。GC 之後請在網站主機重啟後端或清空該快取資料夾。
+  那台的 `<storage.cache_dir>/<bucket>`（快取只是加速，圖片網址仍受權限檢查）。GC 之後請在網站主機刪掉快取資料夾 `<storage.cache_dir>/<bucket>`（預設 `<paths.storage_dir>/r2_cache/<bucket>`），最好在後端停止或閒置時做；重啟後端不會清快取（快取存在磁碟上）。
 - `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試；`--init-instance` 為取消）、2 設定或參數錯誤、
   DB 不是最新版、3 孤兒太多而中止、4 DB 與 storage 的身分標記不一致（或缺少）、5 讀不到 storage 的身分標記
   （例如 R2 403、逾時、連不上；什麼都沒刪）。`invites.py delete-data` 同樣用 4 與 5。

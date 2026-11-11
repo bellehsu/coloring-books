@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Providers } from "@/app/providers";
 import { ToastProvider } from "@/components/ui/Toast";
 import { CharacterStudio } from "./CharacterStudio";
 
@@ -44,11 +45,13 @@ let gens: G[];
 let bk: G;
 let calls: { method: string; url: string; body?: unknown }[];
 let setCharacterResponse: () => Response;
+let candidates429 = false;
 
 const j = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 
 beforeEach(() => {
+  candidates429 = false;
   gens = [];
   bk = book();
   calls = [];
@@ -62,6 +65,9 @@ beforeEach(() => {
       if (url === "/api/books/1" && method === "GET") return j(bk);
       if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0, running_id: null });
       if (url.startsWith("/api/books/1/generations")) return j(gens);
+      if (url === "/api/books/1/character/candidates" && candidates429) {
+        return j({ detail: "今天的生成次數已用完，明天再來" }, 429);
+      }
       if (url === "/api/books/1/character/candidates") {
         // Phase 9：一次一張（後端忽略 count）
         const made = gen(11 + gens.length, { status: "queued", image_url: null, queue_position: 0, user_text: body.description });
@@ -234,6 +240,23 @@ describe("CharacterStudio", () => {
     expect(screen.queryByRole("button", { name: /用這個角色，開始寫故事/ })).not.toBeInTheDocument();
     expect(screen.getByText("a small bunny")).toBeInTheDocument();
     expect(screen.getByAltText("角色彩色圖")).toHaveAttribute("src", "/api/files/2.png");
+  });
+
+  it("每日上限 429：訊息只出現一次（含全域 Providers 在內不重複）", async () => {
+    candidates429 = true;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <Providers>
+          <CharacterStudio bookId={1} />
+        </Providers>
+      </QueryClientProvider>,
+    );
+    await userEvent.type(await screen.findByLabelText("描述角色的外型"), "a small bunny");
+    await userEvent.click(screen.getByRole("button", { name: "產生角色" }));
+    await screen.findByText("今天的生成次數已用完，明天再來");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getAllByText("今天的生成次數已用完，明天再來")).toHaveLength(1);
   });
 
   it("後端 409 顯示中文訊息且不導頁", async () => {

@@ -25,10 +25,6 @@ test("邀請 A 的書，邀請 B 看不到、也打不開；圖片走 302 → /a
 
     // A 看得到自己的書，角色圖載入成功：API 先 302 到簽章網址 /api/files/...，最後是 image/png
     const pageA = await a.newPage();
-    const imageHits: string[] = [];
-    pageA.on("response", (r) => {
-      if (r.url().includes("/api/files/")) imageHits.push(`${r.status()} ${r.headers()["content-type"]}`);
-    });
     await pageA.goto("/");
     await expect(pageA.getByText(title)).toBeVisible();
     const [gen] = await ok<Generation[]>(await a.request.get(`/api/books/${book.id}/generations?kind=character`));
