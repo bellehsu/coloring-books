@@ -1170,10 +1170,10 @@ def test_gc_on_r2_deletes_through_cached_storage(storage_gc, settings_file, tmp_
         sessions, storage, ids, exp = _gc_world(settings_file)
         assert isinstance(storage, CachedStorage)
         old = storage.generation_image(1, ids["old"])
-        assert storage.get(old) == b"img" and (cache / old).is_file()  # 快取裡也有一份
+        assert storage.get(old) == b"img" and (cache / "gc-bucket" / old).is_file()  # 快取裡也有一份（依 bucket 分資料夾）
         assert storage_gc.main(["--settings", str(settings_file)]) == 0
         assert not storage.inner.exists(old)
-        assert not (cache / old).exists()
+        assert not (cache / "gc-bucket" / old).exists()
         assert not any(storage.inner.exists(k) for k in exp["orphans"] | exp["orphan_previews"])
         assert storage.inner.exists(storage.generation_image(1, ids["sel"]))
 
@@ -1486,9 +1486,9 @@ def test_gc_refuses_when_bucket_marker_missing_and_init_instance(storage_gc, set
     args = ["--settings", str(settings_file)]
     assert storage_gc.main(args) == 4
     assert "--init-instance" in capsys.readouterr().err
-    assert storage_gc.main(args + ["--init-instance"]) == 0
+    assert storage_gc.main(args + ["--init-instance", "--yes"]) == 0
     assert instance.bucket_instance_id(storage) == db_id
-    assert storage_gc.main(args + ["--init-instance"]) == 0  # 已一致：不變
+    assert storage_gc.main(args + ["--init-instance"]) == 0  # 已一致：不變、不詢問
     assert storage_gc.main(args + ["--dry-run"]) == 0
 
 
@@ -1503,15 +1503,18 @@ def test_init_instance_never_overwrites_a_differing_marker(storage_gc, settings_
     assert instance.bucket_instance_id(storage) == "b" * 32
 
 
-def test_init_instance_requires_db_id(storage_gc, settings_file):
+def test_init_instance_both_missing_writes_nothing_without_confirmation(storage_gc, settings_file, monkeypatch):
     from app.services import instance
 
     _, sessions, storage = _env(settings_file)
     storage.delete(instance.MARKER_KEY)
     with sessions() as s:
         instance.delete_db_instance_id(s)
-    assert storage_gc.main(["--settings", str(settings_file), "--init-instance"]) == 4
+    monkeypatch.setattr("builtins.input", lambda *_: "")
+    assert storage_gc.main(["--settings", str(settings_file), "--init-instance"]) == 1
     assert instance.bucket_instance_id(storage) is None
+    with sessions() as s:
+        assert instance.db_instance_id(s) is None
 
 
 def test_run_gc_refuses_mismatch_directly(storage_gc, settings_file):
@@ -1535,3 +1538,290 @@ def test_marker_never_deleted_by_gc_or_delete_data(storage_gc, invites, settings
     a = _owner_with_data(sessions, storage, "小明")
     assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]) == 0
     assert instance.bucket_instance_id(storage) == marker
+
+
+# --- 修正第 4 輪：快取裡的舊標記、delete-data 的標記檢查、空 DB 不認領、--init-instance 的復原路徑 ---
+
+
+@pytest.fixture
+def r2_two_buckets(monkeypatch, tmp_path):
+    import boto3
+    import moto
+
+    for k in ("AWS_PROFILE", "AWS_SESSION_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    for k, v in {"BACKEND": "r2", "R2__ENDPOINT": "https://s3.amazonaws.com", "R2__BUCKET": "bucket-a",
+                 "R2__ACCESS_KEY": "AK", "R2__SECRET_KEY": "SK", "CACHE_DIR": str(tmp_path / "r2cache")}.items():
+        monkeypatch.setenv(f"APP_STORAGE__{k}", v)
+    with moto.mock_aws():
+        c = boto3.client("s3", region_name="us-east-1")
+        c.create_bucket(Bucket="bucket-a")
+        c.create_bucket(Bucket="bucket-b")
+        yield tmp_path / "r2cache"
+
+
+@pytest.mark.parametrize("b_marker", [None, "b" * 32])
+def test_gc_bucket_switch_with_shared_cache_dir_exits_4(storage_gc, settings_file, monkeypatch, no_network,
+                                                        r2_two_buckets, capsys, b_marker):
+    """DB A＋bucket A 的標記讀過（進了快取），之後設定換成 bucket B、快取資料夾不變：GC 必須拒絕。"""
+    from app.config import load_settings
+    from app.services import instance
+    from app.storage import CachedStorage, make_storage
+
+    _, sessions, storage_a = _env(settings_file)
+    assert instance.bucket_instance_id(storage_a)
+    storage_a.get(instance.MARKER_KEY)  # 放進快取
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    _bulk_gens(sessions, b, 15)
+    monkeypatch.setenv("APP_STORAGE__R2__BUCKET", "bucket-b")
+    storage_b = make_storage(load_settings(settings_file))
+    for gid in range(1, 11):
+        storage_b.inner.put(storage_b.generation_image(b, gid), b"live-b")
+    if b_marker:
+        storage_b.inner.put(instance.MARKER_KEY, _json.dumps({"storage_instance_id": b_marker}).encode())
+    # 即使兩個 bucket 共用同一個（未分 bucket 的）快取資料夾，標記也不經過快取
+    shared = CachedStorage(storage_b.inner, storage_a.cache_dir, 10_000_000)
+    assert instance.bucket_instance_id(shared) == b_marker
+    before = set(storage_b.inner.list("books/"))
+    assert storage_gc.main(["--settings", str(settings_file)]) == 4
+    assert storage_gc.main(["--settings", str(settings_file), "--allow-mass-delete"]) == 4
+    assert set(storage_b.inner.list("books/")) == before
+    assert "什麼都沒刪" in capsys.readouterr().err
+
+
+def _wrong_db_victim(settings_file, tmp_path, *, db_id="a" * 32):
+    """live DB（books 1、2 有物件）＋錯的 DB（同書號、同 owner id 的 victim）。"""
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    _owner(sessions, "admin", is_admin=True)
+    live = _owner_with_data(sessions, storage, "live")
+    path, other = _other_db(tmp_path, storage)
+    with other() as s:
+        if db_id is None:
+            instance.delete_db_instance_id(s)
+        else:
+            instance.set_db_instance_id(s, db_id)
+    _owner(other, "admin2", is_admin=True)
+    vid, _ = _owner(other, "victim")
+    assert [_book(other, vid), _book(other, vid)] == live["books"]
+    return sessions, storage, other, path, vid
+
+
+@pytest.mark.parametrize("db_id", ["a" * 32, None], ids=["differ", "db_missing"])
+def test_delete_data_refuses_wrong_db(invites, settings_file, tmp_path, monkeypatch, capsys, db_id):
+    from sqlmodel import select
+
+    from app.models import Book, Owner
+    from app.services import instance
+
+    sessions, storage, other, path, vid = _wrong_db_victim(settings_file, tmp_path, db_id=db_id)
+    before = _keys(storage)
+    monkeypatch.setenv("APP_PATHS__DATABASE", str(path))
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("不可在檢查身分標記之前詢問"))
+    for extra in (["--yes"], []):
+        assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(vid), *extra]) == 4
+    assert _keys(storage) == before
+    with other() as s:  # 錯的 DB 也沒有被改
+        assert s.get(Owner, vid) is not None and len(s.exec(select(Book)).all()) == 2
+    err = capsys.readouterr().err
+    assert "什麼都沒刪" in err and instance.bucket_instance_id(storage) in err
+
+
+def test_delete_data_refuses_when_bucket_marker_missing(invites, settings_file, capsys):
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    _owner(sessions, "admin", is_admin=True)
+    a = _owner_with_data(sessions, storage, "小明")
+    storage.delete(instance.MARKER_KEY)
+    before = _keys(storage)
+    assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]) == 4
+    assert _keys(storage) == before
+    assert "--init-instance" in capsys.readouterr().err
+
+
+class _MarkerUnreadable:
+    """包住真的 storage；讀標記時丟非「不存在」的錯誤（例如 R2 403 或逾時）。"""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def get(self, key):
+        if key.endswith("_instance.json"):
+            from botocore.exceptions import ClientError
+
+            raise ClientError({"Error": {"Code": "AccessDenied", "Message": "Forbidden"}}, "GetObject")
+        return self._inner.get(key)
+
+
+def test_marker_read_error_exits_5(storage_gc, invites, settings_file, monkeypatch, capsys):
+    _, sessions, storage = _env(settings_file)
+    _owner(sessions, "admin", is_admin=True)
+    a = _owner_with_data(sessions, storage, "小明")
+    before = _keys(storage)
+    for mod in (storage_gc, invites):
+        real = mod.make_storage
+        monkeypatch.setattr(mod, "make_storage", lambda s, real=real: _MarkerUnreadable(real(s)))
+    args = ["--settings", str(settings_file)]
+    assert storage_gc.main(args) == 5
+    assert storage_gc.main(args + ["--init-instance", "--yes"]) == 5
+    assert invites.main(args + ["delete-data", "--id", str(a["owner"]), "--yes"]) == 5
+    assert _keys(storage) == before
+    err = capsys.readouterr().err
+    assert "AccessDenied" in err and "Traceback" not in err
+
+
+def _unmarked_nonempty(settings_file, n=15):
+    """空的新 DB＋既有、沒有標記的 storage（books/ 有 n 個物件），經過一次後端啟動（拒絕認領）。"""
+    from fastapi.testclient import TestClient
+
+    from app.config import load_settings
+    from app.main import create_app
+    from app.services import instance
+    from app.storage import make_storage
+    from tests.fake_engine import FakeEngine
+
+    s = load_settings(settings_file)
+    storage = make_storage(s)
+    for gid in range(1, n + 1):
+        storage.put(storage.generation_image(1, gid), b"live")
+    app = create_app(s, engine=FakeEngine(), start_worker=False)
+    with TestClient(app):
+        pass
+    sessions = app.state.sessions
+    with sessions() as sess:
+        assert instance.db_instance_id(sess) is None
+    assert instance.bucket_instance_id(storage) is None
+    return sessions, storage
+
+
+def test_empty_db_unmarked_storage_gc_and_delete_data_exit_4(storage_gc, invites, settings_file, capsys):
+    sessions, storage = _unmarked_nonempty(settings_file)
+    oid, _ = _owner(sessions, "new", is_admin=True)
+    _bulk_gens(sessions, _book(sessions, oid), 15)  # 新 DB 長大了：book 1、gens 1..15 沒有圖
+    v, _ = _owner(sessions, "v")
+    _book(sessions, v)
+    before = _keys(storage)
+    args = ["--settings", str(settings_file)]
+    assert storage_gc.main(args) == 4
+    assert invites.main(args + ["delete-data", "--id", str(oid), "--yes", "--force-admin"]) == 4
+    assert _keys(storage) == before
+    assert "--init-instance" in capsys.readouterr().err
+
+
+def test_init_instance_both_missing_requires_typed_bucket_name(storage_gc, settings_file, monkeypatch, capsys):
+    from app.services import instance
+
+    sessions, storage = _unmarked_nonempty(settings_file)
+    label = instance.storage_label(storage)
+    args = ["--settings", str(settings_file), "--init-instance"]
+    monkeypatch.setattr("builtins.input", lambda *_: "nope")
+    assert storage_gc.main(args) == 1  # 取消
+    monkeypatch.setattr("builtins.input", lambda *_: (_ for _ in ()).throw(EOFError()))
+    assert storage_gc.main(args) == 1  # 沒有互動式輸入＝取消
+    with sessions() as s:
+        assert instance.db_instance_id(s) is None
+    assert instance.bucket_instance_id(storage) is None
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda p="": prompts.append(p) or label)
+    capsys.readouterr()
+    assert storage_gc.main(args) == 0
+    assert label in prompts[0]
+    with sessions() as s:
+        db_id = instance.db_instance_id(s)
+    assert db_id and instance.bucket_instance_id(storage) == db_id
+    assert db_id in capsys.readouterr().out
+    before = _keys(storage)
+    assert storage_gc.main(["--settings", str(settings_file), "--dry-run"]) == 0  # 一致了，GC 可以執行
+    assert _keys(storage) == before
+
+
+def test_init_instance_both_missing_with_yes(storage_gc, settings_file, monkeypatch):
+    from app.services import instance
+
+    sessions, storage = _unmarked_nonempty(settings_file)
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("--yes 不詢問"))
+    assert storage_gc.main(["--settings", str(settings_file), "--init-instance", "--yes"]) == 0
+    with sessions() as s:
+        assert instance.db_instance_id(s) == instance.bucket_instance_id(storage)
+
+
+def test_init_instance_rejects_dry_run(storage_gc, settings_file):
+    from app.services import instance
+
+    sessions, storage = _unmarked_nonempty(settings_file)
+    assert storage_gc.main(["--settings", str(settings_file), "--init-instance", "--dry-run", "--yes"]) == 2
+    with sessions() as s:
+        assert instance.db_instance_id(s) is None
+    assert instance.bucket_instance_id(storage) is None
+
+
+def test_adopt_bucket_id_when_db_id_missing(storage_gc, settings_file, monkeypatch, capsys):
+    """DB 沒有 id、storage 有標記（降級或還原 0007 之前的備份）：--init-instance --adopt-bucket-id 把它寫進 DB。"""
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    bucket_id = instance.bucket_instance_id(storage)
+    with sessions() as s:
+        instance.delete_db_instance_id(s)
+    args = ["--settings", str(settings_file)]
+    assert storage_gc.main(args) == 4
+    assert "--adopt-bucket-id" in capsys.readouterr().err
+    assert storage_gc.main(args + ["--init-instance", "--yes"]) == 4  # 沒有 --adopt-bucket-id 不寫
+    assert "--adopt-bucket-id" in capsys.readouterr().err
+    assert storage_gc.main(args + ["--adopt-bucket-id"]) == 2  # 只能搭配 --init-instance
+    monkeypatch.setattr("builtins.input", lambda *_: "nope")
+    assert storage_gc.main(args + ["--init-instance", "--adopt-bucket-id"]) == 1
+    with sessions() as s:
+        assert instance.db_instance_id(s) is None
+    monkeypatch.setattr("builtins.input", lambda *_: instance.storage_label(storage))
+    assert storage_gc.main(args + ["--init-instance", "--adopt-bucket-id"]) == 0
+    with sessions() as s:
+        assert instance.db_instance_id(s) == bucket_id
+    assert instance.bucket_instance_id(storage) == bucket_id
+    assert storage_gc.main(args) == 0
+
+
+def test_adopt_bucket_id_never_overwrites(storage_gc, settings_file):
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    with sessions() as s:
+        db_id = instance.db_instance_id(s)
+    instance.write_bucket_instance_id(storage, "b" * 32)  # 兩邊不同
+    args = ["--settings", str(settings_file), "--init-instance", "--adopt-bucket-id", "--yes"]
+    assert storage_gc.main(args) == 4
+    with sessions() as s:
+        assert instance.db_instance_id(s) == db_id
+    assert instance.bucket_instance_id(storage) == "b" * 32
+    storage.delete(instance.MARKER_KEY)  # storage 沒有標記：沒有 id 可認領
+    assert storage_gc.main(args) == 4
+    assert instance.bucket_instance_id(storage) is None
+    with sessions() as s:
+        instance.delete_db_instance_id(s)  # 兩邊都沒有：--adopt-bucket-id 也不建立
+    assert storage_gc.main(args) == 4
+    with sessions() as s:
+        assert instance.db_instance_id(s) is None
+    assert instance.bucket_instance_id(storage) is None
+
+
+def test_init_instance_never_overwrites_differing_marker_with_yes(storage_gc, settings_file):
+    from app.services import instance
+
+    _, sessions, storage = _env(settings_file)
+    instance.write_bucket_instance_id(storage, "b" * 32)
+    assert storage_gc.main(["--settings", str(settings_file), "--init-instance", "--yes"]) == 4
+    assert instance.bucket_instance_id(storage) == "b" * 32
+    with sessions() as s:
+        instance.delete_db_instance_id(s)
+    assert storage_gc.main(["--settings", str(settings_file), "--init-instance", "--yes"]) == 4
+    assert instance.bucket_instance_id(storage) == "b" * 32
+    with sessions() as s:
+        assert instance.db_instance_id(s) is None

@@ -268,7 +268,7 @@ def test_make_storage_r2_is_cached(settings_file: Path, clean_storage_env, monke
         st = make_storage(load_settings(settings_file))
         assert isinstance(st, CachedStorage)
         assert isinstance(st.inner, R2Storage)
-        assert st.cache_dir == tmp_path / "objcache"
+        assert st.cache_dir == tmp_path / "objcache" / "test-bucket"  # 依 bucket 分資料夾
         assert st.max_bytes == 2 * 1024**3
 
 

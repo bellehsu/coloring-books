@@ -42,7 +42,7 @@ storage:
     #   APP_STORAGE__R2__SECRET_KEY=...
   # 圖片簽章網址的有效秒數（API 檢查權限後立刻 302 轉址，所以很短）
   signed_url_ttl_s: 120
-  # R2 物件的本機快取資料夾（只是加速，隨時可刪；null＝<paths.storage_dir>/r2_cache）
+  # R2 物件的本機快取資料夾（只是加速，隨時可刪；null＝<paths.storage_dir>/r2_cache）；實際放在 <cache_dir>/<bucket>
   cache_dir: null
   # 快取總量上限（bytes），超過時刪最舊的；預設 2 GiB
   cache_max_bytes: 2147483648

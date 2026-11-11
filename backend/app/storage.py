@@ -246,6 +246,12 @@ class LocalStorage(_KeyBuilders):
         return hmac.compare_digest(self._sign(key, exp_i).encode(), sig.encode())
 
 
+# boto3 client 的逾時（秒）與重試次數（不含第一次）：R2 被擋時每個請求最多約 4 × 5 秒就放棄
+R2_CONNECT_TIMEOUT_S = 5
+R2_READ_TIMEOUT_S = 30
+R2_MAX_RETRIES = 3
+
+
 class R2Storage(_KeyBuilders):
     """Cloudflare R2（S3 API）。signed_url 是 S3 presigned GET。憑證只交給 boto3 client，不存在屬性裡。"""
 
@@ -262,7 +268,13 @@ class R2Storage(_KeyBuilders):
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
                 region_name="auto",
-                config=Config(signature_version="s3v4"),
+                # R2 連不上時不能卡住（啟動的身分標記檢查、API 請求）：預設逾時 60 秒＋重試會卡好幾分鐘
+                config=Config(
+                    signature_version="s3v4",
+                    connect_timeout=R2_CONNECT_TIMEOUT_S,
+                    read_timeout=R2_READ_TIMEOUT_S,
+                    retries={"max_attempts": R2_MAX_RETRIES},
+                ),
             )
         self._client = client
 
@@ -463,7 +475,7 @@ def _load_or_create_signing_key(storage_dir: Path) -> bytes:
 
 
 def make_storage(settings: "Settings") -> Storage:
-    """依 storage.backend 建立 Storage：local → LocalStorage；r2 → CachedStorage(R2Storage)。"""
+    """依 storage.backend 建立 Storage：local → LocalStorage；r2 → CachedStorage(R2Storage)，快取在 <cache_dir>/<bucket>。"""
     st = settings.storage
     if st.backend == "local":
         if st.signing_key is not None:
@@ -489,7 +501,8 @@ def make_storage(settings: "Settings") -> Storage:
         st.r2.access_key.get_secret_value(),
         st.r2.secret_key.get_secret_value(),
     )
-    cache_dir = st.cache_dir or (settings.paths.storage_dir / "r2_cache")
+    # 快取依 bucket 分資料夾：換 bucket 時不會讀到（或驗證到）另一個 bucket 的快取內容
+    cache_dir = (st.cache_dir or (settings.paths.storage_dir / "r2_cache")) / st.r2.bucket
     return CachedStorage(r2, cache_dir, st.cache_max_bytes)
 
 

@@ -11,15 +11,17 @@
 
 用法（在專案根目錄執行）：
   python scripts/storage_gc.py [--settings PATH] [--dry-run] [--days 30] [-v] [--allow-mass-delete]
-  python scripts/storage_gc.py --init-instance
+  python scripts/storage_gc.py --init-instance [--adopt-bucket-id] [--yes]
 --dry-run 只計數、不刪任何東西；-v 列出每個物件。
 設定與 app 相同（R2 憑證只來自環境變數）；R2 經過 CachedStorage 刪除，本機快取一起作廢。
 孤兒超過 20 個且超過「孤兒＋被參照物件」的 20%，或與 DB 對不上的物件超過 20 個且超過列出物件的 20%
 （多半是 DB 與 storage 不是一組）時整個中止、什麼都不刪，除非加 --allow-mass-delete。資料庫結構不是最新版時拒絕執行（不跑 migration；請先啟動後端）。
 執行前要求 DB 的 storage_instance_id 與 storage 的 books/_instance.json 一致（後端啟動時建立），
-否則結束碼 4、什麼都不刪（--allow-mass-delete 也不例外）。storage 沒有標記時，確認設定無誤後用
---init-instance 把資料庫的 id 寫進去（不會覆寫不同的標記）。
-結束碼：0 成功；1 有物件刪除失敗；2 設定或參數錯誤；3 孤兒太多而中止；4 DB 與 storage 不是一組。
+否則結束碼 4、什麼都不刪（--allow-mass-delete 也不例外）。缺標記時，確認設定無誤後用 --init-instance 補上：
+DB 有 id、storage 沒有 → 寫進 storage；兩邊都沒有 → 建立新 id；DB 沒有、storage 有 → 加 --adopt-bucket-id
+把 storage 的 id 寫進 DB。都要輸入 storage 名稱（R2 bucket 名稱／本機資料夾路徑）確認，--yes 略過；永不覆寫已存在的 id。
+結束碼：0 成功；1 有物件刪除失敗（--init-instance：取消）；2 設定或參數錯誤；3 孤兒太多而中止；
+4 DB 與 storage 不是一組；5 讀不到 storage 的身分標記（例如 R2 403、逾時）。
 """
 
 from __future__ import annotations
@@ -58,27 +60,14 @@ MASS_DELETE_MIN = 20
 _PREVIEW_KEY = re.compile(r"^cache/previews/(\d+)_[^/]*$")
 
 
-class InstanceMismatch(RuntimeError):
-    """DB 與 storage 的身分標記不一致（或缺少）：不是一組，什麼都不能刪。"""
+InstanceMismatch = instance.InstanceMismatch  # DB 與 storage 不是一組：什麼都不能刪（結束碼 4）
+InstanceUnavailable = instance.InstanceUnavailable  # 讀不到 storage 的身分標記（結束碼 5）
 
 
 def check_instance(sessions, storage: Storage) -> instance.InstanceCheck:
-    """執行前確認 DB 與 storage 是一組；否則丟 InstanceMismatch（訊息列出兩邊的 id）。"""
-    try:
-        with sessions() as s:
-            res = instance.check_instance(s, storage)
-    except instance.InstanceMarkerError as e:
-        raise InstanceMismatch(f"{e}；storage_gc 不執行，什麼都沒刪。") from e
-    if not res.ok:
-        hint = ""
-        if res.db_id and res.bucket_id is None:
-            hint = "\n確認 paths.database 與 storage 設定是同一組後，可用 --init-instance 把資料庫的 id 寫進 storage。"
-        elif res.db_id is None:
-            hint = "\n資料庫沒有身分標記：確認設定指的是正確的資料庫（全新部署請先啟動一次後端）。"
-        raise InstanceMismatch(
-            f"資料庫與 storage 的身分標記不一致，storage_gc 不執行，什麼都沒刪。\n{res.describe()}{hint}"
-        )
-    return res
+    """執行前確認 DB 與 storage 是一組；否則丟 InstanceMismatch（訊息列出兩邊的 id 與下一步）。"""
+    with sessions() as s:
+        return instance.require_instance(s, storage, tool="storage_gc")
 
 
 @dataclass
@@ -371,22 +360,74 @@ def format_report(r: GcReport, *, verbose: bool = False) -> str:
     return "\n".join(lines)
 
 
-def init_instance(sessions, storage: Storage) -> int:
-    """把資料庫的身分標記寫進 storage；只在 storage 沒有標記時寫，永不覆寫不同的標記。"""
+def _confirm(storage: Storage, yes: bool) -> bool:
+    """要求輸入 storage 名稱（R2 bucket 名稱，本機為資料夾路徑）確認；--yes 略過。"""
+    if yes:
+        return True
+    label = instance.storage_label(storage)
+    try:
+        answer = input(f"確認資料庫與這個 storage 是同一組。輸入 storage 名稱「{label}」確認：")
+    except EOFError:  # 沒有互動式輸入：視同取消
+        answer = ""
+    if answer.strip() != label:
+        print("名稱不符，已取消，什麼都沒寫。", file=sys.stderr)
+        return False
+    return True
+
+
+def init_instance(sessions, storage: Storage, *, adopt_bucket_id: bool = False, yes: bool = False) -> int:
+    """補上身分標記（永不覆寫任何一邊已存在的 id）。結束碼：0 一致、1 取消、4 不能寫。
+
+    - 資料庫有 id、storage 沒有：把資料庫的 id 寫進 storage。
+    - 兩邊都沒有：產生新 id，寫進資料庫與 storage（後端啟動時不自動建立的情況，例如空的新 DB＋既有 bucket）。
+    - 資料庫沒有、storage 有：只有加 --adopt-bucket-id 才把 storage 的 id 寫進資料庫。
+    每種寫入都要輸入 storage 名稱確認（--yes 略過）。"""
     try:
         with sessions() as s:
             res = instance.check_instance(s, storage)
+            has_books = instance.db_has_books(s)
+        has_objects = instance.storage_has_objects(storage)
     except instance.InstanceMarkerError as e:
         print(f"{e}；不覆寫，請手動檢查。", file=sys.stderr)
         return 4
     if res.ok:
         print(f"身分標記已一致：{res.db_id}")
         return 0
-    if res.db_id is None or res.bucket_id is not None:
-        print(f"不寫入身分標記（只在資料庫有 id、storage 沒有標記時寫入）。\n{res.describe()}", file=sys.stderr)
+    if res.db_id and res.bucket_id:
+        print(f"兩邊的身分標記不同，不覆寫任何一邊。\n{res.describe()}\n{instance.mismatch_hint(res)}", file=sys.stderr)
         return 4
-    instance.write_bucket_instance_id(storage, res.db_id)
-    print(f"已把資料庫的身分標記寫進 storage 的 {instance.MARKER_KEY}：{res.db_id}")
+    if adopt_bucket_id and res.bucket_id is None:
+        print(f"--adopt-bucket-id 只用在資料庫沒有 id、storage 有標記時；什麼都沒寫。\n{res.describe()}", file=sys.stderr)
+        return 4
+    if res.db_id is None and res.bucket_id and not adopt_bucket_id:
+        print(f"不寫入身分標記。\n{res.describe()}\n{instance.mismatch_hint(res)}", file=sys.stderr)
+        return 4
+
+    if res.db_id is None and res.bucket_id:
+        plan = f"把 storage 的 id {res.bucket_id} 寫進資料庫"
+    elif res.db_id:
+        plan = f"把資料庫的 id {res.db_id} 寫進 storage 的 {instance.MARKER_KEY}"
+    else:
+        plan = f"產生新的 id，寫進資料庫與 storage 的 {instance.MARKER_KEY}"
+    print(res.describe())
+    print(f"資料庫{'有' if has_books else '沒有任何'}書；storage「{instance.storage_label(storage)}」的 books/ "
+          f"{'已經有物件' if has_objects else '是空的'}。")
+    print(f"將{plan}。")
+    if not _confirm(storage, yes):
+        return 1
+    with sessions() as s:
+        if res.db_id is None and res.bucket_id:
+            after = instance.adopt_bucket_instance_id(s, storage)
+        elif res.db_id:
+            if instance.bucket_instance_id(storage) is None:  # 確認期間別人寫了就不覆寫
+                instance.write_bucket_instance_id(storage, res.db_id)
+            after = instance.check_instance(s, storage)
+        else:
+            after = instance.create_instance(s, storage)
+    if not after.ok:
+        print(f"寫完之後兩邊仍不一致（可能有別的行程同時寫入）。\n{after.describe()}", file=sys.stderr)
+        return 4
+    print(f"已完成：{plan}。現在兩邊都是 {after.db_id}")
     return 0
 
 
@@ -397,12 +438,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"捨棄多少天後刪除（預設 {DEFAULT_DAYS}）")
     p.add_argument("-v", "--verbose", action="store_true", help="列出每個物件")
     p.add_argument("--init-instance", action="store_true",
-                   help="storage 沒有身分標記時，寫入資料庫的 id 後結束（不會覆寫不同的標記）")
+                   help="補上缺少的身分標記後結束（資料庫的 id 寫進 storage，或兩邊都沒有時建立新的）；"
+                        "要輸入 storage 名稱確認，永不覆寫已存在的 id")
+    p.add_argument("--adopt-bucket-id", action="store_true",
+                   help="搭配 --init-instance：資料庫沒有 id、storage 有標記時，把 storage 的 id 寫進資料庫")
+    p.add_argument("--yes", action="store_true", help="搭配 --init-instance：不詢問確認")
     p.add_argument("--allow-mass-delete", action="store_true",
                    help="孤兒或對不上的物件太多時仍然執行（預設整個中止）；對不上的物件照樣不刪")
     args = p.parse_args(argv)
     if args.days < 0:
         print("--days 不可小於 0", file=sys.stderr)
+        return 2
+    if args.init_instance and args.dry_run:
+        print("--init-instance 會寫入身分標記，不能搭配 --dry-run", file=sys.stderr)
+        return 2
+    if args.adopt_bucket_id and not args.init_instance:
+        print("--adopt-bucket-id 只能搭配 --init-instance", file=sys.stderr)
         return 2
     try:
         settings = load_settings(args.settings, check_paths=False)
@@ -422,14 +473,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(e, file=sys.stderr)
         return 2
     sessions = session_factory(engine)
-    if args.init_instance:
-        return init_instance(sessions, storage)
     try:
+        if args.init_instance:
+            return init_instance(sessions, storage, adopt_bucket_id=args.adopt_bucket_id, yes=args.yes)
         report = run_gc(sessions, storage, days=args.days, dry_run=args.dry_run,
                         allow_mass_delete=args.allow_mass_delete)
     except InstanceMismatch as e:
         print(e, file=sys.stderr)
         return 4
+    except InstanceUnavailable as e:
+        print(f"{e}\n無法確認資料庫與 storage 是同一組，什麼都沒刪。請檢查 storage 設定、憑證與網路後再試。", file=sys.stderr)
+        return 5
     if report.aborted:
         print(format_report(report), file=sys.stderr)
         return 3

@@ -20,7 +20,7 @@ from .db import init_db, make_engine, session_factory
 from .services.comfy_client import ComfyClient
 from .services.comfy_engine import ComfyEngine
 from .services.engine import GenerationEngine
-from .services.instance import ensure_instance
+from .services.instance import ensure_instance, mismatch_hint, storage_label
 from .services.preflight import format_report, run_preflight
 from .services.worker import GenerationWorker
 from .services.workflow_registry import WorkflowRegistry
@@ -94,21 +94,30 @@ def create_app(
     app.include_router(invites.router)
 
     def _check_storage_instance(app: FastAPI) -> None:
-        """DB 與 storage 的身分標記：新部署建立；對不上只記警告、照常服務（storage_gc 會拒絕執行）。"""
+        """DB 與 storage 的身分標記：新部署（或既有部署第一次升級）建立；對不上或不能自動建立時只記警告、
+        照常服務（storage_gc 與 delete-data 會拒絕執行）。R2 連不上時受 boto3 逾時限制（見 storage.R2Storage）。"""
         try:
             with app.state.sessions() as session:
                 res = ensure_instance(session, app.state.storage)
         except Exception:  # noqa: BLE001  檢查失敗（例如 storage 暫時連不上）不可讓服務當機
             log.warning("!!! storage instance 身分標記檢查失敗", exc_info=True)
             return
-        if res.created:
-            log.info("storage instance 身分標記已建立：%s", res.db_id)
+        if res.adoption_refused:
+            log.warning(
+                "!!! storage instance 身分標記：資料庫沒有任何書，但 storage（%s）的 books/ 已經有物件且沒有標記，"
+                "不自動建立（避免空的新資料庫認領別人的 bucket）。storage_gc 與 invites.py delete-data 會拒絕執行。"
+                "確認 paths.database 與 storage 設定是同一組後，執行 scripts/storage_gc.py --init-instance !!!",
+                storage_label(app.state.storage),
+            )
         elif not res.ok:
             log.warning(
                 "!!! storage instance 身分標記對不上：%s。資料庫與 storage（資料夾／bucket）可能不是一組；"
-                "storage_gc 會拒絕執行。確認設定無誤後，若 storage 沒有標記，用 scripts/storage_gc.py --init-instance 補上 !!!",
+                "storage_gc 與 invites.py delete-data 會拒絕執行。%s !!!",
                 res.describe(),
+                mismatch_hint(res),
             )
+        elif res.created:
+            log.info("storage instance 身分標記已建立：%s", res.db_id)
 
     async def _preflight(app: FastAPI):
         """跑 preflight 並更新快取 app.state.preflight。"""

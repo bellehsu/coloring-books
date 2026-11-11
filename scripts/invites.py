@@ -9,10 +9,12 @@
   python scripts/invites.py delete-data --id N [--yes] [--force-admin]
       刪除這個 owner 的所有書、頁面、生成紀錄、修線、物件（books/{book_id}/ 與預覽）、session、用量，最後刪 owner。
       沒有 --yes 時要輸入 owner 名稱確認。最後一個（未撤銷的）admin 要加 --force-admin 才刪。
+      DB 的 storage_instance_id 與 storage 的 books/_instance.json 必須一致，否則什麼都不刪（結束碼 4；
+      讀不到標記結束碼 5）；補標記見 scripts/storage_gc.py --init-instance。
 
 設定與 app 相同（config/settings.yaml 或 APP_SETTINGS_FILE，APP_ 環境變數覆寫；R2 憑證只來自環境變數）。
 連結前綴：--base-url，其次 auth.invite_base_url，都沒有就是 http://localhost:3000。
-結束碼：0 成功；1 操作失敗或取消；2 設定錯誤。
+結束碼：0 成功；1 操作失敗或取消；2 設定錯誤；4 DB 與 storage 不是一組；5 讀不到 storage 的身分標記。
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from app.models import (  # noqa: E402
     Usage,
     utcnow,
 )
-from app.services import auth  # noqa: E402
+from app.services import auth, instance  # noqa: E402
 from app.services.usage import clock, refund_generations, taipei_day  # noqa: E402
 from app.storage import make_storage  # noqa: E402
 
@@ -177,6 +179,8 @@ def _check_last_admin(s: Session, owner: Owner, force: bool) -> None:
 def cmd_delete_data(args: argparse.Namespace, settings: Settings, sessions) -> int:
     storage = make_storage(settings)
     with sessions() as s:
+        # DB 與 storage 不是一組時，books/{id}/ 是別人的活物件：在詢問確認與任何 DB 變更之前就拒絕
+        instance.require_instance(s, storage, tool="invites.py delete-data")
         owner = get_owner(s, args.id)
         _check_last_admin(s, owner, args.force_admin)
         book_ids = list(s.exec(select(Book.id).where(col(Book.owner_id) == owner.id)).all())
@@ -323,6 +327,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except CliError as e:
         print(e, file=sys.stderr)
         return 1
+    except instance.InstanceMismatch as e:
+        print(e, file=sys.stderr)
+        return 4
+    except instance.InstanceUnavailable as e:
+        print(f"{e}\n無法確認資料庫與 storage 是同一組，什麼都沒刪。請檢查 storage 設定、憑證與網路後再試。", file=sys.stderr)
+        return 5
 
 
 if __name__ == "__main__":

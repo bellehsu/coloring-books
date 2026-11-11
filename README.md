@@ -83,7 +83,8 @@ env -u PYTHONPATH $PY scripts/invites.py revoke --id 2       # 撤銷，並刪�
 env -u PYTHONPATH $PY scripts/invites.py delete-data --id 2  # 刪除它的書、頁面、生成紀錄、圖片、session、用量與 owner；要輸入名稱確認（--yes 略過）
 env -u PYTHONPATH $PY scripts/storage_gc.py --dry-run        # 只計數：捨棄超過 30 天的圖（--days 調整）與沒有資料列指到的孤兒物件
 env -u PYTHONPATH $PY scripts/storage_gc.py                  # 真的刪除（頁面選用中、角色圖不會刪）
-env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance  # storage 缺身分標記時，寫入 DB 的 id（不覆寫不同的）
+env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance  # 補上缺少的身分標記（要輸入 storage 名稱確認；--yes 略過）
+env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance --adopt-bucket-id  # DB 沒有 id、storage 有標記時，把它寫進 DB
 ```
 
 - 連結前綴：`--base-url`，其次 `auth.invite_base_url`，預設 `http://localhost:3000`。
@@ -92,14 +93,26 @@ env -u PYTHONPATH $PY scripts/storage_gc.py --init-instance  # storage 缺身分
   或屬於另一本書）不刪。孤兒超過 20 個且超過「孤兒＋被參照物件」的 20%，或對不上的物件超過 20 個且超過列出物件的 20%，
   就整個中止、什麼都不刪（多半是設定指錯 DB 或 bucket）；先用 `--dry-run -v --allow-mass-delete` 看清單，確認無誤才加 `--allow-mass-delete`。
 - **身分標記：** DB（`app_meta.storage_instance_id`）與 storage（物件 `books/_instance.json`）存同一個隨機 id。
-  後端啟動時兩邊都沒有（新部署）就建立；只有一邊有或兩邊不同時只印警告、照常服務。`storage_gc.py` 要求兩邊一致，
-  否則結束碼 4、什麼都不刪（`--allow-mass-delete` 也不例外）。storage 沒有標記時，確認設定指的是同一組後用
-  `storage_gc.py --init-instance` 把 DB 的 id 寫進去（不會覆寫不同的標記）。這個物件永遠不會被 GC 或 `delete-data` 刪掉。
+  標記一律直接讀寫 R2（不經過本機快取）。`storage_gc.py` 與 `invites.py delete-data` 要求兩邊都有且一致，
+  否則結束碼 4、什麼都不刪、也不改 DB（`--allow-mass-delete` 也不例外）。這個物件永遠不會被 GC 或 `delete-data` 刪掉。
+- **後端啟動時的自動建立：** 兩邊都沒有標記時，只有「DB 至少有一本書」或「storage 的 `books/` 是空的」才自動建立
+  （新部署、或既有部署升級後第一次啟動）。空的新 DB 指到 `books/` 已經有物件、沒有標記的 storage 時**不會**自動認領：
+  只印 `!!!` 警告、照常服務，兩邊都不寫。只有一邊有或兩邊不同時同樣只警告。
+- **補標記（復原）：** 先確認 `paths.database` 與 storage 設定指的是同一組，再執行 `storage_gc.py --init-instance`：
+  DB 有 id、storage 沒有 → 寫進 storage；兩邊都沒有 → 產生新 id 寫進兩邊。DB 沒有 id、storage 有標記
+  （例如降級後再升級、或還原了 0007 之前的備份）→ 加 `--adopt-bucket-id` 把 storage 的 id 寫進 DB。
+  都要輸入 storage 名稱確認（R2 是 bucket 名稱，本機是 storage 資料夾的絕對路徑；`--yes` 略過），
+  永遠不覆寫已存在的 id（兩邊不同時結束碼 4，請檢查設定）；不能搭配 `--dry-run`。
+- **不要把複製的 DB 指到正在使用的 bucket：** 複製（或還原）的 DB 帶著同一個身分標記，GC 與 `delete-data` 會照常執行、
+  刪掉另一份 DB 還在用的物件。開發與正式環境各用自己的 bucket（或本機資料夾）。
 - **還原舊備份的限制：** 從備份還原的舊 DB 與 bucket 的身分標記相同，GC 會照常執行。這時受影響的只有兩種物件：
   頁面線稿（備份之後重算過的會被當成孤兒刪掉，下次讀取時自動重算）；備份之後才產生的生成圖 id 大於 DB 的
   `sqlite_sequence`，會當成「可能正在寫入」略過、不刪。備份之後新建的書（書號大於 DB 最大的書）也一律略過。
-- `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試）、2 設定錯誤或 DB 不是最新版、3 孤兒太多而中止、
-  4 DB 與 storage 的身分標記不一致。
+- `storage_gc.py` 的結束碼：0 成功、1 有物件刪除失敗（下次會再試；`--init-instance` 為取消）、2 設定或參數錯誤、
+  DB 不是最新版、3 孤兒太多而中止、4 DB 與 storage 的身分標記不一致（或缺少）、5 讀不到 storage 的身分標記
+  （例如 R2 403、逾時、連不上；什麼都沒刪）。`invites.py delete-data` 同樣用 4 與 5。
+- R2 的 boto3 client 設了連線逾時 5 秒、讀取逾時 30 秒、最多重試 3 次：R2 連不上時，後端啟動的身分標記檢查約 20 秒後放棄
+  （記警告、照常啟動）。R2 的本機快取放在 `<storage.cache_dir>/<bucket>`；舊版放在 `<cache_dir>` 底下的檔案可以直接刪掉。
 
 ## 模型（只需要 Qwen）
 

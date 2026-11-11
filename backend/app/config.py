@@ -77,7 +77,7 @@ class StorageSettings(BaseModel):
     r2: R2Settings = R2Settings()
     # 簽章網址有效秒數；網址拿到就立刻用（302 轉址），所以很短
     signed_url_ttl_s: int = Field(120, gt=0)
-    # R2 物件的本機快取（只是加速，隨時可刪）；None＝<paths.storage_dir>/r2_cache
+    # R2 物件的本機快取（只是加速，隨時可刪）；None＝<paths.storage_dir>/r2_cache。實際放在 <cache_dir>/<bucket>
     cache_dir: Path | None = None
     cache_max_bytes: int = Field(2 * 1024**3, gt=0)
     # LocalStorage 的 HMAC 金鑰；只能來自環境變數 APP_STORAGE__SIGNING_KEY，
