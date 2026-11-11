@@ -1,4 +1,5 @@
 import type { Page } from "@/api/client";
+import { normalizeCaption } from "@/lib/limits";
 import styles from "./CaptionPreview.module.css";
 
 /**
@@ -6,8 +7,8 @@ import styles from "./CaptionPreview.module.css";
  * 兩行都沒有文字時整塊不出現。文字是伺服器上已存的值。
  */
 export function CaptionPreview({ page }: { page: Page }) {
-  const zh = (page.caption_zh ?? "").trim();
-  const en = (page.caption_en ?? "").trim();
+  const zh = normalizeCaption(page.caption_zh ?? "");
+  const en = normalizeCaption(page.caption_en ?? "");
   if (!zh && !en) return null;
   return (
     <div role="group" aria-label="圖下方的文字預覽" className={styles.box}>

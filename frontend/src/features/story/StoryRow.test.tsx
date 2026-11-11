@@ -111,6 +111,17 @@ describe("StoryRow", () => {
       expect(onSave).toHaveBeenCalledTimes(1);
     });
 
+    it("存出去的是正規化後的值（換行、零寬字元）", async () => {
+      const { onSave } = setup();
+      fireEvent.change(zh(), { target: { value: "消\u2029\u200b防" } });
+      fireEvent.blur(zh());
+      expect(onSave).toHaveBeenCalledWith({ caption_zh: "消 防" });
+      onSave.mockClear();
+      fireEvent.change(en(), { target: { value: "\u200b\n" } });
+      fireEvent.blur(en());
+      expect(onSave).toHaveBeenCalledWith({ caption_en: "" });
+    });
+
     it("清空會存空字串", async () => {
       const { onSave } = setup({ page: page({ caption_zh: "消防車" }) });
       await userEvent.clear(zh());

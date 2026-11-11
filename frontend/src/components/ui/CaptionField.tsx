@@ -1,7 +1,7 @@
 "use client";
 
-import { useId } from "react";
-import { countChars, MAX_CAPTION_EN, MAX_CAPTION_ZH } from "@/lib/limits";
+import { useId, useState } from "react";
+import { countChars, MAX_CAPTION_EN, MAX_CAPTION_ZH, normalizeCaption } from "@/lib/limits";
 import styles from "./CaptionField.module.css";
 
 export type CaptionKind = "zh" | "en";
@@ -11,9 +11,9 @@ const SPEC: Record<CaptionKind, { label: string; max: number; unit: string; erro
   en: { label: "英文字", max: MAX_CAPTION_EN, unit: "字元", error: `英文字最多 ${MAX_CAPTION_EN} 個字元` },
 };
 
-/** 超過上限時回傳規格訊息（以 Unicode code point 計，與後端一致），否則 null。 */
+/** 超過上限時回傳規格訊息（先正規化，再以 Unicode code point 計，與後端一致），否則 null。 */
 export function captionError(kind: CaptionKind, value: string): string | null {
-  return countChars(value.trim()) > SPEC[kind].max ? SPEC[kind].error : null;
+  return countChars(normalizeCaption(value)) > SPEC[kind].max ? SPEC[kind].error : null;
 }
 
 export interface CaptionFieldProps {
@@ -32,8 +32,10 @@ export interface CaptionFieldProps {
 export function CaptionField({ kind, ariaLabel, value, onChange, onBlur }: CaptionFieldProps) {
   const id = useId();
   const { label, max, unit } = SPEC[kind];
-  const err = captionError(kind, value);
-  const left = max - countChars(value.trim());
+  // 輸入法組字中（注音、拼音）內容還沒定案：不評估超過上限，組字結束才檢查
+  const [composing, setComposing] = useState(false);
+  const err = composing ? null : captionError(kind, value);
+  const left = max - countChars(normalizeCaption(value));
   return (
     <div className={styles.field}>
       <label htmlFor={id} className={styles.lbl}>
@@ -49,10 +51,16 @@ export function CaptionField({ kind, ariaLabel, value, onChange, onBlur }: Capti
         aria-describedby={`${id}-n`}
         lang={kind === "zh" ? "zh-Hant" : "en"}
         onChange={(e) => onChange(e.target.value)}
+        onCompositionStart={() => setComposing(true)}
+        onCompositionEnd={() => setComposing(false)}
         onBlur={onBlur}
       />
-      <span id={`${id}-n`} className={err ? styles.error : styles.count} role={err ? "alert" : undefined}>
-        {err ?? `還可 ${left} ${unit}`}
+      {/* 錯誤訊息放在一直存在的 polite 區域：出現時才會被朗讀，不用在出現當下才加 role="alert" */}
+      <span id={`${id}-n`} className={styles.note}>
+        {!err && <span className={styles.count}>{`還可 ${left} ${unit}`}</span>}
+        <span aria-live="polite" className={styles.error}>
+          {err}
+        </span>
       </span>
     </div>
   );

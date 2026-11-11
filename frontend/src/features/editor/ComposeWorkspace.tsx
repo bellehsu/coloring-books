@@ -9,7 +9,7 @@ import { CaptionField, captionError } from "@/components/ui/CaptionField";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { ACTION_HINT, ACTIONS, appendPhrase, hasPhrase } from "@/lib/actions";
-import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
+import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import { errMsg } from "./errMsg";
 import { thumbNumber, Thumbs, useThumbList } from "./Thumbs";
@@ -187,8 +187,8 @@ function useSavePage(bookId: number, pageId: number) {
 function CaptionCard({ bookId, page }: { bookId: number; page: Page }) {
   const id = useId();
   const savePage = useSavePage(bookId, page.id);
-  const zh = usePageText(page.caption_zh ?? "", (v) => (captionError("zh", v) ? Promise.resolve() : savePage({ caption_zh: v })));
-  const en = usePageText(page.caption_en ?? "", (v) => (captionError("en", v) ? Promise.resolve() : savePage({ caption_en: v })));
+  const zh = usePageText(page.caption_zh ?? "", (v) => (captionError("zh", v) ? Promise.resolve() : savePage({ caption_zh: normalizeCaption(v) })));
+  const en = usePageText(page.caption_en ?? "", (v) => (captionError("en", v) ? Promise.resolve() : savePage({ caption_en: normalizeCaption(v) })));
   return (
     <section aria-labelledby={`${id}-h`} className={styles.card}>
       <div className={styles.head}>

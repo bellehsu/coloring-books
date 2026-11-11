@@ -5,7 +5,7 @@ import type { Generation, Page } from "@/api/client";
 import { CaptionField, captionError } from "@/components/ui/CaptionField";
 import { Icons } from "@/components/ui/Icons";
 import { Segmented } from "@/components/ui/Segmented";
-import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
+import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import styles from "./StoryPage.module.css";
 
@@ -131,10 +131,10 @@ export function StoryRow({ n, page, mode, onModeChange, fileName, uploaded = fal
   const action = useAutosave(page.action_prompt, (v) => onSave({ action_prompt: v }));
   // 超過上限的文字不存（欄位下方已顯示訊息）；清空存 ""
   const captionZh = useAutosave(page.caption_zh ?? "", (v) =>
-    captionError("zh", v) ? Promise.resolve() : onSave({ caption_zh: v }),
+    captionError("zh", v) ? Promise.resolve() : onSave({ caption_zh: normalizeCaption(v) }),
   );
   const captionEn = useAutosave(page.caption_en ?? "", (v) =>
-    captionError("en", v) ? Promise.resolve() : onSave({ caption_en: v }),
+    captionError("en", v) ? Promise.resolve() : onSave({ caption_en: normalizeCaption(v) }),
   );
   const fileInput = useRef<HTMLInputElement>(null);
   const hasUpload = !!fileName || uploaded;

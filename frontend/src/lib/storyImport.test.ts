@@ -293,3 +293,22 @@ describe("captions", () => {
     expect(bad[0].problems).toEqual(["中文字最多 12 個字", "英文字最多 28 個字元"]);
   });
 });
+
+describe("貼上的頁面文字也正規化", () => {
+  it("零寬字元與特殊空白在解析時處理，字數用正規化後的", () => {
+    const r = parseStory("第1頁\n場景：消防局\n動作：開車\n中文：消​防 車 \n英文：Fire\u0085Engine");
+    expect(r.pages[0].captionZh).toBe("消防 車");
+    expect(r.pages[0].captionEn).toBe("Fire Engine");
+  });
+
+  it("只有零寬字元的文字等於沒寫", () => {
+    const r = parseStory("第1頁\n場景：消防局\n動作：開車\n中文：​");
+    expect(r.pages[0].captionZh).toBeUndefined();
+  });
+
+  it("試算表欄位同樣正規化", () => {
+    const r = parseStory("場景\t動作\t中文\t英文\n消防局\t開車\t消​防\t​");
+    expect(r.pages[0].captionZh).toBe("消防");
+    expect(r.pages[0].captionEn).toBeUndefined();
+  });
+});

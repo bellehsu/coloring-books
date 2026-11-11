@@ -1,6 +1,6 @@
 /** 貼上整本故事：把文字解析成 (場景, 動作) 的頁面清單，並規劃要怎麼套進現有頁面。純函式，無 I/O。 */
 
-import { countChars, MAX_ACTION, MAX_CAPTION_EN, MAX_CAPTION_ZH, MAX_SCENE } from "./limits";
+import { countChars, MAX_ACTION, MAX_CAPTION_EN, MAX_CAPTION_ZH, MAX_SCENE, normalizeCaption } from "./limits";
 
 export const MAX_IMPORT_PAGES = 40;
 
@@ -198,8 +198,8 @@ export function parseStory(text: string): { pages: ParsedPage[]; errors: ParseEr
     blocks.map((b) => ({
       scene: (b.scene ?? "").trim(),
       action: (b.action ?? "").trim(),
-      zh: (b.zh ?? "").trim(),
-      en: (b.en ?? "").trim(),
+      zh: normalizeCaption(b.zh ?? ""),
+      en: normalizeCaption(b.en ?? ""),
       labelled: b.scene !== null || b.action !== null || b.zh !== null || b.en !== null,
       raw: b.raw.join(" "),
     })),
@@ -250,8 +250,8 @@ function parseTsv(lines: string[]): RawRow[] {
     const cells = l.split("\t");
     const scene = (sceneCol >= 0 ? (cells[sceneCol] ?? "") : "").trim();
     const action = (actionCol >= 0 ? (cells[actionCol] ?? "") : "").trim();
-    const zh = zhCol >= 0 ? (cells[zhCol] ?? "").trim() : "";
-    const en = enCol >= 0 ? (cells[enCol] ?? "").trim() : "";
+    const zh = zhCol >= 0 ? normalizeCaption(cells[zhCol] ?? "") : "";
+    const en = enCol >= 0 ? normalizeCaption(cells[enCol] ?? "") : "";
     return { scene, action, zh, en, labelled: scene !== "" || action !== "" || zh !== "" || en !== "", raw: l };
   });
 }
