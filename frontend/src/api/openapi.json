@@ -1575,7 +1575,7 @@
           "lineart"
         ],
         "summary": "Autofix",
-        "description": "對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。\n使用者的修線（user 層）不動；筆數上限各層分開算。",
+        "description": "對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪\n（services/autofix.plan_autofix）。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。\n使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），\n會被使用者橡皮擦擦到的補線不補。",
         "operationId": "autofix_api_pages__page_id__lineart_autofix_post",
         "parameters": [
           {
@@ -1952,6 +1952,133 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/produce/plan": {
+      "get": {
+        "tags": [
+          "produce"
+        ],
+        "summary": "Produce Plan",
+        "operationId": "produce_plan_api_books__book_id__produce_plan_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProducePlanOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/produce": {
+      "post": {
+        "tags": [
+          "produce"
+        ],
+        "summary": "Produce",
+        "operationId": "produce_api_books__book_id__produce_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProduceOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/overview": {
+      "get": {
+        "tags": [
+          "produce"
+        ],
+        "summary": "Book Overview",
+        "description": "只讀資料庫：不算線稿、不碰存放的物件。",
+        "operationId": "book_overview_api_books__book_id__overview_get",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookOverviewOut"
+                }
               }
             }
           },
@@ -2646,6 +2773,54 @@
           "updated_at"
         ],
         "title": "BookOut"
+      },
+      "BookOverviewOut": {
+        "properties": {
+          "book_id": {
+            "type": "integer",
+            "title": "Book Id"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/OverviewPageOut"
+            },
+            "type": "array",
+            "title": "Pages"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/RunProgress"
+          },
+          "estimate_s": {
+            "type": "integer",
+            "title": "Estimate S"
+          },
+          "deferred_count": {
+            "type": "integer",
+            "title": "Deferred Count"
+          },
+          "run_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Started At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "book_id",
+          "pages",
+          "progress",
+          "estimate_s",
+          "deferred_count",
+          "run_started_at"
+        ],
+        "title": "BookOverviewOut"
       },
       "BookStats": {
         "properties": {
@@ -3407,6 +3582,107 @@
         ],
         "title": "MeOut"
       },
+      "OverviewPageOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "attention",
+              "working",
+              "todo"
+            ],
+            "title": "State"
+          },
+          "gap_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap Count"
+          },
+          "caption_zh": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption Zh"
+          },
+          "caption_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption En"
+          },
+          "thumb_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumb Url"
+          },
+          "lineart_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineart Url"
+          },
+          "attention_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "position",
+          "state",
+          "gap_count",
+          "caption_zh",
+          "caption_en",
+          "thumb_url",
+          "lineart_url",
+          "attention_detail"
+        ],
+        "title": "OverviewPageOut"
+      },
       "PageCreate": {
         "properties": {
           "scene_prompt": {
@@ -3827,6 +4103,83 @@
         ],
         "title": "PrintMode"
       },
+      "ProduceOut": {
+        "properties": {
+          "queued": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Queued"
+          },
+          "deferred_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Deferred Pages"
+          },
+          "pipeline_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Pipeline Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "deferred_pages",
+          "pipeline_pages"
+        ],
+        "title": "ProduceOut"
+      },
+      "ProducePlanOut": {
+        "properties": {
+          "backgrounds": {
+            "type": "integer",
+            "title": "Backgrounds"
+          },
+          "poses": {
+            "type": "integer",
+            "title": "Poses"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "estimate_s": {
+            "type": "integer",
+            "title": "Estimate S"
+          },
+          "remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining"
+          },
+          "fits": {
+            "type": "integer",
+            "title": "Fits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "backgrounds",
+          "poses",
+          "total",
+          "estimate_s",
+          "remaining",
+          "fits"
+        ],
+        "title": "ProducePlanOut"
+      },
       "QAMessage": {
         "properties": {
           "code": {
@@ -4024,6 +4377,29 @@
           "elapsed_s"
         ],
         "title": "RecentJob"
+      },
+      "RunProgress": {
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "running": {
+            "type": "integer",
+            "title": "Running"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "running",
+          "done"
+        ],
+        "title": "RunProgress"
       },
       "SelectGeneration": {
         "properties": {

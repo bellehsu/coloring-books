@@ -517,3 +517,63 @@ async def test_legacy_rows_without_usage_day_not_refunded(wenv):
     engine.outcomes.append(EngineError("boom"))
     assert await worker.run_once()
     assert _used(sessions, owner_id) == 10
+
+
+# ---- 只預留放得下的（Phase 13 /produce）------------------------------------------------
+
+
+def test_reserve_up_to_grants_what_is_left(tmp_path):
+    sessions, owner_id = _db(tmp_path, cap=5)
+    with sessions() as s:
+        owner = s.get(Owner, owner_id)
+        assert usage.remaining(s, owner, NOW) == 5
+        assert usage.reserve_up_to(s, owner, 3, NOW) == (TODAY, 3)
+        s.commit()
+        assert usage.remaining(s, owner, NOW) == 2
+        assert usage.reserve_up_to(s, owner, 4, NOW) == (TODAY, 2)  # 只剩 2：給 2
+        s.commit()
+        assert usage.remaining(s, owner, NOW) == 0
+        with pytest.raises(HTTPException) as e:
+            usage.reserve_up_to(s, owner, 1, NOW)
+        assert e.value.status_code == 429 and e.value.detail == usage.DAILY_CAP_REACHED
+        s.rollback()
+        assert s.get(Usage, (owner_id, TODAY)).generations == 5
+
+
+def test_reserve_up_to_admin_is_uncapped(tmp_path):
+    sessions, owner_id = _db(tmp_path, cap=1)
+    with sessions() as s:
+        owner = s.get(Owner, owner_id)
+        owner.is_admin = True
+        s.add(owner)
+        s.commit()
+        assert usage.remaining(s, owner, NOW) is None
+        assert usage.reserve_up_to(s, owner, 7, NOW) == (TODAY, 7)
+        s.commit()
+        assert s.get(Usage, (owner_id, TODAY)).generations == 7
+
+
+def test_concurrent_reserve_up_to_never_exceeds_cap(tmp_path):
+    sessions, owner_id = _db(tmp_path, cap=4)
+    barrier = threading.Barrier(2)
+    granted: list[object] = []
+
+    def worker():
+        with sessions() as s:
+            owner = s.get(Owner, owner_id)
+            barrier.wait()
+            try:
+                granted.append(usage.reserve_up_to(s, owner, 3, NOW)[1])
+                s.commit()
+            except HTTPException as e:
+                s.rollback()
+                granted.append(e.status_code)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert sorted(granted) == [1, 3]
+    with sessions() as s:
+        assert s.get(Usage, (owner_id, TODAY)).generations == 4

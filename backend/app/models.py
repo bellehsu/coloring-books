@@ -132,6 +132,8 @@ class Book(SQLModel, table=True):
     character_description: str | None = None
     character_generation_id: int | None = None
     shared_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))  # null＝不分享
+    # 最近一輪「開始做這本書／繼續做」的開始時間（B 的本輪進度只算這之後建立的工作）；null＝還沒按過
+    produce_started_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))
     created_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_utc_col())
 

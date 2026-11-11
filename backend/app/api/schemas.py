@@ -478,6 +478,52 @@ class BatchMaterialsOut(BaseModel):
     skipped: list[BatchSkip]
 
 
+# ---- 開始做這本書（/produce）與 B 整本書（/overview）---------------------------------
+
+
+class ProducePlanOut(BaseModel):
+    backgrounds: int  # AI 背景：有場景描述、沒選背景（也沒上傳）、沒有排隊中的
+    poses: int  # 角色動作：有動作描述、沒選、沒有排隊中的（要先有角色）
+    total: int
+    estimate_s: int  # 這次按下去會做的張數（min(total, fits)）× 每張約 22 秒
+    remaining: int | None  # 今天還能排幾次；admin 不設上限為 None
+    fits: int  # total 裡今天放得下的張數
+
+
+class ProduceOut(BaseModel):
+    queued: list[int]  # 新排的生成 id（依頁面順序，每頁先背景再角色動作）
+    deferred_pages: list[int]  # 今天放不下、明天繼續的頁面 id（依頁面順序）
+    pipeline_pages: list[int]  # 已有兩張圖、排了頁面流程的頁面 id（不計次數）
+
+
+class OverviewPageOut(BaseModel):
+    id: int
+    position: int
+    state: Literal["ready", "attention", "working", "todo"]
+    gap_count: int | None  # 快取的 QA 是目前線稿的才有（GET 不算線稿）
+    caption_zh: str | None
+    caption_en: str | None
+    thumb_url: str | None  # 選定圖（合成圖；舊書是整頁圖）
+    lineart_url: str | None  # 目前線稿（?v= 為目前的 key）；沒選定圖為 None
+    attention_detail: str | None
+
+
+class RunProgress(BaseModel):
+    queued: int  # 現在排隊中的生成＋頁面流程（不論哪一輪）
+    running: int
+    done: int  # 本輪（produce_started_at 之後建立）已結束的生成（不含合成圖、上傳）＋頁面流程
+
+
+class BookOverviewOut(BaseModel):
+    book_id: int
+    pages: list[OverviewPageOut]
+    progress: RunProgress
+    estimate_s: int  # 排隊中與執行中的生成 × 每張約 22 秒（頁面流程很快，不算）
+    # 還有素材沒排（也沒有排隊中的那種）的頁數：上一輪放不下的（「還有 N 頁明天繼續」），沒按過時是全部缺的頁
+    deferred_count: int
+    run_started_at: datetime | None  # 最近一輪的開始時間；null＝還沒按過「開始做這本書」
+
+
 InviteNameStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
 
 

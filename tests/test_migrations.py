@@ -552,3 +552,31 @@ def test_0011_downgrade_caps_merged_strokes_to_old_put_limits(tmp_path):
     assert got[30] == (auto + user)[-MAX_STROKES:]  # 丟掉最舊的 100 筆 auto，使用者的全部保留
     assert sum(len(s["points"]) for s in got[31]) <= MAX_TOTAL_POINTS
     assert got[31] == (auto31 + user31)[-200:]  # 20000 點＝最後 200 筆
+
+
+def test_0012_book_produce_started_at_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0011")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, action_prompt, status, line_detail, line_width_px, "
+            "qa_note, created_at, updated_at) VALUES (1, 0, 's', 'a', 'DRAFT', 'STANDARD', 11, '', "
+            "'2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "0012")
+    with eng.connect() as c:
+        assert _cols(c, "book")["produce_started_at"]["nullable"] is True
+        assert c.exec_driver_sql("SELECT produce_started_at FROM book").scalar() is None  # 既有的書：還沒按過
+    command.downgrade(alembic_config(eng), "0011")
+    with eng.connect() as c:
+        assert "produce_started_at" not in _cols(c, "book")
+        assert c.exec_driver_sql("SELECT title FROM book").scalar() == "x"
+        assert c.exec_driver_sql("SELECT count(*) FROM page").scalar() == 1
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")

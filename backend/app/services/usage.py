@@ -72,13 +72,45 @@ def reserve(session: Session, owner: Owner, n: int, now: datetime) -> date:
     return day
 
 
-def _over_cap_detail(session: Session, owner: Owner, day: date, cap: int, n: int) -> str:
-    """還剩幾次但不夠這一批（使用者決定：整批擋下、說清楚）；一次都不剩就是原本的「明天再來」。"""
-    used = session.exec(
+def remaining(session: Session, owner: Owner, now: datetime) -> int | None:
+    """owner 今天（台北）還能排幾次；admin 不設上限回 None。只讀。"""
+    if owner.is_admin:
+        return None
+    return max(owner.daily_generation_cap - _used(session, owner, taipei_day(now)), 0)
+
+
+def reserve_up_to(session: Session, owner: Owner, n: int, now: datetime) -> tuple[date, int]:
+    """「開始做這本書」用：最多預留 n 次，剩下的不夠就只預留剩下的（使用者決定：放得下多少做多少）。
+    一次都不剩 → 429「今天的生成次數已用完，明天再來」。回傳 (計數的日期, 實際預留的次數)。
+
+    先以 INSERT OR IGNORE（0 次）拿到寫入鎖，之後讀到的已用量在這個交易結束前不會被別的請求改掉，
+    所以「讀剩幾次 → 預留」是原子的，同時按也不會超過上限。不 commit（同 reserve）。"""
+    if n <= 0:
+        raise ValueError("n 必須是正整數")
+    if owner.is_admin:
+        return reserve(session, owner, n, now), n
+    day = taipei_day(now)
+    table = Usage.__table__
+    session.exec(
+        insert(table).values(owner_id=owner.id, day=day, generations=0)
+        .on_conflict_do_nothing(index_elements=[table.c.owner_id, table.c.day])
+    )
+    k = min(n, owner.daily_generation_cap - _used(session, owner, day))
+    if k <= 0:
+        raise HTTPException(429, DAILY_CAP_REACHED)
+    return reserve(session, owner, k, now), k
+
+
+def _used(session: Session, owner: Owner, day: date) -> int:
+    return session.exec(
         select(Usage.generations).where(col(Usage.owner_id) == owner.id, col(Usage.day) == day)
     ).first() or 0
-    remaining = max(cap - used, 0)
-    return f"今天只剩 {remaining} 次，這次需要 {n} 次" if remaining > 0 else DAILY_CAP_REACHED
+
+
+def _over_cap_detail(session: Session, owner: Owner, day: date, cap: int, n: int) -> str:
+    """還剩幾次但不夠這一批（使用者決定：整批擋下、說清楚）；一次都不剩就是原本的「明天再來」。"""
+    left = max(cap - _used(session, owner, day), 0)
+    return f"今天只剩 {left} 次，這次需要 {n} 次" if left > 0 else DAILY_CAP_REACHED
 
 
 def refund(session: Session, owner_id: int, day: date, n: int = 1) -> None:

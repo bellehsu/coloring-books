@@ -493,3 +493,30 @@ def test_delete_page_refused_while_pipeline_running(client, app):
     r = client.delete(f"/api/pages/{p['id']}")
     assert r.status_code == 409
     assert get_page(app, p["id"]) is not None
+
+
+def test_kept_changing_does_not_set_attention_when_another_task_is_queued(client, app, monkeypatch):
+    """Task 2 review M1：一直被改而放棄（MAX_ATTEMPTS 次）時，這頁若已有排隊中的流程（改動的那一方排的），
+    不設「請看一下」：下一個工作會用最新的內容再跑。沒有排隊中的工作時照常設 attention。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+
+    def always_stale(*a, **k):
+        raise pipeline._Stale()
+
+    monkeypatch.setattr(pipeline, "_attempt", always_stale)
+    assert enqueue(app, pid)
+    with pytest.raises(pipeline.PipelineFailed) as e:
+        run_pipeline(app, pid)
+    assert e.value.message == pipeline.KEPT_CHANGING
+    pg = get_page(app, pid)
+    assert pg.attention is None and pg.attention_detail is None
+
+    with app.state.sessions() as s:
+        for t in s.exec(select(PageTask)).all():
+            s.delete(t)
+        s.commit()
+    with pytest.raises(pipeline.PipelineFailed):
+        run_pipeline(app, pid)
+    pg = get_page(app, pid)
+    assert pg.attention == "failed" and pg.attention_detail == pipeline.KEPT_CHANGING

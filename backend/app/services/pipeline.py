@@ -78,6 +78,16 @@ class _PageGone(Exception):
     pass
 
 
+class _Superseded(Exception):
+    """一直被改而放棄，但這頁已有排隊中的流程：交給它，不設 attention。"""
+
+
+def _has_queued_task(session: Session, page_id: int) -> bool:
+    return session.exec(
+        select(PageTask.id).where(col(PageTask.page_id) == page_id, col(PageTask.status) == _QUEUED)
+    ).first() is not None
+
+
 # ---- 排隊 ----------------------------------------------------------------------------
 
 
@@ -232,17 +242,23 @@ def auto_select(session: Session, page_id: int) -> bool:
 def run_page_pipeline(session: Session, storage: Storage, page_id: int) -> str:
     """跑一次頁面流程，回傳 PASSED 或 WAITING（背景或角色動作還沒有）。
     失敗時頁面 attention="failed"、attention_detail＝中文說明，丟 PipelineFailed（頁面已不存在時不設 attention）。
-    頁面在執行中被改（輸入變了、選定圖換了）就從頭重跑，最多 MAX_ATTEMPTS 次。呼叫前不可有未提交的寫入。"""
+    頁面在執行中被改（輸入變了、選定圖換了）就從頭重跑，最多 MAX_ATTEMPTS 次；還是一直被改就失敗，但這頁已有
+    排隊中的流程時不設 attention（下一個工作會用最新的內容再跑）。呼叫前不可有未提交的寫入。"""
     try:
         for _ in range(MAX_ATTEMPTS):
             try:
                 return _attempt(session, storage, page_id)
             except _Stale:
                 session.rollback()
+        if _has_queued_task(session, page_id):
+            raise _Superseded()
         raise PipelineFailed(KEPT_CHANGING)
     except _PageGone:
         session.rollback()
         raise PipelineFailed(PAGE_GONE) from None
+    except _Superseded:  # 改動的那一方已經排了下一個流程：它會用最新的內容再跑，不設「請看一下」
+        session.rollback()
+        raise PipelineFailed(KEPT_CHANGING) from None
     except Exception as e:  # noqa: BLE001  任何失敗都要變成「請看一下」，不可卡在製作中
         session.rollback()
         if isinstance(e, PipelineFailed):

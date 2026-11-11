@@ -38,11 +38,13 @@ from app.api.schemas import (
 )
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services import usage
+from app.services.pipeline import UPLOAD_ENGINE
 from app.services.page_compose import (
     ComposeError,
     abandon,
     compose_page,
     finish_stored,
+    is_usable,
     slot_change_values,
     store_outside_tx,
     usable_conditions,
@@ -247,6 +249,49 @@ class _BookState:
             return "背景產生中" if bg else "角色動作產生中"
         return None
 
+    def plan(
+        self, has_character: bool, upload_pages: set[int] = frozenset()
+    ) -> list[tuple[Page, GenKind, str | None]]:
+        """依頁面順序、每頁先背景再角色動作：(頁面, 種類, 略過原因；要排為 None)。
+        upload_pages 的頁面改用上傳圖片，背景略過；沒有角色時角色動作略過。"""
+        out: list[tuple[Page, GenKind, str | None]] = []
+        for page in self.pages:
+            reason = "改用上傳圖片" if page.id in upload_pages else self.skip_reason(page, GenKind.BACKGROUND)
+            out.append((page, GenKind.BACKGROUND, reason))
+            reason = self.skip_reason(page, GenKind.POSE)
+            if reason is None and not has_character:
+                reason = "請先設定角色"
+            out.append((page, GenKind.POSE, reason))
+        return out
+
+    def has_both_images(self, page: Page) -> bool:
+        """背景與角色動作都有（已選，或有可用的成功生成讓頁面流程自動選）；舊流程整頁圖的頁面不算。"""
+        if page.selected_generation_id in self.legacy_selected:
+            return False
+        for kind, slot in ((GenKind.BACKGROUND, page.background_generation_id),
+                           (GenKind.POSE, page.pose_generation_id)):
+            if slot is None and not any(is_usable(g, kind, page.id) and g.engine != UPLOAD_ENGINE
+                                        for g in self.gens[kind].get(page.id, [])):  # 同自動選圖的候選
+                return False
+        return True
+
+
+def has_character(session: Session, book: Book) -> bool:
+    """繪本已設定角色且角色圖還在（角色動作要用它當參考圖）。"""
+    char = (
+        session.get(Generation, book.character_generation_id)
+        if book.character_generation_id is not None
+        else None
+    )
+    return char is not None and bool(char.image_path)
+
+
+def build_job(session: Session, book: Book, page: Page, kind: GenKind) -> _Job:
+    """批次與「開始做這本書」共用：這頁這種素材的排隊任務（呼叫端確認不用略過）。"""
+    if kind == GenKind.BACKGROUND:
+        return _background_job(session, book, page)
+    return _pose_job(session, book, page, page.action_prompt)
+
 
 @router.post("/books/{book_id}/materials/batch", status_code=202, response_model=BatchMaterialsOut)
 def create_materials_batch(
@@ -264,34 +309,15 @@ def create_materials_batch(
     with _BATCH_LOCK:
         book = owned_book(session, owner, book_id)
         state = _BookState(session, book_id)
-        char = (
-            session.get(Generation, book.character_generation_id)
-            if book.character_generation_id is not None
-            else None
-        )
-        has_character = char is not None and bool(char.image_path)
         jobs: list[_Job] = []
         skipped: list[BatchSkip] = []
-        for page in state.pages:
-            if page.id in upload_pages:
-                reason = "改用上傳圖片"
-            else:
-                reason = state.skip_reason(page, GenKind.BACKGROUND)
+        for page, kind, reason in state.plan(has_character(session, book), upload_pages):
             if reason is not None:
                 skipped.append(
-                    BatchSkip(kind="background", page_id=page.id, position=page.position, reason=reason)
+                    BatchSkip(kind=kind.value, page_id=page.id, position=page.position, reason=reason)
                 )
             else:
-                jobs.append(_background_job(session, book, page))
-            reason = state.skip_reason(page, GenKind.POSE)
-            if reason is None and not has_character:
-                reason = "請先設定角色"
-            if reason is not None:
-                skipped.append(
-                    BatchSkip(kind="pose", page_id=page.id, position=page.position, reason=reason)
-                )
-            else:
-                jobs.append(_pose_job(session, book, page, page.action_prompt))
+                jobs.append(build_job(session, book, page, kind))
         queued = _enqueue_jobs(session, worker, owner, jobs)  # 整批一次預留，不夠就整批 429
         return BatchMaterialsOut(queued=queued, skipped=skipped)
 

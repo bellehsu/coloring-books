@@ -521,10 +521,12 @@ export interface paths {
         put?: never;
         /**
          * Autofix
-         * @description 對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪。
+         * @description 對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪
+         *     （services/autofix.plan_autofix）。
          *
          *     只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。
-         *     使用者的修線（user 層）不動；筆數上限各層分開算。
+         *     使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），
+         *     會被使用者橡皮擦擦到的補線不補。
          */
         post: operations["autofix_api_pages__page_id__lineart_autofix_post"];
         delete?: never;
@@ -647,6 +649,60 @@ export interface paths {
         };
         /** Print Png */
         get: operations["print_png_api_pages__page_id__print_png_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/{book_id}/produce/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Produce Plan */
+        get: operations["produce_plan_api_books__book_id__produce_plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/{book_id}/produce": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Produce */
+        post: operations["produce_api_books__book_id__produce_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/{book_id}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Book Overview
+         * @description 只讀資料庫：不算線稿、不碰存放的物件。
+         */
+        get: operations["book_overview_api_books__book_id__overview_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -911,6 +967,20 @@ export interface components {
              */
             updated_at: string;
         };
+        /** BookOverviewOut */
+        BookOverviewOut: {
+            /** Book Id */
+            book_id: number;
+            /** Pages */
+            pages: components["schemas"]["OverviewPageOut"][];
+            progress: components["schemas"]["RunProgress"];
+            /** Estimate S */
+            estimate_s: number;
+            /** Deferred Count */
+            deferred_count: number;
+            /** Run Started At */
+            run_started_at: string | null;
+        };
         /** BookStats */
         BookStats: {
             /**
@@ -1174,6 +1244,30 @@ export interface components {
              */
             via_dev_owner: boolean;
         };
+        /** OverviewPageOut */
+        OverviewPageOut: {
+            /** Id */
+            id: number;
+            /** Position */
+            position: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ready" | "attention" | "working" | "todo";
+            /** Gap Count */
+            gap_count: number | null;
+            /** Caption Zh */
+            caption_zh: string | null;
+            /** Caption En */
+            caption_en: string | null;
+            /** Thumb Url */
+            thumb_url: string | null;
+            /** Lineart Url */
+            lineart_url: string | null;
+            /** Attention Detail */
+            attention_detail: string | null;
+        };
         /** PageCreate */
         PageCreate: {
             /**
@@ -1307,6 +1401,30 @@ export interface components {
          * @enum {string}
          */
         PrintMode: "home" | "print_shop";
+        /** ProduceOut */
+        ProduceOut: {
+            /** Queued */
+            queued: number[];
+            /** Deferred Pages */
+            deferred_pages: number[];
+            /** Pipeline Pages */
+            pipeline_pages: number[];
+        };
+        /** ProducePlanOut */
+        ProducePlanOut: {
+            /** Backgrounds */
+            backgrounds: number;
+            /** Poses */
+            poses: number;
+            /** Total */
+            total: number;
+            /** Estimate S */
+            estimate_s: number;
+            /** Remaining */
+            remaining: number | null;
+            /** Fits */
+            fits: number;
+        };
         /** QAMessage */
         QAMessage: {
             /** Code */
@@ -1367,6 +1485,15 @@ export interface components {
             kind: "character" | "background" | "pose";
             /** Elapsed S */
             elapsed_s: number;
+        };
+        /** RunProgress */
+        RunProgress: {
+            /** Queued */
+            queued: number;
+            /** Running */
+            running: number;
+            /** Done */
+            done: number;
         };
         /** SelectGeneration */
         SelectGeneration: {
@@ -2803,6 +2930,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    produce_plan_api_books__book_id__produce_plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProducePlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    produce_api_books__book_id__produce_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProduceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    book_overview_api_books__book_id__overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookOverviewOut"];
                 };
             };
             /** @description Validation Error */
