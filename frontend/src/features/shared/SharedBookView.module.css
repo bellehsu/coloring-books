@@ -76,7 +76,7 @@
   gap: 16px;
 }
 .home {
-  color: var(--accent);
+  color: var(--accent-ink);
   font-weight: 600;
   min-height: 44px;
   display: inline-flex;

@@ -1,51 +1,62 @@
 :root {
-  --bg: #f4f3ef;
+  /* 童趣繪本（spec §2）：奶油點點底、墨色粗框、硬陰影、膠囊按鈕 */
+  --bg: #fff8ee;
+  --dot: #f1e2cc;
   --surface: #ffffff;
-  --stage: #e9e7e1;
-  --stage-dot: #d2cec5;
+  --input-bg: #fffdf8;
+  --stage: #f6ead6;
+  --stage-dot: #e3d2b8;
   --check-a: #ffffff;
-  --check-b: #e4e1da;
-  --ink: #1c1b19;
-  --muted: #5e5b55;
-  --muted-2: #4a4741;
-  --line: #e2dfd8;
-  --line-strong: #d9d5cc;
-  --accent: #3b4fd8;
-  --accent-hover: #2a3aa8;
-  --accent-soft: #e6e9fb;
-  --accent-softer: #f3f5fe;
+  --check-b: #efe3cf;
+  --ink: #2b2420;
+  --muted: #6b5f55;
+  --muted-2: #4f443b;
+  --line: #ead9c0;
+  --line-strong: #2b2420;
+  --accent: #f2a33a;
+  --accent-hover: #e8932a;
+  --accent-soft: #ffe7bd;
+  --accent-softer: #fff3de;
+  --accent-ink: #7a4300;
+  --sky: #cfe6ff;
   --ok: #1e7a46;
-  --ok-soft: #e3f2e8;
-  --ok-ink: #1e6b3f;
-  --ok-strong: #14532d;
+  --ok-soft: #d8f0d2;
+  --ok-ink: #1e5a2e;
+  --ok-strong: #7fc97a;
   --warn: #a34f06;
-  --warn-soft: #fdecdc;
-  --warn-ink: #8a3f05;
+  --warn-soft: #ffd7a6;
+  --warn-ink: #7a3a04;
+  --warn-strong: #e07b1f;
   --danger: #b42318;
   --danger-soft: #fde8e6;
+  --on-danger: #ffffff;
   --gap: #d9700a;
   --trim: #5b6ee8;
   --safe: #2e9a5c;
-  --focus: #8ea0f5;
-  --accent-ink: #2f3fb8;
-  --chip-bg: #efede8;
-  --muted-3: #8c8880;
-  --step-line: #cfcbc2;
-  --on-accent: #ffffff;
-  --overlay: rgba(28, 27, 25, 0.36);
-  --shadow-pop: 0 20px 60px rgba(28, 27, 25, 0.24);
-  --shadow-drawer: -8px 0 32px rgba(28, 27, 25, 0.18);
-  --shadow-toast: 0 4px 16px rgba(28, 27, 25, 0.16);
-  --shadow-tab: 0 1px 2px rgba(28, 27, 25, 0.12);
-  --shadow-card: 0 1px 2px rgba(28, 27, 25, 0.08);
-  --shadow-card-raised: 0 8px 24px rgba(28, 27, 25, 0.12);
-  --shadow-float: 0 1px 2px rgba(28, 27, 25, 0.08), 0 4px 16px rgba(28, 27, 25, 0.08);
-  --shadow-paper: 0 1px 2px rgba(28, 27, 25, 0.08), 0 10px 30px rgba(28, 27, 25, 0.1);
-  --hint-bg: rgba(255, 255, 255, 0.9);
+  --focus: #1f4fc7;
+  --chip-bg: #f6ead6;
+  --muted-3: #7d7066;
+  --step-line: #d8c6aa;
+  --on-accent: #2b2420;
+  --overlay: rgba(43, 36, 32, 0.4);
+  --border-w: 2px;
+  --shadow-hard: 0 5px 0 var(--ink);
+  --shadow-hard-sm: 0 4px 0 var(--ink);
+  --shadow-hard-lg: 0 6px 0 var(--ink);
+  --shadow-pop: 0 6px 0 var(--ink), 0 24px 60px rgba(43, 36, 32, 0.25);
+  --shadow-drawer: -6px 0 0 var(--ink), -12px 0 32px rgba(43, 36, 32, 0.18);
+  --shadow-toast: 0 4px 0 var(--ink);
+  --shadow-tab: 0 2px 0 var(--ink);
+  --shadow-card: 0 3px 0 var(--ink);
+  --shadow-card-raised: 0 5px 0 var(--ink);
+  --shadow-float: 0 4px 0 var(--ink);
+  --shadow-paper: 0 1px 2px rgba(43, 36, 32, 0.12), 0 10px 30px rgba(43, 36, 32, 0.12);
+  --hint-bg: rgba(255, 255, 255, 0.92);
   --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --radius-xl: 14px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-card: 24px;
 }
 
 * {
@@ -66,7 +77,9 @@ body {
 }
 
 body {
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--dot) 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
   color: var(--ink);
   font-family: var(--font-noto-sans-tc), "Noto Sans TC", system-ui, sans-serif;
   line-height: 1.5;
@@ -75,7 +88,14 @@ body {
 
 :focus-visible {
   outline: 3px solid var(--focus);
+  box-shadow: 0 0 0 2px var(--surface);
   outline-offset: 2px;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 900;
 }
 
 .stage {

@@ -4,12 +4,18 @@
   justify-content: center;
   gap: 8px;
   min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  font-weight: 500;
+  padding: 0 20px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  font-weight: 700;
+  color: var(--ink);
   cursor: pointer;
   text-decoration: none;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.btn:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--ink);
 }
 .btn:disabled,
 .btn[aria-disabled="true"] {
@@ -18,12 +24,14 @@
 }
 .lg {
   min-height: 52px;
-  padding: 0 22px;
+  padding: 0 28px;
   font-size: 16px;
+  font-weight: 900;
 }
 .primary {
   background: var(--accent);
   color: var(--on-accent);
+  box-shadow: var(--shadow-hard-sm);
 }
 .primary:hover:not(:disabled) {
   background: var(--accent-hover);
@@ -31,14 +39,21 @@
 .secondary {
   background: var(--surface);
   color: var(--ink);
-  border-color: var(--line-strong);
 }
 .secondary:hover:not(:disabled) {
-  background: var(--bg);
+  background: var(--accent-softer);
+}
+.sky {
+  background: var(--sky);
+  color: var(--ink);
+}
+.sky:hover:not(:disabled) {
+  background: var(--accent-softer);
 }
 .ghost {
   background: transparent;
   color: var(--muted-2);
+  border-color: transparent;
 }
 .ghost:hover:not(:disabled) {
   background: var(--chip-bg);

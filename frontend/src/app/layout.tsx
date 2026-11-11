@@ -4,7 +4,7 @@ import { Providers } from "./providers";
 import "./globals.css";
 
 const notoSansTC = Noto_Sans_TC({
-  weight: ["400", "500", "700"],
+  weight: ["400", "500", "700", "900"],
   display: "swap",
   variable: "--font-noto-sans-tc",
 });

@@ -3,9 +3,12 @@
   align-items: center;
   gap: 6px;
   align-self: flex-start;
-  padding: 2px 8px;
+  padding: 2px 10px;
+  border: var(--border-w) solid var(--ink);
   border-radius: 999px;
   font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
   white-space: nowrap;
 }
 .dot {
@@ -16,17 +19,13 @@
 }
 .ok {
   background: var(--ok-soft);
-  color: var(--ok-ink);
 }
 .warn {
   background: var(--warn-soft);
-  color: var(--warn-ink);
 }
 .draft {
   background: var(--chip-bg);
-  color: var(--muted-2);
 }
 .busy {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
+  background: var(--sky);
 }
