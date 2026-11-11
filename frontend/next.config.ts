@@ -14,10 +14,18 @@ const nextConfig: NextConfig = {
   allowedDevOrigins,
   async rewrites() {
     const backend = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
-    // 邀請連結 /i/{token} 也走後端：後端設定 cb_session cookie 後轉回 `/`，與 /api 同源，cookie 才帶得到
+    // 邀請連結 /i/{token} 也走後端：後端設定 cb_session cookie 後轉回 `/`，與 /api 同源，cookie 才帶得到。
+    // 只轉後端有的形狀（剛好一段 token）；其他形狀見 redirects
     return [
       { source: "/api/:path*", destination: `${backend}/api/:path*` },
-      { source: "/i/:path*", destination: `${backend}/i/:path*` },
+      { source: "/i/:token", destination: `${backend}/i/:token` },
+    ];
+  },
+  async redirects() {
+    // 被聊天 App 截斷（/i、/i/）或多出段落（/i/a/b）的邀請連結：顯示「連結已失效」頁，而不是後端的 JSON 404
+    return [
+      { source: "/i", destination: "/invalid-link", permanent: false },
+      { source: "/i/:token/:rest+", destination: "/invalid-link", permanent: false },
     ];
   },
 };
