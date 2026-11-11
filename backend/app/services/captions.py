@@ -22,6 +22,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from skimage.morphology import skeletonize
 
+from app.services.caption_text import normalize_caption
 from app.services.layout import Layout
 
 CAPTION_FONT_MISSING = "找不到字型檔，無法印出頁面文字"
@@ -78,8 +79,11 @@ def check_caption_font(path: Path | None) -> str | None:
     """preflight／啟動用：字型可用回傳 None，否則回傳問題描述（含路徑）。"""
     if path is None:
         return "paths.caption_font 未設定"
-    if not Path(path).is_file():
-        return f"找不到字型檔：{path}"
+    try:
+        if not Path(path).is_file():
+            return f"找不到字型檔：{path}"
+    except OSError as e:  # 目錄沒有權限等：回報字型不能用，不讓啟動或 preflight 當掉
+        return f"字型檔無法讀取：{path}: {e}"
     try:
         _font(Path(path), 48)
     except CaptionFontMissing as e:
@@ -168,8 +172,8 @@ def _render_line(text: str, size: int, max_w: float, font_path: Path | None) -> 
 def render_caption_page(ink: np.ndarray, layout: Layout, zh: str | None, en: str | None,
                         font_path: Path | None) -> Image.Image:
     """線稿（True＝黑）＋頁面文字 → 版面大小的 1-bit 白底圖（和 compose_page 一樣貼在 content_offset_px）。"""
-    zh = (zh or "").strip() or None
-    en = (en or "").strip() or None
+    zh = normalize_caption(zh)  # 舊資料也可能有換行、零寬字元：先正規化再排版
+    en = normalize_caption(en)
     w, h = layout.content_px
     bx0, by0, bx1, by1 = band_box(layout)
     bh = by1 - by0

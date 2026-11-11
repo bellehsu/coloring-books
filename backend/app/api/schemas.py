@@ -8,6 +8,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 from pydantic_core import PydanticCustomError
 
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
+from app.services.caption_text import normalize_caption
 from app.services.compose import Placement
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
@@ -25,12 +26,12 @@ ActionPromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_le
 
 
 def _caption_validator(limit: int, message: str):
-    """頁面文字：去頭尾空白，空字串變 None，超過 limit 個 code point（Python len）→ 422 帶 message。"""
+    """頁面文字：先正規化（空白一律變一個空格、去控制／格式字元、去頭尾），空的變 None，超過 limit 個 code point（Python len）→ 422 帶 message。"""
     def check(v: str | None) -> str | None:
         if v is None:
             return None
-        v = v.strip()
-        if not v:
+        v = normalize_caption(v)
+        if v is None:
             return None
         if len(v) > limit:
             raise PydanticCustomError("caption_too_long", message)

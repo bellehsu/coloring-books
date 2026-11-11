@@ -457,3 +457,105 @@ def test_font_is_loaded_once_per_size():
     render_caption_page(np.zeros(A5_HOME.content_px[::-1], bool), A5_HOME, "飛機", "Plane", FONT)
     info = captions_mod.load_font.cache_info()
     assert info.misses == 2 and info.hits >= 2  # 兩種字級各載入一次
+
+
+# --- 最終審查 I1：空白、控制字元、格式字元一律正規化 ---------------------------------------
+
+from app.services.caption_text import normalize_caption  # noqa: E402
+
+NASTY = ["消\n防", "消\r\n防", "消\r防", "消\u2028防", "消\u2029防", "消\x85防", "消\x0b防", "消\x1c防",
+         "消\t防", "消　防", "消\u00a0防", "消\u200b防", "消\u200d防", "消\ufeff防", "消\x00防", "消\x1b防"]
+
+
+@pytest.mark.parametrize("raw,want", [
+    ("消\n防", "消 防"), ("消\r\n\n防", "消 防"), ("消\u2028防", "消 防"), ("消\u2029防", "消 防"),
+    ("消\x85防", "消 防"), ("消　 \t防", "消 防"), ("消\u200b防", "消防"), ("消\u200d防", "消防"),
+    ("\ufeff消防\ufeff", "消防"), ("消\x00防\x1b", "消防"), ("  Fire   Engine ", "Fire Engine"),
+    ("\u200b", None), (" \n ", None), ("", None), (None, None), ("\x00", None),
+])
+def test_normalize_caption(raw, want):
+    assert normalize_caption(raw) == want
+
+
+@pytest.mark.parametrize("raw", NASTY)
+def test_patch_accepts_nasty_caption_and_print_is_200(client, app, raw):
+    b, p = passed_page(client, app, paper_size="a5", print_mode="home")
+    r = client.patch(f"/api/pages/{p['id']}", json={"caption_zh": raw, "caption_en": raw})
+    assert r.status_code == 200, r.text
+    zh = r.json()["caption_zh"]
+    assert zh == normalize_caption(raw) and zh is not None
+    assert all(c.isprintable() and c not in "\n\r\u2028\u2029\x85" for c in zh)
+    assert client.get(f"/api/pages/{p['id']}/print.png").status_code == 200
+    assert client.get(f"/api/books/{b['id']}/export.pdf").status_code == 200
+
+
+@pytest.mark.parametrize("raw", ["\u200b", " ", "\n", "\u2029", "\ufeff\u200d"])
+def test_patch_invisible_only_clears_caption(client, app, raw):
+    b, p = passed_page(client, app, paper_size="a5", print_mode="home")
+    caption(client, b, p, "消防車", "Bus")
+    r = client.patch(f"/api/pages/{p['id']}", json={"caption_zh": raw, "caption_en": raw})
+    assert r.status_code == 200
+    assert r.json()["caption_zh"] is None and r.json()["caption_en"] is None
+
+
+def test_limit_is_checked_after_normalizing(client, app):
+    b, p = passed_page(client, app, paper_size="a5", print_mode="home")
+    url = f"/api/pages/{p['id']}"
+    assert client.patch(url, json={"caption_zh": "一二三四五六七八九十\u200b\n\u200b\n十一十二"}).status_code == 422
+    assert client.patch(url, json={"caption_zh": "一二三四五六七八九十\u200b十一"}).status_code == 200  # 12 字
+    assert client.patch(url, json={"caption_zh": "一二三四五六七八九十 十一"}).status_code == 422  # 空格算 1
+
+
+def test_print_png_200_for_row_stored_with_newline_before_the_fix(client, app):
+    b, p = passed_page(client, app, paper_size="a5", print_mode="home")
+    set_page(app, p["id"], caption_zh="消\n防", caption_en="Fire\u2029Engine\u200b")  # 直接寫 DB，繞過驗證
+    assert client.get(f"/api/pages/{p['id']}/print.png").status_code == 200
+    assert client.get(f"/api/books/{b['id']}/export.pdf").status_code == 200
+    stored = page_png(client, p)
+    caption(client, b, p, "消 防", "Fire Engine")
+    assert page_png(client, p).tobytes() == stored.tobytes()  # 舊資料與正規化後印出同樣的圖
+
+
+def test_zero_width_only_row_prints_like_no_caption(client, app):
+    b, p = passed_page(client, app, paper_size="a5", print_mode="home")
+    plain = page_png(client, p)
+    set_page(app, p["id"], caption_zh="\u200b", caption_en="\n")
+    assert page_png(client, p).tobytes() == plain.tobytes()  # 不佔文字帶
+
+
+def test_render_caption_page_normalizes_defensively():
+    blank = np.zeros(A5_HOME.content_px[::-1], dtype=bool)
+    a = render_caption_page(blank, A5_HOME, "消\n防", "A\u2028B", FONT)
+    b = render_caption_page(blank, A5_HOME, "消 防", "A B", FONT)
+    assert a.tobytes() == b.tobytes()
+
+
+def test_check_caption_font_survives_unreadable_dir(tmp_path, monkeypatch):
+    d = tmp_path / "locked"
+    d.mkdir()
+    f = d / "f.ttf"
+    f.write_bytes(b"x")
+    real = Path.is_file
+
+    def boom(self, *a, **k):
+        if self == f:
+            raise PermissionError(13, "Permission denied", str(f))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "is_file", boom)
+    msg = check_caption_font(f)
+    assert msg and "f.ttf" in msg
+
+
+def test_startup_survives_unreadable_font_dir(settings_file, monkeypatch):
+    real = Path.is_file
+
+    def boom(self, *a, **k):
+        if self.name == "NotoSansTC-VF.ttf":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "is_file", boom)
+    app = create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False, startup_preflight=False)
+    with TestClient(app) as c:
+        assert c.get("/api/system/preflight").status_code == 200

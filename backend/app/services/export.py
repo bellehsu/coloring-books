@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from app.services.captions import render_caption_page
+from app.services.caption_text import normalize_caption
 from app.services.layout import Layout
 
 
@@ -20,7 +21,7 @@ def compose_page(ink: np.ndarray, layout: Layout,
     captions＝(中文, 英文)：至少一行有字時，線稿縮到上方、文字以空心字印在底部的文字帶
     （captions.render_caption_page；字型不能用 → CaptionFontMissing）。都沒有字時和以前一模一樣。
     """
-    zh, en = ((c or "").strip() or None for c in captions)
+    zh, en = (normalize_caption(c) for c in captions)
     if zh or en:
         return render_caption_page(ink, layout, zh, en, font_path)
     content = Image.fromarray(np.where(ink, 0, 255).astype(np.uint8), mode="L").convert(
