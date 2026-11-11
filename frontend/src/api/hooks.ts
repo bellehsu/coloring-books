@@ -11,6 +11,7 @@ import type { components } from "./schema";
 import type {
   BatchMaterials,
   Book,
+  BookOverview,
   Edits,
   ExportSummary,
   Generation,
@@ -18,6 +19,8 @@ import type {
   InviteCreate,
   Me,
   Page,
+  ProducePlan,
+  ProduceResult,
   QA,
   SharedBook,
   SharedBookDetail,
@@ -39,6 +42,8 @@ export const qk = {
   qa: (pageId: number) => ["qa", pageId] as const,
   edits: (pageId: number) => ["edits", pageId] as const,
   exportSummary: (bookId: number) => ["exportSummary", bookId] as const,
+  overview: (bookId: number) => ["overview", bookId] as const,
+  producePlan: (bookId: number) => ["producePlan", bookId] as const,
   sharedBooks: () => ["sharedBooks"] as const,
   sharedBook: (id: number) => ["sharedBook", id] as const,
   me: () => ["me"] as const,
@@ -152,6 +157,26 @@ export const useExportSummary = (bookId: number, enabled = true) =>
     queryKey: qk.exportSummary(bookId),
     queryFn: () => api.get<ExportSummary>(`/books/${bookId}/export/summary`),
     enabled,
+  });
+
+/** 書還在做（有排隊中／執行中的工作，或有頁面製作中）。 */
+export const overviewActive = (o: BookOverview) =>
+  o.progress.queued + o.progress.running > 0 || o.pages.some((p) => p.state === "working");
+
+/** 整本書總覽（B）：還在做時每 3 秒輪詢，做完就停。 */
+export const OVERVIEW_POLL_MS = 3000;
+export const useBookOverview = (bookId: number) =>
+  useQuery({
+    queryKey: qk.overview(bookId),
+    queryFn: () => api.get<BookOverview>(`/books/${bookId}/overview`),
+    refetchInterval: (query) => (query.state.data && overviewActive(query.state.data) ? OVERVIEW_POLL_MS : false),
+  });
+
+/** 「開始做這本書」要排幾張、今天還剩幾次（remaining null＝不限）。 */
+export const useProducePlan = (bookId: number) =>
+  useQuery({
+    queryKey: qk.producePlan(bookId),
+    queryFn: () => api.get<ProducePlan>(`/books/${bookId}/produce/plan`),
   });
 
 // ---------- mutations ----------
@@ -460,6 +485,26 @@ export function useCompose(bookId: number) {
       Promise.all([
         invalidatePage(qc, bookId, v.pageId),
         qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
+      ]),
+  });
+}
+
+/**
+ * 開始做這本書／繼續做：補排缺的素材與頁面流程（放得下多少做多少）。0 次可用時後端回 429。
+ * → overview, producePlan, queue, generations, pages, book, books
+ */
+export function useProduce(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<ProduceResult>(`/books/${bookId}/produce`),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.overview(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.producePlan(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.pages(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.book(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.books() }),
+        invalidateJobs(qc, bookId),
       ]),
   });
 }

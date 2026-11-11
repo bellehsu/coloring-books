@@ -8,7 +8,8 @@ import styles from "./BookCard.module.css";
 export function BookCard({ book }: { book: Book }) {
   const { pages, passed } = book.stats;
   const step = nextStep(book);
-  const href = book.character_generation_id == null ? `/books/${book.id}/character` : `/books/${book.id}/editor`;
+  // 每本書都從 B 整本書進去（還沒開始的書在 B 會引導到「主角與故事」）
+  const href = `/books/${book.id}`;
   const [cw, ch] = book.layout.content_px;
   const pct = pages ? Math.round((passed / pages) * 100) : 0;
   return (

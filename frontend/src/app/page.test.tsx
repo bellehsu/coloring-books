@@ -45,12 +45,12 @@ function setup() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("我的繪本", () => {
-  it("列出書並依角色狀態連結", async () => {
+  it("列出書，每本都連到 B 整本書", async () => {
     mockBooks([book(1, null), book(2, 5)]);
     setup();
     expect(screen.getByRole("heading", { name: "我的繪本" })).toBeInTheDocument();
-    expect(await screen.findByRole("link", { name: /書1/ })).toHaveAttribute("href", "/books/1/character");
-    expect(screen.getByRole("link", { name: /書2/ })).toHaveAttribute("href", "/books/2/editor");
+    expect(await screen.findByRole("link", { name: /書1/ })).toHaveAttribute("href", "/books/1");
+    expect(screen.getByRole("link", { name: /書2/ })).toHaveAttribute("href", "/books/2");
     expect(screen.getByText("2 本")).toBeInTheDocument();
     expect(screen.getAllByText("1 / 4 頁完成")).toHaveLength(2);
   });

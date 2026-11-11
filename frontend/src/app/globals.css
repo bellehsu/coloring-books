@@ -19,6 +19,10 @@
   --accent-softer: #fff3de;
   --accent-ink: #7a4300;
   --sky: #cfe6ff;
+  /* 頁碼圓章的淡色（B 整本書的頁面卡輪流用） */
+  --tint-pink: #ffdcd3;
+  --tint-yellow: #ffeaa8;
+  --tint-purple: #e6dcff;
   --ok: #1e7a46;
   --ok-soft: #d8f0d2;
   --ok-ink: #1e5a2e;

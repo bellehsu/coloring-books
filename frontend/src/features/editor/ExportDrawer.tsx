@@ -19,7 +19,7 @@ import styles from "./ExportDrawer.module.css";
 
 const Download = Icons.download;
 
-type Include = "passed" | "all";
+export type Include = "passed" | "all";
 
 export interface ExportDrawerProps {
   open: boolean;
@@ -28,11 +28,35 @@ export interface ExportDrawerProps {
 }
 
 export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
+  return (
+    <Drawer open={open} onClose={onClose} title="匯出 PDF">
+      <ExportOptions book={book} active={open} />
+    </Drawer>
+  );
+}
+
+export interface ExportOptionsProps {
+  book: Book;
+  /** 顯示中（抽屜開著）才讀匯出摘要。 */
+  active: boolean;
+  /** 預選的匯出範圍。 */
+  initialInclude?: Include;
+  /** 沒有完成的頁面時的提示。 */
+  emptyPassedHint?: string;
+}
+
+/** 匯出 PDF 的選項與下載（編輯器的「匯出 PDF」抽屜與 B 的「印出這本書」共用）。 */
+export function ExportOptions({
+  book,
+  active: open,
+  initialInclude = "passed",
+  emptyPassedHint = "沒有完成的頁面可以匯出，先在 ② 補線 按「完成這一頁 ✓」。",
+}: ExportOptionsProps) {
   const qc = useQueryClient();
   const summary = useExportSummary(book.id, open);
   const pages = usePages(book.id);
   const share = useShareBook(book.id);
-  const [include, setInclude] = useState<Include>("passed");
+  const [include, setInclude] = useState<Include>(initialInclude);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(
     null,
@@ -131,12 +155,12 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
   else if (count === 0)
     hint =
       include === "passed"
-        ? "沒有完成的頁面可以匯出，先在 ② 補線 按「完成這一頁 ✓」。"
+        ? emptyPassedHint
         : "沒有已選圖的頁面可以匯出。";
   else hint = "約 10 秒";
 
   return (
-    <Drawer open={open} onClose={onClose} title="匯出 PDF">
+    <>
       {summary.isError ? (
         <p role="alert" className={styles.error}>
           {summary.error instanceof ApiError
@@ -253,6 +277,6 @@ export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
           hint && <span className={styles.msg}>{hint}</span>
         )}
       </div>
-    </Drawer>
+    </>
   );
 }
