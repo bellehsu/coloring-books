@@ -178,12 +178,18 @@ export const useBookOverview = (bookId: number) =>
     refetchIntervalInBackground: true,
   });
 
-/** 「開始做這本書」要排幾張、今天還剩幾次（remaining null＝不限）。 */
+/**
+ * 「開始做這本書」要排幾張、今天還剩幾次（remaining null＝不限）。
+ * 回到這個分頁就重抓（開著過夜，隔天次數恢復「繼續做」才會亮）；今天用完（remaining 0）時每分鐘再看一次。
+ */
+export const PLAN_RECHECK_MS = 60_000;
 export const useProducePlan = (bookId: number, enabled = true) =>
   useQuery({
     enabled,
     queryKey: qk.producePlan(bookId),
     queryFn: () => api.get<ProducePlan>(`/books/${bookId}/produce/plan`),
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => (query.state.data?.remaining === 0 ? PLAN_RECHECK_MS : false),
   });
 
 // ---------- mutations ----------
@@ -545,13 +551,14 @@ export function useCompose(bookId: number) {
 
 /**
  * 開始做這本書／繼續做：補排缺的素材與頁面流程（放得下多少做多少）。0 次可用時後端回 429。
- * → overview, producePlan, queue, generations, pages, book, books
+ * 成功或失敗 → overview, producePlan, queue, generations, pages, book, books
  */
 export function useProduce(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post<ProduceResult>(`/books/${bookId}/produce`),
-    onSuccess: () =>
+    // 失敗（429）也重抓：剩餘次數變了，「繼續做」與「今天的生成次數已用完」要跟著變
+    onSettled: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: qk.overview(bookId) }),
         qc.invalidateQueries({ queryKey: qk.producePlan(bookId) }),

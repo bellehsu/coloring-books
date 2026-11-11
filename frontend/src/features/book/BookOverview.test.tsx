@@ -81,7 +81,8 @@ afterEach(() => {
 });
 
 function setup() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // 同 app/providers.tsx：全域關掉 refetchOnWindowFocus（要的 query 自己打開）
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
@@ -192,6 +193,52 @@ describe("B 整本書：狀態卡", () => {
     plan = { ...plan, total: 2, remaining: 0, fits: 0 };
     setup();
     const card = await screen.findByRole("region", { name: "還有 1 頁明天繼續" });
+    await waitFor(() => expect(within(card).getByRole("button", { name: "繼續做" })).toBeDisabled());
+    expect(card).toHaveTextContent("今天的生成次數已用完，明天再來");
+  });
+
+  it("繼續做 comes back when the tab regains focus the next day", async () => {
+    overview = ov([pg(1, "ready"), pg(2, "todo")], { deferred_count: 1 });
+    plan = { ...plan, total: 2, remaining: 0, fits: 0 };
+    setup();
+    const card = await screen.findByRole("region", { name: "還有 1 頁明天繼續" });
+    await waitFor(() => expect(within(card).getByRole("button", { name: "繼續做" })).toBeDisabled());
+    plan = { ...plan, remaining: 5, fits: 2 };
+    act(() => {
+      window.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(within(card).getByRole("button", { name: "繼續做" })).toBeEnabled());
+    expect(card).not.toHaveTextContent("今天的生成次數已用完");
+  });
+
+  it("re-checks the plan every minute while nothing is left today, and stops once there is", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    overview = ov([pg(1, "ready"), pg(2, "todo")], { deferred_count: 1 });
+    plan = { ...plan, total: 2, remaining: 0, fits: 0 };
+    setup();
+    const card = await screen.findByRole("region", { name: "還有 1 頁明天繼續" });
+    await waitFor(() => expect(within(card).getByRole("button", { name: "繼續做" })).toBeDisabled());
+    const plans = () => calls.filter((c) => c.url === "/api/books/1/produce/plan").length;
+    const before = plans();
+    plan = { ...plan, remaining: 5, fits: 2 };
+    await act(() => vi.advanceTimersByTimeAsync(61_000));
+    expect(plans()).toBe(before + 1);
+    await waitFor(() => expect(within(card).getByRole("button", { name: "繼續做" })).toBeEnabled());
+    await act(() => vi.advanceTimersByTimeAsync(180_000));
+    expect(plans()).toBe(before + 1);
+  });
+
+  it("a 429 refetches the plan, so 繼續做 turns off and the quota note shows", async () => {
+    overview = ov([pg(1, "ready"), pg(2, "todo")], { deferred_count: 1 });
+    produceRes = () => {
+      plan = { ...plan, total: 2, remaining: 0, fits: 0 };
+      return json({ detail: "今天的生成次數已用完，明天再來" }, 429);
+    };
+    setup();
+    const card = await screen.findByRole("region", { name: "還有 1 頁明天繼續" });
+    const go = within(card).getByRole("button", { name: "繼續做" });
+    await waitFor(() => expect(go).toBeEnabled());
+    await userEvent.click(go);
     await waitFor(() => expect(within(card).getByRole("button", { name: "繼續做" })).toBeDisabled());
     expect(card).toHaveTextContent("今天的生成次數已用完，明天再來");
   });
