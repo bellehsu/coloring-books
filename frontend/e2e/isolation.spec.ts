@@ -17,11 +17,20 @@ async function inviteContext(browser: Browser, baseURL: string, name: string): P
 test("邀請 A 的書，邀請 B 看不到、也打不開；圖片走 302 → /api/files", async ({ browser, baseURL }) => {
   const a = await inviteContext(browser, baseURL!, "e2e-A");
   const b = await inviteContext(browser, baseURL!, "e2e-B");
+  // 沒有 cookie 的 context：假後端以 --dev-owner admin 啟動，所以它是 admin
+  const anon = await browser.newContext({ baseURL });
   try {
     const title = uniqueTitle("A 的書");
     const book = await createBook(a.request, title);
     await createPage(a.request, book.id);
     await setCharacter(a.request, book.id);
+
+    // A 的 cookie 真的生效：不是 cookie 沒設好、被當成沒有 cookie 的 dev admin（那樣下面的斷言也都會過）
+    expect((await a.cookies()).map((c) => c.name)).toContain("cb_session");
+    expect((await a.request.get("/api/system/preflight")).status()).toBe(403); // 只有 admin 可用
+    const adminBook = await createBook(anon.request, uniqueTitle("admin 的書"));
+    expect((await ok<{ id: number }[]>(await a.request.get("/api/books"))).map((x) => x.id)).toEqual([book.id]);
+    expect((await a.request.get(`/api/books/${adminBook.id}`)).status()).toBe(404);
 
     // A 看得到自己的書，角色圖載入成功：API 先 302 到簽章網址 /api/files/...，最後是 image/png
     const pageA = await a.newPage();
@@ -51,5 +60,6 @@ test("邀請 A 的書，邀請 B 看不到、也打不開；圖片走 302 → /a
   } finally {
     await a.close();
     await b.close();
+    await anon.close();
   }
 });
