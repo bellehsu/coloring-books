@@ -2063,6 +2063,7 @@
             "schema": {
               "enum": [
                 "passed",
+                "ready",
                 "all"
               ],
               "type": "string",

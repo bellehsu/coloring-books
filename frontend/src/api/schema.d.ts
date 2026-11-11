@@ -3227,7 +3227,7 @@ export interface operations {
     export_pdf_api_books__book_id__export_pdf_get: {
         parameters: {
             query?: {
-                include?: "passed" | "all";
+                include?: "passed" | "ready" | "all";
             };
             header?: never;
             path: {
