@@ -917,6 +917,7 @@ function CaptionRow({ bookId, page, textKey, busy }: { bookId: number; page: Pag
     captionError("en", v) ? Promise.resolve() : savePage({ caption_en: normalizeCaption(v) }),
     textKey,
   );
+  // aria-disabled（不是 disabled）：存檔中按鈕仍保有鍵盤焦點；off 時 toggle/applyToBook 直接忽略。
   const off = busy || toggling || applyAll.isPending;
 
   const toggle = (field: "caption_show_zh" | "caption_show_en") => {
@@ -960,7 +961,7 @@ function CaptionRow({ bookId, page, textKey, busy }: { bookId: number; page: Pag
                 className={chip.preset}
                 data-added={on}
                 aria-pressed={on}
-                disabled={off}
+                aria-disabled={off}
                 onClick={() => toggle(field)}
               >
                 {on ? <span aria-hidden="true">✓ </span> : null}
@@ -972,7 +973,7 @@ function CaptionRow({ bookId, page, textKey, busy }: { bookId: number; page: Pag
         <p id={`${id}-show-hint`} className={styles.rowNote}>
           兩個都不選＝圖下方留白，讓小朋友自己寫
         </p>
-        <button type="button" className={styles.applyAll} disabled={off} onClick={applyToBook}>
+        <button type="button" className={styles.applyAll} aria-disabled={off} onClick={applyToBook}>
           把這個選擇套用到整本書
         </button>
       </div>
