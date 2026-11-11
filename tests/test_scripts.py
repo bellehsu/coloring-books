@@ -1194,11 +1194,10 @@ def test_gc_mismatched_db_deletes_nothing_live(storage_gc, settings_file, tmp_pa
     before = _keys(storage)
     rep = storage_gc.run_gc(other, storage, days=30)
     assert _keys(storage) == before
-    assert rep.aborted is (other_book_id == b)
-    if rep.aborted:
-        assert "--allow-mass-delete" in storage_gc.format_report(rep)
-    else:
-        assert rep.skipped_mismatched > 0 and rep.orphan_objects == rep.orphan_previews == 0
+    assert rep.aborted and rep.orphan_objects == rep.orphan_previews == 0
+    assert "--allow-mass-delete" in storage_gc.format_report(rep)
+    if other_book_id != b:
+        assert rep.skipped_mismatched > 20  # 對不上的物件太多：DB 與 storage 不是一組
 
 
 def _mass_orphans(settings_file, n=25):
@@ -1276,3 +1275,92 @@ def test_delete_data_rechecks_last_admin_inside_transaction(invites, settings_fi
     monkeypatch.setattr("builtins.input", answer)
     assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(admin["owner"])]) == 1
     assert _counts(sessions, admin)["owner"] is True and _counts(sessions, admin)["books"] == 2
+
+
+def _bulk_gens(sessions, book_id, n, **kw):
+    """一次新增 n 筆沒有圖的成功生成紀錄（不寫物件）。"""
+    from app.models import Generation, GenKind, GenStatus
+
+    with sessions() as s:
+        for _ in range(n):
+            s.add(Generation(book_id=book_id, kind=GenKind.COMPOSITE, status=GenStatus.SUCCEEDED, user_text="",
+                             prompt="", negative_prompt="", seed=0, width=8, height=8, request_json="{}", **kw))
+        s.commit()
+
+
+def test_gc_dilution_by_mismatched_keys_still_aborts(storage_gc, settings_file, tmp_path, monkeypatch, capsys):
+    """1000 個物件：另一個 DB 只有 1 本書、100 筆沒有圖的列 → 900 個對不上（書號超出）、100 個像孤兒。
+    以前用全部列出的物件當分母只有 10%，會刪掉 100 個活的物件；現在整個中止、結束碼 3。"""
+    from app.db import init_db, make_engine, session_factory
+
+    _, _, storage = _env(settings_file)
+    for gid in range(1, 1001):
+        storage.put(storage.generation_image(1 + (gid - 1) // 100, gid), b"live")
+    other_db = tmp_path / "other.db"
+    eng = make_engine(other_db)
+    init_db(eng)
+    other = session_factory(eng)
+    oid, _ = _owner(other, "x", is_admin=True)
+    _bulk_gens(other, _book(other, oid), 100)
+    before = _keys(storage)
+    monkeypatch.setenv("APP_PATHS__DATABASE", str(other_db))
+    assert storage_gc.main(["--settings", str(settings_file)]) == 3
+    assert _keys(storage) == before
+    assert "--allow-mass-delete" in capsys.readouterr().err
+    rep = storage_gc.run_gc(other, storage, days=30, dry_run=True)
+    assert rep.aborted and (rep.skipped_mismatched, rep.mass_candidates) == (900, 100)
+
+
+def test_gc_ratio_ignores_skipped_keys(storage_gc, settings_file):
+    """分母是孤兒＋被參照的物件，不含略過的：25 個孤兒、50 個活的、200 個正在寫入的 → 33%，中止。"""
+    from app.models import Generation
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    gone = [_gen(sessions, storage, b) for _ in range(25)]
+    [_gen(sessions, storage, b) for _ in range(50)]
+    with sessions() as s:
+        for gid in gone:
+            s.delete(s.get(Generation, gid))
+        s.commit()
+    for gid in range(1000, 1200):  # id 大於 sqlite_sequence：正在寫入
+        storage.put(storage.generation_image(b, gid), b"new")
+    before = _keys(storage)
+    rep = storage_gc.run_gc(sessions, storage, days=30)
+    assert rep.aborted and rep.skipped_in_flight == 200 and rep.skipped_mismatched == 0
+    assert _keys(storage) == before
+    rep = storage_gc.run_gc(sessions, storage, days=30, allow_mass_delete=True)
+    assert not rep.aborted and rep.orphan_objects == 25
+
+
+def test_gc_mismatched_guard_overridden_by_allow(storage_gc, settings_file):
+    # 只有「對不上」的物件很多（沒有孤兒）也中止；--allow-mass-delete 時照常跑，對不上的仍然不刪
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    live = _gen(sessions, storage, b)
+    for i in range(30):
+        storage.put(storage.generation_image(b + 1 + i, 5000 + i), b"x")
+    before = _keys(storage)
+    rep = storage_gc.run_gc(sessions, storage, days=30)
+    assert rep.aborted and rep.skipped_mismatched == 30 and rep.mass_candidates == 0
+    rep = storage_gc.run_gc(sessions, storage, days=30, allow_mass_delete=True)
+    assert not rep.aborted and _keys(storage) == before
+    assert storage.exists(storage.generation_image(b, live))
+
+
+def test_gc_deletes_leftover_previews_of_imageless_generation(storage_gc, settings_file):
+    # 生成紀錄還在但已沒有圖（例如過期清掉後預覽刪失敗）：留下的預覽也清掉
+    from app.models import Generation
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "a", is_admin=True)
+    b = _book(sessions, oid)
+    g = _gen(sessions, storage, b, preview=True)
+    keep = _gen(sessions, storage, b, preview=True)
+    storage.delete(storage.generation_image(b, g))
+    _set(sessions, Generation, g, image_path=None)
+    rep = storage_gc.run_gc(sessions, storage, days=30)
+    assert rep.orphan_previews == 1
+    assert not storage.exists(storage.preview(g, "k")) and storage.exists(storage.preview(keep, "k"))

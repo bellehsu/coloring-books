@@ -5,7 +5,7 @@
    並清空 image_path／mask_path。頁面選用中（selected／background／pose）、書的角色、
    排隊中任務要用的角色圖，捨棄再久也不刪。
 2. 孤兒物件：books/ 底下沒有任何資料列指到的物件（生成圖、遮罩、頁面線稿 lineart_path），
-   以及 cache/previews/ 底下生成紀錄已不存在的預覽。
+   以及 cache/previews/ 底下生成紀錄已不存在（或已沒有圖）的預覽。
    正在寫入的物件不算孤兒：生成紀錄排隊中／執行中，或 id 還沒 commit（大於 sqlite_sequence）。
    與 DB 對不上的物件也不刪：書號大於 DB 最大的書、頁／生成紀錄 id 超出 DB，或該 id 的列屬於另一本書。
 
@@ -13,8 +13,8 @@
   python scripts/storage_gc.py [--settings PATH] [--dry-run] [--days 30] [-v] [--allow-mass-delete]
 --dry-run 只計數、不刪任何東西；-v 列出每個物件。
 設定與 app 相同（R2 憑證只來自環境變數）；R2 經過 CachedStorage 刪除，本機快取一起作廢。
-孤兒物件超過 20 個且超過列出物件的 20%（多半是 DB 與 storage 對不上）時整個中止、什麼都不刪，
-除非加 --allow-mass-delete。資料庫結構不是最新版時拒絕執行（不跑 migration；請先啟動後端）。
+孤兒超過 20 個且超過「孤兒＋被參照物件」的 20%，或與 DB 對不上的物件超過 20 個且超過列出物件的 20%
+（多半是 DB 與 storage 不是一組）時整個中止、什麼都不刪，除非加 --allow-mass-delete。資料庫結構不是最新版時拒絕執行（不跑 migration；請先啟動後端）。
 結束碼：0 成功；1 有物件刪除失敗；2 設定或參數錯誤；3 孤兒太多而中止。
 """
 
@@ -65,7 +65,9 @@ class GcReport:
     skipped_in_flight: int = 0
     skipped_mismatched: int = 0  # 物件與 DB 對不上（書／頁 id 超出 DB，或屬於另一本書）：不刪
     aborted: bool = False  # 孤兒太多，什麼都沒刪
-    mass_candidates: int = 0
+    mass_candidates: int = 0  # 孤兒（books/＋預覽）
+    abort_reason: str = ""
+    referenced: int = 0  # 列出的物件裡有資料列指到的
     listed: int = 0
     errors: int = 0
     actions: list[tuple[str, str]] = field(default_factory=list)  # (原因, key)
@@ -205,6 +207,7 @@ def _orphans(state: _State, book_keys: Sequence[str], preview_keys: Sequence[str
     orphans: list[str] = []
     for key in book_keys:
         if key in state.referenced:
+            report.referenced += 1
             continue
         kind = _classify_book_key(state, key)
         if kind == "in_flight":
@@ -216,13 +219,19 @@ def _orphans(state: _State, book_keys: Sequence[str], preview_keys: Sequence[str
     previews: list[str] = []
     for key in preview_keys:
         gid = _preview_gid(key)
-        if gid is None or gid in state.expired:
-            continue  # 不認得的檔名不動；過期的由過期步驟處理
+        if gid is None:
+            continue  # 不認得的檔名：不動
+        if gid in state.expired:
+            report.referenced += 1  # 由過期步驟處理
+            continue
         if gid > state.seq:
             report.skipped_in_flight += 1
             continue
         if _preview_is_orphan(state, gid):
             previews.append(key)
+        else:
+            report.referenced += 1
+    report.mass_candidates = len(orphans) + len(previews)
     return orphans, previews
 
 
@@ -232,12 +241,28 @@ def _preview_gid(key: str) -> int | None:
 
 
 def _preview_is_orphan(state: _State, gid: int) -> bool:
-    """生成紀錄已不存在（id 不超過 sqlite_sequence）。"""
-    return gid <= state.seq and gid not in state.gens
+    """生成紀錄已不存在（id 不超過 sqlite_sequence），或已沒有圖且不在排隊／執行中（例如過期清掉後預覽刪失敗）。"""
+    if gid > state.seq:
+        return False
+    gen = state.gens.get(gid)
+    return gen is None or (gen[1] is None and gen[0] not in _IN_FLIGHT)
 
 
-def _is_mass_delete(n_orphans: int, n_listed: int) -> bool:
-    return n_orphans > MASS_DELETE_MIN and n_orphans > MASS_DELETE_RATIO * n_listed
+def _over(n: int, total: int) -> bool:
+    return n > MASS_DELETE_MIN and n > MASS_DELETE_RATIO * total
+
+
+def _mass_delete_reason(r: GcReport) -> str | None:
+    """DB 與 storage 看起來不是一組時回傳原因（整個中止）；正常回 None。
+    - 孤兒佔「孤兒＋被參照」超過門檻（分母不含略過的物件，對不上的再多也稀釋不了）；
+    - 對不上的物件佔全部列出的超過門檻（正常的 DB 幾乎沒有對不上的物件）。"""
+    if _over(r.mass_candidates, r.mass_candidates + r.referenced):
+        return (f"{r.mass_candidates} 個孤兒物件（被參照的只有 {r.referenced} 個；"
+                f"超過 {MASS_DELETE_MIN} 個且超過 {MASS_DELETE_RATIO:.0%}）")
+    if _over(r.skipped_mismatched, r.listed):
+        return (f"{r.skipped_mismatched} 個物件與資料庫對不上（列出 {r.listed} 個；"
+                f"超過 {MASS_DELETE_MIN} 個且超過 {MASS_DELETE_RATIO:.0%}）")
+    return None
 
 
 def run_gc(sessions, storage: Storage, *, days: int = DEFAULT_DAYS, dry_run: bool = False,
@@ -253,9 +278,10 @@ def run_gc(sessions, storage: Storage, *, days: int = DEFAULT_DAYS, dry_run: boo
 
     # 孤兒太多多半是 DB 與 storage 對不上（設定指錯 DB／bucket）：整個中止，連過期的也不刪
     orphans, previews = _orphans(state, book_keys, preview_keys, report)
-    if not allow_mass_delete and _is_mass_delete(len(orphans) + len(previews), report.listed):
+    reason = None if allow_mass_delete else _mass_delete_reason(report)
+    if reason:
         report.aborted = True
-        report.mass_candidates = len(orphans) + len(previews)
+        report.abort_reason = reason
         return report
 
     def drop(reason: str, key: str) -> bool:
@@ -295,8 +321,7 @@ def run_gc(sessions, storage: Storage, *, days: int = DEFAULT_DAYS, dry_run: boo
 def format_report(r: GcReport, *, verbose: bool = False) -> str:
     if r.aborted:
         return "\n".join([
-            f"storage_gc 已中止，什麼都沒刪：{r.mass_candidates} 個孤兒物件"
-            f"（列出 {r.listed} 個；超過 {MASS_DELETE_MIN} 個且超過 {MASS_DELETE_RATIO:.0%}）。",
+            f"storage_gc 已中止，什麼都沒刪：{r.abort_reason}。",
             "多半是設定的資料庫與 storage（資料夾／bucket）對不上；請先確認 paths.database 與 storage 設定。",
             "確定要刪就加 --allow-mass-delete（建議先用 --dry-run -v --allow-mass-delete 看清單）。",
         ])
@@ -323,7 +348,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"捨棄多少天後刪除（預設 {DEFAULT_DAYS}）")
     p.add_argument("-v", "--verbose", action="store_true", help="列出每個物件")
     p.add_argument("--allow-mass-delete", action="store_true",
-                   help=f"孤兒超過 {MASS_DELETE_MIN} 個且超過 {MASS_DELETE_RATIO:.0%} 時仍然刪除（預設中止）")
+                   help="孤兒或對不上的物件太多時仍然執行（預設整個中止）；對不上的物件照樣不刪")
     args = p.parse_args(argv)
     if args.days < 0:
         print("--days 不可小於 0", file=sys.stderr)
