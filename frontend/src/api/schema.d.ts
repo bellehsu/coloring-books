@@ -567,6 +567,7 @@ export interface paths {
          *     只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。
          *     使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），
          *     會被使用者橡皮擦擦到的補線不補。
+         *     oneclick（C 的「自動補線」）：流程做的頁不退回草稿（之後流程重算 auto 層時仍會補上）。
          */
         post: operations["autofix_api_pages__page_id__lineart_autofix_post"];
         delete?: never;
@@ -806,6 +807,27 @@ export interface paths {
          *     線條清掉使用者筆畫。有改動才存快照；已經是自動的那張就什麼都不做。
          */
         post: operations["restore_api_pages__page_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept
+         * @description C 的「這頁可以印了 ✓」：有選定圖（合成圖；舊流程的整頁圖也算）就清掉 attention、標成可以印。
+         *     沒有選定圖 409。不需要角色檢查（新流程的頁面自動可以印，spec §4.1）。
+         */
+        post: operations["accept_api_pages__page_id__accept_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2885,7 +2907,10 @@ export interface operations {
     };
     autofix_api_pages__page_id__lineart_autofix_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description C 處理一頁：流程做的頁補了線也不退回草稿 */
+                oneclick?: boolean;
+            };
             header?: never;
             path: {
                 page_id: number;
@@ -3319,6 +3344,37 @@ export interface operations {
                 "application/json": components["schemas"]["RestoreIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_api_pages__page_id__accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

@@ -132,7 +132,7 @@ function CollapseButton({
  * 頁面上的一個文字欄位：沒改過就顯示伺服器的值；改過的值在 save() 時送出（同一個值不重送，
  * 送出中的請求會被等待）。失敗時 toast，save() reject，下次會重送。
  */
-function usePageText(serverValue: string, send: (v: string) => Promise<unknown>) {
+export function usePageText(serverValue: string, send: (v: string) => Promise<unknown>) {
   const [edited, setEdited] = useState<string | null>(null);
   const sent = useRef<{ value: string; p: Promise<unknown> } | null>(null);
   const value = edited ?? serverValue;
@@ -485,7 +485,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
 }
 
 /** 單選的片語晶片群組（表情、面向）：再按一次作用中的取消；改選另一個會取代原本的。 */
-function ExclusiveChips({
+export function ExclusiveChips({
   label, group, text, onChange, hint,
 }: {
   label: string;

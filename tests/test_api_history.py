@@ -522,3 +522,85 @@ def test_restored_background_sticks_over_newer_ai_image(client, app):
     pg = get_page(app, pid)
     assert pg.background_generation_id == bg1 and pg.auto_background_generation_id == bg1 and bg2
     assert pg.status == PageStatus.PASSED
+
+
+# ---- 「這頁可以印了 ✓」（POST /pages/{id}/accept）、再試一次、C 的自動補線 ---------------------
+
+
+def accept(client, pid, status=200):
+    r = client.post(f"/api/pages/{pid}/accept")
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def test_accept_clears_attention_and_keeps_passed(client, app):
+    from tests.test_api_lineart import set_page
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    passed_at = get_page(app, pid).passed_at
+    set_page(app, pid, attention="failed", attention_detail="圖片產生失敗，請重新產生")
+    out = accept(client, pid)
+    assert out["attention"] is None and out["attention_detail"] is None and out["status"] == "passed"
+    pg = get_page(app, pid)
+    assert pg.passed_at == passed_at  # 已經可以印：保留原本的通過時間
+    assert history_rows(app, pid) == []  # 不是內容的改動：不存快照、不排流程
+    assert not queued(app, pid)
+
+
+def test_accept_draft_composite_becomes_passed(client, app):
+    from tests.test_api_lineart import set_page
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    set_page(app, pid, status=PageStatus.DRAFT, passed_at=None, attention="failed", attention_detail="x")
+    out = accept(client, pid)
+    assert out["status"] == "passed" and out["attention"] is None
+    assert get_page(app, pid).passed_at is not None
+
+
+def test_accept_without_selection_is_409(client, app):
+    from tests.test_pipeline import book_page
+
+    b, p = book_page(client, app)
+    r = client.post(f"/api/pages/{p['id']}/accept")
+    assert r.status_code == 409 and r.json()["detail"] == "這一頁還沒有選定圖片"
+
+
+def test_retry_reruns_passed_page_with_failed_attention(client, app):
+    """「再試一次」（C 呼叫 /produce）：已經可以印、但後來失敗（例如換一張失敗）的頁也重跑流程，跑完清掉 attention。"""
+    from tests.test_api_lineart import set_page
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    set_page(app, pid, attention="failed", attention_detail="圖片產生失敗，請重新產生")
+    r = client.post(f"/api/books/{b['id']}/produce")
+    assert r.status_code == 202 and pid in r.json()["pipeline_pages"]
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.attention is None and pg.status == PageStatus.PASSED
+
+
+def test_c_autofix_keeps_pipeline_page_passed(client, app, monkeypatch):
+    """C 的「自動補線」（?oneclick=true）：流程做的頁補了線也不退回草稿；舊編輯器照舊退回。"""
+    from app.api import lineart as lineart_api
+    from app.services.lineart_render import Stroke
+    from tests.test_api_lineart import _fake_report, set_page
+    from app.services import page_lineart
+
+    b, page, bg, pose = ready(client, app)
+    pid, gid = page["id"], page["selected_generation_id"]
+    monkeypatch.setattr(page_lineart, "evaluate", lambda ink, lw: _fake_report(1))
+    bridge = Stroke("draw", 11.0, ((0.1, 0.3), (0.1, 0.31)))
+    monkeypatch.setattr(lineart_api, "plan_autofix", lambda *a, **k: [bridge])
+
+    set_page(app, pid, lineart_key=None)  # 用假的 QA（一個缺口）重算
+    r = client.post(f"/api/pages/{pid}/lineart/autofix", params=C, json={"generation_id": gid})
+    assert r.status_code == 200, r.text
+    assert r.json()["autofix_added"] == 1
+    assert get_page(app, pid).status == PageStatus.PASSED
+
+    set_page(app, pid, lineart_key=None)
+    r = client.post(f"/api/pages/{pid}/lineart/autofix", json={"generation_id": gid})
+    assert r.status_code == 200 and r.json()["autofix_added"] == 1
+    assert get_page(app, pid).status == PageStatus.DRAFT

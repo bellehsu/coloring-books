@@ -1728,7 +1728,7 @@
           "lineart"
         ],
         "summary": "Autofix",
-        "description": "對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪\n（services/autofix.plan_autofix）。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。\n使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），\n會被使用者橡皮擦擦到的補線不補。",
+        "description": "對目前 QA 的每個缺口補一筆 draw（加在 auto 修改圖層最後面），重算 QA，最多 AUTOFIX_MAX_PASSES 輪\n（services/autofix.plan_autofix）。\n\n只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。\n使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），\n會被使用者橡皮擦擦到的補線不補。\noneclick（C 的「自動補線」）：流程做的頁不退回草稿（之後流程重算 auto 層時仍會補上）。",
         "operationId": "autofix_api_pages__page_id__lineart_autofix_post",
         "parameters": [
           {
@@ -1739,6 +1739,18 @@
               "type": "integer",
               "title": "Page Id"
             }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：流程做的頁補了線也不退回草稿",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：流程做的頁補了線也不退回草稿"
           }
         ],
         "requestBody": {
@@ -2363,6 +2375,49 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/accept": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Accept",
+        "description": "C 的「這頁可以印了 ✓」：有選定圖（合成圖；舊流程的整頁圖也算）就清掉 attention、標成可以印。\n沒有選定圖 409。不需要角色檢查（新流程的頁面自動可以印，spec §4.1）。",
+        "operationId": "accept_api_pages__page_id__accept_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",

@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { QA } from "@/api/client";
 import { qk, useAutofix, useEdits } from "@/api/hooks";
 import { useToast } from "@/components/ui/Toast";
-import type { Stroke } from "@/lib/strokes";
+import type { Stroke, StrokeOp } from "@/lib/strokes";
 import { editsQueueFor, type EditsEntry } from "./editsQueue";
 import { errMsg } from "./errMsg";
 import { LineFixCanvas } from "./LineFixCanvas";
@@ -20,8 +20,15 @@ export interface LineFixStageProps {
   qa: QA;
   contentPx: readonly [number, number];
   lineWidthPx: number;
-  zoom: number;
-  onZoomChange: (z: number) => void;
+  /** 不給：畫布自己管縮放（−／＋ 在畫布工具列）。 */
+  zoom?: number;
+  onZoomChange?: (z: number) => void;
+  /** C 處理一頁：筆畫與自動補線帶 ?oneclick=true（另一個寫入佇列）。 */
+  oneclick?: boolean;
+  /** 畫布一開始用的工具（C 的「畫筆」「擦除」）。 */
+  initialTool?: StrokeOp;
+  /** 不顯示畫布工具列的「復原」（C 的頁首已有整頁的「↶ 復原」）。 */
+  hideUndo?: boolean;
 }
 
 /**
@@ -35,7 +42,7 @@ export function LineFixStage(props: LineFixStageProps) {
   const { bookId, pageId, genId } = props;
   const qc = useQueryClient();
   const edits = useEdits(pageId);
-  const entry = editsQueueFor(qc, bookId, pageId, genId);
+  const entry = editsQueueFor(qc, bookId, pageId, genId, { oneclick: props.oneclick });
 
   const key = `${pageId}-${genId}`;
   const local = entry.shouldSeedFromLocal() ? entry.latest : null;
@@ -79,6 +86,9 @@ function LineFixEditor({
   lineWidthPx,
   zoom,
   onZoomChange,
+  oneclick,
+  initialTool,
+  hideUndo,
   entry,
   initial,
 }: LineFixStageProps & { entry: EditsEntry; initial: Stroke[] }) {
@@ -130,7 +140,7 @@ function LineFixEditor({
         toast.show(`${errMsg(e, "修線尚未儲存")}，請再畫一筆後再試`, "error");
         return null;
       }
-      const res = await autofix.mutateAsync({ pageId, generationId: genId });
+      const res = await autofix.mutateAsync({ pageId, generationId: genId, oneclick });
       const { autofix_added: added, ...rest } = res;
       qc.setQueryData<QA>(qk.qa(pageId), rest as QA);
       return added;
@@ -170,6 +180,8 @@ function LineFixEditor({
         lineWidthPx={lineWidthPx}
         zoom={zoom}
         onZoomChange={onZoomChange}
+        initialTool={initialTool}
+        hideUndo={hideUndo}
         pending={busy || fixBusy}
         statusOverride={
           failed ? (

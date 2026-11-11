@@ -131,7 +131,7 @@ describe("B 整本書：狀態卡", () => {
     const card = await screen.findByRole("region", { name: "整本做好了！" });
     expect(within(card).getByRole("list", { name: "每一頁的狀態" }).children).toHaveLength(3);
     expect(card).toHaveTextContent("2 頁可以印・1 頁請你看一下");
-    expect(within(card).getByRole("link", { name: "去看那一頁 →" })).toHaveAttribute("href", "/books/1/page/1");
+    expect(within(card).getByRole("link", { name: "去看那一頁 →" })).toHaveAttribute("href", "/books/1/page/1?filter=attention");
   });
 
   it("done without attention has no 去看那一頁", async () => {
@@ -223,6 +223,10 @@ describe("B 整本書：篩選", () => {
     expect(cards.map((a) => a.getAttribute("href"))).toEqual(["/books/1/page/2", "/books/1/page/3"]);
     await userEvent.click(within(filters).getByRole("button", { name: "還沒做完 1" }));
     expect(within(screen.getByRole("list", { name: "頁面" })).getAllByRole("link")).toHaveLength(1);
+    // 請看一下：C 的上一頁／下一頁只在要看的頁之間跳
+    await userEvent.click(within(filters).getByRole("button", { name: "請看一下 1" }));
+    const attention = within(screen.getByRole("list", { name: "頁面" })).getAllByRole("link");
+    expect(attention.map((a) => a.getAttribute("href"))).toEqual(["/books/1/page/1?filter=attention"]);
   });
 });
 

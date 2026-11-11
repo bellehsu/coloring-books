@@ -236,6 +236,7 @@ def put_edits(
 def autofix(
     page_id: int,
     body: AutofixIn,
+    oneclick: bool = Query(False, description="C 處理一頁：流程做的頁補了線也不退回草稿"),
     session: Session = Depends(get_session),
     storage: Storage = Depends(get_storage),
     owner: Owner = Depends(current_owner),
@@ -246,6 +247,7 @@ def autofix(
     只保留讓缺口數減少的那幾輪；某輪沒減少（或沒有缺口了）就停。全部筆畫一次存檔。
     使用者的修線（user 層）不動；筆數上限各層分開算。試補線依渲染順序（auto 再 user），
     會被使用者橡皮擦擦到的補線不補。
+    oneclick（C 的「自動補線」）：流程做的頁不退回草稿（之後流程重算 auto 層時仍會補上）。
     """
     gid = _selected_or_409(owned_page(session, owner, page_id), body.generation_id)
     lin, data = _ensure_png(session, storage, owner, page_id, image_route=False)
@@ -273,7 +275,8 @@ def autofix(
 
     if not added:
         return _qa_out(session, owner, page_id, lin, AutofixOut, autofix_added=0)
-    _commit_strokes(session, page_id, gid, existing + added, layer=StrokeLayer.AUTO)
+    keep = oneclick and on_pipeline(page, session.get(Generation, gid))
+    _commit_strokes(session, page_id, gid, existing + added, layer=StrokeLayer.AUTO, demote=not keep)
     return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id), AutofixOut,
                    autofix_added=len(added))
 

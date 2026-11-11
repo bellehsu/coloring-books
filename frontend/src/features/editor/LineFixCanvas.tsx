@@ -55,6 +55,10 @@ export interface LineFixCanvasProps {
   pending?: boolean;
   /** 取代狀態列（缺口數／更新中）的內容，以 role="alert" 顯示：例如「修線尚未儲存」＋重試。 */
   statusOverride?: ReactNode;
+  /** 一開始用的工具（預設補線）。 */
+  initialTool?: StrokeOp;
+  /** 不顯示工具列的「復原」（呼叫端有自己的復原）。 */
+  hideUndo?: boolean;
 }
 
 /** 疊層 canvas 最長邊（內容 2551×3579 時約 1460×2048，記憶體約 12 MB）。 */
@@ -130,6 +134,8 @@ export function LineFixCanvas({
   onZoomChange,
   pending = false,
   statusOverride,
+  initialTool = "draw",
+  hideUndo = false,
 }: LineFixCanvasProps) {
   const toast = useToast();
   const [w, h] = contentPx;
@@ -142,7 +148,7 @@ export function LineFixCanvas({
   const spaceRef = useRef(false);
   const hoverRef = useRef(false);
 
-  const [tool, setTool] = useState<StrokeOp>("draw");
+  const [tool, setTool] = useState<StrokeOp>(initialTool);
   const [internalZoom, setInternalZoom] = useState(1);
   const [center, setCenter] = useState({ cx: 0.5, cy: 0.5 });
   const [vpWidth, setVpWidth] = useState(0);
@@ -393,16 +399,20 @@ export function LineFixCanvas({
             </button>
           );
         })}
-        <span aria-hidden="true" className={styles.divider} />
-        <IconButton
-          label="復原"
-          size={40}
-          className={styles.tool}
-          disabled={strokes.length === 0}
-          onClick={undo}
-        >
-          <Icons.undo />
-        </IconButton>
+        {!hideUndo && (
+          <>
+            <span aria-hidden="true" className={styles.divider} />
+            <IconButton
+              label="復原"
+              size={40}
+              className={styles.tool}
+              disabled={strokes.length === 0}
+              onClick={undo}
+            >
+              <Icons.undo />
+            </IconButton>
+          </>
+        )}
         {!controlled && (
           <>
             <span aria-hidden="true" className={styles.divider} />

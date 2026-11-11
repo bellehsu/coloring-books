@@ -39,8 +39,15 @@ export interface EditsEntry {
 
 export type AutofixRunner = () => Promise<number | null>;
 
+/** oneclick：C 處理一頁的筆畫（PUT 帶 ?oneclick=true：先存復原快照、流程做的頁不退回草稿）。
+ * 和舊編輯器的佇列分開（key 不同），兩邊不會共用同一個佇列。 */
+export interface EditsQueueOptions {
+  oneclick?: boolean;
+}
+
 const registry = new WeakMap<QueryClient, Map<string, EditsEntry>>();
-const keyOf = (pageId: number, genId: number) => `${pageId}:${genId}`;
+const keyOf = (pageId: number, genId: number, opts?: EditsQueueOptions) =>
+  `${pageId}:${genId}${opts?.oneclick ? ":c" : ""}`;
 
 /** 這個 QueryClient 目前所有的修線佇列（離開頁面前檢查、匯出前等待用）。 */
 export function allEditsQueues(qc: QueryClient): EditsEntry[] {
@@ -48,8 +55,13 @@ export function allEditsQueues(qc: QueryClient): EditsEntry[] {
 }
 
 /** 只查詢、不建立。 */
-export function peekEditsQueue(qc: QueryClient, pageId: number, genId: number): EditsEntry | undefined {
-  return registry.get(qc)?.get(keyOf(pageId, genId));
+export function peekEditsQueue(
+  qc: QueryClient,
+  pageId: number,
+  genId: number,
+  opts?: EditsQueueOptions,
+): EditsEntry | undefined {
+  return registry.get(qc)?.get(keyOf(pageId, genId, opts));
 }
 
 /**
@@ -71,13 +83,20 @@ export function forgetEditsQueues(qc: QueryClient, pageId: number) {
   for (const [k, e] of map) if (e.pageId === pageId) map.delete(k);
 }
 
-export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, genId: number): EditsEntry {
+export function editsQueueFor(
+  qc: QueryClient,
+  bookId: number,
+  pageId: number,
+  genId: number,
+  opts?: EditsQueueOptions,
+): EditsEntry {
   let map = registry.get(qc);
   if (!map) {
     map = new Map();
     registry.set(qc, map);
   }
-  const key = keyOf(pageId, genId);
+  const key = keyOf(pageId, genId, opts);
+  const putUrl = `/pages/${pageId}/lineart/edits${opts?.oneclick ? "?oneclick=true" : ""}`;
   const found = map.get(key);
   if (found) return found;
 
@@ -98,7 +117,7 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
   let autofix: AutofixRunner | null = null;
 
   const queue: WriteQueue<QA> = createWriteQueue<QA>(
-    (strokes) => api.put<QA>(`/pages/${pageId}/lineart/edits`, { generation_id: genId, strokes }),
+    (strokes) => api.put<QA>(putUrl, { generation_id: genId, strokes }),
     {
       onSuccess: (qa, strokes) => {
         failed = false;
@@ -109,6 +128,7 @@ export function editsQueueFor(qc: QueryClient, bookId: number, pageId: number, g
         void qc.invalidateQueries({ queryKey: qk.book(bookId) });
         void qc.invalidateQueries({ queryKey: qk.books() });
         void qc.invalidateQueries({ queryKey: qk.exportSummary(bookId) });
+        if (opts?.oneclick) void qc.invalidateQueries({ queryKey: qk.overview(bookId) });
       },
       onError: (err) => {
         failed = true;

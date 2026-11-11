@@ -4,7 +4,8 @@
 - `POST /books/{id}/produce`：依頁面順序、每頁先背景再角色動作，補排缺的素材。只預留今天放得下的
   （使用者決定：放得下多少做多少，一頁的兩張放不下也先排放得下的那張），其餘頁面回 deferred_pages
   （「還有 N 頁明天繼續」）。已有排隊中／執行中的同種素材就略過，所以按兩次不會重複。
-  已經有背景與角色動作、還沒可以印、也沒有排隊中／執行中流程的頁面排頁面流程（CPU，不計次數）。
+  已經有背景與角色動作、還沒可以印（或「請看一下」：C 的「再試一次」）、也沒有排隊中／執行中流程的頁面
+  排頁面流程（CPU，不計次數）。
   有素材要排卻一次都不剩 → 429「今天的生成次數已用完，明天再來」（同時有頁面流程可排時照排、回 202）。
   與「產生全部素材」共用 _BATCH_LOCK、略過規則與任務組法（api/compose.py）。
 - `GET /books/{id}/overview`：每頁狀態（working＞attention＞ready＞todo）、本輪進度、還有幾頁沒排。
@@ -92,7 +93,8 @@ def produce(
         busy_pages = {t.page_id for t in tasks if t.status in _TASK_ACTIVE}
         pipeline_pages = [
             p.id for p in state.pages
-            if (p.status != PageStatus.PASSED or p.pending_user_strokes is not None)  # 筆畫還沒寫回：再跑一次
+            # 筆畫還沒寫回、或「請看一下」（C 的「再試一次」）：再跑一次
+            if (p.status != PageStatus.PASSED or p.pending_user_strokes is not None or p.attention is not None)
             and p.id not in busy_pages and state.has_both_images(p)
         ]
         if not needed and not pipeline_pages:

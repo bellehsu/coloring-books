@@ -76,6 +76,8 @@ PHASE13_ROUTES = {
     ("POST", "/api/pages/{page_id}/redo"),
     ("POST", "/api/pages/{page_id}/restore"),
     ("POST", "/api/books/{book_id}/character/upload"),
+    # Task 7：C 的「這頁可以印了 ✓」
+    ("POST", "/api/pages/{page_id}/accept"),
 }
 
 

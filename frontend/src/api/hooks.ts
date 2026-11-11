@@ -352,12 +352,14 @@ export function useCancelGeneration(bookId: number) {
   });
 }
 
-/** autofix → qa, edits, pages, book, exportSummary */
+/** autofix → qa, edits, pages, book, exportSummary。oneclick（C）：流程做的頁補了線也不退回草稿。 */
 export function useAutofix(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pageId, generationId }: { pageId: number; generationId: number }) =>
-      api.post<S["AutofixOut"]>(`/pages/${pageId}/lineart/autofix`, { generation_id: generationId }),
+    mutationFn: ({ pageId, generationId, oneclick }: { pageId: number; generationId: number; oneclick?: boolean }) =>
+      api.post<S["AutofixOut"]>(`/pages/${pageId}/lineart/autofix${oneclick ? "?oneclick=true" : ""}`, {
+        generation_id: generationId,
+      }),
     onSuccess: (_d, v) => invalidatePage(qc, bookId, v.pageId),
   });
 }

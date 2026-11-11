@@ -2,15 +2,19 @@
 
 三個端點都回 PageOut（含 can_undo／can_redo）。圖、位置或筆畫有變就排頁面流程：重新合成、寫回使用者筆畫、
 重算補線，跑完仍是可以印。
+
+「這頁可以印了 ✓」（accept）：清掉「請看一下」、標成可以印（已經可以印的保留通過時間）。不是內容的改動，
+不存快照、不排流程。
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from sqlalchemy import case, func, literal
+from sqlmodel import Session, col, update
 
 from app.api.deps import current_owner, get_session, get_worker, owned_page
 from app.api.pages import page_out
 from app.api.schemas import PageOut, RestoreIn
-from app.models import Owner
+from app.models import Owner, Page, PageStatus, utcnow
 from app.services import history
 from app.services.pipeline import enqueue_page_task
 from app.services.worker import GenerationWorker
@@ -71,3 +75,37 @@ def restore(
     """背景／角色動作換回自動畫的那張（auto_* 不能用了就用最新一張能用的 AI 圖；都沒有 409），
     線條清掉使用者筆畫。有改動才存快照；已經是自動的那張就什麼都不做。"""
     return _run(session, worker, owner, page_id, lambda s, p: history.restore(s, p, body.item))
+
+
+NO_SELECTION = "這一頁還沒有選定圖片"
+CHANGED = "頁面剛被修改，請再按一次"
+
+
+@router.post("/pages/{page_id}/accept", response_model=PageOut)
+def accept(
+    page_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> PageOut:
+    """C 的「這頁可以印了 ✓」：有選定圖（合成圖；舊流程的整頁圖也算）就清掉 attention、標成可以印。
+    沒有選定圖 409。不需要角色檢查（新流程的頁面自動可以印，spec §4.1）。"""
+    page = owned_page(session, owner, page_id)
+    session.refresh(page)
+    gid = page.selected_generation_id
+    if gid is None:
+        raise HTTPException(409, NO_SELECTION)
+    now = utcnow()
+    already = col(Page.status) == PageStatus.PASSED
+    res = session.exec(
+        update(Page)
+        .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid)
+        .values(status=PageStatus.PASSED,
+                passed_at=func.coalesce(case((already, col(Page.passed_at))),
+                                        literal(now, Page.__table__.c.passed_at.type)),
+                attention=None, attention_detail=None, updated_at=now)
+    )
+    session.commit()
+    if res.rowcount == 0:
+        raise HTTPException(409, CHANGED)
+    session.refresh(page)
+    return page_out(session, page)

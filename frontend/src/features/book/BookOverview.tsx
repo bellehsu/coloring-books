@@ -33,7 +33,9 @@ import styles from "./BookOverview.module.css";
 const NO_QUOTA = "今天的生成次數已用完，明天再來";
 const DONE_TITLE = "✓ 做好了";
 
-const pageHref = (bookId: number, pageId: number) => `/books/${bookId}/page/${pageId}`;
+/** C 的網址；從「請看一下」篩選（或「去看那一頁」）打開時帶 ?filter=attention，C 的上一頁／下一頁只在要看的頁之間跳。 */
+const pageHref = (bookId: number, pageId: number, attention = false) =>
+  `/books/${bookId}/page/${pageId}${attention ? "?filter=attention" : ""}`;
 
 const todoCount = (o: Overview) => o.pages.filter((p) => p.state === "todo").length;
 
@@ -181,7 +183,7 @@ export function BookOverview({ bookId }: { bookId: number }) {
       ) : (
         <ul aria-label="頁面" className={styles.grid}>
           {shown.map((p) => (
-            <PageCard key={p.id} bookId={bookId} page={p} aspect={b.layout.content_px} />
+            <PageCard key={p.id} bookId={bookId} page={p} aspect={b.layout.content_px} attention={filter === "attention"} />
           ))}
         </ul>
       )}
@@ -237,7 +239,7 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
   }
   const lookLink =
     mode !== "running" && mode !== "notStarted" && firstAttention ? (
-      <Link href={pageHref(book.id, firstAttention.id)} className={`${styles.pillLink} ${styles.pillSky} ${styles.action}`}>
+      <Link href={pageHref(book.id, firstAttention.id, true)} className={`${styles.pillLink} ${styles.pillSky} ${styles.action}`}>
         去看那一頁 →
       </Link>
     ) : null;
@@ -306,7 +308,18 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
 
 const TINTS = ["tintPink", "tintSky", "tintYellow", "tintGreen", "tintPurple"] as const;
 
-function PageCard({ bookId, page: p, aspect }: { bookId: number; page: OverviewPage; aspect: number[] }) {
+function PageCard({
+  bookId,
+  page: p,
+  aspect,
+  attention,
+}: {
+  bookId: number;
+  page: OverviewPage;
+  aspect: number[];
+  /** 從「請看一下」篩選打開：C 的上一頁／下一頁只在要看的頁之間跳。 */
+  attention: boolean;
+}) {
   const n = p.position + 1;
   const src = p.lineart_url ?? p.thumb_url;
   const note = softNote(p);
@@ -314,7 +327,7 @@ function PageCard({ bookId, page: p, aspect }: { bookId: number; page: OverviewP
   return (
     <li className={styles.cell}>
       <Link
-        href={pageHref(bookId, p.id)}
+        href={pageHref(bookId, p.id, attention)}
         className={`${styles.card} ${p.state === "attention" ? styles.cardAttention : ""}`}
       >
         <div className={styles.frame}>
