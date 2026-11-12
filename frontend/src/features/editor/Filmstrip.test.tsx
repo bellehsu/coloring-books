@@ -158,4 +158,18 @@ describe("Filmstrip", () => {
     setup();
     expect(screen.queryByRole("button", { name: "產生所有背景" })).not.toBeInTheDocument();
   });
+
+  it("C 的狀態用 B 的字：請看一下（attention）、製作中（等著重新合成）；製作中優先", () => {
+    setup({
+      pages: [
+        page(1, { status: "passed", selected_generation_id: 3, attention: "failed" }),
+        page(2, { status: "passed", selected_generation_id: 4, recompose_pending: true, attention: "failed" }),
+        page(3, { status: "passed", selected_generation_id: 5 }),
+      ],
+      busyPageIds: new Set(),
+    });
+    expect(within(pageButton(1)).getByText("請看一下")).toBeInTheDocument();
+    expect(within(pageButton(2)).getByText("製作中")).toBeInTheDocument();
+    expect(within(pageButton(3)).getByText("完成")).toBeInTheDocument();
+  });
 });

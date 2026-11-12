@@ -18,9 +18,12 @@ export interface PlacementSaver {
   failed(pageId: number): boolean;
   /** 重送最後 save 的位置（失敗後的「重試」）；沒存過則不動作。 */
   retry(pageId: number): void;
-  /** 任何一頁送出中或失敗（算進 hasPendingWrites）。 */
-  hasPending(): boolean;
-  /** 這個 session 最後 save 的位置（含失敗的）；沒存過 undefined。 */
+  /** 有給 pageId：這頁送出中或失敗；沒給：任何一頁（算進 hasPendingWrites）。 */
+  hasPending(pageId?: number): boolean;
+  /**
+   * 這頁還沒存好的位置：送出中或失敗時是最後 save 的值，否則 undefined。
+   * 存好了伺服器就是真相（C 改過位置、復原也看得到），畫面用 page.placement（同 editsQueue 的 shouldSeedFromLocal）。
+   */
   latest(pageId: number): Placement | undefined;
   subscribe(fn: () => void): () => void;
   /** 頁面已刪除：之後的 save 丟掉，飛行中回來的 404 不報錯，並清掉記憶與失敗狀態。 */
@@ -44,7 +47,11 @@ export function placementSaverFor(qc: QueryClient): PlacementSaver {
   const q = createLatestByKey<number, Placement, Page>(
     (pageId, p) => api.put<Page>(`/pages/${pageId}/placement`, p),
     {
-      onSuccess: (_pageId, page) => void qc.invalidateQueries({ queryKey: qk.pages(page.book_id) }),
+      onSuccess: (_pageId, page) => {
+        // 先寫進頁面快取：latest 接著清掉，畫面改讀 page.placement 時不會先跳回舊位置
+        qc.setQueryData<Page[]>(qk.pages(page.book_id), (old) => old?.map((p) => (p.id === page.id ? page : p)));
+        void qc.invalidateQueries({ queryKey: qk.pages(page.book_id) });
+      },
       onError: (pageId, e) => {
         if (gone.has(pageId) && e instanceof ApiError && e.status === 404) {
           q.clearError(pageId);
@@ -65,12 +72,12 @@ export function placementSaverFor(qc: QueryClient): PlacementSaver {
     busy: () => q.anyBusy(),
     busyPage: (pageId) => q.busy(pageId),
     failed: (pageId) => q.failed(pageId),
-    hasPending: () => q.anyBusy() || q.anyFailed(),
+    hasPending: (pageId) => (pageId == null ? q.anyBusy() || q.anyFailed() : q.busy(pageId) || q.failed(pageId)),
     retry(pageId) {
       const p = last.get(pageId);
       if (p && !gone.has(pageId)) q.push(pageId, p);
     },
-    latest: (pageId) => last.get(pageId),
+    latest: (pageId) => (saver.hasPending(pageId) ? last.get(pageId) : undefined),
     subscribe: (fn) => q.subscribe(fn),
     markGone(pageId) {
       gone.add(pageId);

@@ -33,7 +33,7 @@ import { createAutoCompose } from "./autoCompose";
 import { ComposePreview, ComposeStage, ComposeStatus } from "./ComposeStage";
 import { CaptionPreview } from "./CaptionPreview";
 import { ComposeWorkspace } from "./ComposeWorkspace";
-import { peekEditsQueue, pruneEditsQueues } from "./editsQueue";
+import { flushAllEditsFor, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 import { forgetDeletedPage, forgetPageId } from "./forgetPage";
 import { errMsg } from "./errMsg";
 import { BookSettingsDialog } from "@/features/books/BookSettingsDialog";
@@ -50,6 +50,7 @@ import {
   DEFAULT_MODE,
   modeBlockers,
   normalizeMode,
+  RECOMPOSING_NOTICE,
   StageHeader,
   tabIdOf,
   type EditorMode,
@@ -115,8 +116,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const book = useBook(bookId);
   const pagesQ = usePages(bookId);
   const bookGens = useGenerations(bookId);
-  // 背景／角色動作完成時 worker 會自動選用：跟著重抓頁面，舞台才會填上並自動合成
-  usePagesFollowJobs(bookId, bookGens.data);
   const hasCharacter = book.data?.character_generation_id != null;
 
   // ---------- 目前頁與模式：本機狀態為準（立即反應），寫回網址；網址被外部改變時跟著改 ----------
@@ -139,8 +138,14 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const pages = pagesQ.data ?? [];
   const current = pages.find((p) => p.id === nav.page) ?? pages[0] ?? null;
+  // 背景／角色動作完成時 worker 會自動選用：跟著重抓頁面，舞台才會填上並自動合成；
+  // 目前頁等著重新合成（C 改過）時每 2 秒重抓，做好了補線才能用
+  usePagesFollowJobs(bookId, bookGens.data, current?.id ?? null);
   const hasSel = current?.selected_generation_id != null;
-  const gateOf = (p: Page | null | undefined): ModeGate => ({ selectedId: p?.selected_generation_id ?? null });
+  const gateOf = (p: Page | null | undefined): ModeGate => ({
+    selectedId: p?.selected_generation_id ?? null,
+    recomposing: !!p?.recompose_pending,
+  });
   const mode: EditorMode = allowedMode(nav.mode, gateOf(current));
 
   const go = (page: number, m: EditorMode) => {
@@ -175,7 +180,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const qc = useQueryClient();
 
-  // ---------- 角色位置：自動存（每頁依序、只保留最新）；畫面用這個 session 最後存的值 ----------
+  // ---------- 角色位置：自動存（每頁依序、只保留最新）；還沒存好時畫面用最後存的值，否則用伺服器的 ----------
   // 已刪除的頁 id（id 被沿用時要清掉舊狀態，見 forgetPage）也由 placementSaver 記錄（isGone）
   const placementSaver = placementSaverFor(qc);
   useEffect(() => {
@@ -219,16 +224,19 @@ export function EditorPage({ bookId }: { bookId: number }) {
   });
 
   /**
-   * 先讓這頁選定圖的修線寫完：改選背景／動作（合成圖會被清掉）或合成新的之後才到的 PUT
+   * 先讓這頁選定圖的修線寫完（進階編輯與 C 兩個佇列都等）：改選背景／動作（合成圖會被清掉）或合成新的之後才到的 PUT
    * 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」。失敗已提示過，不擋後續動作。
    */
   const flushSelectedEdits = async (page: Page) => {
     const sel = page.selected_generation_id;
-    const pendingEdits = sel != null ? peekEditsQueue(qc, page.id, sel) : undefined;
-    if (!pendingEdits?.busy()) return;
+    if (sel == null) return;
+    const busy = [peekEditsQueue(qc, page.id, sel), peekEditsQueue(qc, page.id, sel, { oneclick: true })].some((e) =>
+      e?.busy(),
+    );
+    if (!busy) return;
     bumpFlushing(page.id, 1);
     try {
-      await pendingEdits.flush();
+      await flushAllEditsFor(qc, page.id, sel);
     } catch {
       /* 失敗已提示過 */
     } finally {
@@ -273,10 +281,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const [lossAsks, setLossAsks] = useState<ReadonlyMap<number, (ok: boolean) => void>>(() => new Map());
   const [auto] = useState(createEditorAutoCompose);
   const autoCompose = auto.ac;
+  // 這頁等著重新合成（C 改過）：不合成，也就不用問補線（位置照常存，流程合成時用最新的位置）。
+  // 自己合成會清掉 C 的等待、補線分頁打開，之後流程換圖時補的線就不見了
+  const recomposing = (pageId: number) => !!pageOf(pageId)?.recompose_pending;
   useEffect(() => {
     auto.setDeps({
-      compose: composeNow,
-      lineEdits: lineEditsOf,
+      compose: (pageId) => (recomposing(pageId) ? Promise.resolve() : composeNow(pageId)),
+      lineEdits: (pageId) => (recomposing(pageId) ? null : lineEditsOf(pageId)),
       ask: (pageId) => new Promise<boolean>((resolve) => setLossAsks((m) => new Map(m).set(pageId, resolve))),
     });
   });
@@ -319,6 +330,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     current &&
     hasBoth(current) &&
     current.compose_pending &&
+    !current.recompose_pending &&
     genOf(current.background_generation_id)?.image_url &&
     genOf(current.pose_generation_id)?.cutout_url &&
     (current.selected_generation_id == null || curSel?.kind === "composite")
@@ -636,6 +648,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           onModeChange={(m) => (m === "line" ? void toLine(current.id) : go(current.id, m))}
           blockers={blockers}
           gapCount={qa?.gap_count ?? 0}
+          notice={current.recompose_pending ? RECOMPOSING_NOTICE : undefined}
           idPrefix={idPrefix}
           panelId={panelId}
           right={mode === "line" ? <ZoomControls zoom={zoom} onZoomChange={setZoom} /> : undefined}

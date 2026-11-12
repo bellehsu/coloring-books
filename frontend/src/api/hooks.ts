@@ -116,12 +116,21 @@ export function useGenerations(bookId: number, f: GenFilter = {}, enabled = true
   });
 }
 
+/** 頁面等著重新合成時重抓頁面的間隔。 */
+const RECOMPOSE_POLL_MS = 2000;
+
 /**
  * 任務結束時 worker 可能把它自動選用到頁面的空欄位（背景、角色動作），但 pages 不會自己重抓：
  * gens（useGenerations 的資料）裡原本排隊／執行中的任務結束了 → invalidate pages 與 book。
  * 故事頁與編輯器都用，畫面不用重新整理就會看到自動選用的素材。
+ * pollPageId（編輯器的目前頁）：這頁等著重新合成（recompose_pending，C 改過、頁面流程還沒做完）時
+ * 每 2 秒重抓頁面，直到旗標清掉；清掉那一刻重抓這頁的生成紀錄、QA 與修線（選定圖換成新的合成圖）。
  */
-export function usePagesFollowJobs(bookId: number, gens: readonly Generation[] | undefined) {
+export function usePagesFollowJobs(
+  bookId: number,
+  gens: readonly Generation[] | undefined,
+  pollPageId: number | null = null,
+) {
   const qc = useQueryClient();
   const active = useRef<Set<number> | null>(null);
   useEffect(() => {
@@ -134,6 +143,25 @@ export function usePagesFollowJobs(bookId: number, gens: readonly Generation[] |
       void qc.invalidateQueries({ queryKey: qk.book(bookId) });
     }
   }, [gens, qc, bookId]);
+
+  const recomposing = (pages: Page[] | undefined) => !!pages?.find((p) => p.id === pollPageId)?.recompose_pending;
+  const pagesQ = useQuery({
+    queryKey: qk.pages(bookId),
+    queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`),
+    enabled: pollPageId != null,
+    refetchInterval: (query) => (recomposing(query.state.data) ? RECOMPOSE_POLL_MS : false),
+  });
+  const pending = pollPageId != null && recomposing(pagesQ.data);
+  const was = useRef(pending);
+  useEffect(() => {
+    if (was.current && !pending && pollPageId != null) {
+      void qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) });
+      void qc.invalidateQueries({ queryKey: qk.qa(pollPageId) });
+      void qc.invalidateQueries({ queryKey: qk.edits(pollPageId) });
+      void qc.invalidateQueries({ queryKey: qk.book(bookId) });
+    }
+    was.current = pending;
+  }, [pending, pollPageId, qc, bookId]);
 }
 
 /** 佇列狀態每 5 秒輪詢。 */

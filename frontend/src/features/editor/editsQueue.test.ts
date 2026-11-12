@@ -2,7 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/hooks";
 import type { Stroke } from "@/lib/strokes";
-import { editsQueueFor, forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
+import { editsQueueFor, flushAllEditsFor, forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 
 const s = (x: number): Stroke => ({ op: "draw", width_px: 11, points: [[x, x]] });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -137,5 +137,43 @@ describe("editsQueueFor", () => {
     forgetEditsQueues(qc, 30);
     expect(peekEditsQueue(qc, 30, 2)).toBeUndefined();
     expect(peekEditsQueue(qc, 30, 3)).toBeUndefined();
+  });
+
+  it("flushAllEditsFor：同一頁同一張圖的兩個佇列（進階編輯與 C）都送完才 resolve；都沒有就馬上 resolve", async () => {
+    const qc = new QueryClient();
+    await expect(flushAllEditsFor(qc, 40, 7)).resolves.toBeUndefined();
+    const editor = editsQueueFor(qc, 1, 40, 7);
+    const c = editsQueueFor(qc, 1, 40, 7, { oneclick: true });
+    expect(c).not.toBe(editor);
+    editor.push([s(0.1)]);
+    c.push([s(0.2)]);
+    let done = false;
+    void flushAllEditsFor(qc, 40, 7).then(() => (done = true));
+    await tick();
+    expect(bodies).toHaveLength(2);
+    resolvers.shift()!({ gap_count: 0 }); // 進階編輯的先回來：C 的還在路上
+    await tick();
+    await tick();
+    expect(editor.busy()).toBe(false);
+    expect(done).toBe(false);
+    resolvers.shift()!({ gap_count: 0 });
+    await tick();
+    await tick();
+    expect(done).toBe(true);
+  });
+
+  it("flushAllEditsFor：另一邊的寫入失敗 → reject（等兩個都結束才回報）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.includes("oneclick")
+          ? new Response(JSON.stringify({ detail: "選圖已更換" }), { status: 409 })
+          : new Response(JSON.stringify({ gap_count: 0 }), { status: 200 }),
+      ),
+    );
+    const qc = new QueryClient();
+    editsQueueFor(qc, 1, 41, 7).push([s(0.1)]);
+    editsQueueFor(qc, 1, 41, 7, { oneclick: true }).push([s(0.2)]);
+    await expect(flushAllEditsFor(qc, 41, 7)).rejects.toThrow("選圖已更換");
   });
 });

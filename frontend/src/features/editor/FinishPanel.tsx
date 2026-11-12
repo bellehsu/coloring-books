@@ -3,13 +3,14 @@
 import { useId, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, type Book, type Page, type QA } from "@/api/client";
-import { qk, useAutofix, useCharacterCheck, usePass, useUnpass } from "@/api/hooks";
+import { qk, useAutofix, useCharacterCheck, useUnpass } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
 import { Segmented } from "@/components/ui/Segmented";
 import { useToast } from "@/components/ui/Toast";
-import { peekEditsQueue } from "./editsQueue";
+import { useAcceptPage } from "@/features/fix/fixApi";
+import { flushAllEditsFor, peekEditsQueue } from "./editsQueue";
 import { errMsg } from "./errMsg";
 import styles from "./FinishPanel.module.css";
 
@@ -41,7 +42,8 @@ export interface FinishPanelProps {
 
 /**
  * 「② 補線」右欄（§4.5）：缺口檢查＋自動補線、線條多寡（進階：線寬）、角色看起來對嗎、完成這一頁。
- * 有缺口也能完成：先問一次，後端自動記下「使用者確認完成（N 個缺口）」。
+ * 有缺口也能完成：先問一次。「完成這一頁」和 C 的「這頁可以印了 ✓」同一個端點（POST /accept：清掉請看一下、
+ * 等著重新合成時拒絕）；通過但 C 說請看一下的頁不算完成。
  */
 export function FinishPanel(props: FinishPanelProps) {
   // key：角色檢查是「每張圖」的；換頁或換選圖時，本機狀態（線條設定、確認框）重來
@@ -54,11 +56,11 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
   const id = useId();
   const autofix = useAutofix(book.id);
   const check = useCharacterCheck(book.id);
-  const pass = usePass(book.id);
+  const accept = useAcceptPage(book.id, page.id);
   const unpass = useUnpass(book.id);
 
   const genId = page.selected_generation_id;
-  const passed = page.status === "passed";
+  const passed = page.status === "passed" && !page.attention;
   const saved = page.character_check;
   const result = check.isPending ? check.variables.result : saved;
   const consistent = result === "consistent";
@@ -83,13 +85,13 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
   }
   // 只有「換答案」的儲存會擋住完成；同一個答案重送不擋
   const savingResult = check.isPending && check.variables.result !== saved;
-  const busy = submitting || savingResult || pass.isPending || unpass.isPending;
+  const busy = submitting || savingResult || accept.isPending || unpass.isPending;
 
-  /** 先讓修線寫完；寫入失敗（已有 toast）就停止。 */
+  /** 先讓修線寫完（進階編輯與 C 的佇列都等）；寫入失敗（已有 toast）就停止。 */
   async function flushEdits(): Promise<boolean> {
     if (genId == null) return true;
     try {
-      await peekEditsQueue(qc, page.id, genId)?.flush();
+      await flushAllEditsFor(qc, page.id, genId);
       return true;
     } catch {
       toast.show("修線尚未儲存，請稍後再試", "error");
@@ -144,15 +146,14 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
       return end();
     }
     end();
-    await doPass();
+    await doAccept();
   }
 
-  async function doPass() {
+  async function doAccept() {
     if (!begin()) return;
     try {
       if (!(await flushEdits())) return;
-      // 不帶原因：有缺口時後端記下「使用者確認完成（N 個缺口）」
-      await pass.mutateAsync({ pageId: page.id });
+      await accept.mutateAsync();
     } catch (e) {
       toast.show(errMsg(e, "無法完成這一頁"), "error");
     } finally {
@@ -329,7 +330,7 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
           <p className={styles.body}>還有 {confirmGaps} 個缺口，小朋友塗色時顏色可能漏出去。確定完成嗎？</p>
           <div className={styles.dialogActions}>
             <Button onClick={() => setConfirmGaps(null)}>再補補看</Button>
-            <Button variant="primary" disabled={busy} onClick={() => void doPass()}>
+            <Button variant="primary" disabled={busy} onClick={() => void doAccept()}>
               完成
             </Button>
           </div>

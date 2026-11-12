@@ -52,6 +52,14 @@
   display: inline-grid;
   place-items: center;
 }
+.notice {
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font-size: 13px;
+}
 .right {
   margin-left: auto;
   display: flex;

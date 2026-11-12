@@ -65,6 +65,17 @@ export function peekEditsQueue(
 }
 
 /**
+ * 等同一頁同一張圖的兩個佇列（進階編輯的、C 的 oneclick）都送完：後端 PUT 是整份覆蓋、最後提交者勝，
+ * 一邊寫入前另一邊的請求不能還在路上。兩個都結束才回報；有一個最後寫入失敗就 reject 它的錯誤。
+ */
+export async function flushAllEditsFor(qc: QueryClient, pageId: number, genId: number): Promise<void> {
+  const entries = [peekEditsQueue(qc, pageId, genId), peekEditsQueue(qc, pageId, genId, { oneclick: true })];
+  const results = await Promise.allSettled(entries.map((e) => e?.flush()));
+  const failed = results.find((r) => r.status === "rejected");
+  if (failed) throw failed.reason;
+}
+
+/**
  * 移除這一頁「閒置、沒失敗、且不再是選定圖」的佇列（換選圖後不再需要）。
  * 忙碌的留著把請求送完；失敗的留著，重新選回那張圖時還能拿回沒存成功的筆畫。
  */

@@ -494,6 +494,27 @@ describe("ComposeWorkspace", () => {
       expect(calledWith("PATCH", "/api/pages/1")).toHaveLength(1);
     });
 
+    it("C 關掉的那行：欄位下方說「這行目前不印（在處理頁面可打開）」；兩行都關時不說會印", () => {
+      setup({ page: mkPage({ caption_zh: "消防車", caption_en: "Fire Engine", caption_show_zh: true, caption_show_en: false }) });
+      const cap = card("圖下方的文字");
+      expect(within(cap).getAllByText("這行目前不印（在處理頁面可打開）")).toHaveLength(1);
+      const enField = within(cap).getByRole("textbox", { name: "英文字" }).closest("div")!.parentElement!;
+      expect(enField).toHaveTextContent("這行目前不印（在處理頁面可打開）");
+      expect(within(cap).getByText("選填，印在列印頁的圖下方。")).toBeInTheDocument();
+    });
+
+    it("兩行都關：兩行都說目前不印，「印在列印頁的圖下方」的提示不出現", () => {
+      setup({ page: mkPage({ caption_show_zh: false, caption_show_en: false }) });
+      const cap = card("圖下方的文字");
+      expect(within(cap).getAllByText("這行目前不印（在處理頁面可打開）")).toHaveLength(2);
+      expect(within(cap).queryByText("選填，印在列印頁的圖下方。")).not.toBeInTheDocument();
+    });
+
+    it("兩行都開：沒有不印的說明", () => {
+      setup({ page: mkPage({ caption_show_zh: true, caption_show_en: true }) });
+      expect(within(card("圖下方的文字")).queryByText("這行目前不印（在處理頁面可打開）")).not.toBeInTheDocument();
+    });
+
     it("手機（compact）也看得到，不用先展開", () => {
       setup({ compact: true });
       expect(within(card("圖下方的文字")).getByRole("textbox", { name: "中文字" })).toBeInTheDocument();

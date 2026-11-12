@@ -22,7 +22,7 @@ import { STATE_LABEL } from "@/features/book/overviewState";
 import { ComposeStage } from "@/features/editor/ComposeStage";
 import { ExclusiveChips, usePageText } from "@/features/editor/ComposeWorkspace";
 import chip from "@/features/editor/Inspector.module.css";
-import { peekEditsQueue } from "@/features/editor/editsQueue";
+import { flushAllEditsFor, peekEditsQueue } from "@/features/editor/editsQueue";
 import { errMsg } from "@/features/editor/errMsg";
 import { LineFixStage } from "@/features/editor/LineFixStage";
 import { ACTION_HINT, EXPRESSIONS, FACING_HINT, FACINGS } from "@/lib/actions";
@@ -159,11 +159,11 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   const poseActive = gens.some((g) => g.kind === "pose" && isActive(g));
   const working = page.recompose_pending || state === "working";
 
-  /** 送出前先讓畫面上的筆畫寫完（否則晚到的筆畫會蓋掉復原的結果）。 */
+  /** 送出前先讓畫面上的筆畫寫完（C 與進階編輯的佇列都等；否則晚到的筆畫會蓋掉復原的結果）。 */
   async function flushEdits() {
     const gid = page.selected_generation_id;
     if (gid == null) return;
-    await peekEditsQueue(qc, pageId, gid, { oneclick: true })?.flush().catch(() => {});
+    await flushAllEditsFor(qc, pageId, gid).catch(() => {});
   }
 
   /** 一次只做一件事（復原、重做、還原、可以印、再試一次）；失敗 toast。 */

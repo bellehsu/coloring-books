@@ -28,10 +28,11 @@ export interface ExportDrawerProps {
   book: Book;
 }
 
+/** 進階編輯的「匯出 PDF」：和 B 的「印出這本書」一樣的範圍與說法（預設只印可以印的頁，請看一下的頁不印）。 */
 export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
   return (
     <Drawer open={open} onClose={onClose} title="匯出 PDF">
-      <ExportOptions book={book} active={open} />
+      <ExportOptions book={book} active={open} variant="book" initialInclude="ready" emptyPassedHint="還沒有可以印的頁面。" />
     </Drawer>
   );
 }

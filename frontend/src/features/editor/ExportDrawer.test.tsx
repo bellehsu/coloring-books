@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
 import type { Book } from "@/api/client";
 import { editsQueueFor } from "./editsQueue";
-import { ExportDrawer } from "./ExportDrawer";
+import { ExportDrawer, ExportOptions } from "./ExportDrawer";
 
 const book = {
   id: 1,
@@ -67,13 +67,14 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function setup() {
+/** 預設測 ExportOptions 的 editor 說法；drawer：進階編輯的「匯出 PDF」抽屜（和 B 的「印出這本書」同一種）。 */
+function setup({ drawer = false }: { drawer?: boolean } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const spy = vi.spyOn(qc, "invalidateQueries");
   render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <ExportDrawer open onClose={() => {}} book={book} />
+        {drawer ? <ExportDrawer open onClose={() => {}} book={book} /> : <ExportOptions book={book} active />}
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -81,6 +82,35 @@ function setup() {
 }
 
 describe("ExportDrawer", () => {
+  it("進階編輯的匯出抽屜和 B 的「印出這本書」一樣：預設只印可以印的頁（include=ready），請看一下的頁不印", async () => {
+    summary = {
+      total: 3,
+      passed: 2,
+      exportable_ids: [10, 11],
+      ready_ids: [10],
+      skipped: [{ page_id: 12, position: 2, reason: "not_passed" }],
+    };
+    pages = [
+      { id: 10, position: 0 },
+      { id: 11, position: 1 },
+      { id: 12, position: 2 },
+    ];
+    const clicked: string[] = [];
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      clicked.push(this.download);
+    };
+    setup({ drawer: true });
+    await waitFor(() => expect(screen.getByTestId("passed-count")).toHaveTextContent("1"));
+    expect(screen.getByTestId("passed-count").parentElement).toHaveTextContent("可以印");
+    expect(screen.getByRole("radio", { name: /可以印的頁面/ })).toBeChecked();
+    await waitFor(() => expect(screen.getByText(/第 2 頁/).parentElement).toHaveTextContent("請看一下"));
+    await userEvent.click(screen.getByRole("button", { name: /下載 PDF（1 頁）/ }));
+    await waitFor(() => expect(clicked).toHaveLength(1));
+    expect(calls.some((u) => u.endsWith("/books/1/export.pdf?include=ready"))).toBe(true);
+    HTMLAnchorElement.prototype.click = orig;
+  });
+
   it("顯示已完成／未完成數字、版面說明與不會匯出的頁面原因（不再用「通過／QA」）", async () => {
     summary = {
       total: 4,

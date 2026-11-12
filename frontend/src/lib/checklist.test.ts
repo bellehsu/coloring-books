@@ -150,4 +150,18 @@ describe("checklist", () => {
     );
     expect(items.every((i) => i.state === "done")).toBe(true);
   });
+
+  it("C 的狀態：請看一下（attention）→ 完成 warn「請看一下」；等著重新合成 → 完成 todo「製作中」（和 B 同樣的字）", () => {
+    const att = byKey(
+      checklist(page({ selected_generation_id: 7, status: "passed", attention: "failed" }), qa({ status: "passed" })),
+    );
+    expect(att.passed).toMatchObject({ state: "warn", note: "請看一下" });
+    const working = byKey(
+      checklist(
+        page({ selected_generation_id: 7, status: "passed", recompose_pending: true, attention: "failed" }),
+        qa({ status: "passed" }),
+      ),
+    );
+    expect(working.passed).toMatchObject({ state: "todo", note: "製作中" });
+  });
 });
