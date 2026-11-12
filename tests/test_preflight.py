@@ -1,6 +1,7 @@
 import copy
 
 import httpx
+import pytest
 
 from app.services.comfy_client import ComfyClient
 from app.services.preflight import combo_options, format_report, run_preflight
@@ -182,3 +183,26 @@ async def test_caption_font_reported_when_comfy_is_down(workflows_dir, tmp_path)
     async with ComfyClient("http://comfy.test", transport=httpx.MockTransport(boom)) as c:
         rep = await run_preflight(c, WorkflowRegistry(workflows_dir).load(), caption_font=tmp_path / "x.ttf")
     assert not rep.comfy_reachable and rep.caption_font.ok is False
+
+
+async def test_preflight_workflow_exception_reported(workflows_dir, object_info_subset):
+    """A8：格式怪的 /object_info 或 /models 回應只讓該 workflow 的檢查失敗，不冒成例外。"""
+    oi = tiny_object_info(object_info_subset)
+    oi["KSampler"] = "garbage"  # _check_inputs 會在這裡丟例外
+    fake = FakeComfy(object_info=oi)
+    async with fake.client() as c:
+        rep = await run_preflight(c, WorkflowRegistry(workflows_dir).load())
+    w = rep.workflows[0]
+    assert not rep.ok and not w.ok
+    assert any("檢查失敗" in e for e in w.load_errors)
+
+
+async def test_list_models_non_json_is_connection_error():
+    from app.services.comfy_client import ComfyConnectionError
+
+    def html(request):
+        return httpx.Response(200, text="<html>oops</html>")
+
+    async with ComfyClient("http://x", transport=httpx.MockTransport(html)) as c:
+        with pytest.raises(ComfyConnectionError):
+            await c.list_models("checkpoints")

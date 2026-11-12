@@ -30,7 +30,10 @@ class ComfyError(Exception):
 
 
 class ComfyConnectionError(ComfyError):
-    """無法連線或 HTTP 層錯誤。"""
+    """連線層失敗（連不上、連線逾時、連線池逾時、對方中途斷線）。HTTP 4xx/5xx 不算，那是一般 ComfyError。"""
+
+
+_TRANSPORT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError)
 
 
 class ComfyPromptError(ComfyError):
@@ -149,15 +152,17 @@ class ComfyClient:
     async def _request(self, method: str, path: str, **kw: Any) -> httpx.Response:
         try:
             return await self._http.request(method, path, **kw)
+        except _TRANSPORT_ERRORS as e:  # 只有連線層失敗才算「連不上」（會重排）；ConnectTimeout 是 TimeoutException 的子類，要先判斷
+            raise ComfyConnectionError(f"無法連線 ComfyUI（{self.base_url}）：{e}") from e
         except httpx.TimeoutException as e:
             raise ComfyTimeoutError(f"{method} {path} 逾時") from e
         except httpx.HTTPError as e:
-            raise ComfyConnectionError(f"無法連線 ComfyUI（{self.base_url}）：{e}") from e
+            raise ComfyError(f"{method} {path} 失敗：{type(e).__name__}: {e}") from e
 
     async def _get_json(self, path: str, **kw: Any) -> Any:
         resp = await self._request("GET", path, **kw)
         if resp.status_code != 200:
-            raise ComfyConnectionError(f"GET {path} 回傳 HTTP {resp.status_code}: {resp.text[:300]}")
+            raise ComfyError(f"GET {path} 回傳 HTTP {resp.status_code}: {resp.text[:300]}")
         try:
             return resp.json()
         except json.JSONDecodeError as e:
@@ -172,17 +177,17 @@ class ComfyClient:
     async def object_info(self) -> dict[str, Any]:
         return await self._get_json("/object_info")
 
-    async def model_folders(self) -> list[str]:
-        return await self._get_json("/models")
-
     async def list_models(self, folder: str) -> list[str] | None:
         """回傳資料夾類型下的模型檔名；資料夾類型未註冊（ComfyUI 回 404）時回傳 None。"""
         resp = await self._request("GET", f"/models/{folder}")
         if resp.status_code == 404:
             return None
         if resp.status_code != 200:
-            raise ComfyConnectionError(f"GET /models/{folder} 回傳 HTTP {resp.status_code}")
-        return resp.json()
+            raise ComfyError(f"GET /models/{folder} 回傳 HTTP {resp.status_code}")
+        try:
+            return resp.json()
+        except ValueError as e:
+            raise ComfyConnectionError(f"GET /models/{folder} 回傳的不是 JSON：{e}") from e
 
     async def upload_image(
         self,
@@ -209,7 +214,7 @@ class ComfyClient:
             "POST", "/upload/image", data=form, files={"image": (filename, data, "application/octet-stream")}
         )
         if resp.status_code != 200:
-            raise ComfyConnectionError(f"上傳 {filename} 失敗：HTTP {resp.status_code} {resp.text[:300]}")
+            raise ComfyError(f"上傳 {filename} 失敗：HTTP {resp.status_code} {resp.text[:300]}")
         return resp.json()
 
     @staticmethod
@@ -256,7 +261,7 @@ class ComfyClient:
             params = {"filename": f["filename"], "subfolder": f.get("subfolder", ""), "type": f.get("type", "output")}
         resp = await self._request("GET", "/view", params=params)
         if resp.status_code != 200:
-            raise ComfyConnectionError(f"下載 {params['filename']} 失敗：HTTP {resp.status_code}")
+            raise ComfyError(f"下載 {params['filename']} 失敗：HTTP {resp.status_code}")
         return resp.content
 
     async def interrupt(self) -> None:

@@ -27,8 +27,9 @@ export interface ComposeStageProps {
   /**
    * 結束拖曳、縮放，每次按鍵，或按「水平翻轉」「重設位置」時呼叫一次；
    * EditorPage 會自動存（placementSaver，依序、最新為準）並排自動合成。
+   * via＝"key"：方向鍵／＋－（按住會自動重複，C 等停下來才存）。
    */
-  onChange: (p: Placement) => void;
+  onChange: (p: Placement, via?: "key") => void;
   /** 舞台下方、翻轉／重設旁的狀態（自動合成、位置存檔失敗）。 */
   status?: ReactNode;
 }
@@ -147,7 +148,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
     }
     if (!next) return;
     e.preventDefault();
-    if (!same(next, placement)) onChange(next);
+    if (!same(next, placement)) onChange(next, "key");
   };
 
   // 背景像素座標下的角色框 → 百分比（與後端同樣以背景尺寸計算）

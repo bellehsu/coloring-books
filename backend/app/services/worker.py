@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import or_
@@ -23,7 +24,7 @@ from app.services.engine import (
     GenerationEngine,
     GenerationRequest,
 )
-from app.services import pipeline
+from app.services import auth, pipeline
 from app.services.compose import largest_component
 from app.services.usage import refund_generations
 from app.storage import Storage, StorageNotFound
@@ -50,9 +51,23 @@ def worker_job():
     return or_(col(Generation.engine).is_(None), col(Generation.engine).not_in(LOCAL_ENGINES))
 
 
+ENGINE_REQUEUES = "engine_requeues"  # request_json 的計數：因引擎連不上而放回佇列的次數（worker 自己寫）
+ENGINE_UNAVAILABLE_SINCE = "engine_unavailable_since"  # request_json：第一次連不上的時間（UTC ISO；worker 自己寫）
+MAX_ENGINE_REQUEUES = 3
+# 連不上超過 MAX_ENGINE_REQUEUES 次、而且距第一次連不上已滿這麼多秒，才標成失敗（ComfyUI 重啟等短暫中斷不算）
+ENGINE_GIVE_UP_AFTER_S = 600
+WRITE_RETRY_DELAYS = (0.2, 0.5, 1.0)  # 收尾寫入失敗時的退避秒數
+ENGINE_GAVE_UP = "繪圖服務一直連不上，已停止重試"
+
+
 # request_json 的核心欄位（extra 不能蓋掉）
 _CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
-                        "variation"})
+                        "variation", ENGINE_REQUEUES, ENGINE_UNAVAILABLE_SINCE})
+
+
+def _now() -> datetime:
+    """目前時間（UTC）；測試替換它來模擬時間經過。"""
+    return datetime.now(timezone.utc)
 
 
 def encode_request(
@@ -108,7 +123,6 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
     return GenerationRequest(
         kind=GenKind(d["kind"]),
         prompt=d["prompt"],
-        negative_prompt=d["negative_prompt"],
         seed=d["seed"],
         width=d["width"],
         height=d["height"],
@@ -135,6 +149,8 @@ class GenerationWorker:
         self._wakeup = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._in_engine = False  # 引擎正在跑一筆（stop() 時才需要中斷 ComfyUI）
+        self._unfinished: dict[int, Callable[[], object]] = {}  # 收尾寫入一直失敗的列：下一輪迴圈前補寫
 
     # ---- 生命週期 ----
     async def start(self) -> None:
@@ -154,11 +170,19 @@ class GenerationWorker:
         if pipeline._wakeup == self.notify:
             pipeline.set_wakeup(None)
         if task is not None:
+            was_in_engine = self._in_engine
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+            if was_in_engine:
+                # 先取消任務再中斷：否則 ComfyUI 的「執行被中斷」會讓還活著的任務把這筆標成失敗，
+                # 而不是留在 RUNNING 讓重啟時放回佇列。盡力而為，失敗只記 log
+                try:
+                    await self.engine.interrupt()
+                except Exception:  # noqa: BLE001
+                    log.warning("stop：中斷引擎失敗", exc_info=True)
         self.state = WorkerState.STOPPED
 
     def notify(self) -> None:
@@ -184,6 +208,11 @@ class GenerationWorker:
                 .where(running, ~worker_job())
                 .values(status=GenStatus.FAILED, error=LOCAL_INTERRUPTED, finished_at=utcnow())
             )
+            # 執行到一半被中斷（不是連不上）：連不上的紀錄重新算
+            for gid, rj in s.exec(select(Generation.id, Generation.request_json).where(running, worker_job())).all():
+                cleared = self._without_outage(rj)
+                if cleared != rj:
+                    s.exec(update(Generation).where(col(Generation.id) == gid, running).values(request_json=cleared))
             res = s.exec(
                 update(Generation)
                 .where(running, worker_job())
@@ -254,6 +283,7 @@ class GenerationWorker:
         rowcount 為 0 表示被搶走（或被取消），重試。"""
         while True:
             with self.sessions() as s:
+                auth.cancel_revoked_queues(s)  # 撤銷者的排隊工作先取消，不能被認領
                 order = self._plan(s)
                 if not order:
                     return None
@@ -293,31 +323,38 @@ class GenerationWorker:
                 # Storage 可能是遠端（R2）：讀寫放到 thread，不卡住 event loop
                 req = await asyncio.to_thread(decode_request, gen.request_json, self.storage)
             except StorageNotFound:
-                self._fail(gen_id, CHARACTER_MISSING)
+                await self._fail_retrying(gen_id, CHARACTER_MISSING)
                 return True
             except ValueError as e:
                 if str(e) == RETIRED:  # 已停用的路線：只回報原因
-                    self._fail(gen_id, RETIRED)
+                    await self._fail_retrying(gen_id, RETIRED)
                     return True
-                self._fail(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
+                await self._fail_retrying(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
                 return True
             except Exception as e:  # noqa: BLE001
-                self._fail(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
+                await self._fail_retrying(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
                 return True
-            result = await self.engine.generate(
-                req, lambda value, maximum: self.progress.__setitem__(gen_id, (value, maximum))
-            )
+            self._in_engine = True
+            try:
+                result = await self.engine.generate(
+                    req, lambda value, maximum: self.progress.__setitem__(gen_id, (value, maximum))
+                )
+            finally:
+                self._in_engine = False
+            mask_png = result.extra_images.get("mask")
+            if mask_png and req.kind == GenKind.POSE:
+                try:  # 寫任何物件之前先檢查：失敗時不留下沒有列指到的圖
+                    mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
+                except ValueError as e:  # 去背結果太細長（compose.DEGENERATE_MASK）
+                    await self._fail_retrying(gen_id, str(e))
+                    return True
             rel = self.storage.generation_image(gen.book_id, gen_id)
             await asyncio.to_thread(self.storage.put, rel, result.image)
             mask_rel = None
-            if result.extra_images.get("mask"):
+            if mask_png:
                 mask_rel = self.storage.generation_mask(gen.book_id, gen_id)
-                mask_png = result.extra_images["mask"]
-                if req.kind == GenKind.POSE:
-                    mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
                 await asyncio.to_thread(self.storage.put, mask_rel, mask_png)
-            done = self._finish(
-                gen_id,
+            values = dict(
                 mask_path=mask_rel,
                 status=GenStatus.SUCCEEDED,
                 image_path=rel,
@@ -331,22 +368,103 @@ class GenerationWorker:
                 error=None,
                 finished_at=utcnow(),
             )
-            if done:
-                self._after_success(gen_id)
+            cleared = self._without_outage(gen.request_json)
+            if cleared != gen.request_json:  # 引擎回應成功：連不上的紀錄清掉
+                values["request_json"] = cleared
+
+            def write_success() -> None:
+                if self._finish(gen_id, **values):
+                    self._after_success(gen_id)
+
+            await self._write_retrying(gen_id, write_success)
             self.last_error = None
             self.state = WorkerState.IDLE
         except EngineUnavailable as e:
-            self._finish(gen_id, status=GenStatus.QUEUED, started_at=None)
-            self.last_error = str(e)
-            self.state = WorkerState.ENGINE_UNAVAILABLE
+            count, since = self._outage(gen.request_json)
+            requeues, now = count + 1, _now()
+            since = since or now
+            if requeues > MAX_ENGINE_REQUEUES and (now - since).total_seconds() >= ENGINE_GIVE_UP_AFTER_S:
+                await self._fail_retrying(gen_id, ENGINE_GAVE_UP)
+            else:
+                requeue_json = self._with_outage(gen.request_json, requeues, since)
+                await self._write_retrying(
+                    gen_id,
+                    lambda: self._finish(gen_id, status=GenStatus.QUEUED, started_at=None, request_json=requeue_json),
+                )
+                self.last_error = str(e)
+                self.state = WorkerState.ENGINE_UNAVAILABLE
         except EngineError as e:
-            self._fail(gen_id, str(e))
+            await self._fail_retrying(gen_id, str(e))
         except Exception as e:  # noqa: BLE001  單筆任務的任何例外都不可殺死 worker
             log.exception("generation %s crashed", gen_id)
-            self._fail(gen_id, f"非預期錯誤：{type(e).__name__}: {e}")
+            await self._fail_retrying(gen_id, f"非預期錯誤：{type(e).__name__}: {e}")
         finally:
             self.progress.pop(gen_id, None)
         return True
+
+    @staticmethod
+    def _request_dict(request_json: str | None) -> dict:
+        try:
+            d = json.loads(request_json or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    @classmethod
+    def _outage(cls, request_json: str | None) -> tuple[int, datetime | None]:
+        """（因連不上而放回佇列的次數, 第一次連不上的時間）；沒有或格式不對分別是 0、None。"""
+        d = cls._request_dict(request_json)
+        n = d.get(ENGINE_REQUEUES, 0)
+        if not isinstance(n, int) or isinstance(n, bool):
+            n = 0
+        try:
+            since = datetime.fromisoformat(d[ENGINE_UNAVAILABLE_SINCE])
+        except (KeyError, TypeError, ValueError):
+            since = None
+        if since is not None and since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        return n, since
+
+    @classmethod
+    def _with_outage(cls, request_json: str | None, n: int, since: datetime) -> str:
+        d = cls._request_dict(request_json)
+        d[ENGINE_REQUEUES] = n
+        d[ENGINE_UNAVAILABLE_SINCE] = since.isoformat()
+        return json.dumps(d, ensure_ascii=False, sort_keys=True)
+
+    @classmethod
+    def _without_outage(cls, request_json: str) -> str:
+        """拿掉連不上的紀錄；本來就沒有（或無法解析）時原樣回傳。"""
+        d = cls._request_dict(request_json)
+        if ENGINE_REQUEUES not in d and ENGINE_UNAVAILABLE_SINCE not in d:
+            return request_json
+        d.pop(ENGINE_REQUEUES, None)
+        d.pop(ENGINE_UNAVAILABLE_SINCE, None)
+        return json.dumps(d, ensure_ascii=False, sort_keys=True)
+
+    async def _write_retrying(self, gen_id: int, write: Callable[[], object]) -> None:
+        """收尾寫入（資料庫暫時鎖住等）失敗時退避重試；仍失敗就記在 _unfinished，下一輪迴圈前補寫。從不丟例外。"""
+        for delay in (None, *WRITE_RETRY_DELAYS):
+            if delay is not None:
+                await asyncio.sleep(delay)
+            try:
+                write()
+                self._unfinished.pop(gen_id, None)
+                return
+            except Exception:  # noqa: BLE001
+                log.exception("generation %s：收尾寫入失敗", gen_id)
+        self._unfinished[gen_id] = write
+
+    async def _fail_retrying(self, gen_id: int, message: str) -> None:
+        await self._write_retrying(gen_id, lambda: self._fail(gen_id, message))
+
+    async def _retry_unfinished(self) -> None:
+        for gen_id, write in list(self._unfinished.items()):
+            try:
+                write()
+                self._unfinished.pop(gen_id, None)
+            except Exception:  # noqa: BLE001
+                log.exception("generation %s：補寫收尾仍失敗", gen_id)
 
     def _fail(self, gen_id: int, message: str) -> None:
         if self._finish(gen_id, status=GenStatus.FAILED, error=message, finished_at=utcnow()):
@@ -374,6 +492,7 @@ class GenerationWorker:
         n = 0
         while True:
             with self.sessions() as s:
+                auth.cancel_revoked_queues(s)
                 task = pipeline.claim_page_task(s)
                 if task is None:
                     return n
@@ -404,6 +523,7 @@ class GenerationWorker:
             # 先清除再取任務：任務執行中到達的 notify() 會讓事件保持 set，不會遺失
             self._wakeup.clear()
             try:
+                await self._retry_unfinished()
                 did = await self.run_once()
                 await self.run_page_tasks()  # 每張生成之後（與閒置時）先做完排隊的頁面流程
             except Exception:  # noqa: BLE001  例如資料庫暫時錯誤；退避後繼續

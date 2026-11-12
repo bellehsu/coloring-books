@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api, type Generation, type Page, type Placement } from "@/api/client";
-import { qk } from "@/api/hooks";
+import { qk, recomposeRunning } from "@/api/hooks";
 import type { components } from "@/api/schema";
 import type { RestoreItem } from "./fixState";
 
@@ -36,8 +36,9 @@ function putPage(qc: QueryClient, bookId: number, page: Page) {
 export const FIX_POLL_MS = 2000;
 
 /**
- * 這本書的頁面（C 用）：這頁等著重新合成、或 busy（B 的總覽說這頁製作中、這頁有生成在跑）時每 2 秒重抓，
- * 預覽跟著更新。忙完的那一刻再重抓一次頁面、QA 與總覽。
+ * 這本書的頁面（C 用）：這頁還在重新合成（recomposeRunning；合成失敗就不算，要等「再試一次」）、
+ * 或 busy（B 的總覽說這頁製作中、這頁有生成在跑）時每 2 秒重抓，預覽跟著更新。
+ * 忙完的那一刻再重抓一次頁面、QA 與總覽。
  */
 export function useFixPages(bookId: number, pageId: number, busy: boolean) {
   const qc = useQueryClient();
@@ -45,9 +46,9 @@ export function useFixPages(bookId: number, pageId: number, busy: boolean) {
     queryKey: qk.pages(bookId),
     queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`),
     refetchInterval: (query) =>
-      busy || query.state.data?.find((p) => p.id === pageId)?.recompose_pending ? FIX_POLL_MS : false,
+      busy || recomposeRunning(query.state.data?.find((p) => p.id === pageId)) ? FIX_POLL_MS : false,
   });
-  const pending = !!q.data?.find((p) => p.id === pageId)?.recompose_pending;
+  const pending = recomposeRunning(q.data?.find((p) => p.id === pageId));
   const working = busy || pending;
   const was = useRef(working);
   useEffect(() => {

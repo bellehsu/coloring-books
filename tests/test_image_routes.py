@@ -9,7 +9,7 @@ from app.config import load_settings
 from app.main import create_app
 from app.models import Generation
 from tests.fake_engine import FakeEngine
-from tests.test_api_lineart import color_png, selected_page
+from tests.test_api_lineart import selected_page
 from tests.test_api_pages import book_with_character  # noqa: F401  (fixtures 由 selected_page 使用)
 
 
@@ -45,9 +45,9 @@ def test_image_route_redirects_to_signed_url(client, app):
     assert client.get(f"/api/generations/{gid}/image").content == followed.content  # 預設跟隨轉址
 
 
-def test_lineart_and_preview_redirect(client, app):
+def test_lineart_redirect(client, app):
     _, p, ids = selected_page(client, app)
-    for url in (f"/api/pages/{p['id']}/lineart", f"/api/generations/{ids[0]}/lineart-preview"):
+    for url in (f"/api/pages/{p['id']}/lineart",):
         r = _redirects(client, url)
         assert r.status_code == 302, url
         assert r.headers["cache-control"] == "private, max-age=60"
@@ -70,21 +70,6 @@ def test_image_route_missing_object_404(client, app):
     assert r.status_code == 404 and r.json()["detail"] == "圖片檔案遺失"
     r = _redirects(client, f"/api/pages/{p['id']}/lineart")
     assert r.status_code == 404 and r.json()["detail"] == "圖片檔案遺失"
-    r = _redirects(client, f"/api/generations/{ids[0]}/lineart-preview")
-    assert r.status_code == 404
-
-
-def test_mask_missing_object_404_and_redirect(client, app):
-    _, p, ids = selected_page(client, app)
-    st = app.state.storage
-    with app.state.sessions() as s:
-        g = s.get(Generation, ids[0])
-        g.mask_path = "books/1/generations/gone_mask.png"
-        s.commit()
-    assert _redirects(client, f"/api/generations/{ids[0]}/mask").status_code == 404
-    st.put(g.mask_path, color_png())
-    r = _redirects(client, f"/api/generations/{ids[0]}/mask")
-    assert r.status_code == 302 and client.get(r.headers["location"]).content == color_png()
 
 
 def test_files_route_rejects_bad_sig_and_expired(client, app):

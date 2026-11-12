@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
 import type { Book } from "@/api/client";
 import { editsQueueFor } from "./editsQueue";
-import { ExportDrawer } from "./ExportDrawer";
+import { placementSaverFor } from "./placementSaver";
+import { ExportDrawer, ExportOptions } from "./ExportDrawer";
 
 const book = {
   id: 1,
@@ -67,13 +68,14 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function setup() {
+/** 預設測 ExportOptions 的 editor 說法；drawer：進階編輯的「匯出 PDF」抽屜（和 B 的「印出這本書」同一種）。 */
+function setup({ drawer = false }: { drawer?: boolean } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const spy = vi.spyOn(qc, "invalidateQueries");
   render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <ExportDrawer open onClose={() => {}} book={book} />
+        {drawer ? <ExportDrawer open onClose={() => {}} book={book} /> : <ExportOptions book={book} active />}
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -81,6 +83,35 @@ function setup() {
 }
 
 describe("ExportDrawer", () => {
+  it("進階編輯的匯出抽屜和 B 的「印出這本書」一樣：預設只印可以印的頁（include=ready），請看一下的頁不印", async () => {
+    summary = {
+      total: 3,
+      passed: 2,
+      exportable_ids: [10, 11],
+      ready_ids: [10],
+      skipped: [{ page_id: 12, position: 2, reason: "not_passed" }],
+    };
+    pages = [
+      { id: 10, position: 0 },
+      { id: 11, position: 1 },
+      { id: 12, position: 2 },
+    ];
+    const clicked: string[] = [];
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      clicked.push(this.download);
+    };
+    setup({ drawer: true });
+    await waitFor(() => expect(screen.getByTestId("passed-count")).toHaveTextContent("1"));
+    expect(screen.getByTestId("passed-count").parentElement).toHaveTextContent("可以印");
+    expect(screen.getByRole("radio", { name: /可以印的頁面/ })).toBeChecked();
+    await waitFor(() => expect(screen.getByText(/第 2 頁/).parentElement).toHaveTextContent("請看一下"));
+    await userEvent.click(screen.getByRole("button", { name: /下載 PDF（1 頁）/ }));
+    await waitFor(() => expect(clicked).toHaveLength(1));
+    expect(calls.some((u) => u.endsWith("/books/1/export.pdf?include=ready"))).toBe(true);
+    HTMLAnchorElement.prototype.click = orig;
+  });
+
   it("顯示已完成／未完成數字、版面說明與不會匯出的頁面原因（不再用「通過／QA」）", async () => {
     summary = {
       total: 4,
@@ -253,8 +284,115 @@ describe("ExportDrawer", () => {
     entry.push([{ op: "draw", width_px: 11, points: [[0.1, 0.1]] }]);
     await waitFor(() => expect(entry.failed).toBe(true));
     await userEvent.click(await screen.findByRole("button", { name: /下載 PDF（1 頁）/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/尚未儲存/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/還沒存好/);
     expect(calls.some((u) => u.includes("export.pdf"))).toBe(false);
+  });
+
+  it("E4：寫入失敗的提示說是第幾頁、連到那頁的 C「去處理」", async () => {
+    summary = { total: 3, passed: 1, exportable_ids: [10], ready_ids: [10], skipped: [] };
+    pages = [
+      { id: 9, position: 0, selected_generation_id: 6 },
+      { id: 10, position: 1, selected_generation_id: 7 },
+    ];
+    writeStatus = 500;
+    const { qc } = setup();
+    await waitFor(() => expect(qc.getQueryData(["pages", 1])).toBeTruthy());
+    const entry = editsQueueFor(qc, 1, 10, 7);
+    entry.push([{ op: "draw", width_px: 11, points: [[0.1, 0.1]] }]);
+    await waitFor(() => expect(entry.failed).toBe(true));
+    await userEvent.click(await screen.findByRole("button", { name: /下載 PDF/ }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("第 2 頁的修線還沒存好");
+    expect(screen.getByRole("link", { name: "去處理" })).toHaveAttribute("href", "/books/1/page/10");
+  });
+
+  it("E4：「重送」把失敗佇列最新的筆畫再送一次，成功後提示消失", async () => {
+    summary = { total: 1, passed: 1, exportable_ids: [10], ready_ids: [10], skipped: [] };
+    pages = [{ id: 10, position: 0, selected_generation_id: 7 }];
+    writeStatus = 500;
+    const { qc } = setup();
+    await waitFor(() => expect(qc.getQueryData(["pages", 1])).toBeTruthy());
+    const entry = editsQueueFor(qc, 1, 10, 7);
+    entry.push([{ op: "draw", width_px: 11, points: [[0.1, 0.1]] }]);
+    await waitFor(() => expect(entry.failed).toBe(true));
+    await userEvent.click(await screen.findByRole("button", { name: /下載 PDF/ }));
+    await screen.findByRole("link", { name: "去處理" });
+    const puts = () => calls.filter((u) => u.includes("/lineart/edits")).length;
+    const before = puts();
+    writeStatus = 200;
+    await userEvent.click(screen.getByRole("button", { name: "重送" }));
+    await waitFor(() => expect(puts()).toBe(before + 1));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "去處理" })).not.toBeInTheDocument());
+    expect(entry.failed).toBe(false);
+  });
+
+  it("E9：匯出先等位置存檔（placementSaver）寫完，再要 PDF；beforeExport 也要先做完", async () => {
+    summary = { total: 1, passed: 1, exportable_ids: [10], ready_ids: [10], skipped: [] };
+    pages = [{ id: 10, position: 0, selected_generation_id: 7 }];
+    const clicked: string[] = [];
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      clicked.push(this.download);
+    };
+    try {
+      let releasePlacement!: () => void;
+      const placementGate = new Promise<void>((r) => (releasePlacement = r));
+      const base = fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes("/placement")) {
+            calls.push(url);
+            await placementGate;
+            return json({ id: 10, book_id: 1, position: 0, selected_generation_id: 7 });
+          }
+          return base(url, init);
+        }),
+      );
+      let releaseCompose!: () => void;
+      const composeGate = new Promise<void>((r) => (releaseCompose = r));
+      const beforeExport = vi.fn(() => composeGate);
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={qc}>
+          <ToastProvider>
+            <ExportDrawer open onClose={() => {}} book={book} beforeExport={beforeExport} />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+      await waitFor(() => expect(qc.getQueryData(["pages", 1])).toBeTruthy());
+      placementSaverFor(qc).savePlacement(10, { cx: 0.5, cy: 0.5, height: 0.6, flip: false });
+      await userEvent.click(await screen.findByRole("button", { name: /下載 PDF（1 頁）/ }));
+      await act(async () => {});
+      expect(beforeExport).toHaveBeenCalled();
+      expect(calls.some((u) => u.includes("export.pdf"))).toBe(false);
+      await act(async () => releaseCompose());
+      await act(async () => {});
+      expect(calls.some((u) => u.includes("export.pdf"))).toBe(false); // 位置還在送
+      await act(async () => releasePlacement());
+      await waitFor(() => expect(clicked).toHaveLength(1));
+      const order = calls.filter((u) => /placement|export\.pdf/.test(u));
+      expect(order[order.length - 1]).toContain("export.pdf");
+    } finally {
+      HTMLAnchorElement.prototype.click = orig;
+    }
+  });
+
+  it("D8：摘要重新載入後、下載 PDF 後，都重抓 B 的 overview", async () => {
+    summary = { total: 1, passed: 1, exportable_ids: [1], ready_ids: [1], skipped: [] };
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {};
+    try {
+      const { spy } = setup();
+      const overviewCalls = () =>
+        spy.mock.calls.filter((c) => JSON.stringify((c[0] as { queryKey: unknown }).queryKey) === '["overview",1]').length;
+      await waitFor(() => expect(overviewCalls()).toBeGreaterThanOrEqual(1)); // 摘要載入後
+      const before = overviewCalls();
+      await userEvent.click(await screen.findByRole("button", { name: /下載 PDF/ }));
+      await waitFor(() => expect(overviewCalls()).toBeGreaterThan(before)); // 下載後
+    } finally {
+      HTMLAnchorElement.prototype.click = orig;
+    }
   });
 
   describe("分享開關", () => {

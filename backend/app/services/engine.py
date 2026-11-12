@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -17,7 +18,6 @@ RETIRED = "這種生成已停用"
 class GenerationRequest:
     kind: GenKind
     prompt: str
-    negative_prompt: str  # Qwen 的 cfg 為 1 → 不使用；新任務一律存空字串
     seed: int
     width: int
     height: int
@@ -51,3 +51,26 @@ ProgressFn = Callable[[int, int], None]
 
 class GenerationEngine(Protocol):
     async def generate(self, req: GenerationRequest, on_progress: ProgressFn | None = None) -> GenerationResult: ...
+
+    async def interrupt(self) -> None:
+        """盡力中斷執行中的生成（後端停止時呼叫）；沒有東西可中斷或失敗都不丟例外。"""
+        ...
+
+
+ENGINE_UNREACHABLE_PUBLIC = "繪圖服務暫時無法連線，稍後會自動重試"
+ENGINE_FAILED_PUBLIC = "繪圖時發生錯誤，請再試一次"
+_INTERNAL_MARKERS = ("127.0.0.1", "localhost", "http://", "https://")
+_PATH_MARKERS = ("/ai-data/", "/home/", "/tmp/", "/opt/")
+_DRIVE_PATH = re.compile(r"[A-Za-z]:\\")
+
+
+def public_engine_error(text: str | None, is_admin: bool) -> str | None:
+    """給 API 回應用：非管理者看不到引擎的內部位址、連線細節與檔案路徑，
+    含位址的錯誤原文換成連不上的固定訊息，含路徑的換成繪圖失敗的固定訊息。"""
+    if text is None or is_admin:
+        return text
+    if any(m in text for m in _INTERNAL_MARKERS):
+        return ENGINE_UNREACHABLE_PUBLIC
+    if any(m in text for m in _PATH_MARKERS) or _DRIVE_PATH.search(text):
+        return ENGINE_FAILED_PUBLIC
+    return text

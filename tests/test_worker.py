@@ -1,11 +1,11 @@
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from app.db import init_db, make_engine, session_factory
-from app.models import Book, GenKind, Generation, GenStatus, Owner
+from app.models import Book, GenKind, Generation, GenStatus, Owner, Usage
 from app.services.engine import EngineError, EngineUnavailable
 from app.services.layout import PaperSize, PrintMode
 from app.services.worker import (
@@ -67,7 +67,7 @@ def test_encode_decode_roundtrip(tmp_path):
     assert "中文" in text  # ensure_ascii=False
     storage.put("books/1/generations/1.png", b"char-png")
     req = decode_request(text, storage)
-    assert req.kind == GenKind.POSE and req.prompt == "中文" and req.negative_prompt == "" and req.seed == 3
+    assert req.kind == GenKind.POSE and req.prompt == "中文" and req.seed == 3
     assert (req.width, req.height, req.variation) == (10, 20, "facing left")
     assert req.character_image == b"char-png"  # 引擎收 bytes；request_json 仍記 key
 
@@ -223,6 +223,126 @@ async def test_engine_unavailable_keeps_job_queued_and_retries(env):
     await worker.run_once()
     assert get(sessions, gid).status == GenStatus.SUCCEEDED
     assert worker.state != WorkerState.ENGINE_UNAVAILABLE
+
+
+def _usage_gen(sessions):
+    gid = add_gen(sessions, request_json=encode_request(
+        kind=GenKind.CHARACTER, prompt="p", negative_prompt="n", seed=7, width=64, height=64,
+        extra={"usage_day": "2026-11-12", "usage_owner": 1}))
+    with sessions() as s:
+        s.add(Usage(owner_id=1, day=date(2026, 11, 12), generations=1))
+        s.commit()
+    return gid
+
+
+class _Clock:
+    def __init__(self):
+        self.t = datetime(2026, 11, 12, 3, 0, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.t
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    import app.services.worker as worker_mod
+
+    c = _Clock()
+    monkeypatch.setattr(worker_mod, "_now", c)
+    return c
+
+
+async def test_short_outage_never_fails_job(env, clock):
+    """ComfyUI 重啟約 2 分鐘：連不上 6 次（每 20 秒一次）仍留在佇列，不算「一直連不上」。"""
+    worker, engine, sessions, _ = env
+    engine.error = EngineUnavailable("comfy down")
+    gid = _usage_gen(sessions)
+    first = clock.t
+    for i in range(6):
+        clock.t = first + timedelta(seconds=20 * i)
+        await worker.run_once()
+        g = get(sessions, gid)
+        assert g.status == GenStatus.QUEUED
+        d = json.loads(g.request_json)
+        assert d["engine_requeues"] == i + 1
+        assert datetime.fromisoformat(d["engine_unavailable_since"]) == first
+    engine.error = None
+    await worker.run_once()
+    g = get(sessions, gid)
+    assert g.status == GenStatus.SUCCEEDED
+    d = json.loads(g.request_json)
+    assert "engine_requeues" not in d and "engine_unavailable_since" not in d  # 引擎回應成功：清掉
+    with sessions() as s:
+        assert s.get(Usage, (1, date(2026, 11, 12))).generations == 1
+
+
+async def test_unavailable_requeue_cap(env, clock):
+    """連不上超過 3 次、而且距第一次連不上已滿 600 秒：標成失敗並退回額度。"""
+    worker, engine, sessions, _ = env
+    engine.error = EngineUnavailable("comfy down")
+    gid = _usage_gen(sessions)
+    first = clock.t
+    for i in range(3):
+        clock.t = first + timedelta(seconds=300 * i)  # 0、300、600 秒：次數還不到
+        await worker.run_once()
+        assert get(sessions, gid).status == GenStatus.QUEUED
+    clock.t = first + timedelta(seconds=599)  # 第 4 次：次數到了，時間還差 1 秒
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.QUEUED
+    assert json.loads(get(sessions, gid).request_json)["engine_requeues"] == 4
+    clock.t = first + timedelta(seconds=600)
+    await worker.run_once()
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED and g.error == "繪圖服務一直連不上，已停止重試"
+    assert json.loads(g.request_json)["usage_refunded"] is True
+    with sessions() as s:
+        assert s.get(Usage, (1, date(2026, 11, 12))).generations == 0
+    assert len(engine.requests) == 5
+
+
+async def test_long_outage_needs_more_than_three_requeues(env, clock):
+    """時間到了但次數還不夠（例如兩次之間後端停了很久）：仍留在佇列。"""
+    worker, engine, sessions, _ = env
+    engine.error = EngineUnavailable("comfy down")
+    gid = _usage_gen(sessions)
+    first = clock.t
+    await worker.run_once()
+    clock.t = first + timedelta(hours=2)
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.QUEUED
+
+
+def test_interrupted_job_forgets_outage_on_restart(env):
+    """執行到一半被中斷（不是連不上）：放回佇列時清掉連不上的紀錄。"""
+    worker, engine, sessions, _ = env
+    rj = json.loads(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="n", seed=7,
+                                   width=64, height=64))
+    rj.update(engine_requeues=5, engine_unavailable_since="2026-11-12T03:00:00+00:00")
+    gid = add_gen(sessions, request_json=json.dumps(rj), status=GenStatus.RUNNING)
+    assert worker.requeue_interrupted() == 1
+    g = get(sessions, gid)
+    d = json.loads(g.request_json)
+    assert g.status == GenStatus.QUEUED
+    assert "engine_requeues" not in d and "engine_unavailable_since" not in d
+    assert d["prompt"] == "p"
+
+
+def test_outage_keys_are_protected():
+    for key in ("engine_requeues", "engine_unavailable_since"):
+        with pytest.raises(ValueError):
+            encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                           extra={key: 1})
+
+
+async def test_http_error_fails_job_once(env):
+    worker, engine, sessions, _ = env
+    engine.error = EngineError("GET /view 回傳 HTTP 404")
+    gid = add_gen(sessions)
+    await worker.run_once()
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED and "404" in g.error
+    assert await worker.run_once() is False
+    assert len(engine.requests) == 1
 
 
 async def test_cancelled_during_run_is_not_overwritten(env):
@@ -503,6 +623,29 @@ async def test_worker_stores_largest_component_mask_for_pose(env):
     assert int((out > 0).sum()) == 30 * 30
 
 
+async def test_degenerate_pose_mask_fails_cleanly(env):
+    """去背結果太細長：只回報中文原因（不是「非預期錯誤」），也不留下沒有列指到的角色動作圖。"""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    worker, engine, sessions, storage = env
+    a = np.zeros((64, 64), np.uint8)
+    a[10:14, 2:62] = 255  # 4×60：短邊 < 16 px
+    buf = io.BytesIO()
+    Image.fromarray(a, "L").save(buf, "PNG")
+    engine.mask_override = buf.getvalue()
+    rj = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="n", seed=7, width=64, height=64)
+    gid = add_gen(sessions, request_json=rj)
+    assert await worker.run_once() is True
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED
+    assert g.error == "角色動作的去背結果太細長，請重新產生角色動作"
+    assert g.image_path is None and g.mask_path is None
+    assert list(storage.list("books/")) == []
+
+
 def _page(sessions, **kw):
     from app.models import Page
 
@@ -555,3 +698,185 @@ async def test_autoselect_never_replaces(env):
     add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid)
     assert await worker.run_once() is True
     assert _page_row(sessions, pid).background_generation_id == first
+
+
+async def test_finish_write_retried_then_succeeds(env, monkeypatch):
+    worker, engine, sessions, _ = env
+    gid = add_gen(sessions)
+    sleeps = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(d):
+        sleeps.append(d)
+        await real_sleep(0)
+
+    monkeypatch.setattr("app.services.worker.asyncio.sleep", fake_sleep)
+    fails = {"n": 2}
+
+    # 只讓「收尾」的 commit 失敗：_claim 之後才開始計
+    orig_finish = worker._finish
+
+    def flaky_finish(*a, **kw):
+        if fails["n"] > 0:
+            fails["n"] -= 1
+            raise RuntimeError("database is locked")
+        return orig_finish(*a, **kw)
+
+    monkeypatch.setattr(worker, "_finish", flaky_finish)
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.SUCCEEDED
+    assert sleeps == [0.2, 0.5]
+
+
+async def test_finish_write_all_attempts_fail_then_retried_next_loop(env, monkeypatch):
+    worker, engine, sessions, _ = env
+    gid = add_gen(sessions)
+
+    async def no_sleep(d):
+        pass
+
+    monkeypatch.setattr("app.services.worker.asyncio.sleep", no_sleep)
+    orig_finish = worker._finish
+    broken = {"on": True}
+
+    def flaky_finish(*a, **kw):
+        if broken["on"]:
+            raise RuntimeError("database is locked")
+        return orig_finish(*a, **kw)
+
+    monkeypatch.setattr(worker, "_finish", flaky_finish)
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.RUNNING
+    assert gid in worker._unfinished
+    broken["on"] = False
+    await worker._retry_unfinished()
+    assert get(sessions, gid).status == GenStatus.SUCCEEDED
+    assert not worker._unfinished
+
+
+async def test_stop_interrupts_running_engine(env):
+    worker, engine, sessions, _ = env
+    engine.delay_s = 5
+    add_gen(sessions)
+    await worker.start()
+    for _ in range(100):
+        if worker.state == WorkerState.RUNNING:
+            break
+        await asyncio.sleep(0.01)
+    await worker.stop()
+    assert engine.interrupts == 1
+
+
+async def test_stop_idle_does_not_interrupt(env):
+    worker, engine, sessions, _ = env
+    await worker.start()
+    await asyncio.sleep(0.05)
+    await worker.stop()
+    assert engine.interrupts == 0
+
+
+class InterruptibleEngine(FakeEngine):
+    """interrupt() 會讓執行中的 generate() 丟 EngineError（像 ComfyUI 回 execution_interrupted）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.stop_event = asyncio.Event()
+
+    async def generate(self, req, on_progress=None):
+        self.requests.append(req)
+        await self.stop_event.wait()
+        raise EngineError("執行被中斷")
+
+    async def interrupt(self):
+        await super().interrupt()
+        self.stop_event.set()
+        await asyncio.sleep(0.05)  # 真的 interrupt 有網路往返：worker 任務在這段時間會先看到錯誤
+
+
+async def test_stop_interrupt_does_not_fail_running_job(env):
+    worker, _, sessions, storage = env
+    engine = InterruptibleEngine()
+    worker.engine = engine
+    gid = add_gen(sessions)
+    await worker.start()
+    for _ in range(200):
+        if worker._in_engine:
+            break
+        await asyncio.sleep(0.01)
+    await worker.stop()
+    assert engine.interrupts == 1
+    g = get(sessions, gid)
+    assert g.status == GenStatus.RUNNING and g.error is None
+    assert worker.requeue_interrupted() == 1
+    assert get(sessions, gid).status == GenStatus.QUEUED
+
+
+# ---- 撤銷：RUNNING 的讓它跑完，但不能再有這個 owner 的新工作開始（B9）----
+
+
+def _revoke_owner(sessions, owner_id=1):
+    from app.models import utcnow
+
+    with sessions() as s:
+        o = s.get(Owner, owner_id)
+        o.revoked_at = utcnow()
+        s.add(o)
+        s.commit()
+
+
+async def test_revoked_owner_requeued_job_is_cancelled_not_run(env):
+    from app.services.usage import USAGE_DAY, USAGE_OWNER, taipei_day
+    from app.models import utcnow
+
+    worker, engine, sessions, _ = env
+    day = taipei_day(utcnow())
+    with sessions() as s:
+        s.add(Usage(owner_id=1, day=day, generations=1))
+        s.commit()
+    base = json.loads(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="n", seed=7, width=64, height=64))
+    gid = add_gen(sessions, request_json=json.dumps({**base, USAGE_DAY: day.isoformat(), USAGE_OWNER: 1}))
+
+    async def down_after_revoke(req, on_progress=None):  # 執行中被撤銷，之後引擎斷線 -> 放回佇列
+        engine.requests.append(req)
+        _revoke_owner(sessions)
+        raise EngineUnavailable("comfy down")
+
+    engine.generate = down_after_revoke
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.QUEUED  # 放回佇列
+    assert len(engine.requests) == 1
+    assert await worker.run_once() is False  # 下一輪：先取消撤銷者的排隊工作，不再跑引擎
+    g = get(sessions, gid)
+    assert g.status == GenStatus.CANCELLED and g.error == "邀請已撤銷"
+    assert len(engine.requests) == 1
+    with sessions() as s:
+        assert s.get(Usage, (1, day)).generations == 0  # 額度退回
+
+
+async def test_revoked_owner_success_followup_task_not_run(env, monkeypatch):
+    from sqlmodel import select
+
+    from app.models import PageTask, PageTaskStatus
+    from app.services import pipeline
+
+    worker, engine, sessions, _ = env
+    pid = _page(sessions)
+    real = engine.generate
+
+    async def revoke_then_succeed(req, on_progress=None):
+        _revoke_owner(sessions)
+        return await real(req, on_progress)
+
+    engine.generate = revoke_then_succeed
+    add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid)
+    assert await worker.run_once() is True  # 執行中的讓它跑完，並照常排了頁面流程
+    with sessions() as s:
+        task = s.exec(select(PageTask).where(PageTask.page_id == pid)).one()
+        assert task.status == PageTaskStatus.QUEUED.value
+    ran = []
+    monkeypatch.setattr(pipeline, "run_pipeline", lambda *a, **k: ran.append(a), raising=False)
+    assert await worker.run_page_tasks() == 0
+    with sessions() as s:
+        task = s.exec(select(PageTask).where(PageTask.page_id == pid)).one()
+        assert task.status == PageTaskStatus.FAILED.value and task.error == "邀請已撤銷"
+    assert ran == []

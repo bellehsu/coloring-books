@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_PLACEMENT } from "@/api/client";
+import { DEFAULT_PLACEMENT, type Page } from "@/api/client";
+import { qk } from "@/api/hooks";
 import { hasPendingWrites } from "./pendingWrites";
 import { forgetDeletedPage, forgetPageId } from "./forgetPage";
 import { placementSaverFor } from "./placementSaver";
@@ -21,7 +22,15 @@ beforeEach(() => {
             url,
             method: init.method ?? "GET",
             body: init.body ? JSON.parse(init.body as string) : undefined,
-            release: (status = 200) => r(res(status, status === 200 ? { id: 1, book_id: 7 } : { detail: "壞了" })),
+            release: (status = 200) =>
+              r(
+                res(
+                  status,
+                  status === 200
+                    ? { id: Number(url.split("/")[3]), book_id: 7, placement: init.body ? JSON.parse(init.body as string) : null }
+                    : { detail: "壞了" },
+                ),
+              ),
           }),
         ),
     ),
@@ -42,7 +51,7 @@ describe("placementSaverFor", () => {
     const spy = vi.spyOn(qc, "invalidateQueries");
     const s = placementSaverFor(qc);
     for (let i = 1; i <= 5; i++) s.savePlacement(1, at(i / 10));
-    expect(s.busy()).toBe(true);
+    expect(s.hasPending()).toBe(true);
     let idle = false;
     void s.whenIdle(1).then(() => (idle = true));
     await tick();
@@ -58,7 +67,7 @@ describe("placementSaverFor", () => {
     await tick();
     expect(idle).toBe(true);
     expect(gates).toHaveLength(2);
-    expect(s.busy()).toBe(false);
+    expect(s.hasPending()).toBe(false);
     expect(spy).toHaveBeenCalledWith({ queryKey: ["pages", 7] });
   });
 
@@ -123,5 +132,39 @@ describe("placementSaverFor", () => {
     gates[1].release();
     await tick();
     expect(s.failed(1)).toBe(false);
+  });
+
+  it("latest 只在這頁送出中或失敗時有值；閒置（存好了）回 undefined，畫面改用伺服器的 page.placement（C 改過也看得到）", async () => {
+    const qc = new QueryClient();
+    const s = placementSaverFor(qc);
+    expect(s.latest(1)).toBeUndefined();
+    s.savePlacement(1, at(0.2));
+    expect(s.hasPending(1)).toBe(true);
+    expect(s.hasPending(2)).toBe(false);
+    expect(s.latest(1)).toEqual(at(0.2));
+    gates[0].release();
+    await tick();
+    expect(s.hasPending(1)).toBe(false);
+    expect(s.latest(1)).toBeUndefined();
+    // 失敗：留著畫面上的位置（重試用）
+    s.savePlacement(1, at(0.3));
+    gates[1].release(500);
+    await tick();
+    expect(s.failed(1)).toBe(true);
+    expect(s.latest(1)).toEqual(at(0.3));
+  });
+
+  it("存好時把回傳的頁寫進頁面快取（latest 清掉時畫面不會先跳回舊位置）", async () => {
+    const qc = new QueryClient();
+    const old = { id: 1, book_id: 7, placement: at(0.1) } as unknown as Page;
+    qc.setQueryData<Page[]>(qk.pages(7), [old, { id: 2, book_id: 7 } as unknown as Page]);
+    const s = placementSaverFor(qc);
+    s.savePlacement(1, at(0.6));
+    const seen: unknown[] = [];
+    s.subscribe(() => seen.push(qc.getQueryData<Page[]>(qk.pages(7))?.[0].placement));
+    gates[0].release();
+    await tick();
+    expect(s.latest(1)).toBeUndefined();
+    expect(seen.at(-1)).toEqual(at(0.6));
   });
 });

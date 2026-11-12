@@ -16,16 +16,11 @@ const gen = (id: number, o: O = {}): O => ({
   kind: "background",
   status: "succeeded",
   discarded: false,
-  prompt: "",
   user_text: "",
-  seed: 100 + id,
   width: 864,
   height: 1216,
   image_url: `/img/${id}.png`,
-  mask_url: null,
   cutout_url: null,
-  pose_mode: null,
-  background_style: null,
   source: "generated",
   error: null,
   elapsed_s: 3,
@@ -70,7 +65,7 @@ beforeEach(() => {
         gens = gens.map((g) => (g.id === Number(m![1]) ? { ...g, status: "cancelled" } : g));
         return j(gens.find((g) => g.id === Number(m![1])));
       }
-      if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0, running_id: null });
+      if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0 });
       return j({ detail: "not found" }, 404);
     }),
   );
@@ -212,10 +207,9 @@ describe("Thumbs", () => {
   it("上傳的背景顯示「上傳」標記，名稱也說明；不再顯示精準／快速／簡潔／細緻", async () => {
     gens = [
       gen(3, { source: "upload" }),
-      gen(4, { background_style: "simple" }),
-      gen(5, { background_style: "detailed" }),
-      gen(6, { kind: "pose", pose_mode: "precise" }),
-      gen(7, { kind: "pose", pose_mode: "fast" }),
+      gen(4),
+      gen(6, { kind: "pose" }),
+      gen(7, { kind: "pose" }),
     ];
     setup();
     const up = await screen.findByRole("radio", { name: "背景第 1 張（上傳的圖片）" });

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type Book } from "@/api/client";
@@ -14,7 +15,8 @@ import {
   formatCm,
 } from "@/lib/layout";
 import { errMsg } from "./errMsg";
-import { whenBookWritesIdle } from "./pendingWrites";
+import { fixHref } from "@/features/fix/fixState";
+import { BookWritesError, retryFailedWrites, whenBookWritesIdle, type WriteFailure } from "./pendingWrites";
 import styles from "./ExportDrawer.module.css";
 
 const Download = Icons.download;
@@ -26,12 +28,15 @@ export interface ExportDrawerProps {
   open: boolean;
   onClose: () => void;
   book: Book;
+  /** 匯出前要先做完的事（編輯器：還在等的自動合成）。 */
+  beforeExport?: () => Promise<void>;
 }
 
-export function ExportDrawer({ open, onClose, book }: ExportDrawerProps) {
+/** 進階編輯的「匯出 PDF」：和 B 的「印出這本書」一樣的範圍與說法（預設只印可以印的頁，請看一下的頁不印）。 */
+export function ExportDrawer({ open, onClose, book, beforeExport }: ExportDrawerProps) {
   return (
     <Drawer open={open} onClose={onClose} title="匯出 PDF">
-      <ExportOptions book={book} active={open} />
+      <ExportOptions book={book} active={open} beforeExport={beforeExport} variant="book" initialInclude="ready" emptyPassedHint="還沒有可以印的頁面。" />
     </Drawer>
   );
 }
@@ -46,6 +51,8 @@ export interface ExportOptionsProps {
   emptyPassedHint?: string;
   /** book：B 的「印出這本書」（可以印／請看一下／還沒做完的說法，預設範圍是 ready）。 */
   variant?: "editor" | "book";
+  /** 匯出前要先做完的事（編輯器：還在等的自動合成）。 */
+  beforeExport?: () => Promise<void>;
 }
 
 /** 匯出 PDF 的選項與下載（編輯器的「匯出 PDF」抽屜與 B 的「印出這本書」共用）。 */
@@ -55,6 +62,7 @@ export function ExportOptions({
   initialInclude = "passed",
   emptyPassedHint = "沒有完成的頁面可以匯出，先在 ② 補線 按「完成這一頁 ✓」。",
   variant = "editor",
+  beforeExport,
 }: ExportOptionsProps) {
   const isBook = variant === "book";
   const qc = useQueryClient();
@@ -63,6 +71,7 @@ export function ExportOptions({
   const share = useShareBook(book.id);
   const [include, setInclude] = useState<Include>(initialInclude);
   const [busy, setBusy] = useState(false);
+  const [writeFailures, setWriteFailures] = useState<WriteFailure[]>([]);
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(
     null,
   );
@@ -75,6 +84,7 @@ export function ExportOptions({
     seen.current = updatedAt;
     void qc.invalidateQueries({ queryKey: qk.pages(book.id) });
     void qc.invalidateQueries({ queryKey: qk.book(book.id) });
+    void qc.invalidateQueries({ queryKey: qk.overview(book.id) });
   }, [open, updatedAt, qc, book.id]);
 
   const layout = computeLayout(book.paper_size, book.print_mode);
@@ -107,18 +117,28 @@ export function ExportOptions({
     }
   }
 
+  /** 重送失敗的寫入（修線 push 最新筆畫、位置重送）；還是失敗就留著提示。 */
+  async function resend() {
+    try {
+      await retryFailedWrites(qc, book.id, writeFailures);
+      setWriteFailures([]);
+    } catch (e) {
+      if (e instanceof BookWritesError) setWriteFailures(e.failures);
+    }
+  }
+
   async function download() {
     if (busy || count === 0) return;
     setBusy(true);
     setMsg(null);
-    // 先讓伺服器等於畫面：修線都寫完；有失敗就不匯出舊內容
+    setWriteFailures([]);
+    // 先讓伺服器等於畫面：排著的自動合成、位置與修線都寫完；有失敗就不匯出舊內容
     try {
+      await beforeExport?.();
       await whenBookWritesIdle(qc, book.id);
     } catch (e) {
-      setMsg({
-        tone: "error",
-        text: `有修改尚未儲存（${errMsg(e, "儲存失敗")}），請先按「重試」存好再匯出`,
-      });
+      if (e instanceof BookWritesError) setWriteFailures(e.failures);
+      else setMsg({ tone: "error", text: `有修改尚未儲存（${errMsg(e, "儲存失敗")}），請稍後再試` });
       setBusy(false);
       return;
     }
@@ -139,6 +159,7 @@ export function ExportOptions({
       // 匯出時後端可能重算並退回草稿
       void qc.invalidateQueries({ queryKey: qk.pages(book.id) });
       void qc.invalidateQueries({ queryKey: qk.exportSummary(book.id) });
+      void qc.invalidateQueries({ queryKey: qk.overview(book.id) });
     } catch (e) {
       setMsg({
         tone: "error",
@@ -291,7 +312,22 @@ export function ExportOptions({
         >
           {busy ? "產生中…" : `下載 PDF（${count} 頁）`}
         </Button>
-        {msg ? (
+        {writeFailures.length > 0 ? (
+          <div role="alert" className={styles.errorText}>
+            {writeFailures.map((f) => {
+              const pos = positions.get(f.pageId);
+              return (
+                <p key={`${f.kind}-${f.pageId}`}>
+                  {pos != null ? `第 ${pos + 1} 頁` : "一頁"}的{f.kind === "edits" ? "修線" : "位置"}還沒存好{" "}
+                  <Link href={fixHref(book.id, f.pageId)}>去處理</Link>
+                </p>
+              );
+            })}
+            <Button variant="secondary" size="md" onClick={() => void resend()}>
+              重送
+            </Button>
+          </div>
+        ) : msg ? (
           <span
             role={msg.tone === "error" ? "alert" : "status"}
             className={msg.tone === "error" ? styles.errorText : styles.msg}

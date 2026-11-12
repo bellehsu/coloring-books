@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.api.deps import (
-    current_owner, get_session, get_storage, get_worker, owned_book, owned_generation, owned_page,
+    current_owner, get_session, get_storage, get_worker, owned_book, owned_page,
 )
 from app.api.files import signed_redirect
 from app.api.schemas import (
@@ -23,26 +23,19 @@ from app.api.schemas import (
     QAOut,
     StrokeOut,
 )
-from app.models import Generation, GenStatus, Owner, Page, StrokeLayer
+from app.models import Generation, Owner, Page, StrokeLayer
 from app.services import history
 from app.services.pipeline import ATTENTION_FAILED, enqueue_page_task
 from app.services.worker import GenerationWorker
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix, read_ink
 from app.services.layout import compute_layout
-from app.services.lineart_render import (
-    LINE_WIDTH_DEFAULT,
-    LINE_WIDTH_MAX,
-    LINE_WIDTH_MIN,
-    LineDetail,
-    Stroke,
-)
+from app.services.lineart_render import Stroke
 from app.services.page_lineart import (
     LineartSourceMissing,
     LineartUnavailable,
     PageLineart,
     commit_layer,
     ensure_page_lineart,
-    ensure_preview,
     ink_before_user_layer,
     load_strokes,
     on_pipeline,
@@ -279,26 +272,3 @@ def autofix(
     _commit_strokes(session, page_id, gid, existing + added, layer=StrokeLayer.AUTO, demote=not keep)
     return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id), AutofixOut,
                    autofix_added=len(added))
-
-
-@router.get("/generations/{gen_id}/lineart-preview")
-def lineart_preview(
-    request: Request,
-    gen_id: int,
-    detail: LineDetail = LineDetail.STANDARD,
-    line_width_px: int = Query(LINE_WIDTH_DEFAULT, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX),
-    session: Session = Depends(get_session),
-    storage: Storage = Depends(get_storage),
-    owner: Owner = Depends(current_owner),
-) -> Response:
-    """角色或頁面候選的線稿預覽（不含修改圖層），依所屬繪本目前的內容尺寸。"""
-    gen = owned_generation(session, owner, gen_id)
-    if gen.status != GenStatus.SUCCEEDED or not gen.image_path:
-        raise HTTPException(404, "這筆生成紀錄還沒有圖片")
-    book = owned_book(session, owner, gen.book_id)
-    content_px = compute_layout(book.paper_size, book.print_mode).content_px
-    try:
-        key = ensure_preview(storage, gen, content_px, detail, line_width_px)
-    except LineartUnavailable as e:
-        raise HTTPException(404, IMAGE_MISSING) from e
-    return signed_redirect(request, storage, key)

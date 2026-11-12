@@ -9,7 +9,6 @@ import { api } from "./client";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
 import type {
-  BatchMaterials,
   Book,
   BookOverview,
   Edits,
@@ -116,12 +115,26 @@ export function useGenerations(bookId: number, f: GenFilter = {}, enabled = true
   });
 }
 
+/** 頁面等著重新合成時重抓頁面的間隔。 */
+const RECOMPOSE_POLL_MS = 2000;
+
+/** 頁面流程還在重新合成這頁（C 改過、還沒做完）；失敗了（attention）就不是，要到 C 按「再試一次」。 */
+export const recomposeRunning = (p: Page | undefined) => !!p?.recompose_pending && !p.attention;
+
 /**
  * 任務結束時 worker 可能把它自動選用到頁面的空欄位（背景、角色動作），但 pages 不會自己重抓：
  * gens（useGenerations 的資料）裡原本排隊／執行中的任務結束了 → invalidate pages 與 book。
  * 故事頁與編輯器都用，畫面不用重新整理就會看到自動選用的素材。
+ * pollPageId（編輯器的目前頁）：
+ * - 分頁切回來（visibilitychange 變成可見）或視窗取得 focus 就重抓頁面：別的分頁（C）可能改過這頁；
+ * - 這頁還在重新合成（recomposeRunning）時每 2 秒重抓頁面，直到做完或失敗；結束那一刻重抓這頁的
+ *   生成紀錄、QA 與修線（選定圖換成新的合成圖）。
  */
-export function usePagesFollowJobs(bookId: number, gens: readonly Generation[] | undefined) {
+export function usePagesFollowJobs(
+  bookId: number,
+  gens: readonly Generation[] | undefined,
+  pollPageId: number | null = null,
+) {
   const qc = useQueryClient();
   const active = useRef<Set<number> | null>(null);
   useEffect(() => {
@@ -134,6 +147,41 @@ export function usePagesFollowJobs(bookId: number, gens: readonly Generation[] |
       void qc.invalidateQueries({ queryKey: qk.book(bookId) });
     }
   }, [gens, qc, bookId]);
+
+  const recomposing = (pages: Page[] | undefined) => recomposeRunning(pages?.find((p) => p.id === pollPageId));
+  const pagesQ = useQuery({
+    queryKey: qk.pages(bookId),
+    queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`),
+    enabled: pollPageId != null,
+    // 只有這個觀察者（全域預設關掉）
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => (recomposing(query.state.data) ? RECOMPOSE_POLL_MS : false),
+  });
+  const watching = pollPageId != null;
+  const { refetch } = pagesQ;
+  useEffect(() => {
+    if (!watching) return;
+    const onVisible = () => {
+      if (document.visibilityState !== "hidden") void refetch({ cancelRefetch: false });
+    };
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [watching, refetch]);
+  const pending = pollPageId != null && recomposing(pagesQ.data);
+  const was = useRef(pending);
+  useEffect(() => {
+    if (was.current && !pending && pollPageId != null) {
+      void qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) });
+      void qc.invalidateQueries({ queryKey: qk.qa(pollPageId) });
+      void qc.invalidateQueries({ queryKey: qk.edits(pollPageId) });
+      void qc.invalidateQueries({ queryKey: qk.book(bookId) });
+    }
+    was.current = pending;
+  }, [pending, pollPageId, qc, bookId]);
 }
 
 /** 佇列狀態每 5 秒輪詢。 */
@@ -166,16 +214,17 @@ export const overviewActive = (o: BookOverview) =>
   o.progress.queued + o.progress.running > 0 || o.pages.some((p) => p.state === "working");
 
 /**
- * 整本書總覽（B）：還在做時每 3 秒輪詢，做完就停。分頁在背景時也照樣輪詢（只在還在做時）：
- * 「可以先去忙，好了會通知你」的分頁標題「✓ 做好了」就是給在別的分頁的人看的。
+ * 整本書總覽：還在做時每 3 秒輪詢，做完就停。background（只有 B 傳 true）：分頁在背景時也照樣輪詢
+ * （只在還在做時）——「可以先去忙，好了會通知你」的分頁標題「✓ 做好了」就是給在別的分頁的人看的；
+ * C 沒有分頁標題通知，在背景不輪詢。
  */
 export const OVERVIEW_POLL_MS = 3000;
-export const useBookOverview = (bookId: number) =>
+export const useBookOverview = (bookId: number, { background = false }: { background?: boolean } = {}) =>
   useQuery({
     queryKey: qk.overview(bookId),
     queryFn: () => api.get<BookOverview>(`/books/${bookId}/overview`),
     refetchInterval: (query) => (query.state.data && overviewActive(query.state.data) ? OVERVIEW_POLL_MS : false),
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: background,
   });
 
 /**
@@ -214,15 +263,6 @@ function invalidateJobs(qc: QueryClient, bookId: number) {
   ]);
 }
 
-/** invalidate: books */
-export function useCreateBook() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (b: S["BookCreate"]) => api.post<Book>("/books", b),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.books() }),
-  });
-}
-
 /** invalidate: book, books（紙張或模式改變也影響頁面版面與 QA） */
 export function useUpdateBook(bookId: number) {
   const qc = useQueryClient();
@@ -251,22 +291,6 @@ export function useShareBook(bookId: number) {
         qc.invalidateQueries({ queryKey: qk.books() }),
         qc.invalidateQueries({ queryKey: qk.sharedBooks() }),
       ]),
-  });
-}
-
-/**
- * 產生一張角色候選（後端一次只排一張；舊版的 count 後端會忽略，所以不送）→ generations, queue。
- * 變化語不重複上一張由後端處理。
- */
-export function useCharacterCandidates(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (
-      b: Omit<S["CharacterCandidatesCreate"], "count" | "confirm_change"> & { confirm_change?: boolean },
-    ) =>
-      api.post<Generation[]>(`/books/${bookId}/character/candidates`, b),
-    onSuccess: () =>
-      Promise.all([invalidateJobs(qc, bookId), qc.invalidateQueries({ queryKey: qk.producePlan(bookId) })]),
   });
 }
 
@@ -312,21 +336,6 @@ export function useSetupCharacter() {
     onSuccess: (book) => afterCharacterSet(qc, book),
   });
   return { generate, choose, upload };
-}
-
-/** invalidate: book, books, generations */
-export function useSetCharacter(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (generationId: number) =>
-      api.post<Book>(`/books/${bookId}/character`, { generation_id: generationId }),
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: qk.book(bookId) }),
-        qc.invalidateQueries({ queryKey: qk.books() }),
-        qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
-      ]),
-  });
 }
 
 /** invalidate: pages, book, books */
@@ -470,20 +479,6 @@ export function useUploadBackground(bookId: number) {
     mutationFn: ({ pageId, file }: { pageId: number; file: File }) =>
       api.upload<Page>(`/pages/${pageId}/backgrounds/upload`, file),
     onSuccess: (_d, v) => Promise.all([invalidatePage(qc, bookId, v.pageId), invalidateJobs(qc, bookId)]),
-  });
-}
-
-/**
- * 產生全部素材：替整本書每一頁補排缺的背景與角色動作（後端略過已有／沒描述的）。
- * upload_page_ids：改用上傳圖片的頁，不排背景 → generations, pages, queue
- */
-export function useBatchMaterials(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body?: S["BatchMaterialsIn"]) =>
-      api.post<BatchMaterials>(`/books/${bookId}/materials/batch`, body),
-    onSuccess: () =>
-      Promise.all([qc.invalidateQueries({ queryKey: qk.pages(bookId) }), invalidateJobs(qc, bookId)]),
   });
 }
 

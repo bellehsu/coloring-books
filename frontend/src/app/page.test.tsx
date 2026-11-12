@@ -14,7 +14,7 @@ const book = (id: number, charId: number | null) => ({
   cover_url: null,
   layout: { content_px: [2244, 3272] },
   // 2 頁 PASSED，其中 1 頁「請看一下」（失敗後還是 PASSED）；needs_fix（線沒接起來）不影響書卡
-  stats: { pages: 4, passed: 2, needs_fix: 2, no_selection: 0, ready: 1, attention: 1, working: 0, todo: 2 },
+  stats: { pages: 4, passed: 2, ready: 1, attention: 1, working: 0, todo: 2 },
 });
 
 function mockBooks(body: unknown, status = 200, shared: unknown = [], me: unknown = { name: "小明", is_admin: false, via_dev_owner: false }) {
@@ -97,7 +97,6 @@ describe("大家的繪本", () => {
     author: "小華",
     paper_size: "a4",
     page_count: 3,
-    cover_page_id: 77,
     cover_image_url: "/api/shared/pages/77/image.png?v=abc123",
     shared_at: "2026-11-11T01:00:00Z",
     mine: false,

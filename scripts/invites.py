@@ -7,7 +7,7 @@
   python scripts/invites.py rotate --id N [--base-url URL]    換發新連結（舊連結與已登入的瀏覽器都失效）
   python scripts/invites.py revoke --id N                     撤銷（連結失效，已登入的瀏覽器下一個請求就 401）
   python scripts/invites.py delete-data --id N [--yes] [--force-admin]
-      刪除這個 owner 的所有書、頁面、生成紀錄、修線、物件（books/{book_id}/ 與預覽）、session、用量，最後刪 owner。
+      刪除這個 owner 的所有書、頁面、生成紀錄、修線、物件（books/{book_id}/）、session、用量，最後刪 owner。
       沒有 --yes 時要輸入 owner 名稱確認。最後一個（未撤銷的）admin 要加 --force-admin 才刪。
       DB 的 storage_instance_id 與 storage 的 books/_instance.json 必須一致，否則什麼都不刪（結束碼 4；
       讀不到標記結束碼 5）；補標記見 scripts/storage_gc.py --init-instance。
@@ -28,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from sqlalchemy import func  # noqa: E402
-from sqlmodel import Session, col, delete, select, update  # noqa: E402
+from sqlmodel import Session, col, delete, select  # noqa: E402
 
 from app.config import Settings, SettingsError, load_settings  # noqa: E402
 from app.db import LegacyUpgradeRefused, init_db, make_engine, session_factory  # noqa: E402
@@ -47,7 +47,7 @@ from app.models import (  # noqa: E402
     utcnow,
 )
 from app.services import auth, instance  # noqa: E402
-from app.services.usage import clock, refund_generations, taipei_day  # noqa: E402
+from app.services.usage import clock, taipei_day  # noqa: E402
 from app.storage import make_storage  # noqa: E402
 
 DEFAULT_BASE_URL = "http://localhost:3000"
@@ -124,8 +124,9 @@ def cmd_revoke(args: argparse.Namespace, settings: Settings, sessions) -> int:
             owner.revoked_at = utcnow()
             s.add(owner)
         n = auth.delete_sessions(s, owner.id)
+        cancelled = auth.cancel_owner_queue(s, owner.id, reason="邀請已撤銷")  # RUNNING 的讓它跑完
         s.commit()
-    print(f"已撤銷 owner {owner.id}「{owner.name}」，刪除 {n} 個 session。")
+    print(f"已撤銷 owner {owner.id}「{owner.name}」，刪除 {n} 個 session，取消排隊 {cancelled} 筆。")
     return 0
 
 
@@ -213,13 +214,7 @@ def cmd_delete_data(args: argparse.Namespace, settings: Settings, sessions) -> i
         # 先取消排隊中的（條件式 UPDATE 取得寫入鎖，worker 之後無法再認領），再檢查有沒有執行中的。
         # 書單用子查詢：確認期間 owner 新建的書也一起刪
         owned = select(Book.id).where(col(Book.owner_id) == args.id)
-        cancelled = s.exec(
-            update(Generation)
-            .where(col(Generation.book_id).in_(owned), col(Generation.status) == GenStatus.QUEUED)
-            .values(status=GenStatus.CANCELLED, error="資料已刪除", finished_at=utcnow())
-            .returning(Generation.id)
-        ).scalars().all()
-        refund_generations(s, cancelled)  # 替別人的書排隊的 admin 也拿回額度
+        cancelled = auth.cancel_owner_queue(s, args.id, reason="資料已刪除")
         # 確認期間可能有變（另一個 admin 被撤銷、owner 已被刪）：在持有寫入鎖的交易裡再檢查一次
         try:
             _check_last_admin(s, get_owner(s, args.id), args.force_admin)
@@ -269,35 +264,14 @@ def cmd_delete_data(args: argparse.Namespace, settings: Settings, sessions) -> i
         except Exception as e:  # noqa: BLE001
             failed += 1
             print(f"刪除 {prefix} 失敗：{type(e).__name__}: {e}", file=sys.stderr)
-    previews = 0
-    try:
-        for key in list(storage.list("cache/previews/")):
-            gid = _preview_gen_id(key)
-            if gid is not None and gid in gen_ids:
-                try:
-                    storage.delete(key)
-                    previews += 1
-                except Exception as e:  # noqa: BLE001
-                    failed += 1
-                    print(f"刪除 {key} 失敗：{type(e).__name__}: {e}", file=sys.stderr)
-    except Exception as e:  # noqa: BLE001
-        failed += 1
-        print(f"列出預覽失敗：{type(e).__name__}: {e}", file=sys.stderr)
     print(
         f"已刪除 owner {args.id}「{name}」：{len(book_ids)} 本書、{n_pages} 頁、{len(gen_ids)} 筆生成紀錄"
-        f"（取消排隊 {len(cancelled)} 筆）、{n_sessions} 個 session、預覽 {previews} 個。"
+        f"（取消排隊 {cancelled} 筆）、{n_sessions} 個 session。"
     )
     if failed:
         print(f"有 {failed} 個物件刪除失敗；之後執行 scripts/storage_gc.py 會清掉。", file=sys.stderr)
         return 1
     return 0
-
-
-def _preview_gen_id(key: str) -> int | None:
-    """cache/previews/{gen}_{key}.png → gen；格式不符回 None。"""
-    name = key.rsplit("/", 1)[-1]
-    head, sep, _ = name.partition("_")
-    return int(head) if sep and head.isdigit() else None
 
 
 COMMANDS = {

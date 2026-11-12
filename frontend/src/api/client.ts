@@ -12,7 +12,6 @@ export type Generation = S["GenerationOut"];
 export type QA = S["QAOut"];
 export type Edits = S["EditsOut"];
 export type QueueStatus = S["QueueStatus"];
-export type BatchMaterials = S["BatchMaterialsOut"];
 export type BookOverview = S["BookOverviewOut"];
 export type OverviewPage = S["OverviewPageOut"];
 export type ProducePlan = S["ProducePlanOut"];

@@ -74,7 +74,8 @@ def test_scene_prompt_length(client, app):
     assert client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "景" * 801}).status_code == 422
     r = client.post(f"/api/pages/{p['id']}/backgrounds")  # 800 字的場景描述照樣能產生背景
     assert r.status_code == 202, r.text
-    assert len(r.json()["prompt"]) < 2000
+    with app.state.sessions() as s:
+        assert len(s.get(Generation, r.json()["id"]).prompt) < 2000
 
 
 def queue_backgrounds(client, page_id, n):

@@ -10,7 +10,6 @@ from app.services.qa import (
     evaluate,
     find_candidates,
     find_endpoints,
-    find_gaps,
     find_leaks,
 )
 from app.services.lineart_render import Stroke, apply_strokes
@@ -123,20 +122,6 @@ def test_isolated_dot_is_not_an_endpoint():
     cv2.circle(img, (300, 300), 4, 1, -1)  # 實心小點 → 骨架只剩孤立像素
     _, endpoints = find_endpoints(img.astype(bool))
     assert endpoints == []
-
-
-def test_find_gaps_merges_facing_endpoints():
-    skel = np.zeros((200, 200), bool)
-    skel[100, 20:90] = True
-    skel[100, 110:180] = True  # 兩條線頭相距 20 px
-    gaps = find_gaps(skel, [(20, 100), (89, 100), (110, 100), (179, 100)], 40)
-    assert gaps == [(99, 100)] or gaps == [(100, 100)]
-
-
-def test_find_gaps_ignores_own_line_within_path_limit():
-    skel = np.zeros((200, 200), bool)
-    skel[100, 20:180] = True
-    assert find_gaps(skel, [(20, 100), (179, 100)], 40) == []
 
 
 def test_find_candidates_returns_endpoint_pairs():

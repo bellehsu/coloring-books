@@ -234,25 +234,6 @@ def test_missing_image_raises(env):
         assert "檔案遺失" in e.value.message
 
 
-def test_render_preview_cached(env, monkeypatch):
-    make, storage, pid, gid = env
-    calls = []
-    orig = page_lineart.render_base
-    monkeypatch.setattr(page_lineart, "render_base",
-                        lambda *a, **k: (calls.append(1), orig(*a, **k))[1])
-    with make() as s:
-        gen = s.get(Generation, gid)
-        data = page_lineart.render_preview(storage, gen, (300, 400), "standard", 11)
-        assert data.startswith(b"\x89PNG")
-        keys = list(storage.list(f"cache/previews/{gid}_"))
-        assert len(keys) == 1 and storage.get(keys[0]) == data
-        assert page_lineart.render_preview(storage, gen, (300, 400), "standard", 11) == data
-        assert len(calls) == 1  # 第二次直接讀快取的物件
-        storage.delete(keys[0])  # 物件不見了（GC 或手動刪除）→ 重算
-        assert page_lineart.render_preview(storage, gen, (300, 400), "standard", 11) == data
-        assert len(calls) == 2
-
-
 def test_qa_version_in_key_forces_rerender(env, monkeypatch):
     from app.services import qa as qa_mod
     make, storage, pid, gid = env

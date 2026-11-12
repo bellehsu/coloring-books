@@ -49,3 +49,43 @@ def test_apply_strokes_draw_then_erase():
 def test_ink_to_png_is_1bit_300dpi():
     im = Image.open(io.BytesIO(ink_to_png(np.eye(64, dtype=bool))))
     assert im.mode == "1" and round(im.info["dpi"][0]) == 300
+
+
+def legacy_apply_strokes(ink, strokes):
+    """C14 之前的實作（整頁遮罩），逐字複製，用來驗證 bbox 版輸出完全一致。"""
+    out = ink.astype(bool).copy()
+    h, w = out.shape
+    for s in strokes:
+        if not s.points:
+            continue
+        mask = np.zeros((h, w), np.uint8)
+        pts = np.array([[round(x * (w - 1)), round(y * (h - 1))] for x, y in s.points], np.int32)
+        t = max(1, round(s.width_px))
+        if len(pts) > 1:
+            cv2.polylines(mask, [pts.reshape(-1, 1, 2)], False, 1, t, cv2.LINE_8)
+        r = max(0, t // 2)
+        for x, y in pts:
+            cv2.circle(mask, (int(x), int(y)), r, 1, -1)
+        out[mask.astype(bool)] = s.op == "draw"
+    return out
+
+
+def random_strokes(rng, n=200):
+    strokes = []
+    for _ in range(n):
+        k = int(rng.integers(1, 8))
+        # 座標範圍略超出 0–1，包含貼邊與跨邊的筆畫
+        pts = tuple((float(x), float(y)) for x, y in rng.uniform(-0.03, 1.03, size=(k, 2)))
+        if rng.random() < 0.2:  # 貼著邊
+            pts = tuple((min(1.0, max(0.0, x)) if i % 2 else 0.0, y) for i, (x, y) in enumerate(pts))
+        strokes.append(Stroke("draw" if rng.random() < 0.5 else "erase",
+                              float(rng.uniform(4, 40)), pts))
+    return strokes
+
+
+def test_apply_strokes_matches_legacy():
+    rng = np.random.default_rng(1234)
+    w, h = 2244, 3272
+    ink = rng.random((h, w)) < 0.3
+    strokes = random_strokes(rng)
+    assert np.array_equal(apply_strokes(ink, strokes), legacy_apply_strokes(ink, strokes))

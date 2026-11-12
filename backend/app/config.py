@@ -33,7 +33,7 @@ class SettingsError(RuntimeError):
 
 class ComfySettings(BaseModel):
     url: str = "http://127.0.0.1:8188"
-    models_root: Path
+    models_root: Path | None = None  # 只有 scripts/sync_comfy_model_paths.py 用；後端不讀
     install_dir: Path | None = None
     request_timeout_s: float = Field(30.0, gt=0)
     run_timeout_s: float = Field(900.0, gt=0)
@@ -45,10 +45,6 @@ class ComfySettings(BaseModel):
         if not v.startswith(("http://", "https://")):
             raise ValueError("comfy.url 必須以 http:// 或 https:// 開頭")
         return v
-
-    @property
-    def ws_url(self) -> str:
-        return "ws" + self.url[len("http"):] + "/ws"
 
 
 class QueueSettings(BaseModel):
@@ -78,7 +74,8 @@ class StorageSettings(BaseModel):
     backend: Literal["local", "r2"] = "local"
     r2: R2Settings = R2Settings()
     # 簽章網址有效秒數；網址拿到就立刻用（302 轉址），所以很短
-    signed_url_ttl_s: int = Field(120, gt=0)
+    # 下限 = api/files.py 的 REDIRECT_MAX_AGE（302 快取 60 秒）+ 30 秒餘裕，否則快取的轉址會指到過期網址（B11）
+    signed_url_ttl_s: int = Field(120, ge=90)
     # R2 物件的本機快取（只是加速，隨時可刪）；None＝<paths.storage_dir>/r2_cache。實際放在 <cache_dir>/<bucket>
     cache_dir: Path | None = None
     cache_max_bytes: int = Field(2 * 1024**3, gt=0)
@@ -204,13 +201,6 @@ def _env_only_problems(data: dict[str, Any]) -> list[str]:
 def validate_paths(s: Settings) -> list[str]:
     """檢查路徑是否存在。回傳問題清單（空清單代表通過）。s 必須已 resolved()。"""
     problems: list[str] = []
-    if not s.comfy.models_root.is_dir():
-        problems.append(f"comfy.models_root 不存在或不是資料夾：{s.comfy.models_root}")
-    if s.comfy.install_dir is not None:
-        if not s.comfy.install_dir.is_dir():
-            problems.append(f"comfy.install_dir 不存在：{s.comfy.install_dir}")
-        elif not (s.comfy.install_dir / "main.py").is_file():
-            problems.append(f"comfy.install_dir 看起來不是 ComfyUI 安裝目錄（缺 main.py）：{s.comfy.install_dir}")
     if not s.paths.workflows_dir.is_dir():
         problems.append(f"paths.workflows_dir 不存在：{s.paths.workflows_dir}")
     if not s.paths.storage_dir.is_dir():

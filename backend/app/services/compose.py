@@ -17,6 +17,17 @@ from app.models import Generation, GenKind
 # 合成演算法改變時 +1
 COMPOSE_VERSION = "1"
 
+# 遮罩外框的下限：短邊太小或長寬比太極端的遮罩不是正常的角色（BiRefNet 失敗），拒絕以免配置巨大影像
+MIN_MASK_SIDE_PX = 16
+MAX_MASK_ASPECT = 8
+MAX_WIDTH_FACTOR = 3  # 合成後角色寬度上限：背景寬的幾倍
+DEGENERATE_MASK = "角色動作的去背結果太細長，請重新產生角色動作"
+
+
+def _check_mask_box(w: int, h: int) -> None:
+    if min(w, h) < MIN_MASK_SIDE_PX or max(w, h) > MAX_MASK_ASPECT * min(w, h):
+        raise ValueError(DEGENERATE_MASK)
+
 
 @dataclass(frozen=True)
 class Placement:
@@ -132,11 +143,12 @@ def compose(
     bbox = mask_bbox(m)
     if bbox is None:
         raise ValueError("遮罩是空的")
+    _check_mask_box(bbox[2] - bbox[0], bbox[3] - bbox[1])
     pose_rgb = pose_rgb.crop(bbox)
     m = m.crop(bbox)
 
     target_h = max(1, round(placement.height * bg.height))
-    target_w = max(1, round(pose_rgb.width * target_h / pose_rgb.height))
+    target_w = min(max(1, round(pose_rgb.width * target_h / pose_rgb.height)), MAX_WIDTH_FACTOR * bg.width)
     pose_rgb = pose_rgb.resize((target_w, target_h), Image.LANCZOS)
     m = m.resize((target_w, target_h), Image.BILINEAR)
     if placement.flip:
@@ -175,6 +187,7 @@ def largest_component(mask_png: bytes) -> bytes:
     out = np.zeros_like(arr)
     if n > 1:
         best = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        _check_mask_box(int(stats[best, cv2.CC_STAT_WIDTH]), int(stats[best, cv2.CC_STAT_HEIGHT]))
         main = (labels == best).astype(np.uint8)
         filled = _fill_holes(main)
         keep = cv2.dilate(filled, np.ones((5, 5), np.uint8))

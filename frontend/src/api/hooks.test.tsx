@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import {
-  useBatchMaterials,
-  useCharacterCandidates,
+  useBookOverview,
+  OVERVIEW_POLL_MS,
   useCompose,
   useGenerateBackground,
   useGeneratePose,
@@ -69,6 +69,37 @@ describe("polling", () => {
   });
 });
 
+describe("useBookOverview background polling", () => {
+  const active = {
+    book_id: 1,
+    pages: [],
+    progress: { queued: 1, running: 0, done: 0 },
+    estimate_s: 10,
+    deferred_count: 0,
+    run_started_at: null,
+  };
+  afterEach(() => focusManager.setFocused(undefined));
+
+  async function pollsInBackground(opts?: { background?: boolean }) {
+    const f = vi.fn().mockImplementation(async () => jsonRes(active));
+    vi.stubGlobal("fetch", f);
+    const { wrapper } = setup();
+    renderHook(() => useBookOverview(1, opts), { wrapper });
+    await waitFor(() => expect(f).toHaveBeenCalledTimes(1));
+    act(() => focusManager.setFocused(false));
+    await act(async () => { await vi.advanceTimersByTimeAsync(OVERVIEW_POLL_MS * 2 + 100); });
+    return f.mock.calls.length;
+  }
+
+  it("C overview does not poll in background", async () => {
+    expect(await pollsInBackground()).toBe(1);
+  });
+
+  it("B overview (background: true) keeps polling in a background tab", async () => {
+    expect(await pollsInBackground({ background: true })).toBe(3);
+  });
+});
+
 describe("compose-flow hooks", () => {
   function run() {
     const f = vi.fn().mockImplementation(async () => jsonRes({ id: 5, book_id: 1 }));
@@ -108,26 +139,6 @@ describe("compose-flow hooks", () => {
     // 同 useSelectBackground：上傳等於改選背景，頁面的線稿／QA／書的統計都要重抓
     for (const k of [qk.generationsOf(1), qk.pages(1), qk.qa(5), qk.edits(5), qk.book(1), qk.exportSummary(1)])
       expect(keys()).toContain(JSON.stringify(k));
-  });
-
-  it("useCharacterCandidates POST /books/1/character/candidates 只帶描述（後端一次一張，不送 count）", async () => {
-    const { f, wrapper, keys } = run();
-    const { result } = renderHook(() => useCharacterCandidates(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ description: "一隻小兔子" }); });
-    expect(f.mock.calls[0][0]).toBe("/api/books/1/character/candidates");
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ description: "一隻小兔子" });
-    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
-  });
-
-  it("useBatchMaterials POST /books/1/materials/batch 帶 upload_page_ids", async () => {
-    const { f, wrapper, keys } = run();
-    const { result } = renderHook(() => useBatchMaterials(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ upload_page_ids: [4] }); });
-    expect(f.mock.calls[0][0]).toBe("/api/books/1/materials/batch");
-    expect(f.mock.calls[0][1].method).toBe("POST");
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ upload_page_ids: [4] });
-    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
-    expect(keys()).toContain(JSON.stringify(qk.pages(1)));
   });
 
   it("useGeneratePose POST /pages/5/poses 只帶 action（不帶產生方式）", async () => {

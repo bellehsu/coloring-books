@@ -142,12 +142,6 @@ def _seqs(session: Session, page_id: int) -> list[int]:
     ).all())
 
 
-def can_undo_redo(seqs: list[int], cursor: int | None) -> tuple[bool, bool]:
-    if cursor is None:
-        return bool(seqs), False
-    return any(s < cursor for s in seqs), any(s > cursor for s in seqs)
-
-
 def history_flags(session: Session, pages: list[Page]) -> dict[int, tuple[bool, bool]]:
     """多頁一次查：{page_id: (can_undo, can_redo)}。"""
     ids = [p.id for p in pages]

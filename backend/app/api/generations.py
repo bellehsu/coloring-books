@@ -16,6 +16,7 @@ from app.api.schemas import GenerationOut
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
+from app.services.engine import ENGINE_UNREACHABLE_PUBLIC, public_engine_error
 from app.services.usage import refund_generations
 from app.services.worker import GenerationWorker, WorkerState, worker_job
 from app.storage import Storage, StorageNotFound
@@ -46,16 +47,27 @@ class QueueStatus(BaseModel):
     state: WorkerState
     last_error: str | None
     queued: int
-    running_id: int | None
     # 供狀態膠囊估算剩餘時間：排隊中／執行中（舊→新），與各類型最近成功的耗時（新→舊）。
     pending: list[PendingJob]
     recent: list[RecentJob]
 
 
 
-def _out(gen: Generation, worker: GenerationWorker) -> GenerationOut:
+def _queue_error(worker: GenerationWorker, owner: Owner) -> str | None:
+    """管理者看原文；其他人只在引擎連不上時看到固定的中文訊息（不洩漏內部位址）。"""
+    if owner.is_admin:
+        return worker.last_error
+    if worker.state == WorkerState.ENGINE_UNAVAILABLE:
+        return ENGINE_UNREACHABLE_PUBLIC
+    return None
+
+
+def _out(gen: Generation, worker: GenerationWorker, owner: Owner) -> GenerationOut:
     return GenerationOut.from_generation(
-        gen, queue_position=worker.queue_position(gen.id), progress=worker.progress.get(gen.id)
+        gen,
+        queue_position=worker.queue_position(gen.id),
+        progress=worker.progress.get(gen.id),
+        is_admin=owner.is_admin,
     )
 
 
@@ -66,7 +78,7 @@ def get_generation(
     worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    return _out(owned_generation(session, owner, gen_id), worker)
+    return _out(owned_generation(session, owner, gen_id), worker, owner)
 
 
 @router.get("/generations/{gen_id}/image")
@@ -87,26 +99,6 @@ def get_generation_image(
     if not found:
         raise HTTPException(404, "圖片檔案遺失")
     return signed_redirect(request, storage, gen.image_path)
-
-
-@router.get("/generations/{gen_id}/mask")
-def get_generation_mask(
-    request: Request,
-    gen_id: int,
-    session: Session = Depends(get_session),
-    storage: Storage = Depends(get_storage),
-    owner: Owner = Depends(current_owner),
-) -> Response:
-    gen = owned_generation(session, owner, gen_id)
-    if not gen.mask_path:
-        raise HTTPException(404, "這筆生成紀錄沒有遮罩")
-    try:
-        found = storage.exists(gen.mask_path)
-    except ValueError:
-        found = False
-    if not found:
-        raise HTTPException(404, "遮罩檔案遺失")
-    return signed_redirect(request, storage, gen.mask_path)
 
 
 @router.get("/generations/{gen_id}/cutout")
@@ -157,7 +149,7 @@ def list_generations(
     if not include_discarded:
         stmt = stmt.where(col(Generation.discarded).is_(False))
     gens = session.exec(stmt.order_by(col(Generation.id).desc())).all()
-    return [_out(g, worker) for g in gens]
+    return [_out(g, worker, owner) for g in gens]
 
 
 @router.patch("/generations/{gen_id}", response_model=GenerationOut)
@@ -216,7 +208,7 @@ def update_generation(
             raise HTTPException(409, IMAGE_CLEARED)
         raise HTTPException(409, "這筆生成紀錄正被頁面使用或作為角色，無法捨棄")
     session.refresh(gen)
-    return _out(gen, worker)
+    return _out(gen, worker, owner)
 
 
 @router.post("/generations/{gen_id}/cancel", response_model=GenerationOut)
@@ -238,7 +230,7 @@ def cancel_generation(
     if res.rowcount == 0:
         raise HTTPException(409, "只有排隊中的任務可以取消")
     session.refresh(gen)
-    return _out(gen, worker)
+    return _out(gen, worker, owner)
 
 
 @router.get("/system/queue", response_model=QueueStatus)
@@ -248,13 +240,10 @@ def queue_status(
     owner: Owner = Depends(current_owner),
 ) -> QueueStatus:
     """全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。
-    非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。"""
+    非 admin 看不到任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。"""
     queued = session.exec(
         select(func.count()).select_from(Generation).where(col(Generation.status) == GenStatus.QUEUED)
     ).one()
-    running_id = session.exec(
-        select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job()).limit(1)
-    ).first()
     pending = session.exec(
         select(Generation.kind)
         .where(
@@ -280,12 +269,10 @@ def queue_status(
             .limit(_RECENT_PER_KIND)
         ).all()
         recent += [RecentJob(kind=kind.value, elapsed_s=e) for e in rows]
-    system_error = worker.state == WorkerState.ENGINE_UNAVAILABLE
     return QueueStatus(
         state=worker.state,
-        last_error=worker.last_error if owner.is_admin or system_error else None,
+        last_error=_queue_error(worker, owner),
         queued=queued,
-        running_id=running_id if owner.is_admin else None,
         pending=[PendingJob(kind=k.value) for k in pending],
         recent=recent,
     )

@@ -152,15 +152,15 @@ describe("FinishPanel", () => {
     });
   });
 
-  it("完成 without gaps passes right away with empty body", async () => {
+  it("完成 without gaps posts /accept right away (same as C's 這頁可以印了), not /pass", async () => {
     setup(mkPage({ character_check: "consistent" }), mkQA());
     await userEvent.click(finishBtn());
-    await waitFor(() => expect(posts("/api/pages/7/pass")).toHaveLength(1));
-    expect(posts("/api/pages/7/pass")[0].body).toEqual({});
+    await waitFor(() => expect(posts("/api/pages/7/accept")).toHaveLength(1));
+    expect(posts("/api/pages/7/pass")).toHaveLength(0);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("完成 with gaps asks once then passes with empty body", async () => {
+  it("完成 with gaps asks once then posts /accept", async () => {
     setup(mkPage({ character_check: "consistent" }), gapQA(2));
     await userEvent.click(finishBtn());
     const dlg = await screen.findByRole("dialog");
@@ -169,20 +169,19 @@ describe("FinishPanel", () => {
     // 再補補看：關掉，不送出
     await userEvent.click(within(dlg).getByRole("button", { name: "再補補看" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(posts("/api/pages/7/pass")).toHaveLength(0);
+    expect(posts("/api/pages/7/accept")).toHaveLength(0);
     // 再按一次 → 完成
     await userEvent.click(finishBtn());
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "完成" }));
-    await waitFor(() => expect(posts("/api/pages/7/pass")).toHaveLength(1));
-    expect(posts("/api/pages/7/pass")[0].body).toEqual({});
+    await waitFor(() => expect(posts("/api/pages/7/accept")).toHaveLength(1));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
-  it("pass 失敗：顯示訊息", async () => {
-    responses["POST /api/pages/7/pass"] = () => j({ detail: "頁面已變更，請重新檢查" }, 409);
+  it("accept 失敗：顯示訊息", async () => {
+    responses["POST /api/pages/7/accept"] = () => j({ detail: "這一頁還在重新合成，請等它做完或按「再試一次」" }, 409);
     setup(mkPage({ character_check: "consistent" }), mkQA());
     await userEvent.click(finishBtn());
-    expect(await screen.findByText("頁面已變更，請重新檢查")).toBeInTheDocument();
+    expect(await screen.findByText("這一頁還在重新合成，請等它做完或按「再試一次」")).toBeInTheDocument();
   });
 
   it("不太像 records inconsistent and goes to compose", async () => {
@@ -199,6 +198,32 @@ describe("FinishPanel", () => {
     expect(screen.queryByRole("button", { name: "完成這一頁 ✓" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "取消完成" }));
     await waitFor(() => expect(posts("/api/pages/7/unpass")).toHaveLength(1));
+  });
+
+  it("通過但 C 說請看一下（attention）：不算完成，可以按「完成這一頁 ✓」清掉（POST /accept）", async () => {
+    setup(mkPage({ status: "passed", attention: "failed", character_check: "consistent" }), mkQA({ status: "passed" }));
+    expect(screen.queryByText("已完成")).not.toBeInTheDocument();
+    await userEvent.click(finishBtn());
+    await waitFor(() => expect(posts("/api/pages/7/accept")).toHaveLength(1));
+  });
+
+  it("完成前等兩邊（進階編輯與 C）同一張圖的修線都寫完", async () => {
+    let release!: () => void;
+    responses["PUT /api/pages/7/lineart/edits?oneclick=true"] = () => j(mkQA());
+    const { qc } = setup(mkPage({ character_check: "consistent" }), mkQA());
+    const gate = new Promise<void>((r) => (release = r));
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      if (String(url).includes("oneclick")) await gate;
+      return base(url as string, init);
+    });
+    editsQueueFor(qc, 1, 7, 5, { oneclick: true }).push([{ op: "draw", width_px: 11, points: [[0.5, 0.5]] }]);
+    await userEvent.click(finishBtn());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posts("/api/pages/7/accept")).toHaveLength(0);
+    release();
+    await waitFor(() => expect(posts("/api/pages/7/accept")).toHaveLength(1));
   });
 
   it("線條多寡：簡單／標準／細緻 立即存", async () => {

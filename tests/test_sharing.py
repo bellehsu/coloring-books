@@ -108,7 +108,7 @@ def test_list_visibility(world):
     it = items[0]
     assert it["author"] == "小明" and it["page_count"] == 2 and it["mine"] is False
     assert it["title"] == shared["title"] and it["paper_size"] == shared["paper_size"]
-    assert it["cover_page_id"] == sp[0]["id"] and it["shared_at"]
+    assert "cover_page_id" not in it and it["shared_at"]
     # A 自己看：不含自己的書（首頁用徽章標示），只有 B 的
     as_(client, sids["a"])
     assert [i["id"] for i in client.get("/api/shared/books").json()] == [mine_b["id"]]
@@ -256,3 +256,31 @@ def test_shared_image_url_version_follows_what_prints(world):
         assert now[pages[1]["id"]] == first[pages[1]["id"]]  # 別頁不受影響
         assert client.get(now[pid]).status_code == 200
         seen.add(now[pid])
+
+
+def test_shared_pdf_skips_unrenderable_page(world, monkeypatch):
+    """B8：有一頁讀不到線稿 → 分享 PDF 只輸出其他頁；全部讀不到才 404。"""
+    from app.api import export
+    from app.services.page_lineart import LineartSourceMissing
+
+    app, client, sids, ids = world
+    b, pages = a_book(client, app, sids["a"], n=3, passed=(0, 1, 2))
+    share(client, b["id"])
+    bad = {pages[1]["id"]}
+    real = export.read_page_lineart
+
+    def flaky(session, storage, page_id):
+        if page_id in bad:
+            raise LineartSourceMissing()
+        return real(session, storage, page_id)
+
+    monkeypatch.setattr(export, "read_page_lineart", flaky)
+    as_(client, sids["b"])
+    r = client.get(f"/api/shared/books/{b['id']}/export.pdf")
+    assert r.status_code == 200 and npages(r.content) == 2
+    bad.update(p["id"] for p in pages)
+    r = client.get(f"/api/shared/books/{b['id']}/export.pdf")
+    assert r.status_code == 404 and r.json()["detail"] == GONE
+    # 擁有者匯出維持 409
+    as_(client, sids["a"])
+    assert client.get(f"/api/books/{b['id']}/export.pdf").status_code == 409

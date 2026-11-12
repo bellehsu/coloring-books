@@ -172,6 +172,9 @@ class DemoEngine:
         self.delay_s = delay_s
         self.progress_steps = progress_steps
 
+    async def interrupt(self) -> None:
+        return None
+
     async def generate(self, req: GenerationRequest, on_progress: ProgressFn | None = None) -> GenerationResult:
         start = time.monotonic()
         n = max(1, self.progress_steps)
@@ -244,6 +247,21 @@ def create_demo_app(storage: Path, base: Settings | None = None, engine: DemoEng
     return app
 
 
+FAKE_MARKER = ".fake-backend"
+
+
+def check_storage_safe(storage: Path) -> str | None:
+    """--storage 指到正式資料時回傳拒絕訊息（中文），否則 None：
+    設定裡的 storage_dir、正式資料庫所在資料夾，或有 app.db 但沒有假後端標記檔的資料夾。"""
+    target = storage.expanduser().resolve()
+    real = load_settings(check_paths=False).paths
+    if target in (real.storage_dir.resolve(), real.database.resolve().parent):
+        return f"--storage 指到正式資料夾，假後端拒絕啟動：{target}"
+    if (target / "app.db").exists() and not (target / FAKE_MARKER).exists():
+        return f"--storage 資料夾已有不是假後端建立的 app.db，假後端拒絕啟動：{target}"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", default="127.0.0.1")
@@ -253,6 +271,12 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     storage = args.storage or Path(tempfile.mkdtemp(prefix="coloring-books-fake-"))
     try:
+        refusal = check_storage_safe(storage)
+        if refusal:
+            print(refusal, file=sys.stderr)
+            return 2
+        storage.mkdir(parents=True, exist_ok=True)
+        (storage / FAKE_MARKER).touch()
         app = create_demo_app(storage, dev_owner=args.dev_owner or None)
     except SettingsError as e:
         print(e, file=sys.stderr)

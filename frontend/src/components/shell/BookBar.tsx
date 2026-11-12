@@ -19,19 +19,12 @@ const PRINT: Record<Book["print_mode"], string> = {
 
 export interface BookBarProps {
   book: Book;
-  current: "character" | "story" | "pages" | "export";
   onExport?: () => void;
   onSettings?: () => void;
 }
 
-export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
-  const hasCharacter = book.character_generation_id != null;
-  const charHref = `/books/${book.id}/setup`; // 角色、故事都在 A「主角與故事」
-  const storyHref = `/books/${book.id}/setup`;
-  const pagesHref = `/books/${book.id}/editor`;
-  const pagesLabel = hasCharacter ? `頁面 ${book.stats.passed} / ${book.stats.pages}` : "頁面";
-  const hintId = `pages-hint-${book.id}`;
-
+/** 進階編輯專用的標題列：書名、版面說明、回到「主角與故事」、匯出、設定。 */
+export function BookBar({ book, onExport, onSettings }: BookBarProps) {
   return (
     <div className={styles.bar}>
       <div className={styles.titles}>
@@ -40,90 +33,9 @@ export function BookBar({ book, current, onExport, onSettings }: BookBarProps) {
           {PAPER[book.paper_size]}・{PRINT[book.print_mode]}
         </span>
       </div>
-      <ol aria-label="製作步驟" className={styles.steps}>
-        <li>
-          {current === "character" ? (
-            <span aria-current="step" className={`${styles.pill} ${styles.now}`}>
-              <span className={`${styles.badge} ${styles.badgeNow}`}>{hasCharacter ? <Icons.check size={14} /> : 1}</span>
-              角色
-            </span>
-          ) : (
-            <Link href={charHref} className={`${styles.pill} ${hasCharacter ? styles.done : styles.todo}`}>
-              <span className={`${styles.badge} ${hasCharacter ? styles.badgeDone : styles.badgeTodo}`}>
-                {hasCharacter ? <Icons.check size={14} /> : 1}
-              </span>
-              角色
-            </Link>
-          )}
-        </li>
-        <li aria-hidden="true" className={styles.sep} />
-        <li>
-          {!hasCharacter ? (
-            <button
-              type="button"
-              aria-disabled="true"
-              aria-describedby={hintId}
-              title="請先設定角色"
-              className={`${styles.pill} ${styles.todo} ${styles.disabled}`}
-            >
-              <span className={`${styles.badge} ${styles.badgeTodo}`}>2</span>
-              故事
-            </button>
-          ) : current === "story" ? (
-            <span aria-current="step" className={`${styles.pill} ${styles.now}`}>
-              <span className={`${styles.badge} ${styles.badgeNow}`}>2</span>
-              故事
-            </span>
-          ) : (
-            <Link href={storyHref} className={`${styles.pill} ${styles.todo}`}>
-              <span className={`${styles.badge} ${styles.badgeTodo}`}>2</span>
-              故事
-            </Link>
-          )}
-        </li>
-        <li aria-hidden="true" className={styles.sep} />
-        <li>
-          {!hasCharacter ? (
-            <>
-              <button
-                type="button"
-                aria-disabled="true"
-                aria-describedby={hintId}
-                title="請先設定角色"
-                className={`${styles.pill} ${styles.todo} ${styles.disabled}`}
-              >
-                <span className={`${styles.badge} ${styles.badgeTodo}`}>3</span>
-                頁面
-              </button>
-              <span id={hintId} className={styles.srOnly}>
-                請先設定角色
-              </span>
-            </>
-          ) : current === "pages" ? (
-            <span aria-current="step" className={`${styles.pill} ${styles.now}`}>
-              <span className={`${styles.badge} ${styles.badgeNow}`}>3</span>
-              {pagesLabel}
-            </span>
-          ) : (
-            <Link href={pagesHref} className={`${styles.pill} ${styles.todo}`}>
-              <span className={`${styles.badge} ${styles.badgeTodo}`}>3</span>
-              {pagesLabel}
-            </Link>
-          )}
-        </li>
-        <li aria-hidden="true" className={styles.sep} />
-        <li>
-          <button
-            type="button"
-            onClick={onExport}
-            aria-current={current === "export" ? "step" : undefined}
-            className={`${styles.pill} ${current === "export" ? styles.now : styles.todo}`}
-          >
-            <span className={`${styles.badge} ${current === "export" ? styles.badgeNow : styles.badgeTodo}`}>4</span>
-            匯出
-          </button>
-        </li>
-      </ol>
+      <Link href={`/books/${book.id}/setup`} className={styles.setupLink}>
+        主角與故事
+      </Link>
       <div className={styles.actions}>
         <IconButton label="繪本設定" onClick={onSettings}>
           <Icons.sliders />

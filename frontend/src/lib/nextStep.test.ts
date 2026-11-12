@@ -9,8 +9,6 @@ const mk = (o: Partial<Omit<Book, "stats">> & { stats?: Partial<Book["stats"]> }
     stats: {
       pages: 5,
       passed: 5,
-      needs_fix: 0,
-      no_selection: 0,
       ready: 5,
       attention: 0,
       working: 0,
@@ -34,8 +32,5 @@ describe("nextStep（與 B 的狀態同一套說法）", () => {
   });
   it("還沒做完", () => {
     expect(nextStep(mk({ stats: { passed: 2, ready: 2, todo: 3 } }))).toEqual({ text: "還有 3 頁還沒做完", tone: "busy" });
-  });
-  it("線沒接起來（舊的 needs_fix）不算：整本做好了", () => {
-    expect(nextStep(mk({ stats: { needs_fix: 2 } }))).toEqual({ text: "整本做好了，可以印", tone: "ok" });
   });
 });

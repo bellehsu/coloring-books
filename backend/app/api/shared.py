@@ -100,7 +100,7 @@ def list_shared_books(
     covers = _image_urls(session, [pages[0] for _b, _o, pages in books])
     return [
         SharedBookOut(id=b.id, title=b.title, author=o.name, paper_size=b.paper_size, page_count=len(pages),
-                      cover_page_id=pages[0].id, cover_image_url=covers[pages[0].id], shared_at=b.shared_at,
+                      cover_image_url=covers[pages[0].id], shared_at=b.shared_at,
                       mine=False)
         for b, o, pages in books
     ]
@@ -158,7 +158,7 @@ def shared_book_pdf(
 ) -> Response:
     book, _o, _pages = _visible_book(session, book_id)
     try:
-        pdf = book_pdf(session, storage, book, "passed", font_path)
+        pdf = book_pdf(session, storage, book, "passed", font_path, skip_unrenderable=True)
     except HTTPException:
         raise _gone() from None
     return pdf_response(book, pdf)

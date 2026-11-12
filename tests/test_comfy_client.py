@@ -4,6 +4,7 @@ import pytest
 from app.services.comfy_client import (
     ComfyClient,
     ComfyConnectionError,
+    ComfyError,
     ComfyExecutionError,
     ComfyPromptError,
     ComfyTimeoutError,
@@ -119,3 +120,55 @@ async def test_non_comfy_server_detected():
 
 def test_ws_url():
     assert ComfyClient("https://h:1/", client_id="abc").ws_url == "wss://h:1/ws?clientId=abc"
+
+
+async def test_http_500_on_download_is_error_not_connection():
+    def h(request):
+        return httpx.Response(500, text="boom")
+
+    async with ComfyClient("http://x", transport=httpx.MockTransport(h)) as c:
+        with pytest.raises(ComfyError) as ei:
+            await c.download({"filename": "a.png"})
+    assert not isinstance(ei.value, ComfyConnectionError)
+    assert "500" in str(ei.value)
+
+
+@pytest.mark.parametrize("exc", [httpx.ConnectTimeout("t"), httpx.PoolTimeout("t"), httpx.RemoteProtocolError("r")])
+async def test_transport_failures_are_connection_errors(exc):
+    def boom(request):
+        raise exc
+
+    async with ComfyClient("http://x", transport=httpx.MockTransport(boom)) as c:
+        with pytest.raises(ComfyConnectionError):
+            await c.system_stats()
+
+
+async def test_connect_timeout_is_connection_error():
+    def boom(request):
+        raise httpx.ConnectTimeout("timed out")
+
+    async with ComfyClient("http://x", transport=httpx.MockTransport(boom)) as c:
+        with pytest.raises(ComfyConnectionError):
+            await c.download({"filename": "a.png"})
+
+
+async def test_read_timeout_stays_timeout():
+    def boom(request):
+        raise httpx.ReadTimeout("slow")
+
+    async with ComfyClient("http://x", transport=httpx.MockTransport(boom)) as c:
+        with pytest.raises(ComfyTimeoutError) as ei:
+            await c.system_stats()
+    assert not isinstance(ei.value, ComfyConnectionError)
+
+
+async def test_http_errors_on_other_calls_are_plain_errors():
+    def h(request):
+        return httpx.Response(413 if request.method == "POST" else 502, text="x")
+
+    async with ComfyClient("http://x", transport=httpx.MockTransport(h)) as c:
+        for call in (lambda: c.system_stats(), lambda: c.list_models("checkpoints"),
+                     lambda: c.upload_image(b"x", "a.png")):
+            with pytest.raises(ComfyError) as ei:
+                await call()
+            assert not isinstance(ei.value, ComfyConnectionError)

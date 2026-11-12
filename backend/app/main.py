@@ -2,8 +2,7 @@
 
 啟動：uvicorn app.main:app --app-dir backend
 啟動時會跑一次 preflight 並寫入 log；失敗只記錄，不讓服務當機（startup_preflight=False 時略過，例如假後端）。
-preflight 結果快取在 app.state.preflight（啟動時與每次 GET /api/system/preflight 更新）。
-生成請求不看這份快取（不先擋）：缺模型或節點時由生成失敗回報。
+生成請求不看 preflight 結果（不先擋）：缺模型或節點時由生成失敗回報。
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ from .services.engine import GenerationEngine
 from .services.instance import ensure_instance, mismatch_hint, storage_label
 from .services.preflight import format_report, run_preflight
 from .services.worker import GenerationWorker
+from .api.guards import BodyLimitMiddleware, CrossSiteWriteMiddleware
 from .services.workflow_registry import WorkflowRegistry
 from .storage import make_storage
 
@@ -69,7 +69,6 @@ def create_app(
             app.state.storage,
             s.queue.retry_backoff_s,
         )
-        app.state.preflight = None  # None＝還沒檢查過
         font_problem = check_caption_font(s.paths.caption_font)
         if font_problem:  # 不擋啟動：只有「有頁面文字」的頁面匯出會 409
             log.warning("頁面文字字型不能用（paths.caption_font）：%s", font_problem)
@@ -97,6 +96,9 @@ def create_app(
             db.dispose()
 
     app = FastAPI(title="Coloring Books", lifespan=lifespan)
+    # 在路由與相依性之前：先擋超大 body（B1）與跨站寫入（B2）
+    app.add_middleware(CrossSiteWriteMiddleware)
+    app.add_middleware(BodyLimitMiddleware)
     # 每個 API 路由先確認登入（current_owner），再確認路徑裡的 book／page／generation id 屬於這個 owner
     # （別人的 → 404），都在 body 驗證與端點本身之前。例外：/api/files（HMAC 簽章就是憑證）與 /i/{token}。
     owned = [Depends(require_owned_path)]
@@ -137,21 +139,30 @@ def create_app(
             log.info("storage instance 身分標記已建立：%s", res.db_id)
 
     async def _preflight(app: FastAPI):
-        """跑 preflight 並更新快取 app.state.preflight。"""
+        """跑 preflight 並回傳報告（不快取）。"""
         s: Settings = app.state.settings
         async with ComfyClient(s.comfy.url, request_timeout_s=s.comfy.request_timeout_s) as client:
             report = await run_preflight(client, app.state.registry, caption_font=s.paths.caption_font)
-        app.state.preflight = report
         return report
 
     @app.get("/api/system/preflight", dependencies=[Depends(require_admin)])
     async def preflight(reload: bool = True) -> dict:
+        reload_error = None
         if reload:
-            app.state.registry = WorkflowRegistry(app.state.settings.paths.workflows_dir).load()
-            # 引擎也要改用新登錄，否則 preflight 與實際生成會看到不同的 workflow／hash
-            if isinstance(app.state.engine, ComfyEngine):
-                app.state.engine.registry = app.state.registry
-        return (await _preflight(app)).to_dict()
+            try:
+                new_registry = WorkflowRegistry(app.state.settings.paths.workflows_dir).load()
+            except Exception as e:  # noqa: BLE001  例如 workflows_dir 被刪：保留舊登錄，把原因放進報告
+                reload_error = f"重新載入 workflow 失敗：{type(e).__name__}: {e}"
+            else:
+                app.state.registry = new_registry
+                # 引擎也要改用新登錄，否則 preflight 與實際生成會看到不同的 workflow／hash
+                if isinstance(app.state.engine, ComfyEngine):
+                    app.state.engine.registry = app.state.registry
+        report = await _preflight(app)
+        if reload_error:
+            report.reload_error = reload_error
+            report.ok = False
+        return report.to_dict()
 
     return app
 

@@ -204,15 +204,20 @@ function useSavePage(bookId: number, pageId: number) {
     });
 }
 
+const CAPTION_OFF = "這行目前不印（在處理頁面可打開）";
+
 /**
  * 圖下方的文字（中文字、英文字）：和場景、動作欄位一樣，離開欄位時存回頁面。
  * 超過上限（以 code point 計）時不存，欄位下方顯示訊息。手機也直接顯示（欄位很小，不收合）。
+ * C 關掉的那行（caption_show_*，沒有欄位＝印）照樣能改，但說明目前不印；兩行都關就不說「印在圖下方」。
  */
 function CaptionCard({ bookId, page }: { bookId: number; page: Page }) {
   const id = useId();
   const savePage = useSavePage(bookId, page.id);
   const zh = usePageText(page.caption_zh ?? "", (v) => (captionError("zh", v) ? Promise.resolve() : savePage({ caption_zh: normalizeCaption(v) })));
   const en = usePageText(page.caption_en ?? "", (v) => (captionError("en", v) ? Promise.resolve() : savePage({ caption_en: normalizeCaption(v) })));
+  const zhOn = page.caption_show_zh !== false;
+  const enOn = page.caption_show_en !== false;
   return (
     <section aria-labelledby={`${id}-h`} className={styles.card}>
       <div className={styles.head}>
@@ -221,10 +226,16 @@ function CaptionCard({ bookId, page }: { bookId: number; page: Page }) {
         </h2>
       </div>
       <div className={styles.captionFields}>
-        <CaptionField kind="zh" value={zh.value} onChange={zh.setValue} onBlur={() => quiet(zh.save())} />
-        <CaptionField kind="en" value={en.value} onChange={en.setValue} onBlur={() => quiet(en.save())} />
+        <div className={styles.captionLine}>
+          <CaptionField kind="zh" value={zh.value} onChange={zh.setValue} onBlur={() => quiet(zh.save())} />
+          {!zhOn && <p className={styles.hint}>{CAPTION_OFF}</p>}
+        </div>
+        <div className={styles.captionLine}>
+          <CaptionField kind="en" value={en.value} onChange={en.setValue} onBlur={() => quiet(en.save())} />
+          {!enOn && <p className={styles.hint}>{CAPTION_OFF}</p>}
+        </div>
       </div>
-      <p className={styles.hint}>選填，印在列印頁的圖下方。</p>
+      {(zhOn || enOn) && <p className={styles.hint}>選填，印在列印頁的圖下方。</p>}
     </section>
   );
 }

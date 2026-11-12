@@ -76,7 +76,7 @@ def merge_into(existing_text: str | None, section_key: str, section: dict) -> tu
     data[section_key] = section
     header = (
         "# 由 coloring-books/scripts/sync_comfy_model_paths.py 維護 "
-        f"'{section_key}' 區段；其他區段保留原樣。\n"
+        f"'{section_key}' 區段；其他區段的內容保留，但註解與格式會被重寫。\n"
     )
     return header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True), warnings
 
@@ -105,6 +105,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     models_root = settings.comfy.models_root
+    if models_root is None:
+        print("錯誤：settings 未設定 comfy.models_root（此腳本需要它；可寫進設定檔或設環境變數 APP_COMFY__MODELS_ROOT）",
+              file=sys.stderr)
+        return 2
     if not models_root.is_dir():
         print(f"錯誤：comfy.models_root 不存在：{models_root}", file=sys.stderr)
         return 2
@@ -165,8 +169,11 @@ def main(argv: list[str] | None = None) -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     if existing is not None:
         backup = target.with_name(target.name + ".bak")
-        shutil.copy2(target, backup)
-        print(f"已備份原檔到 {backup}")
+        if backup.exists():
+            print(f"{backup} 已存在，不覆寫（保留第一次備份的原檔）")
+        else:
+            shutil.copy2(target, backup)
+            print(f"已備份原檔到 {backup}")
     target.write_text(new_text, encoding="utf-8")
     print(f"已寫入 {target}")
     print("請重啟 ComfyUI 讓新路徑生效。")

@@ -29,11 +29,12 @@ import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
 import { PHONE_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
+import { fixHref } from "@/features/fix/fixState";
 import { createAutoCompose } from "./autoCompose";
 import { ComposePreview, ComposeStage, ComposeStatus } from "./ComposeStage";
 import { CaptionPreview } from "./CaptionPreview";
 import { ComposeWorkspace } from "./ComposeWorkspace";
-import { peekEditsQueue, pruneEditsQueues } from "./editsQueue";
+import { flushAllEditsFor, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 import { forgetDeletedPage, forgetPageId } from "./forgetPage";
 import { errMsg } from "./errMsg";
 import { BookSettingsDialog } from "@/features/books/BookSettingsDialog";
@@ -50,6 +51,7 @@ import {
   DEFAULT_MODE,
   modeBlockers,
   normalizeMode,
+  RECOMPOSING_NOTICE,
   StageHeader,
   tabIdOf,
   type EditorMode,
@@ -115,8 +117,6 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const book = useBook(bookId);
   const pagesQ = usePages(bookId);
   const bookGens = useGenerations(bookId);
-  // 背景／角色動作完成時 worker 會自動選用：跟著重抓頁面，舞台才會填上並自動合成
-  usePagesFollowJobs(bookId, bookGens.data);
   const hasCharacter = book.data?.character_generation_id != null;
 
   // ---------- 目前頁與模式：本機狀態為準（立即反應），寫回網址；網址被外部改變時跟著改 ----------
@@ -139,8 +139,15 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const pages = pagesQ.data ?? [];
   const current = pages.find((p) => p.id === nav.page) ?? pages[0] ?? null;
+  // 背景／角色動作完成時 worker 會自動選用：跟著重抓頁面，舞台才會填上並自動合成；
+  // 目前頁等著重新合成（C 改過）時每 2 秒重抓，做好了補線才能用
+  usePagesFollowJobs(bookId, bookGens.data, current?.id ?? null);
   const hasSel = current?.selected_generation_id != null;
-  const gateOf = (p: Page | null | undefined): ModeGate => ({ selectedId: p?.selected_generation_id ?? null });
+  const gateOf = (p: Page | null | undefined): ModeGate => ({
+    selectedId: p?.selected_generation_id ?? null,
+    recomposing: !!p?.recompose_pending,
+    recomposeFailed: !!p?.recompose_pending && !!p.attention,
+  });
   const mode: EditorMode = allowedMode(nav.mode, gateOf(current));
 
   const go = (page: number, m: EditorMode) => {
@@ -175,7 +182,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
 
   const qc = useQueryClient();
 
-  // ---------- 角色位置：自動存（每頁依序、只保留最新）；畫面用這個 session 最後存的值 ----------
+  // ---------- 角色位置：自動存（每頁依序、只保留最新）；還沒存好時畫面用最後存的值，否則用伺服器的 ----------
   // 已刪除的頁 id（id 被沿用時要清掉舊狀態，見 forgetPage）也由 placementSaver 記錄（isGone）
   const placementSaver = placementSaverFor(qc);
   useEffect(() => {
@@ -219,16 +226,19 @@ export function EditorPage({ bookId }: { bookId: number }) {
   });
 
   /**
-   * 先讓這頁選定圖的修線寫完：改選背景／動作（合成圖會被清掉）或合成新的之後才到的 PUT
+   * 先讓這頁選定圖的修線寫完（進階編輯與 C 兩個佇列都等）：改選背景／動作（合成圖會被清掉）或合成新的之後才到的 PUT
    * 會被後端以「選圖已更換」拒絕，出現多餘的「修線尚未儲存」。失敗已提示過，不擋後續動作。
    */
   const flushSelectedEdits = async (page: Page) => {
     const sel = page.selected_generation_id;
-    const pendingEdits = sel != null ? peekEditsQueue(qc, page.id, sel) : undefined;
-    if (!pendingEdits?.busy()) return;
+    if (sel == null) return;
+    const busy = [peekEditsQueue(qc, page.id, sel), peekEditsQueue(qc, page.id, sel, { oneclick: true })].some((e) =>
+      e?.busy(),
+    );
+    if (!busy) return;
     bumpFlushing(page.id, 1);
     try {
-      await pendingEdits.flush();
+      await flushAllEditsFor(qc, page.id, sel);
     } catch {
       /* 失敗已提示過 */
     } finally {
@@ -273,10 +283,13 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const [lossAsks, setLossAsks] = useState<ReadonlyMap<number, (ok: boolean) => void>>(() => new Map());
   const [auto] = useState(createEditorAutoCompose);
   const autoCompose = auto.ac;
+  // 這頁等著重新合成（C 改過）：不合成，也就不用問補線（位置照常存，流程合成時用最新的位置）。
+  // 自己合成會清掉 C 的等待、補線分頁打開，之後流程換圖時補的線就不見了
+  const recomposing = (pageId: number) => !!pageOf(pageId)?.recompose_pending;
   useEffect(() => {
     auto.setDeps({
-      compose: composeNow,
-      lineEdits: lineEditsOf,
+      compose: (pageId) => (recomposing(pageId) ? Promise.resolve() : composeNow(pageId)),
+      lineEdits: (pageId) => (recomposing(pageId) ? null : lineEditsOf(pageId)),
       ask: (pageId) => new Promise<boolean>((resolve) => setLossAsks((m) => new Map(m).set(pageId, resolve))),
     });
   });
@@ -319,6 +332,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     current &&
     hasBoth(current) &&
     current.compose_pending &&
+    !current.recompose_pending &&
     genOf(current.background_generation_id)?.image_url &&
     genOf(current.pose_generation_id)?.cutout_url &&
     (current.selected_generation_id == null || curSel?.kind === "composite")
@@ -442,17 +456,28 @@ export function EditorPage({ bookId }: { bookId: number }) {
     if (currentIdRef.current === pageId) go(pageId, "line");
   };
 
+  /** 匯出前：所有頁還在等（或正在跑）的自動合成先做完，PDF 才是畫面上的內容。 */
+  const settleAutoCompose = async () => {
+    const ids = (pagesQ.data ?? []).map((p) => p.id);
+    await Promise.all(
+      ids.map((id) => {
+        const st = autoCompose.status(id);
+        return st === "pending" || st === "running" ? autoCompose.flush(id) : undefined;
+      }),
+    );
+  };
+
   const shell = (body: ReactNode) => (
     <>
-      <AppBar crumbs={[{ label: "我的繪本", href: "/" }, { label: b.title }]} />
-      <BookBar book={b} current="pages" onExport={() => setExportOpen(true)} onSettings={() => setSettingsOpen(true)} />
+      <AppBar crumbs={[{ label: "我的繪本", href: "/" }, { label: b.title, href: `/books/${b.id}` }]} />
+      <BookBar book={b} onExport={() => setExportOpen(true)} onSettings={() => setSettingsOpen(true)} />
       {!hasCharacter && (
         <p className={styles.notice}>
           這本繪本還沒設定角色，不能產生角色動作。<Link href={characterHref}>前往角色工作室</Link>
         </p>
       )}
       {body}
-      <ExportDrawer open={exportOpen} onClose={() => setExportOpen(false)} book={b} />
+      <ExportDrawer open={exportOpen} onClose={() => setExportOpen(false)} book={b} beforeExport={settleAutoCompose} />
       <BookSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} book={b} />
       <Dialog open={askingCurrent} onClose={() => settleAsk(current!.id, false)} title="清掉補過的線？">
         <p className={styles.confirmText}>移動角色會清掉這頁補過的線，要繼續嗎？</p>
@@ -636,8 +661,18 @@ export function EditorPage({ bookId }: { bookId: number }) {
           onModeChange={(m) => (m === "line" ? void toLine(current.id) : go(current.id, m))}
           blockers={blockers}
           gapCount={qa?.gap_count ?? 0}
+          notice={
+            !current.recompose_pending ? undefined : current.attention ? (
+              <>
+                重新合成沒成功，請到<Link href={`/books/${bookId}/page/${current.id}`}>處理頁面</Link>按「再試一次」
+              </>
+            ) : (
+              RECOMPOSING_NOTICE
+            )
+          }
           idPrefix={idPrefix}
           panelId={panelId}
+          backHref={fixHref(bookId, current.id)}
           right={mode === "line" ? <ZoomControls zoom={zoom} onZoomChange={setZoom} /> : undefined}
         />
         <div id={panelId} role="tabpanel" aria-labelledby={tabIdOf(idPrefix, mode)} className={`stage ${styles.stage}`}>

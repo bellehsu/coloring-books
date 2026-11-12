@@ -30,6 +30,11 @@ async def _main(args: argparse.Namespace) -> int:
         return 2
     registry = WorkflowRegistry(settings.paths.workflows_dir).load()
     if args.workflow:
+        unknown = [n for n in args.workflow if n not in registry.entries]
+        if unknown:
+            print(f"找不到 workflow：{', '.join(unknown)}；可用的有：{', '.join(sorted(registry.entries)) or '（無）'}",
+                  file=sys.stderr)
+            return 2
         registry.entries = {k: v for k, v in registry.entries.items() if k in args.workflow}
     url = args.comfy_url or settings.comfy.url
     async with ComfyClient(url, request_timeout_s=settings.comfy.request_timeout_s) as client:

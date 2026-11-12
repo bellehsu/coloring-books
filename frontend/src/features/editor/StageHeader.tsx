@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import styles from "./StageHeader.module.css";
 
@@ -14,28 +15,31 @@ export const DEFAULT_MODE: EditorMode = "compose";
 
 export const isEditorMode = (v: string | null): v is EditorMode => MODES.some((m) => m.value === v);
 
-/** 舊網址的模式（五個分頁時代）對到現在的兩步：背景／角色 → 構圖、QA 檢查 → 補線；其他 → 構圖。 */
-const LEGACY_MODES = new Map<string, EditorMode>([
-  ["background", "compose"],
-  ["pose", "compose"],
-  ["qa", "line"],
-]);
+/** 網址的 mode 參數 → 編輯器模式；未知值一律回構圖。 */
+export const normalizeMode = (v: string | null): EditorMode => (isEditorMode(v) ? v : DEFAULT_MODE);
 
-/** 網址的 mode 參數 → 編輯器模式（書籤與舊連結照常可用）。 */
-export const normalizeMode = (v: string | null): EditorMode =>
-  isEditorMode(v) ? v : ((v != null && LEGACY_MODES.get(v)) || DEFAULT_MODE);
+/** C 改過、頁面流程還在重新合成時的說明（補線停用的原因，也顯示在舞台上方）。 */
+export const RECOMPOSING_NOTICE = "這一頁正在重新合成…好了會自動更新";
+/** 重新合成失敗（還等著、但流程不會再跑）：要到 C 按「再試一次」。 */
+export const RECOMPOSE_FAILED_NOTICE = "重新合成沒成功，請到處理頁面按「再試一次」";
 
 /** 決定分頁能不能用的頁面狀態。 */
 export interface ModeGate {
   selectedId: number | null;
+  /** page.recompose_pending：選定圖還是舊的合成圖，補的線會在流程換圖時不見。 */
+  recomposing?: boolean;
+  /** 重新合成失敗（recompose_pending＋attention）。 */
+  recomposeFailed?: boolean;
 }
 
 /**
  * 停用的分頁 → 原因（顯示在 tooltip 與 aria-describedby）；不在表內＝可用。
- * 構圖永遠可用；補線要有選定圖（合成圖，或舊流程頁面的圖）。
+ * 構圖永遠可用；補線要有選定圖（合成圖，或舊流程頁面的圖），而且這頁沒有在等重新合成。
  */
 export function modeBlockers(g: ModeGate): Partial<Record<EditorMode, string>> {
-  return g.selectedId == null ? { line: "請先擺好角色位置" } : {};
+  if (g.selectedId == null) return { line: "請先擺好角色位置" };
+  if (!g.recomposing) return {};
+  return { line: g.recomposeFailed ? RECOMPOSE_FAILED_NOTICE : RECOMPOSING_NOTICE };
 }
 
 /** 目標模式能用就用它，否則回到構圖。 */
@@ -55,9 +59,13 @@ export interface StageHeaderProps {
   panelId: string;
   /** 右側插槽：修線模式放 <ZoomControls>。 */
   right?: ReactNode;
+  /** 分頁旁的說明（例如 RECOMPOSING_NOTICE）。 */
+  notice?: ReactNode;
+  /** 有給：顯示「回到處理這一頁」連結（目前頁的 C）。 */
+  backHref?: string;
 }
 
-export function StageHeader({ mode, onModeChange, blockers, gapCount = 0, idPrefix, panelId, right }: StageHeaderProps) {
+export function StageHeader({ mode, onModeChange, blockers, gapCount = 0, idPrefix, panelId, right, notice, backHref }: StageHeaderProps) {
   const hintId = useId();
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const enabled = (m: EditorMode) => !blockers[m];
@@ -126,6 +134,16 @@ export function StageHeader({ mode, onModeChange, blockers, gapCount = 0, idPref
           {blockers[m.value]}
         </span>
       ))}
+      {notice && (
+        <p role="status" className={styles.notice}>
+          {notice}
+        </p>
+      )}
+      {backHref && (
+        <Link href={backHref} className={styles.back}>
+          回到處理這一頁
+        </Link>
+      )}
       {right && <div className={styles.right}>{right}</div>}
     </div>
   );
