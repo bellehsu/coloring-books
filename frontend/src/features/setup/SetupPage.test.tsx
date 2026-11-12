@@ -149,6 +149,23 @@ const startButton = () => screen.getByRole("button", { name: "開始做這本書
 const paste = (text: string) => fireEvent.change(screen.getByLabelText("把故事貼在這裡"), { target: { value: text } });
 const png = (name = "park.png") => new File(["x"], name, { type: "image/png" });
 
+describe("D1：上一頁回到 /books/new 這個元件，但網址是 /books/{id}/setup", () => {
+  it("bookId＝null 且 pathname 是 /books/1/setup：載入第 1 本書，不顯示「做一本新的著色書」，書名離開欄位不建新書", async () => {
+    book = bookOf({ character_generation_id: 50 });
+    pages = [pageOf(101, 0)];
+    gens = [charGen(50)];
+    window.history.replaceState(null, "", "/books/1/setup");
+    setup(null);
+    expect(await screen.findByRole("heading", { level: 1, name: "主角與故事" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "做一本新的著色書" })).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("書名")).toHaveValue("小兔子的交通工具書"));
+    await userEvent.type(screen.getByLabelText("書名"), "2");
+    await userEvent.tab();
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH" && c.url === "/api/books/1")).toBe(true));
+    expect(posts("/api/books")).toHaveLength(0);
+  });
+});
+
 describe("① 書名和紙張：建立書", () => {
   it("/books/new：書名離開欄位就建立（用選的紙張），網址換成 /books/{id}/setup，不換頁", async () => {
     book = null;

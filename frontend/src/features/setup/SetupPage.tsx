@@ -20,6 +20,13 @@ const MAX_TITLE = 100;
 const MODES: PrintMode[] = ["home", "print_shop"];
 const paperValue = (size: PaperSize, mode: PrintMode) => `${size}:${mode}`;
 
+/** 網址是 /books/{id}/setup 就回傳 id（只在瀏覽器；SSR 回 null）。 */
+function bookIdFromPath(): number | null {
+  if (typeof window === "undefined") return null;
+  const m = /^\/books\/(\d+)\/setup\/?$/.exec(window.location.pathname);
+  return m ? Number(m[1]) : null;
+}
+
 /** 「開始做這本書」進行到哪一步（按鈕裡顯示）。 */
 type Phase = { step: "import" } | { step: "upload"; done: number; of: number } | { step: "produce" };
 const phaseLabel = (p: Phase) =>
@@ -32,10 +39,13 @@ const phaseLabel = (p: Phase) =>
  * - /books/{id}/setup：同一頁，給已經有的書（「主角與故事」）：列出現有頁，貼上的故事只填空欄位、補頁。
  * - 開始：匯入頁面 → 上傳選好的背景 → POST /produce → 到 B。429 也到 B（B 會顯示今天用完了）。
  */
-export function SetupPage({ bookId: initialId }: { bookId: number | null }) {
+export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
   const router = useRouter();
   const qc = useQueryClient();
   const toast = useToast();
+  // D1：Next 會把 /books/new 的 router tree 抄進 replaceState 換掉的歷史紀錄；之後按「上一頁」，
+  // 網址是 /books/{id}/setup，畫出來的卻是這個元件（bookId＝null）。所以掛載時以網址為準（只在 client 讀，SSR 還是新書表單）。
+  const [initialId] = useState(() => routeId ?? bookIdFromPath());
   const [bookId, setBookId] = useState(initialId);
   const has = bookId != null;
   const id = bookId ?? 0;
