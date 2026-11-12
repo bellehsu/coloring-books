@@ -33,7 +33,7 @@ class SettingsError(RuntimeError):
 
 class ComfySettings(BaseModel):
     url: str = "http://127.0.0.1:8188"
-    models_root: Path
+    models_root: Path | None = None  # 只有 scripts/sync_comfy_model_paths.py 用；後端不讀
     install_dir: Path | None = None
     request_timeout_s: float = Field(30.0, gt=0)
     run_timeout_s: float = Field(900.0, gt=0)
@@ -201,13 +201,6 @@ def _env_only_problems(data: dict[str, Any]) -> list[str]:
 def validate_paths(s: Settings) -> list[str]:
     """檢查路徑是否存在。回傳問題清單（空清單代表通過）。s 必須已 resolved()。"""
     problems: list[str] = []
-    if not s.comfy.models_root.is_dir():
-        problems.append(f"comfy.models_root 不存在或不是資料夾：{s.comfy.models_root}")
-    if s.comfy.install_dir is not None:
-        if not s.comfy.install_dir.is_dir():
-            problems.append(f"comfy.install_dir 不存在：{s.comfy.install_dir}")
-        elif not (s.comfy.install_dir / "main.py").is_file():
-            problems.append(f"comfy.install_dir 看起來不是 ComfyUI 安裝目錄（缺 main.py）：{s.comfy.install_dir}")
     if not s.paths.workflows_dir.is_dir():
         problems.append(f"paths.workflows_dir 不存在：{s.paths.workflows_dir}")
     if not s.paths.storage_dir.is_dir():

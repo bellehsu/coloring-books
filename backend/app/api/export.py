@@ -59,13 +59,19 @@ def _included(p: Page, include: Include) -> bool:
 
 
 def book_pdf(session: Session, storage: Storage, book: Book, include: Include,
-             font_path: Path | None) -> bytes:
+             font_path: Path | None, *, skip_unrenderable: bool = False) -> bytes:
     """書的 PDF（擁有者匯出與分享下載共用）：include=passed 只含「現在」仍通過的頁面，ready 再去掉
-    「請看一下」的頁（B 的「印出這本書」預設）；沒有頁面 → 409。"""
+    「請看一下」的頁（B 的「印出這本書」預設）；沒有頁面 → 409。
+    skip_unrenderable（分享下載用）：讀不到線稿或字型不能用的頁略過，其餘照常輸出；擁有者匯出則任何一頁失敗都 409。"""
     candidates = [p for p in _ordered_pages(session, book.id) if _included(p, include)]
     images = []
     for p in candidates:
-        img = composed_page(session, storage, book, p, font_path)
+        try:
+            img = composed_page(session, storage, book, p, font_path)
+        except HTTPException:
+            if skip_unrenderable:
+                continue
+            raise
         # 重算線稿可能把這一頁退回草稿（例如剛換紙張大小）；只匯出「現在」仍符合的頁面
         session.refresh(p)
         if not _included(p, include):

@@ -184,7 +184,10 @@ class ComfyClient:
             return None
         if resp.status_code != 200:
             raise ComfyError(f"GET /models/{folder} 回傳 HTTP {resp.status_code}")
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError as e:
+            raise ComfyConnectionError(f"GET /models/{folder} 回傳的不是 JSON：{e}") from e
 
     async def upload_image(
         self,

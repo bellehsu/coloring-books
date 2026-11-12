@@ -26,6 +26,37 @@ REQUIRED = {"checkpoints", "loras", "controlnet", "ipadapter", "clip_vision", "u
             "diffusion_models", "text_encoders", "vae"}
 
 
+def test_sync_errors_when_models_root_unset(settings_file, tmp_path, capsys):
+    """A12：models_root 沒設定 → 清楚的錯誤、結束碼 2。"""
+    data = yaml.safe_load(settings_file.read_text())
+    data["comfy"].pop("models_root")
+    p = tmp_path / "s2.yaml"
+    p.write_text(yaml.safe_dump(data))
+    assert sync.main(["--settings", str(p), "--output", str(tmp_path / "o.yaml")]) == 2
+    assert "comfy.models_root" in capsys.readouterr().err
+
+
+def test_sync_keeps_first_backup(settings_file, tmp_path):
+    """C12：.bak 只在不存在時建立，第二次同步不覆寫第一次留下的原檔。"""
+    out = tmp_path / "extra_model_paths.yaml"
+    out.write_text("# 我的註解\nother:\n  base_path: /x\n")
+    args = ["--settings", str(settings_file), "--output", str(out)]
+    assert sync.main(args) == 0
+    bak = out.with_name(out.name + ".bak")
+    assert bak.read_text() == "# 我的註解\nother:\n  base_path: /x\n"
+    assert sync.main(args) == 0
+    assert bak.read_text() == "# 我的註解\nother:\n  base_path: /x\n"
+
+
+def test_preflight_unknown_workflow_exit_2(settings_file, capsys):
+    """C13：打錯 --workflow 名稱 → 列出可用名稱、結束碼 2。"""
+    pf = _load("preflight")
+    sys.argv = ["preflight.py", "--settings", str(settings_file), "--workflow", "nope_x"]
+    assert pf.main() == 2
+    err = capsys.readouterr().err
+    assert "找不到 workflow：nope_x" in err and "可用的有：" in err
+
+
 def test_build_section_has_required_folders(tmp_path):
     sec = sync.build_section(tmp_path)
     assert sec["base_path"] == str(tmp_path)
@@ -2063,3 +2094,53 @@ def test_fake_backend_refuses_database_parent(settings_file, tmp_path, monkeypat
     settings_file.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     rc, started, err = _run_fake_main(monkeypatch, settings_file, db_dir, capsys)
     assert rc == 2 and not started and "假後端拒絕啟動" in err
+
+
+def test_gc_clears_old_unselected_composites_keeps_newest_three(storage_gc, settings_file):
+    """B7：不是選定圖、超過 7 天、不在該頁最新 3 張的合成圖 → 刪物件並清空 image_path／mask_path。"""
+    from app.models import Generation, Page, utcnow
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "管理員", is_admin=True)
+    b = _book(sessions, oid)
+    p = _page(sessions, b)
+    other = _page(sessions, b)
+    old = utcnow() - _td(days=10)
+    cs = [_gen(sessions, storage, b, p, mask=True) for _ in range(6)]
+    cs.append(_gen(sessions, storage, b, p))
+    o = _gen(sessions, storage, b, other)  # 別頁、只有一張：保留
+    for gid in cs[:6] + [o]:
+        _set(sessions, Generation, gid, created_at=old)
+    _set(sessions, Page, p, selected_generation_id=cs[0])
+    pose = _gen(sessions, storage, b, p, kind="pose")  # 非合成圖不受影響
+    _set(sessions, Generation, pose, created_at=old)
+
+    rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=True)
+    assert all(v[0] for v in _paths(sessions).values())  # dry-run 不動
+    assert rep.expired_composites == 3
+    rep = storage_gc.run_gc(sessions, storage, days=30)
+    paths = _paths(sessions)
+    cleared = {gid for gid, v in paths.items() if v == (None, None)}
+    assert cleared == {cs[1], cs[2], cs[3]}
+    assert rep.expired_composites == 3
+    keys = _keys(storage)
+    assert all(paths[g][0] in keys for g in (cs[0], cs[4], cs[5], cs[6], o, pose))
+    assert not any(k.endswith(f"/{g}.png") or k.endswith(f"/{g}_mask.png") for k in keys for g in cs[1:4])
+
+
+def test_gc_keeps_old_composites_of_pages_with_active_tasks(storage_gc, settings_file):
+    from app.models import Generation, PageTask, PageTaskStatus, utcnow
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "管理員", is_admin=True)
+    b = _book(sessions, oid)
+    p = _page(sessions, b)
+    old = utcnow() - _td(days=10)
+    cs = [_gen(sessions, storage, b, p) for _ in range(5)]
+    for gid in cs:
+        _set(sessions, Generation, gid, created_at=old)
+    with sessions() as s:
+        s.add(PageTask(page_id=p, status=PageTaskStatus.RUNNING.value))
+        s.commit()
+    storage_gc.run_gc(sessions, storage, days=30)
+    assert all(v[0] for v in _paths(sessions).values())

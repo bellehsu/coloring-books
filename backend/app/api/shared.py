@@ -158,7 +158,7 @@ def shared_book_pdf(
 ) -> Response:
     book, _o, _pages = _visible_book(session, book_id)
     try:
-        pdf = book_pdf(session, storage, book, "passed", font_path)
+        pdf = book_pdf(session, storage, book, "passed", font_path, skip_unrenderable=True)
     except HTTPException:
         raise _gone() from None
     return pdf_response(book, pdf)

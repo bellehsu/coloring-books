@@ -96,3 +96,23 @@ def test_preflight_endpoint_reports_missing_caption_font(settings_file, object_i
         body = client.get("/api/system/preflight").json()
     assert body["ok"] and body["workflows"][0]["ok"]
     assert body["caption_font"]["ok"] is False and "missing.ttf" in body["caption_font"]["error"]
+
+
+def test_preflight_reload_failure_keeps_old_registry(settings_file, object_info_subset, monkeypatch):
+    """A8：workflows_dir 被刪掉時 reload 不是 500；回報原因並沿用舊登錄。"""
+    import shutil
+
+    from tests.test_preflight import tiny_object_info
+
+    fake = FakeComfy(object_info=tiny_object_info(object_info_subset))
+    monkeypatch.setattr(app_main, "ComfyClient", lambda url, **kw: fake.client(**kw))
+    settings = load_settings(settings_file)
+    app = app_main.create_app(settings)
+    with TestClient(app) as client:
+        old = app.state.registry
+        shutil.rmtree(settings.paths.workflows_dir)
+        r = client.get("/api/system/preflight")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False and "重新載入 workflow 失敗" in body["reload_error"]
+        assert app.state.registry is old

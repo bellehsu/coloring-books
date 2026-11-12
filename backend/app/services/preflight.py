@@ -66,6 +66,7 @@ class PreflightReport:
     devices: list[dict] = field(default_factory=list)
     workflows: list[WorkflowReport] = field(default_factory=list)
     caption_font: CaptionFontReport | None = None  # 獨立項目，不計入 ok
+    reload_error: str | None = None  # 重新載入 workflow 失敗時的原因（改用舊的登錄檢查）；有值時 ok 一定是 False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -178,6 +179,21 @@ def check_font(path: Path | None) -> CaptionFontReport:
     return CaptionFontReport(str(path) if path is not None else None, error is None, error)
 
 
+async def _check_entry(entry, object_info: dict, client: ComfyClient,
+                       folder_cache: dict[str, list[str] | None], rep: WorkflowReport) -> None:
+    provided_by = {ct: cn["repo"] for cn in entry.manifest.get("custom_nodes", []) for ct in cn["provides"]}
+    missing: dict[str, list[str]] = {}
+    for nid, node in entry.workflow.items():
+        if node["class_type"] not in object_info:
+            missing.setdefault(node["class_type"], []).append(nid)
+    rep.missing_nodes = [MissingNode(ct, ids, provided_by.get(ct)) for ct, ids in sorted(missing.items())]
+    try:
+        await _check_models(entry, object_info, client, folder_cache, rep)
+    except ComfyError as e:
+        rep.load_errors.append(f"模型檢查失敗：{e}")
+    _check_inputs(entry, object_info, rep)
+
+
 async def run_preflight(client: ComfyClient, registry: WorkflowRegistry,
                         caption_font: Path | None = None) -> PreflightReport:
     report = PreflightReport(ok=False, comfy_url=client.base_url, comfy_reachable=False)
@@ -200,17 +216,10 @@ async def run_preflight(client: ComfyClient, registry: WorkflowRegistry,
         report.workflows.append(rep)
         if object_info is None or entry.workflow is None:
             continue
-        provided_by = {ct: cn["repo"] for cn in entry.manifest.get("custom_nodes", []) for ct in cn["provides"]}
-        missing: dict[str, list[str]] = {}
-        for nid, node in entry.workflow.items():
-            if node["class_type"] not in object_info:
-                missing.setdefault(node["class_type"], []).append(nid)
-        rep.missing_nodes = [MissingNode(ct, ids, provided_by.get(ct)) for ct, ids in sorted(missing.items())]
         try:
-            await _check_models(entry, object_info, client, folder_cache, rep)
-        except ComfyError as e:
-            rep.load_errors.append(f"模型檢查失敗：{e}")
-        _check_inputs(entry, object_info, rep)
+            await _check_entry(entry, object_info, client, folder_cache, rep)
+        except Exception as e:  # noqa: BLE001 - 單一 workflow 檢查失敗只記在它自己的報告，不讓整份報告變 500
+            rep.load_errors.append(f"檢查失敗：{type(e).__name__}: {e}")
         rep.ok = not (rep.load_errors or rep.missing_nodes or rep.missing_models or rep.input_errors)
 
     report.ok = report.comfy_reachable and bool(report.workflows) and all(w.ok for w in report.workflows)

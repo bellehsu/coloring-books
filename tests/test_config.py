@@ -48,8 +48,8 @@ def test_missing_paths_listed_together(tmp_path: Path):
     with pytest.raises(SettingsError) as ei:
         load_settings(p)
     text = str(ei.value)
-    assert len(ei.value.problems) == 5
-    for key in ("models_root", "install_dir", "workflows_dir", "storage_dir", "database"):
+    assert len(ei.value.problems) == 3  # models_root／install_dir 不再由後端檢查（A12）
+    for key in ("workflows_dir", "storage_dir", "database"):
         assert key in text
 
 
@@ -61,7 +61,7 @@ def test_missing_file_and_bad_values(tmp_path: Path):
     with pytest.raises(SettingsError) as ei:
         load_settings(p)
     text = str(ei.value)
-    assert "comfy.url" in text and "comfy.models_root" in text and "paths.workflows_dir" in text
+    assert "comfy.url" in text and "comfy.models_root" not in text and "paths.workflows_dir" in text
 
 
 def test_example_settings_is_valid_schema():
@@ -352,3 +352,16 @@ def test_example_settings_names_caption_font():
     s = load_settings(PROJECT_ROOT / "config" / "settings.example.yaml", check_paths=False)
     assert s.paths.caption_font == PROJECT_ROOT / "assets" / "fonts" / "NotoSansTC-VF.ttf"
     assert "caption_font" in (PROJECT_ROOT / "config" / "settings.example.yaml").read_text(encoding="utf-8")
+
+
+def test_settings_without_models_root_load(tmp_path: Path, settings_file: Path):
+    """A12：後端不讀 models_root／install_dir，沒設定也能啟動；設了但路徑不存在也不擋。"""
+    data = yaml.safe_load(settings_file.read_text())
+    data["comfy"].pop("models_root")
+    p = tmp_path / "no_models.yaml"
+    p.write_text(yaml.safe_dump(data))
+    assert load_settings(p).comfy.models_root is None
+    data["comfy"]["models_root"] = str(tmp_path / "missing")
+    data["comfy"]["install_dir"] = str(tmp_path / "missing2")
+    p.write_text(yaml.safe_dump(data))
+    assert load_settings(p).comfy.models_root == tmp_path / "missing"

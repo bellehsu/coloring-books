@@ -4,7 +4,10 @@
 1. 過期的捨棄圖：`discarded_at` 早於 --days 天（預設 30）的生成紀錄，刪掉它的圖片與遮罩物件，
    並清空 image_path／mask_path。頁面選用中（selected／background／pose／auto_*）、復原快照用到的、有進行中頁面任務的頁面、書的角色、
    排隊中任務要用的角色圖，捨棄再久也不刪。
-2. 孤兒物件：books/ 底下沒有任何資料列指到的物件（生成圖、遮罩、頁面線稿 lineart_path），
+2. 舊合成圖：每次拖位置／換背景／復原都會新增一筆 composite generation，沒有流程會捨棄它。
+   不是任何頁面的選定圖、建立時間早於 7 天（固定值，不受 --days 影響）、而且不是該頁最新 3 筆（依 id）的 composite，
+   刪掉它的圖片與遮罩物件並清空 image_path／mask_path（列留著）。有進行中頁面任務的頁面、排隊中任務要用的角色圖不動。
+3. 孤兒物件：books/ 底下沒有任何資料列指到的物件（生成圖、遮罩、頁面線稿 lineart_path），
    另外一次性清掉 cache/previews/ 底下全部的舊預覽物件（預覽功能已移除，之後沒有新的；這條規則之後可以拿掉）。
    正在寫入的物件不算孤兒：生成紀錄排隊中／執行中，或 id 還沒 commit（大於 sqlite_sequence）。
    與 DB 對不上的物件也不刪：書號大於 DB 最大的書、頁／生成紀錄 id 超出 DB，或該 id 的列屬於另一本書。
@@ -42,11 +45,13 @@ from sqlmodel import Session, col, select, update  # noqa: E402
 
 from app.config import SettingsError, load_settings  # noqa: E402
 from app.db import make_engine, schema_revisions, session_factory  # noqa: E402
-from app.models import Book, Generation, GenStatus, Page, PageHistory, PageTask, PageTaskStatus, utcnow  # noqa: E402
+from app.models import Book, Generation, GenKind, GenStatus, Page, PageHistory, PageTask, PageTaskStatus, utcnow  # noqa: E402
 from app.services import instance  # noqa: E402
 from app.storage import Storage, make_storage  # noqa: E402
 
 DEFAULT_DAYS = 30
+COMPOSITE_KEEP_DAYS = 7  # 合成圖至少保留這麼久
+COMPOSITE_KEEP_NEWEST = 3  # 每頁最新幾筆合成圖一律保留
 _IN_FLIGHT = (GenStatus.QUEUED, GenStatus.RUNNING)
 _BOOK_KEY = re.compile(r"^books/(\d+)/")
 # books/{book}/generations/{gen}.png 或 {gen}_mask.png
@@ -75,12 +80,15 @@ class GcReport:
     cutoff: datetime
     expired_generations: int = 0
     expired_objects: int = 0
+    expired_composites: int = 0
+    composite_objects: int = 0
     orphan_objects: int = 0
     orphan_previews: int = 0
     skipped_in_flight: int = 0
     skipped_mismatched: int = 0  # 物件與 DB 對不上（書／頁 id 超出 DB，或屬於另一本書）：不刪
     aborted: bool = False  # 孤兒太多，什麼都沒刪
     mass_candidates: int = 0  # 孤兒（books/）
+    composite_candidates: int = 0  # 該清的舊合成圖（它們的物件已算在 referenced 裡）
     abort_reason: str = ""
     referenced: int = 0  # 列出的物件裡有資料列指到的
     listed: int = 0
@@ -97,6 +105,7 @@ class _State:
     pages: dict[int, int]  # id → book_id
     referenced: set[str]
     expired: dict[int, list[str]]  # 過期的捨棄生成紀錄 id → 它的物件 key（image／mask）
+    composites: dict[int, list[str]]  # 該清的舊合成圖 id → 它的物件 key
 
 
 def _seq(s: Session, model) -> int:
@@ -151,6 +160,29 @@ def _protected_gen_ids(s: Session) -> set[int]:
     return ids
 
 
+def _old_composites(s: Session, now: datetime, in_flight_refs: set[str]) -> dict[int, list[str]]:
+    """該清掉圖片的舊合成圖：不是任何頁面的選定圖、建立超過 COMPOSITE_KEEP_DAYS 天、不是該頁最新
+    COMPOSITE_KEEP_NEWEST 筆（依 id）、頁面沒有進行中的任務、不是排隊中任務要用的圖。"""
+    cutoff = now - timedelta(days=COMPOSITE_KEEP_DAYS)
+    selected = {i for i in s.exec(select(Page.selected_generation_id)).all() if i is not None}
+    active_pages = set(s.exec(select(PageTask.page_id).where(
+        col(PageTask.status).in_([PageTaskStatus.QUEUED.value, PageTaskStatus.RUNNING.value]))).all())
+    by_page: dict[int, list[Generation]] = {}
+    for g in s.exec(select(Generation).where(Generation.kind == GenKind.COMPOSITE,
+                                             col(Generation.page_id).is_not(None)).order_by(col(Generation.id).desc())):
+        by_page.setdefault(g.page_id, []).append(g)
+    out: dict[int, list[str]] = {}
+    for page_id, gens in by_page.items():
+        if page_id in active_pages:
+            continue
+        for g in gens[COMPOSITE_KEEP_NEWEST:]:
+            keys = [k for k in (g.image_path, g.mask_path) if k]
+            if (keys and g.id not in selected and g.created_at < cutoff and g.status not in _IN_FLIGHT
+                    and not (set(keys) & in_flight_refs)):
+                out[g.id] = keys
+    return out
+
+
 def _load_state(s: Session, now: datetime, days: int) -> _State:
     cutoff = now - timedelta(days=days)
     seq = _seq(s, Generation)
@@ -175,6 +207,7 @@ def _load_state(s: Session, now: datetime, days: int) -> _State:
             and not (set(keys) & char_refs)
         ):
             expired[g.id] = keys
+    composites = _old_composites(s, now, char_refs)
     return _State(
         seq=seq,
         max_book=s.exec(select(func.max(Book.id))).one() or 0,
@@ -183,6 +216,7 @@ def _load_state(s: Session, now: datetime, days: int) -> _State:
         pages={pid: bid for pid, bid in s.exec(select(Page.id, Page.book_id)).all()},
         referenced=referenced,
         expired=expired,
+        composites=composites,
     )
 
 
@@ -217,6 +251,21 @@ def _clear_expired(s: Session, ids: Sequence[int], cutoff: datetime) -> set[int]
         .values(image_path=None, mask_path=None)
         .returning(Generation.id)
     )
+    cleared = set(res.scalars().all())
+    s.commit()
+    return cleared
+
+
+def _clear_composites(s: Session, planned: Sequence[int], now: datetime) -> set[int]:
+    """清空舊合成圖的 key。條件重算一次（讀完之後才被選用、或被更新的合成圖擠進最新 3 筆的不清），回傳真的清掉的 id。"""
+    if not planned:
+        return set()
+    char_refs = _character_refs(s.exec(select(Generation).where(col(Generation.status).in_(_IN_FLIGHT))).all())
+    ids = sorted(set(planned) & set(_old_composites(s, now, char_refs)))
+    if not ids:
+        return set()
+    res = s.exec(update(Generation).where(col(Generation.id).in_(ids)).values(image_path=None, mask_path=None)
+                 .returning(Generation.id))
     cleared = set(res.scalars().all())
     s.commit()
     return cleared
@@ -260,6 +309,7 @@ def _orphans(state: _State, book_keys: Sequence[str], report: GcReport) -> list[
         else:
             orphans.append(key)
     report.mass_candidates = len(orphans)
+    report.composite_candidates = len(state.composites)
     return orphans
 
 
@@ -271,8 +321,8 @@ def _mass_delete_reason(r: GcReport) -> str | None:
     """DB 與 storage 看起來不是一組時回傳原因（整個中止）；正常回 None。
     - 孤兒佔「孤兒＋被參照」超過門檻（分母不含略過的物件，對不上的再多也稀釋不了）；
     - 對不上的物件佔全部列出的超過門檻（正常的 DB 幾乎沒有對不上的物件）。"""
-    if _over(r.mass_candidates, r.mass_candidates + r.referenced):
-        return (f"{r.mass_candidates} 個孤兒物件（被參照的只有 {r.referenced} 個；"
+    if _over(r.mass_candidates + r.composite_candidates, r.mass_candidates + r.referenced):
+        return (f"{r.mass_candidates} 個孤兒物件、{r.composite_candidates} 筆舊合成圖（被參照的只有 {r.referenced} 個；"
                 f"超過 {MASS_DELETE_MIN} 個且超過 {MASS_DELETE_RATIO:.0%}）")
     if _over(r.skipped_mismatched, r.listed):
         return (f"{r.skipped_mismatched} 個物件與資料庫對不上（列出 {r.listed} 個；"
@@ -322,7 +372,17 @@ def run_gc(sessions, storage: Storage, *, days: int = DEFAULT_DAYS, dry_run: boo
     for gid in sorted(cleared):
         report.expired_objects += sum(drop("expired", k) for k in state.expired[gid])
 
-    # 2. 孤兒：刪之前再讀一次參照（縮短與其他行程競爭的時間）
+    # 2. 舊合成圖：同樣先清 key（重算條件）再刪物件
+    if dry_run:
+        cleared_c = set(state.composites)
+    else:
+        with sessions() as s:
+            cleared_c = _clear_composites(s, sorted(state.composites), now)
+    report.expired_composites = len(cleared_c)
+    for gid in sorted(cleared_c):
+        report.composite_objects += sum(drop("old-composite", k) for k in state.composites[gid])
+
+    # 3. 孤兒：刪之前再讀一次參照（縮短與其他行程競爭的時間）
     if not dry_run and orphans:
         with sessions() as s:
             fresh = _load_state(s, now, days)
@@ -345,6 +405,7 @@ def format_report(r: GcReport, *, verbose: bool = False) -> str:
         "storage_gc（dry-run：只計數，不刪除任何東西）" if r.dry_run else "storage_gc",
         f"保留天數：{r.days}（discarded_at 早於 {r.cutoff.isoformat(timespec='seconds')}）",
         f"過期的捨棄生成紀錄：{r.expired_generations} 筆，{verb}物件 {r.expired_objects} 個",
+        f"舊合成圖：{r.expired_composites} 筆，{verb}物件 {r.composite_objects} 個",
         f"孤兒物件：{verb} books/ {r.orphan_objects} 個、cache/previews/ {r.orphan_previews} 個",
         f"略過（可能正在寫入）：{r.skipped_in_flight} 個",
         f"略過（與資料庫對不上）：{r.skipped_mismatched} 個",

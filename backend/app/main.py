@@ -147,12 +147,22 @@ def create_app(
 
     @app.get("/api/system/preflight", dependencies=[Depends(require_admin)])
     async def preflight(reload: bool = True) -> dict:
+        reload_error = None
         if reload:
-            app.state.registry = WorkflowRegistry(app.state.settings.paths.workflows_dir).load()
-            # 引擎也要改用新登錄，否則 preflight 與實際生成會看到不同的 workflow／hash
-            if isinstance(app.state.engine, ComfyEngine):
-                app.state.engine.registry = app.state.registry
-        return (await _preflight(app)).to_dict()
+            try:
+                new_registry = WorkflowRegistry(app.state.settings.paths.workflows_dir).load()
+            except Exception as e:  # noqa: BLE001  例如 workflows_dir 被刪：保留舊登錄，把原因放進報告
+                reload_error = f"重新載入 workflow 失敗：{type(e).__name__}: {e}"
+            else:
+                app.state.registry = new_registry
+                # 引擎也要改用新登錄，否則 preflight 與實際生成會看到不同的 workflow／hash
+                if isinstance(app.state.engine, ComfyEngine):
+                    app.state.engine.registry = app.state.registry
+        report = await _preflight(app)
+        if reload_error:
+            report.reload_error = reload_error
+            report.ok = False
+        return report.to_dict()
 
     return app
 
