@@ -411,6 +411,9 @@ class GenerationWorker:
 
     async def _fail_retrying(self, gen_id: int, message: str) -> None:
         await self._write_retrying(gen_id, lambda: self._fail(gen_id, message))
+        if gen_id not in self._unfinished:  # 狀態只在 event loop 這一側改：stop() 之後 thread 才收尾也不會蓋掉 STOPPED
+            self.last_error = message
+            self.state = WorkerState.IDLE
 
     async def _retry_unfinished(self) -> None:
         for gen_id, write in list(self._unfinished.items()):
@@ -427,8 +430,6 @@ class GenerationWorker:
                     pipeline.on_generation_failed(s, gen_id)
             except Exception:  # noqa: BLE001  只記 log：生成已標成失敗
                 log.exception("記下頁面需要注意失敗（generation %s）", gen_id)
-        self.last_error = message
-        self.state = WorkerState.IDLE
 
     def _after_success(self, gen_id: int) -> None:
         """頁面的背景／角色動作：自動選用並排頁面流程；任何失敗只記 log（生成已經成功）。"""

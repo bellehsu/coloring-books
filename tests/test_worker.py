@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -788,6 +789,26 @@ async def test_stop_interrupts_running_engine(env):
         await asyncio.sleep(0.01)
     await worker.stop()
     assert engine.interrupts == 1
+
+
+async def test_stop_during_slow_failing_write_ends_stopped(env, monkeypatch):
+    worker, engine, sessions, _ = env
+    gid = add_gen(sessions, status=GenStatus.RUNNING)
+    real = worker._finish
+
+    def slow(*a, **kw):
+        time.sleep(0.3)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(worker, "_finish", slow)
+    task = asyncio.create_task(worker._fail_retrying(gid, "boom"))
+    await asyncio.sleep(0.05)  # 寫入在 thread 裡進行中
+    worker.state = WorkerState.STOPPED
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.5)  # thread 收尾
+    assert worker.state == WorkerState.STOPPED and worker.last_error is None
 
 
 async def test_stop_idle_does_not_interrupt(env):

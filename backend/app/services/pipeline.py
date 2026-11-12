@@ -30,7 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select, update
 
 from app.models import (
-    Generation, GenKind, GenStatus, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer, utcnow,
+    Book, Generation, GenKind, GenStatus, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer, utcnow,
 )
 from app.services import history
 from app.services.engine import public_engine_error
@@ -164,11 +164,19 @@ def finish_page_task(session: Session, task_id: int, status: PageTaskStatus, err
         .values(status=status.value, error=error, updated_at=utcnow())
     )
     page_id = session.exec(select(PageTask.page_id).where(col(PageTask.id) == task_id)).first()
-    if page_id is not None:  # 每頁只留最新 FINISHED_TASKS_KEPT 筆已完成的工作（A16），總覽才不會越來越慢
+    if page_id is not None:
+        # 每頁只留最新 FINISHED_TASKS_KEPT 筆已完成的工作（A16）；但這一輪（created_at >= produce_started_at）
+        # 的不刪，B 的「做好 N / M 張」要算它們
         stale = select(PageTask.id).where(
             col(PageTask.page_id) == page_id, col(PageTask.status).in_(_FINISHED)
         ).order_by(col(PageTask.id).desc()).offset(FINISHED_TASKS_KEPT)
-        session.exec(delete(PageTask).where(col(PageTask.id).in_(stale)))
+        started = session.exec(
+            select(Book.produce_started_at).join(Page, col(Page.book_id) == col(Book.id)).where(col(Page.id) == page_id)
+        ).first()
+        cond = col(PageTask.id).in_(stale)
+        if started is not None:
+            cond = cond & (col(PageTask.created_at) < started)
+        session.exec(delete(PageTask).where(cond))
     session.commit()
 
 
