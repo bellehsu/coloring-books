@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -57,11 +58,19 @@ class GenerationEngine(Protocol):
 
 
 ENGINE_UNREACHABLE_PUBLIC = "繪圖服務暫時無法連線，稍後會自動重試"
+ENGINE_FAILED_PUBLIC = "繪圖時發生錯誤，請再試一次"
 _INTERNAL_MARKERS = ("127.0.0.1", "localhost", "http://", "https://")
+_PATH_MARKERS = ("/ai-data/", "/home/", "/tmp/", "/opt/")
+_DRIVE_PATH = re.compile(r"[A-Za-z]:\\")
 
 
 def public_engine_error(text: str | None, is_admin: bool) -> str | None:
-    """給 API 回應用：非管理者看不到引擎的內部位址與連線細節，含位址的錯誤原文換成固定中文訊息。"""
+    """給 API 回應用：非管理者看不到引擎的內部位址、連線細節與檔案路徑，
+    含位址的錯誤原文換成連不上的固定訊息，含路徑的換成繪圖失敗的固定訊息。"""
     if text is None or is_admin:
         return text
-    return ENGINE_UNREACHABLE_PUBLIC if any(m in text for m in _INTERNAL_MARKERS) else text
+    if any(m in text for m in _INTERNAL_MARKERS):
+        return ENGINE_UNREACHABLE_PUBLIC
+    if any(m in text for m in _PATH_MARKERS) or _DRIVE_PATH.search(text):
+        return ENGINE_FAILED_PUBLIC
+    return text

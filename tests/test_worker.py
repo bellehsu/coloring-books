@@ -225,27 +225,113 @@ async def test_engine_unavailable_keeps_job_queued_and_retries(env):
     assert worker.state != WorkerState.ENGINE_UNAVAILABLE
 
 
-async def test_unavailable_requeue_cap(env):
-    worker, engine, sessions, _ = env
-    engine.error = EngineUnavailable("comfy down")
+def _usage_gen(sessions):
     gid = add_gen(sessions, request_json=encode_request(
         kind=GenKind.CHARACTER, prompt="p", negative_prompt="n", seed=7, width=64, height=64,
         extra={"usage_day": "2026-11-12", "usage_owner": 1}))
     with sessions() as s:
         s.add(Usage(owner_id=1, day=date(2026, 11, 12), generations=1))
         s.commit()
-    for i in range(3):
+    return gid
+
+
+class _Clock:
+    def __init__(self):
+        self.t = datetime(2026, 11, 12, 3, 0, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.t
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    import app.services.worker as worker_mod
+
+    c = _Clock()
+    monkeypatch.setattr(worker_mod, "_now", c)
+    return c
+
+
+async def test_short_outage_never_fails_job(env, clock):
+    """ComfyUI 重啟約 2 分鐘：連不上 6 次（每 20 秒一次）仍留在佇列，不算「一直連不上」。"""
+    worker, engine, sessions, _ = env
+    engine.error = EngineUnavailable("comfy down")
+    gid = _usage_gen(sessions)
+    first = clock.t
+    for i in range(6):
+        clock.t = first + timedelta(seconds=20 * i)
         await worker.run_once()
         g = get(sessions, gid)
         assert g.status == GenStatus.QUEUED
-        assert json.loads(g.request_json)["engine_requeues"] == i + 1
+        d = json.loads(g.request_json)
+        assert d["engine_requeues"] == i + 1
+        assert datetime.fromisoformat(d["engine_unavailable_since"]) == first
+    engine.error = None
+    await worker.run_once()
+    g = get(sessions, gid)
+    assert g.status == GenStatus.SUCCEEDED
+    d = json.loads(g.request_json)
+    assert "engine_requeues" not in d and "engine_unavailable_since" not in d  # 引擎回應成功：清掉
+    with sessions() as s:
+        assert s.get(Usage, (1, date(2026, 11, 12))).generations == 1
+
+
+async def test_unavailable_requeue_cap(env, clock):
+    """連不上超過 3 次、而且距第一次連不上已滿 600 秒：標成失敗並退回額度。"""
+    worker, engine, sessions, _ = env
+    engine.error = EngineUnavailable("comfy down")
+    gid = _usage_gen(sessions)
+    first = clock.t
+    for i in range(3):
+        clock.t = first + timedelta(seconds=300 * i)  # 0、300、600 秒：次數還不到
+        await worker.run_once()
+        assert get(sessions, gid).status == GenStatus.QUEUED
+    clock.t = first + timedelta(seconds=599)  # 第 4 次：次數到了，時間還差 1 秒
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.QUEUED
+    assert json.loads(get(sessions, gid).request_json)["engine_requeues"] == 4
+    clock.t = first + timedelta(seconds=600)
     await worker.run_once()
     g = get(sessions, gid)
     assert g.status == GenStatus.FAILED and g.error == "繪圖服務一直連不上，已停止重試"
     assert json.loads(g.request_json)["usage_refunded"] is True
     with sessions() as s:
         assert s.get(Usage, (1, date(2026, 11, 12))).generations == 0
-    assert len(engine.requests) == 4
+    assert len(engine.requests) == 5
+
+
+async def test_long_outage_needs_more_than_three_requeues(env, clock):
+    """時間到了但次數還不夠（例如兩次之間後端停了很久）：仍留在佇列。"""
+    worker, engine, sessions, _ = env
+    engine.error = EngineUnavailable("comfy down")
+    gid = _usage_gen(sessions)
+    first = clock.t
+    await worker.run_once()
+    clock.t = first + timedelta(hours=2)
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.QUEUED
+
+
+def test_interrupted_job_forgets_outage_on_restart(env):
+    """執行到一半被中斷（不是連不上）：放回佇列時清掉連不上的紀錄。"""
+    worker, engine, sessions, _ = env
+    rj = json.loads(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="n", seed=7,
+                                   width=64, height=64))
+    rj.update(engine_requeues=5, engine_unavailable_since="2026-11-12T03:00:00+00:00")
+    gid = add_gen(sessions, request_json=json.dumps(rj), status=GenStatus.RUNNING)
+    assert worker.requeue_interrupted() == 1
+    g = get(sessions, gid)
+    d = json.loads(g.request_json)
+    assert g.status == GenStatus.QUEUED
+    assert "engine_requeues" not in d and "engine_unavailable_since" not in d
+    assert d["prompt"] == "p"
+
+
+def test_outage_keys_are_protected():
+    for key in ("engine_requeues", "engine_unavailable_since"):
+        with pytest.raises(ValueError):
+            encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1, width=8, height=8,
+                           extra={key: 1})
 
 
 async def test_http_error_fails_job_once(env):
@@ -535,6 +621,29 @@ async def test_worker_stores_largest_component_mask_for_pose(env):
     g = get(sessions, gid)
     out = np.asarray(Image.open(io.BytesIO(storage.get(g.mask_path))))
     assert int((out > 0).sum()) == 30 * 30
+
+
+async def test_degenerate_pose_mask_fails_cleanly(env):
+    """去背結果太細長：只回報中文原因（不是「非預期錯誤」），也不留下沒有列指到的角色動作圖。"""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    worker, engine, sessions, storage = env
+    a = np.zeros((64, 64), np.uint8)
+    a[10:14, 2:62] = 255  # 4×60：短邊 < 16 px
+    buf = io.BytesIO()
+    Image.fromarray(a, "L").save(buf, "PNG")
+    engine.mask_override = buf.getvalue()
+    rj = encode_request(kind=GenKind.POSE, prompt="p", negative_prompt="n", seed=7, width=64, height=64)
+    gid = add_gen(sessions, request_json=rj)
+    assert await worker.run_once() is True
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED
+    assert g.error == "角色動作的去背結果太細長，請重新產生角色動作"
+    assert g.image_path is None and g.mask_path is None
+    assert list(storage.list("books/")) == []
 
 
 def _page(sessions, **kw):

@@ -2144,3 +2144,72 @@ def test_gc_keeps_old_composites_of_pages_with_active_tasks(storage_gc, settings
         s.commit()
     storage_gc.run_gc(sessions, storage, days=30)
     assert all(v[0] for v in _paths(sessions).values())
+
+
+def _old_composite_pages(sessions, storage, pages: int, per_page: int) -> tuple[int, dict[int, list[int]]]:
+    """pages 頁，每頁 per_page 張超過 7 天的合成圖（依 id 由舊到新），最新一張是選定圖。"""
+    from app.models import Generation, Page, utcnow
+
+    oid, _ = _owner(sessions, "管理員", is_admin=True)
+    b = _book(sessions, oid)
+    old = utcnow() - _td(days=10)
+    out: dict[int, list[int]] = {}
+    for _ in range(pages):
+        p = _page(sessions, b)
+        cs = [_gen(sessions, storage, b, p) for _ in range(per_page)]
+        for gid in cs:
+            _set(sessions, Generation, gid, created_at=old)
+        _set(sessions, Page, p, selected_generation_id=cs[-1])
+        out[p] = cs
+    return b, out
+
+
+def test_gc_old_composites_do_not_trip_orphan_guard(storage_gc, settings_file):
+    """正常使用的實例：20 頁、每頁選定圖之外還有 4 張舊合成圖 → 不中止，清掉每頁最新 3 張以外的。"""
+    _, sessions, storage = _env(settings_file)
+    _, pages = _old_composite_pages(sessions, storage, pages=20, per_page=5)
+    rep = storage_gc.run_gc(sessions, storage, days=30)
+    assert not rep.aborted, rep.abort_reason
+    paths = _paths(sessions)
+    cleared = {gid for gid, v in paths.items() if v == (None, None)}
+    assert cleared == {gid for cs in pages.values() for gid in cs[:2]}
+    assert rep.expired_composites == 40 and rep.composite_objects == 40
+
+
+def test_gc_aborts_when_most_composites_would_be_cleared(storage_gc, settings_file):
+    """該清的舊合成圖超過「有圖的合成圖」的一半：多半有問題（例如時鐘錯了），整個中止；--allow-mass-delete 才清。"""
+    _, sessions, storage = _env(settings_file)
+    _, pages = _old_composite_pages(sessions, storage, pages=1, per_page=10)
+    before = _keys(storage)
+    rep = storage_gc.run_gc(sessions, storage, days=30)
+    assert rep.aborted and rep.composite_candidates == 7
+    assert "舊合成圖" in rep.abort_reason
+    assert _keys(storage) == before and all(v[0] for v in _paths(sessions).values())
+    assert storage_gc.main(["--settings", str(settings_file)]) == 3
+    rep = storage_gc.run_gc(sessions, storage, days=30, allow_mass_delete=True)
+    assert not rep.aborted and rep.expired_composites == 7
+
+
+def test_gc_composite_clear_rechecks_selection(storage_gc, settings_file, monkeypatch):
+    """重算條件之後、清空之前，合成圖被選回（例如復原）：UPDATE 本身再檢查一次，不清、不刪物件。"""
+    from app.models import Page
+
+    _, sessions, storage = _env(settings_file)
+    _, pages = _old_composite_pages(sessions, storage, pages=1, per_page=6)
+    (pid, cs), = pages.items()
+    real = storage_gc._old_composites
+    calls = []
+
+    def racing(s, now, refs):
+        out = real(s, now, refs)
+        calls.append(1)
+        if len(calls) == 2:  # _clear_composites 重算之後
+            _set(sessions, Page, pid, selected_generation_id=cs[0])
+        return out
+
+    monkeypatch.setattr(storage_gc, "_old_composites", racing)
+    rep = storage_gc.run_gc(sessions, storage, days=30)
+    assert not rep.aborted, rep.abort_reason
+    paths = _paths(sessions)
+    assert paths[cs[0]][0] is not None and paths[cs[0]][0] in _keys(storage)
+    assert {gid for gid, v in paths.items() if v == (None, None)} == {cs[1], cs[2]}

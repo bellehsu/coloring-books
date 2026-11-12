@@ -17,7 +17,7 @@ from sqlalchemy import and_, case, literal, null
 from sqlmodel import Session, col, delete, select, update
 
 from app.models import Generation, GenKind, GenStatus, Page, PageStatus, utcnow
-from app.services.compose import COMPOSE_VERSION, Placement, compose, page_placement
+from app.services.compose import COMPOSE_VERSION, DEGENERATE_MASK, Placement, compose, page_placement
 from app.services.compose import composite_matches
 from app.storage import Storage, StorageNotFound
 
@@ -219,7 +219,9 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
             raise ComposeError(FILE_MISSING) from e
         try:
             out = compose(bg_img, pose_img, mask_img, placement)
-        except ValueError as e:  # 遮罩是空的、與角色圖尺寸不同
+        except ValueError as e:  # 遮罩是空的、與角色圖尺寸不同、太細長
+            if str(e) == DEGENERATE_MASK:  # 已經說了「請重新產生角色動作」
+                raise ComposeError(DEGENERATE_MASK) from e
             raise ComposeError(f"無法合成：{e}，請重新產生角色動作") from e
         buf = io.BytesIO()
         out.save(buf, "PNG")
@@ -255,7 +257,8 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
             .where(col(Generation.id) == target_id, col(Generation.page_id) == page_id,
                    col(Generation.kind) == GenKind.COMPOSITE,
                    col(Generation.status) == GenStatus.SUCCEEDED,
-                   col(Generation.discarded).is_(False))
+                   col(Generation.discarded).is_(False),
+                   col(Generation.image_path).is_not(None))  # storage_gc 清掉的舊合成圖不能選回
             .exists()
         )
         changed = col(Page.selected_generation_id).is_distinct_from(target_id)

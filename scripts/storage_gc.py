@@ -18,12 +18,13 @@
 --dry-run 只計數、不刪任何東西；-v 列出每個物件。
 設定與 app 相同（R2 憑證只來自環境變數）；R2 經過 CachedStorage 刪除，本機快取一起作廢。
 孤兒超過 20 個且超過「孤兒＋被參照物件」的 20%，或與 DB 對不上的物件超過 20 個且超過列出物件的 20%
-（多半是 DB 與 storage 不是一組）時整個中止、什麼都不刪，除非加 --allow-mass-delete。資料庫結構不是最新版時拒絕執行（不跑 migration；請先啟動後端）。
+（多半是 DB 與 storage 不是一組），或該清的舊合成圖超過有圖的合成圖的 50% 時整個中止、什麼都不刪，
+除非加 --allow-mass-delete。資料庫結構不是最新版時拒絕執行（不跑 migration；請先啟動後端）。
 執行前要求 DB 的 storage_instance_id 與 storage 的 books/_instance.json 一致（後端啟動時建立），
 否則結束碼 4、什麼都不刪（--allow-mass-delete 也不例外）。缺標記時，確認設定無誤後用 --init-instance 補上：
 DB 有 id、storage 沒有 → 寫進 storage；兩邊都沒有 → 建立新 id；DB 沒有、storage 有 → 加 --adopt-bucket-id
 把 storage 的 id 寫進 DB。都要輸入 storage 名稱（R2 bucket 名稱／本機資料夾路徑）確認，--yes 略過；永不覆寫已存在的 id。
-結束碼：0 成功；1 有物件刪除失敗（--init-instance：取消）；2 設定或參數錯誤；3 孤兒太多而中止；
+結束碼：0 成功；1 有物件刪除失敗（--init-instance：取消）；2 設定或參數錯誤；3 孤兒（或舊合成圖）太多而中止；
 4 DB 與 storage 不是一組；5 讀不到 storage 的身分標記（例如 R2 403、逾時）。
 """
 
@@ -61,6 +62,8 @@ _PAGE_KEY = re.compile(r"^books/\d+/pages/(\d+)/")
 # 孤兒同時超過這兩個門檻就整個中止（多半是 DB 與 storage 對不上），除非 --allow-mass-delete
 MASS_DELETE_RATIO = 0.2
 MASS_DELETE_MIN = 20
+# 該清的舊合成圖超過「有圖的合成圖」的這個比例就整個中止（例如時鐘錯了），除非 --allow-mass-delete
+COMPOSITE_DELETE_RATIO = 0.5
 
 
 InstanceMismatch = instance.InstanceMismatch  # DB 與 storage 不是一組：什麼都不能刪（結束碼 4）
@@ -88,7 +91,8 @@ class GcReport:
     skipped_mismatched: int = 0  # 物件與 DB 對不上（書／頁 id 超出 DB，或屬於另一本書）：不刪
     aborted: bool = False  # 孤兒太多，什麼都沒刪
     mass_candidates: int = 0  # 孤兒（books/）
-    composite_candidates: int = 0  # 該清的舊合成圖（它們的物件已算在 referenced 裡）
+    composite_candidates: int = 0  # 該清的舊合成圖（它們的物件已算在 referenced 裡；不算進孤兒比例）
+    composite_total: int = 0  # 有圖（image_path）的合成圖
     abort_reason: str = ""
     referenced: int = 0  # 列出的物件裡有資料列指到的
     listed: int = 0
@@ -106,6 +110,7 @@ class _State:
     referenced: set[str]
     expired: dict[int, list[str]]  # 過期的捨棄生成紀錄 id → 它的物件 key（image／mask）
     composites: dict[int, list[str]]  # 該清的舊合成圖 id → 它的物件 key
+    composite_total: int  # 有圖（image_path）的合成圖數
 
 
 def _seq(s: Session, model) -> int:
@@ -217,6 +222,7 @@ def _load_state(s: Session, now: datetime, days: int) -> _State:
         referenced=referenced,
         expired=expired,
         composites=composites,
+        composite_total=sum(1 for g in gens if g.kind == GenKind.COMPOSITE and g.image_path),
     )
 
 
@@ -264,7 +270,12 @@ def _clear_composites(s: Session, planned: Sequence[int], now: datetime) -> set[
     ids = sorted(set(planned) & set(_old_composites(s, now, char_refs)))
     if not ids:
         return set()
-    res = s.exec(update(Generation).where(col(Generation.id).in_(ids)).values(image_path=None, mask_path=None)
+    # UPDATE 本身再檢查一次：重算之後才被選用的不清（與 page_compose 的選用互斥：它要求 image_path 不是空的）
+    selected = select(Page.selected_generation_id).where(col(Page.selected_generation_id).is_not(None))
+    res = s.exec(update(Generation)
+                 .where(col(Generation.id).in_(ids), col(Generation.kind) == GenKind.COMPOSITE,
+                        col(Generation.image_path).is_not(None), col(Generation.id).not_in(selected))
+                 .values(image_path=None, mask_path=None)
                  .returning(Generation.id))
     cleared = set(res.scalars().all())
     s.commit()
@@ -310,6 +321,7 @@ def _orphans(state: _State, book_keys: Sequence[str], report: GcReport) -> list[
             orphans.append(key)
     report.mass_candidates = len(orphans)
     report.composite_candidates = len(state.composites)
+    report.composite_total = state.composite_total
     return orphans
 
 
@@ -318,15 +330,19 @@ def _over(n: int, total: int) -> bool:
 
 
 def _mass_delete_reason(r: GcReport) -> str | None:
-    """DB 與 storage 看起來不是一組時回傳原因（整個中止）；正常回 None。
+    """看起來會刪錯（多半是 DB 與 storage 不是一組）時回傳原因（整個中止）；正常回 None。
     - 孤兒佔「孤兒＋被參照」超過門檻（分母不含略過的物件，對不上的再多也稀釋不了）；
-    - 對不上的物件佔全部列出的超過門檻（正常的 DB 幾乎沒有對不上的物件）。"""
-    if _over(r.mass_candidates + r.composite_candidates, r.mass_candidates + r.referenced):
-        return (f"{r.mass_candidates} 個孤兒物件、{r.composite_candidates} 筆舊合成圖（被參照的只有 {r.referenced} 個；"
+    - 對不上的物件佔全部列出的超過門檻（正常的 DB 幾乎沒有對不上的物件）；
+    - 該清的舊合成圖超過有圖的合成圖的一半（舊合成圖的物件有列指到，不算進孤兒比例）。"""
+    if _over(r.mass_candidates, r.mass_candidates + r.referenced):
+        return (f"{r.mass_candidates} 個孤兒物件（被參照的只有 {r.referenced} 個；"
                 f"超過 {MASS_DELETE_MIN} 個且超過 {MASS_DELETE_RATIO:.0%}）")
     if _over(r.skipped_mismatched, r.listed):
         return (f"{r.skipped_mismatched} 個物件與資料庫對不上（列出 {r.listed} 個；"
                 f"超過 {MASS_DELETE_MIN} 個且超過 {MASS_DELETE_RATIO:.0%}）")
+    if r.composite_candidates > COMPOSITE_DELETE_RATIO * r.composite_total:
+        return (f"{r.composite_candidates} 筆舊合成圖要清（有圖的合成圖共 {r.composite_total} 筆；"
+                f"超過 {COMPOSITE_DELETE_RATIO:.0%}）")
     return None
 
 

@@ -983,6 +983,53 @@ def test_compose_race_inputs_changed(client, app, monkeypatch):
     assert json.loads(pg.placement_json) == raced
 
 
+
+def test_compose_degenerate_mask_message_reads_once(client, app, monkeypatch):
+    import app.services.page_compose as page_compose
+    from app.services.compose import DEGENERATE_MASK
+
+    b, p, bg, pose = compose_ready(client, app)
+
+    def degenerate(*args, **kwargs):
+        raise ValueError(DEGENERATE_MASK)
+
+    monkeypatch.setattr(page_compose, "compose", degenerate)
+    r = client.post(f"/api/pages/{p['id']}/compose")
+    assert r.status_code == 409
+    assert r.json()["detail"].count("請重新產生角色動作") == 1
+    assert "太細長" in r.json()["detail"]
+
+
+def test_compose_does_not_reselect_composite_cleared_by_gc(client, app, monkeypatch):
+    """storage_gc 在找到既有合成圖之後、選用之前清掉它（image_path 變空）：不可選回沒有圖的合成圖。"""
+    import app.services.page_compose as page_compose
+
+    b, p, bg, pose = compose_ready(client, app)
+    pid = p["id"]
+    gid = confirm(client, pid)["selected_generation_id"]
+    moved = {"cx": 0.3, "cy": 0.6, "height": 0.5, "flip": True}
+    client.put(f"/api/pages/{pid}/placement", json=moved)
+    gid2 = confirm(client, pid)["selected_generation_id"]
+    client.put(f"/api/pages/{pid}/placement", json=DEFAULT_PLACEMENT.to_dict())
+    real = page_compose.find_composite
+
+    def gc_races(session, storage, *args, **kwargs):
+        found = real(session, storage, *args, **kwargs)
+        assert found is not None and found.id == gid
+        with app.state.sessions() as s:  # 另一個行程（storage_gc）清掉這張合成圖
+            g = s.get(Generation, gid)
+            g.image_path = None
+            g.mask_path = None
+            s.add(g)
+            s.commit()
+        return found
+
+    monkeypatch.setattr(page_compose, "find_composite", gc_races)
+    r = client.post(f"/api/pages/{pid}/compose")
+    assert r.status_code == 409
+    assert get_page(app, pid).selected_generation_id == gid2
+
+
 def test_cutout_is_cacheable(client, app):
     b, p, bg, pose = compose_ready(client, app)
     r = client.get(f"/api/generations/{pose}/cutout")

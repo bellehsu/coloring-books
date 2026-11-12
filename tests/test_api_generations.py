@@ -238,6 +238,28 @@ def _act_as_non_admin(app):
     app.dependency_overrides[current_owner] = lambda: fake
 
 
+@pytest.mark.parametrize("raw", [
+    "ComfyUI 執行失敗：FileNotFoundError: /ai-data/models/unet/qwen.gguf",
+    "無法讀取 /home/belle/ComfyUI/output/x.png",
+    "OSError: /tmp/comfy/abc.png 不存在",
+    "找不到 /opt/comfy/custom_nodes/gguf",
+    r"ComfyUI 執行失敗：C:\ComfyUI\models\unet\qwen.gguf 不存在",
+])
+def test_public_engine_error_hides_paths_from_non_admin(raw):
+    from app.services.engine import public_engine_error
+
+    assert public_engine_error(raw, False) == "繪圖時發生錯誤，請再試一次"
+    assert public_engine_error(raw, True) == raw  # 管理者看原文
+
+
+def test_public_engine_error_keeps_plain_text_and_hides_urls():
+    from app.services.engine import public_engine_error
+
+    assert public_engine_error("ComfyUI 執行失敗：記憶體不足", False) == "ComfyUI 執行失敗：記憶體不足"
+    assert public_engine_error("GET http://127.0.0.1:8188/view 失敗", False) == "繪圖服務暫時無法連線，稍後會自動重試"
+    assert public_engine_error(None, False) is None
+
+
 def test_engine_error_text_hidden_from_non_admin(client, app, engine):
     raw = "ComfyUI 無法連線：無法連線 ComfyUI（http://127.0.0.1:8188）：All connection attempts failed"
     fixed = "繪圖服務暫時無法連線，稍後會自動重試"

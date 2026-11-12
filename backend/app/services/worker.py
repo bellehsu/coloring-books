@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import or_
@@ -51,14 +52,22 @@ def worker_job():
 
 
 ENGINE_REQUEUES = "engine_requeues"  # request_json 的計數：因引擎連不上而放回佇列的次數（worker 自己寫）
+ENGINE_UNAVAILABLE_SINCE = "engine_unavailable_since"  # request_json：第一次連不上的時間（UTC ISO；worker 自己寫）
 MAX_ENGINE_REQUEUES = 3
+# 連不上超過 MAX_ENGINE_REQUEUES 次、而且距第一次連不上已滿這麼多秒，才標成失敗（ComfyUI 重啟等短暫中斷不算）
+ENGINE_GIVE_UP_AFTER_S = 600
 WRITE_RETRY_DELAYS = (0.2, 0.5, 1.0)  # 收尾寫入失敗時的退避秒數
 ENGINE_GAVE_UP = "繪圖服務一直連不上，已停止重試"
 
 
 # request_json 的核心欄位（extra 不能蓋掉）
 _CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
-                        "variation", ENGINE_REQUEUES})
+                        "variation", ENGINE_REQUEUES, ENGINE_UNAVAILABLE_SINCE})
+
+
+def _now() -> datetime:
+    """目前時間（UTC）；測試替換它來模擬時間經過。"""
+    return datetime.now(timezone.utc)
 
 
 def encode_request(
@@ -199,6 +208,11 @@ class GenerationWorker:
                 .where(running, ~worker_job())
                 .values(status=GenStatus.FAILED, error=LOCAL_INTERRUPTED, finished_at=utcnow())
             )
+            # 執行到一半被中斷（不是連不上）：連不上的紀錄重新算
+            for gid, rj in s.exec(select(Generation.id, Generation.request_json).where(running, worker_job())).all():
+                cleared = self._without_outage(rj)
+                if cleared != rj:
+                    s.exec(update(Generation).where(col(Generation.id) == gid, running).values(request_json=cleared))
             res = s.exec(
                 update(Generation)
                 .where(running, worker_job())
@@ -327,14 +341,18 @@ class GenerationWorker:
                 )
             finally:
                 self._in_engine = False
+            mask_png = result.extra_images.get("mask")
+            if mask_png and req.kind == GenKind.POSE:
+                try:  # 寫任何物件之前先檢查：失敗時不留下沒有列指到的圖
+                    mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
+                except ValueError as e:  # 去背結果太細長（compose.DEGENERATE_MASK）
+                    await self._fail_retrying(gen_id, str(e))
+                    return True
             rel = self.storage.generation_image(gen.book_id, gen_id)
             await asyncio.to_thread(self.storage.put, rel, result.image)
             mask_rel = None
-            if result.extra_images.get("mask"):
+            if mask_png:
                 mask_rel = self.storage.generation_mask(gen.book_id, gen_id)
-                mask_png = result.extra_images["mask"]
-                if req.kind == GenKind.POSE:
-                    mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
                 await asyncio.to_thread(self.storage.put, mask_rel, mask_png)
             values = dict(
                 mask_path=mask_rel,
@@ -350,6 +368,9 @@ class GenerationWorker:
                 error=None,
                 finished_at=utcnow(),
             )
+            cleared = self._without_outage(gen.request_json)
+            if cleared != gen.request_json:  # 引擎回應成功：連不上的紀錄清掉
+                values["request_json"] = cleared
 
             def write_success() -> None:
                 if self._finish(gen_id, **values):
@@ -359,11 +380,13 @@ class GenerationWorker:
             self.last_error = None
             self.state = WorkerState.IDLE
         except EngineUnavailable as e:
-            requeues = self._requeue_count(gen.request_json) + 1
-            if requeues > MAX_ENGINE_REQUEUES:
+            count, since = self._outage(gen.request_json)
+            requeues, now = count + 1, _now()
+            since = since or now
+            if requeues > MAX_ENGINE_REQUEUES and (now - since).total_seconds() >= ENGINE_GIVE_UP_AFTER_S:
                 await self._fail_retrying(gen_id, ENGINE_GAVE_UP)
             else:
-                requeue_json = self._with_requeues(gen.request_json, requeues)
+                requeue_json = self._with_outage(gen.request_json, requeues, since)
                 await self._write_retrying(
                     gen_id,
                     lambda: self._finish(gen_id, status=GenStatus.QUEUED, started_at=None, request_json=requeue_json),
@@ -380,22 +403,43 @@ class GenerationWorker:
         return True
 
     @staticmethod
-    def _requeue_count(request_json: str | None) -> int:
-        try:
-            n = json.loads(request_json or "{}").get(ENGINE_REQUEUES, 0)
-        except (TypeError, ValueError, AttributeError):
-            return 0
-        return n if isinstance(n, int) and not isinstance(n, bool) else 0
-
-    @staticmethod
-    def _with_requeues(request_json: str | None, n: int) -> str:
+    def _request_dict(request_json: str | None) -> dict:
         try:
             d = json.loads(request_json or "{}")
         except (TypeError, ValueError):
-            d = {}
-        if not isinstance(d, dict):
-            d = {}
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    @classmethod
+    def _outage(cls, request_json: str | None) -> tuple[int, datetime | None]:
+        """（因連不上而放回佇列的次數, 第一次連不上的時間）；沒有或格式不對分別是 0、None。"""
+        d = cls._request_dict(request_json)
+        n = d.get(ENGINE_REQUEUES, 0)
+        if not isinstance(n, int) or isinstance(n, bool):
+            n = 0
+        try:
+            since = datetime.fromisoformat(d[ENGINE_UNAVAILABLE_SINCE])
+        except (KeyError, TypeError, ValueError):
+            since = None
+        if since is not None and since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        return n, since
+
+    @classmethod
+    def _with_outage(cls, request_json: str | None, n: int, since: datetime) -> str:
+        d = cls._request_dict(request_json)
         d[ENGINE_REQUEUES] = n
+        d[ENGINE_UNAVAILABLE_SINCE] = since.isoformat()
+        return json.dumps(d, ensure_ascii=False, sort_keys=True)
+
+    @classmethod
+    def _without_outage(cls, request_json: str) -> str:
+        """拿掉連不上的紀錄；本來就沒有（或無法解析）時原樣回傳。"""
+        d = cls._request_dict(request_json)
+        if ENGINE_REQUEUES not in d and ENGINE_UNAVAILABLE_SINCE not in d:
+            return request_json
+        d.pop(ENGINE_REQUEUES, None)
+        d.pop(ENGINE_UNAVAILABLE_SINCE, None)
         return json.dumps(d, ensure_ascii=False, sort_keys=True)
 
     async def _write_retrying(self, gen_id: int, write: Callable[[], object]) -> None:
