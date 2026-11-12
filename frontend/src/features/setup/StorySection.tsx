@@ -57,7 +57,7 @@ export function StorySection({
 
   const count =
     pasted > 0
-      ? `讀到 ${pasted} 段${existing > 0 ? `（這本書已經有 ${existing} 頁：空的欄位才會填入）` : ""}`
+      ? `讀到 ${pasted} 段${problems.length > 0 ? `，${problems.length} 段不會匯入` : ""}${existing > 0 ? `（這本書已經有 ${existing} 頁：空的欄位才會填入）` : ""}`
       : existing > 0
         ? `這本書有 ${existing} 頁。要加頁就把故事貼在上面。`
         : null;

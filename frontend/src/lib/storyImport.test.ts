@@ -312,3 +312,34 @@ describe("貼上的頁面文字也正規化", () => {
     expect(r.pages[0].captionEn).toBeUndefined();
   });
 });
+
+describe("parseStory one-line 中文／英文 captions", () => {
+  it.each(["\u3000", " ", " / ", "／", "｜", "|", "，", ", "])("splits 中文 line with separator %j", (sep) => {
+    const r = parseStory(`第1頁\n場景：公園\n動作：揮手\n中文：公園${sep}英文：Park`);
+    expect(r.errors).toEqual([]);
+    expect(r.pages[0]).toMatchObject({ captionZh: "公園", captionEn: "Park" });
+  });
+
+  it("splits 英文 line with trailing 中文 label", () => {
+    const r = parseStory("第1頁\n場景：公園\n動作：揮手\n英文：Park 中文：公園");
+    expect(r.pages[0]).toMatchObject({ captionZh: "公園", captionEn: "Park" });
+  });
+
+  it("does not split 英文 without a colon", () => {
+    const r = parseStory("第1頁\n場景：公園\n動作：揮手\n中文：學英文");
+    expect(r.pages[0].captionZh).toBe("學英文");
+    expect(r.pages[0].captionEn).toBeUndefined();
+  });
+
+  it("parses the walkthrough story", () => {
+    const story = [
+      "第1頁", "場景：陽光公園，有一棵大樹和長椅", "動作：開心地揮手", "中文：公園\u3000英文：Park", "",
+      "第2頁", "場景：安靜的海邊，有貝殼和小船", "動作：坐著看書", "中文：海邊\u3000英文：Beach", "",
+      "第3頁", "場景：麵包店門口，櫥窗裡有麵包", "動作：雙手捧著一個大麵包", "中文：麵包店\u3000英文：Bakery",
+    ].join("\n");
+    const r = parseStory(story);
+    expect(r.errors).toEqual([]);
+    expect(r.pages).toHaveLength(3);
+    expect(r.pages[2]).toMatchObject({ captionZh: "麵包店", captionEn: "Bakery" });
+  });
+});

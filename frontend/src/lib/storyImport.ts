@@ -45,6 +45,18 @@ const ACTION_LABEL = /^(動作|角色)\**\s*[:：]\s*\**\s*(.*)$/;
 /** 圖下方的文字：只認「中文」「英文」「English」；「文字：」不算標籤。 */
 const ZH_LABEL = /^(中文)\**\s*[:：]\s*\**\s*(.*)$/;
 const EN_LABEL = /^(英文|English)\**\s*[:：]\s*\**\s*(.*)$/i;
+/** 同一行還有另一個標籤（「中文：公園　英文：Park」）：值裡面出現「英文／English／中文」加冒號才切開。 */
+const INLINE_EN = /^(.*?)\s*(?:英文|English)\**\s*[:：]\s*\**\s*(.*)$/i;
+const INLINE_ZH = /^(.*?)\s*中文\**\s*[:：]\s*\**\s*(.*)$/;
+const TRAILING_SEP = /[\s\u3000/／|｜、，,]+$/;
+
+/** 把一個文字欄的值切成 [本欄的字, 另一欄的字 | null]；切的位置前面的分隔符號一併去掉。 */
+function splitInline(value: string, field: "zh" | "en"): [string, string | null] {
+  const m = (field === "zh" ? INLINE_EN : INLINE_ZH).exec(value);
+  if (!m) return [value, null];
+  return [m[1].replace(TRAILING_SEP, "").trim(), m[2].trim()];
+}
+
 /** 試算表標題列的欄名。 */
 const SCENE_COLS = new Set(["場景", "背景"]);
 const ACTION_COLS = new Set(["動作", "角色"]);
@@ -167,6 +179,13 @@ export function parseStory(text: string): { pages: ParsedPage[]; errors: ParseEr
     cur.raw.push(line);
     if (f) {
       cur[f] = hit![1]![2].trim();
+      if (f === "zh" || f === "en") {
+        const [own, other] = splitInline(cur[f]!, f);
+        if (other !== null) {
+          cur[f] = own;
+          cur[f === "zh" ? "en" : "zh"] = other;
+        }
+      }
       // 圖下方的文字只有一行，不接續下一行
       field = f === "zh" || f === "en" ? null : f;
     } else if (field) {
@@ -250,8 +269,15 @@ function parseTsv(lines: string[]): RawRow[] {
     const cells = l.split("\t");
     const scene = (sceneCol >= 0 ? (cells[sceneCol] ?? "") : "").trim();
     const action = (actionCol >= 0 ? (cells[actionCol] ?? "") : "").trim();
-    const zh = zhCol >= 0 ? normalizeCaption(cells[zhCol] ?? "") : "";
-    const en = enCol >= 0 ? normalizeCaption(cells[enCol] ?? "") : "";
+    let zh = zhCol >= 0 ? (cells[zhCol] ?? "") : "";
+    let en = enCol >= 0 ? (cells[enCol] ?? "") : "";
+    // 只有一格同時寫了兩個標籤才切開；其餘照舊
+    const zhSplit = splitInline(zh, "zh");
+    if (zhSplit[1] !== null) [zh, en] = [zhSplit[0], en || zhSplit[1]];
+    const enSplit = splitInline(en, "en");
+    if (enSplit[1] !== null) [en, zh] = [enSplit[0], zh || enSplit[1]];
+    zh = normalizeCaption(zh);
+    en = normalizeCaption(en);
     return { scene, action, zh, en, labelled: scene !== "" || action !== "" || zh !== "" || en !== "", raw: l };
   });
 }
