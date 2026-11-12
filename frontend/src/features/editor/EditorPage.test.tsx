@@ -330,8 +330,9 @@ afterEach(() => {
 let rerenderEditor: () => void = () => {};
 let lastQc: QueryClient;
 
+/** refetchOnWindowFocus 預設跟 app（providers.tsx）一樣關掉。 */
 function setup() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
   const tree = () => (
     <QueryClientProvider client={qc}>
       <ToastProvider>
@@ -1015,6 +1016,62 @@ describe("EditorPage", () => {
       // 網址要的補線現在可以用了；回到構圖看位置
       await userEvent.click(composeTab());
       expect(JSON.parse((await screen.findByTestId("compose-stage")).getAttribute("data-placement")!)).toMatchObject({ cx: 0.7 });
+      expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
+    },
+    10_000,
+  );
+
+  it("已經開著的進階編輯：C 改了這頁（等著重新合成）→ 切回這個分頁（visibilitychange／focus）就重抓，顯示說明、停用補線", async () => {
+    const NOTICE = "這一頁正在重新合成…好了會自動更新";
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    await screen.findByTestId("compose-stage");
+    await waitFor(() => expect(lineTab()).not.toHaveAttribute("aria-disabled"));
+    // 在另一個分頁（C）拖了角色
+    pages[0] = { ...pages[0], recompose_pending: true, compose_pending: true, placement: { cx: 0.2, cy: 0.5, height: 0.4, flip: false } };
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(lineTab()).toHaveAttribute("aria-disabled", "true"));
+    expect(screen.getAllByRole("status").some((el) => el.textContent === NOTICE)).toBe(true);
+    expect(JSON.parse(screen.getByTestId("compose-stage").getAttribute("data-placement")!)).toMatchObject({ cx: 0.2 });
+    // 視窗 focus 也會重抓
+    const before = calledWith("GET", "/api/books/1/pages").length;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(calledWith("GET", "/api/books/1/pages").length).toBeGreaterThan(before));
+  });
+
+  it(
+    "重新合成失敗（等著＋請看一下）：說明「重新合成沒成功…」連到這頁的處理頁面、補線停用、頁面標請看一下、不再每 2 秒重抓",
+    async () => {
+      const FAILED = "重新合成沒成功，請到處理頁面按「再試一次」";
+      const { o, g } = composedReady();
+      pages[0] = mkPage(1, {
+        ...o,
+        selected_generation_id: 50,
+        compose_pending: true,
+        recompose_pending: true,
+        attention: "failed",
+        attention_detail: "合成失敗",
+        status: "passed",
+      });
+      gens = [...g, mkGen(50, { kind: "composite" })];
+      setup();
+      await screen.findByTestId("compose-stage");
+      const notice = screen.getAllByRole("status").find((el) => el.textContent === FAILED);
+      expect(notice).toBeDefined();
+      expect(within(notice!).getByRole("link", { name: "處理頁面" })).toHaveAttribute("href", "/books/1/page/1");
+      expect(screen.getAllByRole("status").some((el) => el.textContent === "這一頁正在重新合成…好了會自動更新")).toBe(false);
+      expect(lineTab()).toHaveAttribute("aria-disabled", "true");
+      expect(lineTab()).toHaveAccessibleDescription(FAILED);
+      expect(within(pageButton(1)).getByText("請看一下")).toBeInTheDocument();
+      const n = calledWith("GET", "/api/books/1/pages").length;
+      await act(() => new Promise((r) => setTimeout(r, 2600)));
+      expect(calledWith("GET", "/api/books/1/pages")).toHaveLength(n);
       expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
     },
     10_000,

@@ -145,6 +145,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const gateOf = (p: Page | null | undefined): ModeGate => ({
     selectedId: p?.selected_generation_id ?? null,
     recomposing: !!p?.recompose_pending,
+    recomposeFailed: !!p?.recompose_pending && !!p.attention,
   });
   const mode: EditorMode = allowedMode(nav.mode, gateOf(current));
 
@@ -648,7 +649,15 @@ export function EditorPage({ bookId }: { bookId: number }) {
           onModeChange={(m) => (m === "line" ? void toLine(current.id) : go(current.id, m))}
           blockers={blockers}
           gapCount={qa?.gap_count ?? 0}
-          notice={current.recompose_pending ? RECOMPOSING_NOTICE : undefined}
+          notice={
+            !current.recompose_pending ? undefined : current.attention ? (
+              <>
+                重新合成沒成功，請到<Link href={`/books/${bookId}/page/${current.id}`}>處理頁面</Link>按「再試一次」
+              </>
+            ) : (
+              RECOMPOSING_NOTICE
+            )
+          }
           idPrefix={idPrefix}
           panelId={panelId}
           right={mode === "line" ? <ZoomControls zoom={zoom} onZoomChange={setZoom} /> : undefined}

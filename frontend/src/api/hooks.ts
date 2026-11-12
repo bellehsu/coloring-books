@@ -119,12 +119,17 @@ export function useGenerations(bookId: number, f: GenFilter = {}, enabled = true
 /** 頁面等著重新合成時重抓頁面的間隔。 */
 const RECOMPOSE_POLL_MS = 2000;
 
+/** 頁面流程還在重新合成這頁（C 改過、還沒做完）；失敗了（attention）就不是，要到 C 按「再試一次」。 */
+export const recomposeRunning = (p: Page | undefined) => !!p?.recompose_pending && !p.attention;
+
 /**
  * 任務結束時 worker 可能把它自動選用到頁面的空欄位（背景、角色動作），但 pages 不會自己重抓：
  * gens（useGenerations 的資料）裡原本排隊／執行中的任務結束了 → invalidate pages 與 book。
  * 故事頁與編輯器都用，畫面不用重新整理就會看到自動選用的素材。
- * pollPageId（編輯器的目前頁）：這頁等著重新合成（recompose_pending，C 改過、頁面流程還沒做完）時
- * 每 2 秒重抓頁面，直到旗標清掉；清掉那一刻重抓這頁的生成紀錄、QA 與修線（選定圖換成新的合成圖）。
+ * pollPageId（編輯器的目前頁）：
+ * - 分頁切回來（visibilitychange 變成可見）或視窗取得 focus 就重抓頁面：別的分頁（C）可能改過這頁；
+ * - 這頁還在重新合成（recomposeRunning）時每 2 秒重抓頁面，直到做完或失敗；結束那一刻重抓這頁的
+ *   生成紀錄、QA 與修線（選定圖換成新的合成圖）。
  */
 export function usePagesFollowJobs(
   bookId: number,
@@ -144,13 +149,29 @@ export function usePagesFollowJobs(
     }
   }, [gens, qc, bookId]);
 
-  const recomposing = (pages: Page[] | undefined) => !!pages?.find((p) => p.id === pollPageId)?.recompose_pending;
+  const recomposing = (pages: Page[] | undefined) => recomposeRunning(pages?.find((p) => p.id === pollPageId));
   const pagesQ = useQuery({
     queryKey: qk.pages(bookId),
     queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`),
     enabled: pollPageId != null,
+    // 只有這個觀察者（全域預設關掉）
+    refetchOnWindowFocus: true,
     refetchInterval: (query) => (recomposing(query.state.data) ? RECOMPOSE_POLL_MS : false),
   });
+  const watching = pollPageId != null;
+  const { refetch } = pagesQ;
+  useEffect(() => {
+    if (!watching) return;
+    const onVisible = () => {
+      if (document.visibilityState !== "hidden") void refetch({ cancelRefetch: false });
+    };
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [watching, refetch]);
   const pending = pollPageId != null && recomposing(pagesQ.data);
   const was = useRef(pending);
   useEffect(() => {

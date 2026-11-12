@@ -60,5 +60,8 @@ describe("modes", () => {
   it("modeBlockers：等著重新合成（C 改過）時 ② 補線停用並說明", () => {
     expect(modeBlockers({ selectedId: 5, recomposing: true })).toEqual({ line: "這一頁正在重新合成…好了會自動更新" });
     expect(allowedMode("line", { selectedId: 5, recomposing: true })).toBe("compose");
+    expect(modeBlockers({ selectedId: 5, recomposing: true, recomposeFailed: true })).toEqual({
+      line: "重新合成沒成功，請到處理頁面按「再試一次」",
+    });
   });
 });

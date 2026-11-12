@@ -27,12 +27,16 @@ export const normalizeMode = (v: string | null): EditorMode =>
 
 /** C 改過、頁面流程還在重新合成時的說明（補線停用的原因，也顯示在舞台上方）。 */
 export const RECOMPOSING_NOTICE = "這一頁正在重新合成…好了會自動更新";
+/** 重新合成失敗（還等著、但流程不會再跑）：要到 C 按「再試一次」。 */
+export const RECOMPOSE_FAILED_NOTICE = "重新合成沒成功，請到處理頁面按「再試一次」";
 
 /** 決定分頁能不能用的頁面狀態。 */
 export interface ModeGate {
   selectedId: number | null;
   /** page.recompose_pending：選定圖還是舊的合成圖，補的線會在流程換圖時不見。 */
   recomposing?: boolean;
+  /** 重新合成失敗（recompose_pending＋attention）。 */
+  recomposeFailed?: boolean;
 }
 
 /**
@@ -41,7 +45,8 @@ export interface ModeGate {
  */
 export function modeBlockers(g: ModeGate): Partial<Record<EditorMode, string>> {
   if (g.selectedId == null) return { line: "請先擺好角色位置" };
-  return g.recomposing ? { line: RECOMPOSING_NOTICE } : {};
+  if (!g.recomposing) return {};
+  return { line: g.recomposeFailed ? RECOMPOSE_FAILED_NOTICE : RECOMPOSING_NOTICE };
 }
 
 /** 目標模式能用就用它，否則回到構圖。 */
@@ -62,7 +67,7 @@ export interface StageHeaderProps {
   /** 右側插槽：修線模式放 <ZoomControls>。 */
   right?: ReactNode;
   /** 分頁旁的說明（例如 RECOMPOSING_NOTICE）。 */
-  notice?: string;
+  notice?: ReactNode;
 }
 
 export function StageHeader({ mode, onModeChange, blockers, gapCount = 0, idPrefix, panelId, right, notice }: StageHeaderProps) {

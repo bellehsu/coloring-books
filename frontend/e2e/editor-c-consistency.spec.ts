@@ -8,7 +8,7 @@ import { composePage, createBook, createPage, getPages, setCharacter, uniqueTitl
  * 假後端（DemoEngine）產生圖，worker 的頁面流程重新合成。
  */
 const NOTICE = "這一頁正在重新合成…好了會自動更新";
-const FILLERS = 4;
+const FILLERS = 2;
 
 let bookId = 0;
 let target = 0;
@@ -94,8 +94,13 @@ test("C 拖角色時進階編輯停用補線、說明正在重新合成；做好
     if (/\/compose$/.test(r.url()) && r.method() === "POST") composes.push(r.url());
   });
 
-  // 進階編輯重新整理：這頁還在重新合成 → 補線停用、說明；位置已經是 C 的新位置（伺服器的，不是舊的快取）
-  await editor.reload();
+  // 切回開著的進階編輯（不重新整理）：分頁變回可見／取得 focus 就重抓 → 這頁還在重新合成 → 補線停用、說明；
+  // 位置已經是 C 的新位置（伺服器的，不是舊的快取）。headless 不一定送出這兩個事件，自己補上
+  await editor.bringToFront();
+  await editor.evaluate(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("focus"));
+  });
   await expect(editor.getByRole("status").filter({ hasText: NOTICE })).toBeVisible();
   await expect(lineTab).toHaveAttribute("aria-disabled", "true");
   await expect(editor.getByRole("button", { name: "下一步：補線 →" })).toBeDisabled();

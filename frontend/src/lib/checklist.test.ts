@@ -158,10 +158,18 @@ describe("checklist", () => {
     expect(att.passed).toMatchObject({ state: "warn", note: "請看一下" });
     const working = byKey(
       checklist(
-        page({ selected_generation_id: 7, status: "passed", recompose_pending: true, attention: "failed" }),
+        page({ selected_generation_id: 7, status: "passed", recompose_pending: true }),
         qa({ status: "passed" }),
       ),
     );
     expect(working.passed).toMatchObject({ state: "todo", note: "製作中" });
+    // 重新合成失敗：還等著，但流程沒在跑 → 和 B 一樣是請看一下
+    const failed = byKey(
+      checklist(
+        page({ selected_generation_id: 7, status: "passed", recompose_pending: true, attention: "failed" }),
+        qa({ status: "passed" }),
+      ),
+    );
+    expect(failed.passed).toMatchObject({ state: "warn", note: "請看一下" });
   });
 });
