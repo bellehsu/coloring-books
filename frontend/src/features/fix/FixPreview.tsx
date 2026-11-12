@@ -241,11 +241,11 @@ function DrawStage({
   );
 }
 
-/** 線稿 QA 載入失敗：後端的原因＋「再試一次」（重抓 QA）。 */
-export function QAError({ message, onRetry }: { message: string; onRetry: () => void }) {
+/** 線稿 QA 載入失敗：後端的原因＋「再試一次」（重抓 QA）。alert：只在線條列宣讀一次（畫筆的舞台同時顯示時不重複）。 */
+export function QAError({ message, onRetry, alert = false }: { message: string; onRetry: () => void; alert?: boolean }) {
   return (
     <div className={styles.qaError}>
-      <p role="alert">{message}</p>
+      <p role={alert ? "alert" : undefined}>{message}</p>
       <Button onClick={onRetry}>再試一次</Button>
     </div>
   );

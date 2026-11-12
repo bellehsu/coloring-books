@@ -65,6 +65,11 @@ export function peekEditsQueue(
   return registry.get(qc)?.get(keyOf(pageId, genId, opts));
 }
 
+/** 同一頁同一張圖的兩個佇列（進階編輯的、C 的 oneclick）有沒有一個還在送。 */
+export function editsBusyFor(qc: QueryClient, pageId: number, genId: number): boolean {
+  return [peekEditsQueue(qc, pageId, genId), peekEditsQueue(qc, pageId, genId, { oneclick: true })].some((e) => e?.busy());
+}
+
 /**
  * 等同一頁同一張圖的兩個佇列（進階編輯的、C 的 oneclick）都送完：後端 PUT 是整份覆蓋、最後提交者勝，
  * 一邊寫入前另一邊的請求不能還在路上。兩個都結束才回報；有一個最後寫入失敗就 reject 它的錯誤。

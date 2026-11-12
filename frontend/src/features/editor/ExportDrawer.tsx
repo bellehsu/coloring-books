@@ -16,7 +16,7 @@ export interface ExportDrawerProps {
 export function ExportDrawer({ open, onClose, book, beforeExport }: ExportDrawerProps) {
   return (
     <Drawer open={open} onClose={onClose} title="匯出 PDF">
-      <ExportOptions book={book} active={open} beforeExport={beforeExport} variant="book" initialInclude="ready" emptyPassedHint="還沒有可以印的頁面。" />
+      <ExportOptions book={book} active={open} beforeExport={beforeExport} initialInclude="ready" />
     </Drawer>
   );
 }

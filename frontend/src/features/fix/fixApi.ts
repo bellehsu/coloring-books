@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api, type Generation, type Page, type Placement } from "@/api/client";
-import { qk, recomposeRunning } from "@/api/hooks";
+import { pagesQueryOptions, qk } from "@/api/hooks";
 import type { components } from "@/api/schema";
+import { recomposeRunning } from "@/lib/pageState";
 import type { RestoreItem } from "./fixState";
 
 type S = components["schemas"];
@@ -43,8 +44,7 @@ export const FIX_POLL_MS = 2000;
 export function useFixPages(bookId: number, pageId: number, busy: boolean) {
   const qc = useQueryClient();
   const q = useQuery({
-    queryKey: qk.pages(bookId),
-    queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`),
+    ...pagesQueryOptions(bookId),
     refetchInterval: (query) =>
       busy || recomposeRunning(query.state.data?.find((p) => p.id === pageId)) ? FIX_POLL_MS : false,
   });

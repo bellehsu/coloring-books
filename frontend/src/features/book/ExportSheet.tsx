@@ -101,9 +101,7 @@ export function ExportSheet({ onClose, book, pages }: ExportSheetProps) {
           <ExportOptions
             book={book}
             active
-            variant="book"
             initialInclude={withAttention ? "all" : "ready"}
-            emptyPassedHint="還沒有可以印的頁面。"
           />
         </>
       )}

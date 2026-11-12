@@ -95,7 +95,7 @@ export function LinesRow({
       }
     >
       {blocked && <p className={styles.rowWarn}>{blocked}</p>}
-      {!noArt && qaError && <QAError message={qaError} onRetry={onRetryQA} />}
+      {!noArt && qaError && <QAError message={qaError} onRetry={onRetryQA} alert />}
     </Row>
   );
 }

@@ -3,9 +3,10 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import type { Book, Generation, OverviewPage, Page } from "@/api/client";
-import { isActive, useBook, useBookOverview, useGenerations, usePagesFollowJobs, useQA, recomposeRunning } from "@/api/hooks";
+import { isActive, useBook, useBookOverview, useGenerations, usePagesFollowJobs, useQA } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { errMsg } from "@/features/editing/errMsg";
+import { recomposeRunning } from "@/lib/pageState";
 import type { StrokeOp } from "@/lib/strokes";
 import { useFixPages } from "./fixApi";
 import { FixHeader } from "./FixHeader";

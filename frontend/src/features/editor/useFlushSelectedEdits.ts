@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Page } from "@/api/client";
-import { flushAllEditsFor, peekEditsQueue } from "@/features/editing/editsQueue";
+import { editsBusyFor, flushAllEditsFor } from "@/features/editing/editsQueue";
 
 /**
  * 先讓這頁選定圖的修線寫完（進階編輯與 C 兩個佇列都等）：改選背景／動作（合成圖會被清掉）或合成新的之後才到的 PUT
@@ -23,10 +23,7 @@ export function useFlushSelectedEdits() {
   const flushSelectedEdits = async (page: Page) => {
     const sel = page.selected_generation_id;
     if (sel == null) return;
-    const busy = [peekEditsQueue(qc, page.id, sel), peekEditsQueue(qc, page.id, sel, { oneclick: true })].some((e) =>
-      e?.busy(),
-    );
-    if (!busy) return;
+    if (!editsBusyFor(qc, page.id, sel)) return;
     bumpFlushing(page.id, 1);
     try {
       await flushAllEditsFor(qc, page.id, sel);

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import {
+  queryOptions,
   useMutation,
   useQuery,
   useQueryClient,
@@ -7,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 import { api } from "./client";
 import { placementSaverFor } from "@/features/editing/placementSaver";
+import { recomposeRunning } from "@/lib/pageState";
 import type { components } from "./schema";
 import type {
   Book,
@@ -96,8 +98,11 @@ export const useSharedBook = (id: number) =>
     retry: false,
   });
 
-export const usePages = (bookId: number, enabled = true) =>
-  useQuery({ queryKey: qk.pages(bookId), queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`), enabled });
+/** 這本書的頁面查詢（usePages、進階編輯跟著重新合成的觀察者、C 的 useFixPages 共用；各自加輪詢等選項）。 */
+export const pagesQueryOptions = (bookId: number) =>
+  queryOptions({ queryKey: qk.pages(bookId), queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`) });
+
+export const usePages = (bookId: number, enabled = true) => useQuery({ ...pagesQueryOptions(bookId), enabled });
 
 /** 有 queued/running 的 generation 時每 2 秒輪詢，否則停止。 */
 export function useGenerations(bookId: number, f: GenFilter = {}, enabled = true) {
@@ -118,9 +123,6 @@ export function useGenerations(bookId: number, f: GenFilter = {}, enabled = true
 
 /** 頁面等著重新合成時重抓頁面的間隔。 */
 const RECOMPOSE_POLL_MS = 2000;
-
-/** 頁面流程還在重新合成這頁（C 改過、還沒做完）；失敗了（attention）就不是，要到 C 按「再試一次」。 */
-export const recomposeRunning = (p: Page | undefined) => !!p?.recompose_pending && !p.attention;
 
 /**
  * 任務結束時 worker 可能把它自動選用到頁面的空欄位（背景、角色動作），但 pages 不會自己重抓：
@@ -151,8 +153,7 @@ export function usePagesFollowJobs(
 
   const recomposing = (pages: Page[] | undefined) => recomposeRunning(pages?.find((p) => p.id === pollPageId));
   const pagesQ = useQuery({
-    queryKey: qk.pages(bookId),
-    queryFn: () => api.get<Page[]>(`/books/${bookId}/pages`),
+    ...pagesQueryOptions(bookId),
     enabled: pollPageId != null,
     // 只有這個觀察者（全域預設關掉）
     refetchOnWindowFocus: true,

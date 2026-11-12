@@ -952,6 +952,8 @@ describe("C 處理一頁：線稿 QA 載入失敗", () => {
     await user.click(within(lines).getByRole("button", { name: "畫筆" }));
     const preview = screen.getByRole("region", { name: "預覽" });
     expect(within(preview).getByText("圖片檔案遺失")).toBeInTheDocument();
+    expect(within(lines).getByRole("alert")).toHaveTextContent("圖片檔案遺失"); // 只在線條列宣讀一次
+    expect(within(preview).queryByRole("alert")).toBeNull();
     expect(within(preview).queryByText("載入線稿中…")).toBeNull();
     delete respond["GET /api/pages/5/qa"];
     await user.click(within(preview).getByRole("button", { name: "再試一次" }));
