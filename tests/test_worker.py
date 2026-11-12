@@ -664,3 +664,39 @@ async def test_stop_idle_does_not_interrupt(env):
     await asyncio.sleep(0.05)
     await worker.stop()
     assert engine.interrupts == 0
+
+
+class InterruptibleEngine(FakeEngine):
+    """interrupt() 會讓執行中的 generate() 丟 EngineError（像 ComfyUI 回 execution_interrupted）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.stop_event = asyncio.Event()
+
+    async def generate(self, req, on_progress=None):
+        self.requests.append(req)
+        await self.stop_event.wait()
+        raise EngineError("執行被中斷")
+
+    async def interrupt(self):
+        await super().interrupt()
+        self.stop_event.set()
+        await asyncio.sleep(0.05)  # 真的 interrupt 有網路往返：worker 任務在這段時間會先看到錯誤
+
+
+async def test_stop_interrupt_does_not_fail_running_job(env):
+    worker, _, sessions, storage = env
+    engine = InterruptibleEngine()
+    worker.engine = engine
+    gid = add_gen(sessions)
+    await worker.start()
+    for _ in range(200):
+        if worker._in_engine:
+            break
+        await asyncio.sleep(0.01)
+    await worker.stop()
+    assert engine.interrupts == 1
+    g = get(sessions, gid)
+    assert g.status == GenStatus.RUNNING and g.error is None
+    assert worker.requeue_interrupted() == 1
+    assert get(sessions, gid).status == GenStatus.QUEUED

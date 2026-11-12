@@ -162,16 +162,19 @@ class GenerationWorker:
         if pipeline._wakeup == self.notify:
             pipeline.set_wakeup(None)
         if task is not None:
-            if self._in_engine:  # 盡力中斷 ComfyUI 正在跑的 prompt，重啟後才不會白跑兩次
-                try:
-                    await self.engine.interrupt()
-                except Exception:  # noqa: BLE001
-                    log.warning("stop：中斷引擎失敗", exc_info=True)
+            was_in_engine = self._in_engine
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+            if was_in_engine:
+                # 先取消任務再中斷：否則 ComfyUI 的「執行被中斷」會讓還活著的任務把這筆標成失敗，
+                # 而不是留在 RUNNING 讓重啟時放回佇列。盡力而為，失敗只記 log
+                try:
+                    await self.engine.interrupt()
+                except Exception:  # noqa: BLE001
+                    log.warning("stop：中斷引擎失敗", exc_info=True)
         self.state = WorkerState.STOPPED
 
     def notify(self) -> None:
