@@ -118,6 +118,8 @@ def load_image(path: str | Path | BinaryIO) -> np.ndarray:
 def to_gray(img: np.ndarray) -> np.ndarray:
     if img.ndim == 2:
         return img.astype(np.uint8)
+    if img.shape[2] == 4:
+        img = np.asarray(flatten_on_white(Image.fromarray(img, "RGBA")))
     return cv2.cvtColor(img[..., :3], cv2.COLOR_RGB2GRAY)
 
 

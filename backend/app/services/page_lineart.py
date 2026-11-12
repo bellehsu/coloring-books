@@ -15,7 +15,7 @@ from app.services import lineart_post
 from app.services.imageio import ink_to_png
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
-    RENDER_VERSION, Stroke, apply_strokes, render_lineart, render_params,
+    RENDER_VERSION, Stroke, apply_strokes, render_lineart,
 )
 from app.services import qa as qa_mod
 from app.services.qa import QAReport, evaluate
@@ -145,7 +145,7 @@ def _digest(*parts) -> str:
 
 def lineart_key(gen: Generation, page: Page, content_px, strokes_json: str) -> str:
     return _digest(RENDER_VERSION, qa_mod.QA_VERSION, gen.id, gen.image_path, str(getattr(page.line_detail, "value", page.line_detail)),
-                   page.line_width_px, list(content_px), strokes_json, render_params())
+                   page.line_width_px, list(content_px), strokes_json)
 
 
 def _load(storage: Storage, gen: Generation):

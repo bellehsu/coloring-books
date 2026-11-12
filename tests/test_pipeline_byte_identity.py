@@ -18,7 +18,7 @@ from app.services.compose import Placement, compose
 from app.services.export import layout_print_page
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.imageio import ink_to_png
-from app.services.lineart_render import LineDetail, render_base
+from app.services.lineart_render import LineDetail, render_base, render_lineart
 from app.services.qa import evaluate
 from app.storage import load_rgb
 from tests.conftest import REPO
@@ -97,6 +97,26 @@ def cases() -> dict[str, str]:
     out["compose_rgba_bg"] = h(compose(bg, pose, mask, Placement(0.5, 0.6, 0.5, True)).tobytes())
     out["storage_rgba_flatten"] = h(np.asarray(load_rgb(synthetic_rgba_png())[0]).tobytes())
     return out
+
+
+def product_cases() -> dict[str, str]:
+    """產品實際走的 render_lineart（不算指標）要和 render_base 的雜湊一樣。"""
+    a4 = compute_layout(PaperSize.A4, PrintMode.HOME)
+    syn = synthetic_color()
+    flat = lineart_post.load_image(io.BytesIO(synthetic_rgba_png()))
+    return {
+        "render_standard_a4home": h_ink(render_lineart(lineart_post.load_image(SAMPLE), a4.content_px,
+                                                       LineDetail.STANDARD, 11)),
+        "render_simple_w8": h_ink(render_lineart(syn, (620, 800), LineDetail.SIMPLE, 8)),
+        "render_detailed_w16": h_ink(render_lineart(syn, (700, 700), LineDetail.DETAILED, 16)),
+        "render_rgba_flattened": h_ink(render_lineart(flat, (500, 700), LineDetail.STANDARD, 11)),
+    }
+
+
+@pytest.mark.parametrize("name", ["render_standard_a4home", "render_simple_w8", "render_detailed_w16",
+                                  "render_rgba_flattened"])
+def test_render_lineart_byte_identical(name):
+    assert product_cases()[name] == EXPECTED[name]
 
 
 @pytest.mark.parametrize("name", list(EXPECTED))

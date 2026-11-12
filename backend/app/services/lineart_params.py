@@ -1,7 +1,8 @@
 """產品線稿的固定演算法參數（render_base／render_lineart 專用，不依賴 LineartParams／實驗方法表的預設值）。
 
-這些值決定線稿的每一個像素；改任何一個都要讓快取失效。page_lineart.lineart_key 會把 `as_dict()`
-整份放進雜湊，所以改了值，已存的線稿、預覽和 QA 結果會自動重算（不必記得去加 RENDER_VERSION）。
+這些值決定線稿的每一個像素。改任何一個，都要把 lineart_render.RENDER_VERSION 加 1（QAThresholds 則是
+qa.QA_VERSION），已存的線稿、預覽和 QA 結果才會失效重算；lineart_key 不含這些值（舊頁面的 key 不能變）。
+tests/test_lineart_render.py 的快照測試會在值變動時失敗，提醒你加版本號。
 """
 
 from __future__ import annotations

@@ -314,3 +314,12 @@ def test_read_page_lineart_source_missing(env):
         with pytest.raises(page_lineart.LineartSourceMissing) as e:
             page_lineart.read_page_lineart(s, storage, pid)
         assert "圖片檔案遺失" in e.value.message
+
+
+def test_lineart_key_unchanged_since_before_structure_cleanup():
+    """既有頁面的 key 不能變（變了會整批重算線稿並把頁面退回草稿）。值取自 8d5187c 的程式。"""
+    from types import SimpleNamespace as N
+
+    gen = N(id=7, image_path="books/1/generations/7.png")
+    page = N(line_detail="standard", line_width_px=11)
+    assert page_lineart.lineart_key(gen, page, (2244, 3272), "[]") == "33f670f493f81344"

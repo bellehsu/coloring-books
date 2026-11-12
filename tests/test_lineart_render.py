@@ -101,3 +101,19 @@ def test_render_lineart_is_render_base_without_metrics():
     params = lr.render_params()
     assert params["xdog"] == [1.6, 20.0, 0.02, 10.0] and params["sigma"]["standard"] == 1.2
     assert params["close_kernel"] == 7 and params["min_fragment_area"] == 64
+
+
+def test_algorithm_parameters_snapshot():
+    """線稿／QA 的演算法參數凍結：改了就要把版本號加 1（lineart_key 不含這些值）。"""
+    from app.services.qa import QAThresholds
+
+    msg = "lineart 參數改了：請把 RENDER_VERSION／QA_VERSION 加 1，再更新這個快照"
+    assert lr.render_params() == {
+        "xdog": [1.6, 20.0, 0.02, 10.0], "fit": "contain", "interpolation": "lanczos", "binarize": "otsu",
+        "min_fragment_area": 64, "close_kernel": 7, "close_iterations": 1,
+        "sigma": {"simple": 1.5, "standard": 1.2, "detailed": 0.8},
+    }, msg
+    assert vars(QAThresholds()) == {
+        "max_gap_px": 40, "border_px": 12, "gap_error_min": 1, "black_fill_warn": 0.005,
+        "tiny_region_warn": 150, "fragment_warn": 80, "min_region_area": 3000,
+    }, msg

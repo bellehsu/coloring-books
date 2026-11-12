@@ -178,3 +178,11 @@ def test_default_target_is_a4_300dpi():
     p = LineartParams()
     assert (p.target_width, p.target_height) == (2480, 3508)
     assert 10 <= p.line_width_px <= 12
+
+
+def test_to_gray_flattens_4_channel_array_on_white():
+    rgba = np.zeros((2, 2, 4), np.uint8)
+    rgba[0, 0] = (0, 0, 0, 255)  # 不透明黑
+    rgba[0, 1] = (0, 0, 0, 0)    # 全透明 → 白
+    g = lp.to_gray(rgba)
+    assert g[0, 0] == 0 and g[0, 1] == 255 and g[1, 0] == 255
