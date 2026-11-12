@@ -343,3 +343,22 @@ describe("parseStory one-line 中文／英文 captions", () => {
     expect(r.pages[2]).toMatchObject({ captionZh: "麵包店", captionEn: "Bakery" });
   });
 });
+
+describe("parseStory spreadsheet cell with both labels", () => {
+  it("splits a 中文 cell that also holds the 英文 label", () => {
+    const r = parseStory("場景\t動作\t中文\n公園\t揮手\t公園\u3000英文：Park");
+    expect(r.errors).toEqual([]);
+    expect(r.pages[0]).toMatchObject({ scene: "公園", action: "揮手", captionZh: "公園", captionEn: "Park" });
+  });
+
+  it("keeps a non-empty 英文 cell instead of overwriting it", () => {
+    const r = parseStory("場景\t動作\t中文\t英文\n公園\t揮手\t公園\u3000英文：Park\tThe Park");
+    expect(r.pages[0]).toMatchObject({ captionZh: "公園", captionEn: "The Park" });
+  });
+
+  it("leaves cells with at most one label unchanged", () => {
+    const r = parseStory("場景\t動作\t中文\t英文\n公園\t揮手\t學英文\tPark\n海邊\t看書\t海邊\tBeach");
+    expect(r.pages[0]).toMatchObject({ captionZh: "學英文", captionEn: "Park" });
+    expect(r.pages[1]).toMatchObject({ captionZh: "海邊", captionEn: "Beach" });
+  });
+});
