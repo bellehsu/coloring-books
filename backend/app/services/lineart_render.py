@@ -44,21 +44,37 @@ def render_base(color: np.ndarray, content_px: tuple[int, int], detail: LineDeta
     return res.ink, res.metrics
 
 
+def stroke_patch(s: Stroke, w: int, h: int) -> tuple[int, int, np.ndarray] | None:
+    """一筆畫在畫布（w×h）上的像素，只配置筆畫外框（外擴一個筆寬）大的遮罩：回傳 (x0, y0, bool 子陣列)，
+    子陣列對應畫布 [y0:y0+rows, x0:x0+cols]；沒有點或外框完全在畫布外時 None。結果與整頁遮罩版相同。"""
+    if not s.points:
+        return None
+    pts = np.array([[round(x * (w - 1)), round(y * (h - 1))] for x, y in s.points], np.int32)
+    t = max(1, round(s.width_px))
+    pad = t + 2
+    x0, y0 = max(0, int(pts[:, 0].min()) - pad), max(0, int(pts[:, 1].min()) - pad)
+    x1, y1 = min(w, int(pts[:, 0].max()) + pad + 1), min(h, int(pts[:, 1].max()) + pad + 1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    mask = np.zeros((y1 - y0, x1 - x0), np.uint8)
+    local = pts - np.array([x0, y0], np.int32)
+    if len(local) > 1:
+        cv2.polylines(mask, [local.reshape(-1, 1, 2)], False, 1, t, cv2.LINE_8)
+    r = max(0, t // 2)
+    for x, y in local:
+        cv2.circle(mask, (int(x), int(y)), r, 1, -1)
+    return x0, y0, mask.astype(bool)
+
+
 def apply_strokes(ink: np.ndarray, strokes: Sequence[Stroke]) -> np.ndarray:
     out = ink.astype(bool).copy()
     h, w = out.shape
     for s in strokes:
-        if not s.points:
+        patch = stroke_patch(s, w, h)
+        if patch is None:
             continue
-        mask = np.zeros((h, w), np.uint8)
-        pts = np.array([[round(x * (w - 1)), round(y * (h - 1))] for x, y in s.points], np.int32)
-        t = max(1, round(s.width_px))
-        if len(pts) > 1:
-            cv2.polylines(mask, [pts.reshape(-1, 1, 2)], False, 1, t, cv2.LINE_8)
-        r = max(0, t // 2)
-        for x, y in pts:
-            cv2.circle(mask, (int(x), int(y)), r, 1, -1)
-        out[mask.astype(bool)] = s.op == "draw"
+        x0, y0, m = patch
+        out[y0:y0 + m.shape[0], x0:x0 + m.shape[1]][m] = s.op == "draw"
     return out
 
 

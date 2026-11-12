@@ -15,6 +15,7 @@ from app.services.compose import (
     Placement,
     compose,
     composite_matches,
+    largest_component,
     page_placement,
 )
 
@@ -302,3 +303,45 @@ def test_largest_component_hole_fill_keeps_outer_soft_edge():
     assert (o[20:40, 20:40] == 255).all()
     assert (o[10:50, 50] == 200).all() and (o[10:50, 51] == 60).all()
     assert (o[:, 53:] == 0).all()
+
+
+def _mask_png(arr):
+    import io
+
+    buf = io.BytesIO()
+    Image.fromarray(arr, "L").save(buf, "PNG")
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize(("w", "h"), [(300, 10), (10, 300), (400, 40), (40, 400)])
+def test_extreme_mask_rejected(w, h):
+    """外框短邊 < 16 px 或長寬比 > 8:1 的遮罩：compose 與 largest_component 都丟 ValueError。"""
+    pose = Image.new("RGB", (500, 500), (0, 255, 0))
+    mask = Image.new("L", (500, 500), 0)
+    mask.paste(255, (20, 20, 20 + w, 20 + h))
+    with pytest.raises(ValueError, match="太細長"):
+        compose(_bg(), pose, mask, DEFAULT_PLACEMENT)
+    with pytest.raises(ValueError, match="太細長"):
+        largest_component(_mask_png(np.asarray(mask)))
+
+
+def test_normal_mask_still_accepted():
+    pose, mask = _pose()
+    compose(_bg(), pose, mask, DEFAULT_PLACEMENT)
+    largest_component(_mask_png(np.asarray(mask)))
+
+
+def test_target_width_clamped(monkeypatch):
+    """寬度上限是背景寬的 3 倍（長寬比 8:1 的角色在很寬的背景高度比下也不會超過）。"""
+    seen = []
+    orig = Image.Image.resize
+
+    def spy(self, size, *a, **k):
+        seen.append(size)
+        return orig(self, size, *a, **k)
+
+    monkeypatch.setattr(Image.Image, "resize", spy)
+    pose = Image.new("RGB", (800, 100), (0, 255, 0))
+    mask = Image.new("L", (800, 100), 255)  # 8:1，剛好可接受
+    compose(_bg(100, 300), pose, mask, Placement(0.5, 0.5, 1.0, False))
+    assert max(w for w, _ in seen) <= 300

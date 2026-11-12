@@ -2020,3 +2020,49 @@ def test_init_instance_never_overwrites_differing_marker_with_yes(storage_gc, se
     assert instance.bucket_instance_id(storage) == "b" * 32
     with sessions() as s:
         assert instance.db_instance_id(s) is None
+
+
+def _run_fake_main(monkeypatch, settings_file, storage, capsys):
+    monkeypatch.setenv("APP_SETTINGS_FILE", str(settings_file))
+    started = []
+    monkeypatch.setattr(fake_backend, "create_demo_app", lambda *a, **k: started.append(a) or object())
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    rc = fake_backend.main(["--storage", str(storage)])
+    return rc, started, capsys.readouterr().err
+
+
+def test_fake_backend_refuses_real_storage(settings_file, tmp_path, monkeypatch, capsys):
+    from app.config import load_settings
+
+    real = load_settings(settings_file).paths.storage_dir
+    (real / "app.db").write_bytes(b"")
+    # 1. 設定裡的 storage_dir
+    rc, started, err = _run_fake_main(monkeypatch, settings_file, real, capsys)
+    assert rc == 2 and not started and "假後端拒絕啟動" in err and str(real.resolve()) in err
+    # 2. 沒有標記檔、但有 app.db 的其他資料夾
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "app.db").write_bytes(b"")
+    rc, started, err = _run_fake_main(monkeypatch, settings_file, other, capsys)
+    assert rc == 2 and not started and "假後端拒絕啟動" in err
+    # 3. 有標記檔的資料夾可以；新資料夾會建立標記檔
+    (other / ".fake-backend").write_text("")
+    rc, started, _ = _run_fake_main(monkeypatch, settings_file, other, capsys)
+    assert rc == 0 and started
+    fresh = tmp_path / "fresh"
+    rc, started, _ = _run_fake_main(monkeypatch, settings_file, fresh, capsys)
+    assert rc == 0 and (fresh / ".fake-backend").exists()
+
+
+def test_fake_backend_refuses_database_parent(settings_file, tmp_path, monkeypatch, capsys):
+    import yaml
+
+    cfg = yaml.safe_load(settings_file.read_text(encoding="utf-8"))
+    db_dir = tmp_path / "dbdir"
+    db_dir.mkdir()
+    cfg["paths"]["database"] = str(db_dir / "app.db")
+    settings_file.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    rc, started, err = _run_fake_main(monkeypatch, settings_file, db_dir, capsys)
+    assert rc == 2 and not started and "假後端拒絕啟動" in err

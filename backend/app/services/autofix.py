@@ -11,7 +11,7 @@ import io
 import numpy as np
 from PIL import Image
 
-from app.services.lineart_render import Stroke, apply_strokes
+from app.services.lineart_render import Stroke, apply_strokes, stroke_patch
 from app.services.qa import evaluate
 
 AUTOFIX_MAX_PASSES = 3  # ruling 2026-11-06：補線會讓別的近缺口變成缺口，所以重複幾輪
@@ -36,6 +36,18 @@ def bridge_stroke(bridge, w: int, h: int, width_px: int) -> Stroke:
     return Stroke("draw", float(width_px), (conv(ex, ey), conv(qx, qy)))
 
 
+def survives(erased: np.ndarray | None, stroke: Stroke) -> bool:
+    """補線 stroke 不會被 user 層擦掉（erased＝user 層最後擦成白的像素；None＝沒有 user 層）。
+    只比對筆畫外框內的子陣列。"""
+    if erased is None:
+        return True
+    patch = stroke_patch(stroke, erased.shape[1], erased.shape[0])
+    if patch is None:
+        return True
+    x0, y0, m = patch
+    return not (m & erased[y0:y0 + m.shape[0], x0:x0 + m.shape[1]]).any()
+
+
 def plan_autofix(
     pre: np.ndarray,
     user: list[Stroke],
@@ -54,13 +66,10 @@ def plan_autofix(
     erased = ~apply_strokes(np.ones_like(pre), user) if user else None  # user 層最後會擦成白的像素
     h, w = pre.shape
 
-    def survives(stroke: Stroke) -> bool:
-        return erased is None or not (apply_strokes(np.zeros_like(pre), [stroke]) & erased).any()
-
     added: list[Stroke] = []
     for _ in range(AUTOFIX_MAX_PASSES):
         room = min(room_strokes - len(added), (room_points - 2 * len(added)) // 2)
-        batch = [s for s in (bridge_stroke(b, w, h, width_px) for b in bridges[:max(0, room)]) if survives(s)]
+        batch = [s for s in (bridge_stroke(b, w, h, width_px) for b in bridges[:max(0, room)]) if survives(erased, s)]
         if not batch:
             break
         trial_pre = apply_strokes(pre, batch)

@@ -11,13 +11,13 @@ from app.models import GenKind
 from app.services.engine import GenerationRequest, GenerationResult, ProgressFn
 
 
-def make_png(size: tuple[int, int] = (8, 8)) -> bytes:
+def make_png(size: tuple[int, int] = (64, 64)) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", size, (255, 255, 255)).save(buf, "PNG")
     return buf.getvalue()
 
 
-def make_mask_png(size: tuple[int, int] = (8, 8)) -> bytes:
+def make_mask_png(size: tuple[int, int] = (64, 64)) -> bytes:
     """遮罩替身：黑底、白色一塊代表角色（與正式遮罩一致，白＝角色）。"""
     img = Image.new("L", size, 0)
     img.paste(255, (2, 2, size[0] - 2, size[1] - 2))
