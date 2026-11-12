@@ -1,0 +1,26 @@
+[0s] book 1 created
+[1s] shot 01_new_book
+[1s] character generating…
+[37s] character chosen
+[37s] shot 02_character
+[37s] shot 03_story
+[38s] produce started
+[38s] shot 04a_overview_working
+[173s] all pages done
+[173s] shot 04b_overview_done
+[175s] shot 05_c_page
+[177s] moved character with 15 ArrowRight presses
+[178s] shot 06_c_moved
+[180s] shot 07_c_english_off
+[184s] placement before=null afterMove={"cx":0.65,"cy":0.66,"height":0.6,"flip":false} afterUndo2=null
+[184s] shot 08_c_after_undo
+[184s] editor: regenerating pose…
+[220s] pose swapped 3 → 9
+[220s] shot 09_editor_new_pose
+[223s] C undo restored the old pose
+[223s] shot 10_c_undo_pose
+[223s] shot 11_print_sheet
+[224s] PDF saved (42210 bytes)
+[224s] pages: 1:passed 2:passed
+[224s] browser errors: console: Failed to load resource: the server responded with a status of 409 (Conflict)
+[224s] RESULT: PASS
