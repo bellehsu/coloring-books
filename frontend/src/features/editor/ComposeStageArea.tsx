@@ -1,12 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { DEFAULT_PLACEMENT, type Generation, type Page, type Placement } from "@/api/client";
+import { isActive } from "@/api/hooks";
 import { ComposePreview, ComposeStage, ComposeStatus, type AutoComposeStatus } from "@/features/editing/ComposeStage";
 import { errMsg } from "@/features/editing/errMsg";
 import { placementSaverFor } from "@/features/editing/placementSaver";
 import stageStyles from "@/features/editing/stage.module.css";
-
-const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
 
 export interface ComposeStageAreaProps {
   page: Page;

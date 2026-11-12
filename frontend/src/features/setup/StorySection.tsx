@@ -3,11 +3,11 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { AI_PROMPT } from "@/features/story/aiPrompt";
-import { ThemePackDialog } from "@/features/story/ThemePackDialog";
 import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
+import { AI_PROMPT } from "./aiPrompt";
 import type { DraftPage, PreviewEntry, StoryPreview } from "./storyPreview";
+import { ThemePackDialog } from "./ThemePackDialog";
 import styles from "./SetupPage.module.css";
 
 export interface StorySectionProps {

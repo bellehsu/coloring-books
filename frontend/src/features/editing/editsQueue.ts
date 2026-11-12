@@ -30,8 +30,9 @@ export interface EditsEntry {
   /** 設定寫入失敗的回報（目前掛載的元件換成自己的 toast）。 */
   setErrorHandler(fn: (error: unknown) => void): void;
   /**
-   * 目前掛著的修線畫布登記的自動補線：補上的線會併進畫面上的筆畫，回傳補了幾條（失敗已提示過 → null）。
-   * 沒有畫布為 null。面板的「自動補線」有畫布時要走這裡，否則畫布下一次寫入會蓋掉補上的線。
+   * 目前掛著的修線畫布登記的自動補線，回傳補了幾條（失敗已提示過 → null）；沒有畫布為 null。
+   * 面板的「自動補線」有畫布時要走這裡：先讓畫面上的筆畫寫完、補線期間延後寫入；補上的線存在 auto 圖層
+   * （不併進使用者筆畫）。
    */
   readonly autofix: AutofixRunner | null;
   setAutofix(fn: AutofixRunner | null): void;

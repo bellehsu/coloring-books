@@ -4,8 +4,6 @@ import { errMsg } from "@/features/editing/errMsg";
 import { usePatchPageC } from "../fixApi";
 import styles from "../FixPage.module.css";
 
-export const quiet = (p: Promise<unknown>) => p.catch(() => {});
-
 /** 修改列的外框：色點、標題與一行說明、右邊的按鈕，需要時加「↺ 還原成自動畫的那張」。 */
 export function Row({
   title,

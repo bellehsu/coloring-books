@@ -55,7 +55,8 @@ export interface GenFilter {
   includeDiscarded?: boolean;
 }
 
-const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
+/** 生成還在排隊或執行中。 */
+export const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
 
 // ---------- queries ----------
 
@@ -124,7 +125,7 @@ export const recomposeRunning = (p: Page | undefined) => !!p?.recompose_pending 
 /**
  * 任務結束時 worker 可能把它自動選用到頁面的空欄位（背景、角色動作），但 pages 不會自己重抓：
  * gens（useGenerations 的資料）裡原本排隊／執行中的任務結束了 → invalidate pages 與 book。
- * 故事頁與編輯器都用，畫面不用重新整理就會看到自動選用的素材。
+ * C（處理一頁）與進階編輯都用，畫面不用重新整理就會看到自動選用的素材。
  * pollPageId（編輯器的目前頁）：
  * - 分頁切回來（visibilitychange 變成可見）或視窗取得 focus 就重抓頁面：別的分頁（C）可能改過這頁；
  * - 這頁還在重新合成（recomposeRunning）時每 2 秒重抓頁面，直到做完或失敗；結束那一刻重抓這頁的

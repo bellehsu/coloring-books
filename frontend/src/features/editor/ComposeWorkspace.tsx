@@ -12,7 +12,9 @@ import {
   ACTION_HINT, ACTIONS, appendPhrase, EXPRESSIONS, FACING_HINT, FACINGS, hasPhrase,
 } from "@/lib/actions";
 import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
+import { quiet } from "@/lib/quiet";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
+import { useSingleFlight } from "@/lib/useSingleFlight";
 import { errMsg } from "@/features/editing/errMsg";
 import { thumbNumber, Thumbs, useThumbList } from "./Thumbs";
 import { ExclusiveChips } from "@/features/editing/ExclusiveChips";
@@ -130,26 +132,6 @@ function CollapseButton({
     </button>
   );
 }
-
-/** 一次只跑一個（整段 await 期間停用按鈕；ref 擋住同一輪 render 前的第二次點擊）。 */
-function useSingleFlight() {
-  const [busy, setBusy] = useState(false);
-  const ref = useRef(false);
-  const run = async (fn: () => Promise<unknown>) => {
-    if (ref.current) return;
-    ref.current = true;
-    setBusy(true);
-    try {
-      await fn();
-    } finally {
-      ref.current = false;
-      setBusy(false);
-    }
-  };
-  return { busy, run };
-}
-
-const quiet = (p: Promise<unknown>) => p.catch(() => {});
 
 function useSavePage(bookId: number, pageId: number) {
   const toast = useToast();

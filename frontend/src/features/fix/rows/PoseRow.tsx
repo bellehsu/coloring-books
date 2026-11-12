@@ -8,8 +8,9 @@ import { usePageText } from "@/features/editing/usePageText";
 import { ACTION_HINT, EXPRESSIONS, FACING_HINT, FACINGS } from "@/lib/actions";
 import { MAX_ACTION } from "@/lib/limits";
 import { useRegenerate } from "../fixApi";
+import { quiet } from "@/lib/quiet";
 import styles from "../FixPage.module.css";
-import { quiet, Row, useSavePage } from "./Row";
+import { Row, useSavePage } from "./Row";
 
 export function PoseRow({
   bookId,

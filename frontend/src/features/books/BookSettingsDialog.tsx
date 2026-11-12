@@ -16,8 +16,7 @@ import {
   type PaperSize,
   type PrintMode,
 } from "@/lib/layout";
-import styles from "./CreateBookDialog.module.css";
-import extra from "./BookSettingsDialog.module.css";
+import styles from "./BookSettingsDialog.module.css";
 
 const MODE_HINT: Record<PrintMode, string> = {
   home: "四邊留 10 mm 白邊，印表機印不到邊緣也不會切到",
@@ -100,7 +99,7 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
                 aria-checked={on}
                 disabled={locked}
                 title={locked ? SAME_RATIO : undefined}
-                className={`${styles.card} ${styles.sizeCard} ${on ? styles.on : ""} ${locked ? extra.locked : ""}`}
+                className={`${styles.card} ${styles.sizeCard} ${on ? styles.on : ""} ${locked ? styles.locked : ""}`}
                 onClick={() => {
                   update.reset();
                   setSize(s);
@@ -117,7 +116,7 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
                 </span>
                 <b className={styles.sizeName}>{PAPER_LABELS[s]}</b>
                 <span className={styles.dim}>{formatCm([w, h])}</span>
-                {locked && <span className={extra.lockNote}>{SAME_RATIO}</span>}
+                {locked && <span className={styles.lockNote}>{SAME_RATIO}</span>}
               </button>
             );
           })}
@@ -168,7 +167,7 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
       </div>
 
       {layoutChanged && (
-        <p role="status" className={extra.warning}>
+        <p role="status" className={styles.warning}>
           線稿會重新計算，有缺口的頁面會退回草稿，記得再跑一次自動補線。
         </p>
       )}

@@ -9,8 +9,9 @@ import { usePageText } from "@/features/editing/usePageText";
 import { normalizeCaption } from "@/lib/limits";
 import { useCaptionDisplay } from "../fixApi";
 import { captionChoiceLabel, captionSummary } from "../fixState";
+import { quiet } from "@/lib/quiet";
 import styles from "../FixPage.module.css";
-import { quiet, Row, useSavePage } from "./Row";
+import { Row, useSavePage } from "./Row";
 
 /**
  * 圖下方的字：「改字」打開中文／英文欄位；兩個開關（中文、英文，多選）決定這一頁印哪幾行，兩個都不選＝

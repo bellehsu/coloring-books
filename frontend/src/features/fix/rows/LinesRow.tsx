@@ -49,7 +49,7 @@ export function LinesRow({
       const entry = peekEditsQueue(qc, page.id, gid, { oneclick: true });
       let added: number | null;
       if (entry?.autofix) {
-        added = await entry.autofix(); // 畫布開著：補上的線要併進畫布（失敗已提示）
+        added = await entry.autofix(); // 畫布開著：走畫布的補線（先寫完畫面上的筆畫、補線期間延後寫入；失敗已提示）
       } else {
         await entry?.flush().catch(() => {});
         const res = await autofix.mutateAsync({ pageId: page.id, generationId: gid, oneclick: true });

@@ -6,6 +6,7 @@ import { useToast } from "@/components/ui/Toast";
 import { flushAllEditsFor } from "@/features/editing/editsQueue";
 import { errMsg } from "@/features/editing/errMsg";
 import { onBeforeUnload } from "@/features/editing/pendingWrites";
+import { useSingleFlight } from "@/lib/useSingleFlight";
 import { useAcceptPage, useRedoPage, useRestorePage, useRetryPage, useUndoPage } from "./fixApi";
 import { fixHref, type FixFilter, type RestoreItem } from "./fixState";
 import type { PlacementSaves } from "./usePlacementSaves";
@@ -37,8 +38,7 @@ export function useFixActions({ bookId, page, filter, next, placement, closePen 
   const acceptM = useAcceptPage(bookId, pageId);
   const retryM = useRetryPage(bookId, pageId);
 
-  const [acting, setActing] = useState(false);
-  const actingRef = useRef(false);
+  const flight = useSingleFlight();
   // 復原／重做／還原成功一次就加 1：文字欄位（動作、場景、圖下方的字）丟掉改過的值、改顯示伺服器的
   const [historyEpoch, setHistoryEpoch] = useState(0);
   // 文字欄位離開時的存檔與「中文／英文」開關的 PATCH（送出中）：復原／重做／還原、可以印、再試一次先等它們
@@ -73,19 +73,14 @@ export function useFixActions({ bookId, page, filter, next, placement, closePen 
   }
 
   /** 一次只做一件事（復原、重做、還原、可以印、再試一次）；失敗 toast。 */
-  async function act(fn: () => Promise<unknown>, fallback: string) {
-    if (actingRef.current) return;
-    actingRef.current = true;
-    setActing(true);
-    try {
-      await fn();
-    } catch (e) {
-      toast.show(errMsg(e, fallback), "error");
-    } finally {
-      actingRef.current = false;
-      setActing(false);
-    }
-  }
+  const act = (fn: () => Promise<unknown>, fallback: string) =>
+    flight.run(async () => {
+      try {
+        await fn();
+      } catch (e) {
+        toast.show(errMsg(e, fallback), "error");
+      }
+    });
 
   /** 復原／重做／還原：先等文字、拖拉的位置與筆畫寫完（晚到的寫入不會蓋掉復原），再收起畫筆
    * （畫布的筆畫在之後重新從伺服器載入）。 */
@@ -125,7 +120,7 @@ export function useFixActions({ bookId, page, filter, next, placement, closePen 
 
   // 文字存檔中不停用按鈕（只標 aria-busy）：按下按鈕時欄位 blur 才送出存檔，停用會吃掉「改完直接按」的那一下；
   // 復原／重做／還原、可以印、再試一次自己會先等文字存好（textSaves）
-  const busy = acting || undoM.isPending || redoM.isPending || placement.saving;
+  const busy = flight.busy || undoM.isPending || redoM.isPending || placement.saving;
   const acceptBlocked = !page.recompose_pending
     ? null
     : page.attention === "failed"

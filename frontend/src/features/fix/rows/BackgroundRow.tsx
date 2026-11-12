@@ -8,8 +8,9 @@ import { MAX_SCENE } from "@/lib/limits";
 import { UPLOAD_ACCEPT } from "@/lib/upload";
 import { useRegenerate, useUploadBackgroundC } from "../fixApi";
 import { showRestore } from "../fixState";
+import { quiet } from "@/lib/quiet";
 import styles from "../FixPage.module.css";
-import { quiet, Row, useSavePage } from "./Row";
+import { Row, useSavePage } from "./Row";
 
 export function BackgroundRow({
   bookId,

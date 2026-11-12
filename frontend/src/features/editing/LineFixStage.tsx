@@ -156,7 +156,7 @@ function LineFixEditor({
     }
   }
 
-  // 登記給右欄的「自動補線」：畫布掛著時一定要經過這裡，補上的線才會併進畫面上的筆畫
+  // 登記給右欄的「自動補線」：畫布掛著時一定要經過這裡（先讓畫面上的筆畫寫完、補線期間延後寫入；補線存 auto 圖層）
   const runRef = useRef(runAutofix);
   useEffect(() => {
     runRef.current = runAutofix;

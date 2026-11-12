@@ -3,8 +3,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Generation, Page, Placement } from "@/api/client";
-import { useBook, useEdits, useGenerations, usePages, usePagesFollowJobs, useQA, useUpdatePage } from "@/api/hooks";
+import type { Page, Placement } from "@/api/client";
+import { isActive, useBook, useEdits, useGenerations, usePages, usePagesFollowJobs, useQA, useUpdatePage } from "@/api/hooks";
 import { AppBar } from "@/components/shell/AppBar";
 import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
@@ -31,8 +31,6 @@ import { useFlushSelectedEdits } from "./useFlushSelectedEdits";
 import { useMaterialPicks } from "./useMaterialPicks";
 import { usePageListActions } from "./usePageListActions";
 import styles from "./EditorPage.module.css";
-
-const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
 
 type PagePatch = Partial<Pick<Page, "line_detail" | "line_width_px">>;
 

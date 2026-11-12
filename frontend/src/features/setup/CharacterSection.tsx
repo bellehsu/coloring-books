@@ -2,7 +2,7 @@
 
 import { useState, type ChangeEvent } from "react";
 import type { Book, Generation } from "@/api/client";
-import { useGenerations, useSetupCharacter } from "@/api/hooks";
+import { isActive, useGenerations, useSetupCharacter } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
@@ -11,8 +11,6 @@ import { UPLOAD_ACCEPT } from "@/lib/upload";
 import styles from "./SetupPage.module.css";
 
 const MAX_DESC = 800;
-const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
-
 /** 確認「換主角？」之後要做的事。 */
 type Pending = { kind: "choose"; generationId: number } | { kind: "upload"; file: File };
 

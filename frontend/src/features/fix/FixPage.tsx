@@ -3,7 +3,7 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import type { Book, Generation, OverviewPage, Page } from "@/api/client";
-import { useBook, useBookOverview, useGenerations, usePagesFollowJobs, useQA, recomposeRunning } from "@/api/hooks";
+import { isActive, useBook, useBookOverview, useGenerations, usePagesFollowJobs, useQA, recomposeRunning } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { errMsg } from "@/features/editing/errMsg";
 import type { StrokeOp } from "@/lib/strokes";
@@ -18,8 +18,6 @@ import { PoseRow } from "./rows/PoseRow";
 import { useFixActions } from "./useFixActions";
 import { usePlacementSaves } from "./usePlacementSaves";
 import styles from "./FixPage.module.css";
-
-const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
 
 export interface FixPageProps {
   bookId: number;
