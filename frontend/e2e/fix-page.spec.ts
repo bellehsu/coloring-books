@@ -1,5 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { composePage, createBook, createPage, getPages, setCharacter, uniqueTitle } from "./seed";
+import { composePage, createBook, createPage, getPages, setCharacter, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 /**
  * C 處理一頁（spec §4.4）：從 B 打開做好的一頁 → 背景「AI 再畫一張」新圖換上去 → 復原回到舊的 → 重做 →

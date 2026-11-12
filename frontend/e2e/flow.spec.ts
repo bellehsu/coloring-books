@@ -11,7 +11,10 @@ import {
   uniqueTitle,
   uploadBackground,
   type Generation,
+  drainQueueAfterAll,
 } from "./seed";
+
+drainQueueAfterAll();
 
 const COMPOSE = /\/api\/pages\/\d+\/compose$/;
 const PLACEMENT = /\/api\/pages\/\d+\/placement$/;

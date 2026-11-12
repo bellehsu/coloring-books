@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page as PwPage } from "@playwright/test";
-import { createBook, createPage, getGenerations, grayPng, ok, setCharacter, uniqueTitle } from "./seed";
+import { createBook, createPage, getGenerations, grayPng, ok, setCharacter, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 /**
  * Phase 13 一鍵做完（spec §4.5、§4.1、§4.3、§4.4）：首頁「建立新繪本」→ A 做一本新的著色書（書名和紙張、主角、

@@ -1,5 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { composePage, createBook, createPage, getPages, setCharacter, uniqueTitle } from "./seed";
+import { composePage, createBook, createPage, getPages, setCharacter, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 /**
  * 進階編輯和 C 同時開著同一頁（Review Focus 1、E1／E3）：在 C 拖角色 → 頁面流程排隊重新合成；

@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { createBook, createPage, getPages, setCharacter, uniqueTitle } from "./seed";
+import { createBook, createPage, getPages, setCharacter, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 /**
  * B 整本書（spec §4.3）：兩頁有故事、一頁空白。還沒開始 → 「開始做這本書」→ 假後端（DemoEngine）產生背景與
