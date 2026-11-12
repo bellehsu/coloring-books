@@ -6,7 +6,7 @@ import { AppBar } from "./AppBar";
 import { BookBar } from "./BookBar";
 
 vi.mock("@/api/hooks", () => ({
-  useQueue: () => ({ data: { state: "idle", last_error: null, queued: 0, running_id: null } }),
+  useQueue: () => ({ data: { state: "idle", last_error: null, queued: 0 } }),
 }));
 
 const book = (o: Partial<Book> = {}) =>
@@ -16,7 +16,7 @@ const book = (o: Partial<Book> = {}) =>
     paper_size: "a4",
     print_mode: "print_shop",
     character_generation_id: 3,
-    stats: { pages: 20, passed: 14, needs_fix: 4, no_selection: 2 },
+    stats: { pages: 20, passed: 14 },
     ...o,
   }) as Book;
 

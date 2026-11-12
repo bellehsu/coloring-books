@@ -46,10 +46,6 @@ class ComfySettings(BaseModel):
             raise ValueError("comfy.url 必須以 http:// 或 https:// 開頭")
         return v
 
-    @property
-    def ws_url(self) -> str:
-        return "ws" + self.url[len("http"):] + "/ws"
-
 
 class QueueSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")  # 舊設定檔的 max_wait_s 等欄位直接忽略

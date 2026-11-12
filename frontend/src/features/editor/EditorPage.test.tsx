@@ -76,16 +76,8 @@ vi.mock("./ComposeStage", async (orig) => {
 // ---------- 假後端 ----------
 type O = Record<string, unknown>;
 const layout = {
-  paper_mm: [216, 303],
-  content_mm: [216, 303],
   content_px: [2551, 3579],
   generation_size: [864, 1216],
-  safe_inset_mm: 6,
-  page_px: [2551, 3579],
-  content_offset_px: [0, 0],
-  trim_box_px: [35, 35, 2516, 3544],
-  safe_box_px: [106, 106, 2445, 3473],
-  ratio_group: "a",
 };
 const mkBook = (o: O = {}): O => ({
   id: 1,
@@ -95,7 +87,7 @@ const mkBook = (o: O = {}): O => ({
   character_description: "bunny",
   character_generation_id: 99,
   layout,
-  stats: { pages: 3, passed: 0, needs_fix: 0, no_selection: 3 },
+  stats: { pages: 3, passed: 0 },
   cover_url: null,
   created_at: "",
   updated_at: "",
@@ -130,13 +122,10 @@ const mkGen = (id: number, o: O = {}): O => ({
   kind: "page",
   status: "succeeded",
   discarded: false,
-  prompt: "",
   user_text: "",
-  seed: 100 + id,
   width: 864,
   height: 1216,
   image_url: `/img/${id}.png`,
-  mask_url: null,
   cutout_url: null,
   error: null,
   elapsed_s: 3,
@@ -155,9 +144,6 @@ const mkQA = (o: O = {}): O => ({
     [0.6, 0.7],
   ],
   gap_count: 3,
-  dangling_count: 0,
-  near_miss_count: 0,
-  metrics: {},
   character_check: null,
   qa_note: "",
   forced_pass_reason: null,
@@ -222,7 +208,7 @@ beforeEach(() => {
         pages = ids.map((id, i) => ({ ...pages.find((p) => p.id === id)!, position: i }));
         return j(pages);
       }
-      if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0, running_id: null });
+      if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0 });
       if (url.startsWith("/api/books/1/generations")) {
         const q = new URL(url, "http://x").searchParams;
         let list = gens;
@@ -359,7 +345,7 @@ const composedReady = (id = 1, bg = 3, pose = 4) => {
   const o = { background_generation_id: bg, pose_generation_id: pose };
   const g = [
     mkGen(bg, { kind: "background", page_id: id }),
-    mkGen(pose, { kind: "pose", page_id: id, mask_url: `/api/generations/${pose}/mask`, cutout_url: `/api/generations/${pose}/cutout` }),
+    mkGen(pose, { kind: "pose", page_id: id, cutout_url: `/api/generations/${pose}/cutout` }),
   ];
   return { o, g };
 };
@@ -589,7 +575,7 @@ describe("EditorPage", () => {
   });
 
   it("角色動作卡片：點縮圖呼叫 POST /pose；「換一張」只送出頁面的動作文字（沒有產生方式）並顯示排隊中", async () => {
-    gens = [mkGen(5, { kind: "background" }), mkGen(7, { kind: "pose", width: 832, height: 1216, mask_url: "/api/generations/7/mask" })];
+    gens = [mkGen(5, { kind: "background" }), mkGen(7, { kind: "pose", width: 832, height: 1216 })];
     setup();
     await screen.findByRole("region", { name: "角色動作" });
     await userEvent.click(await within(poseCard()).findByRole("radio", { name: "角色動作第 1 張" }));
@@ -806,7 +792,7 @@ describe("EditorPage", () => {
     expect(screen.getByRole("img", { name: "背景圖" })).toHaveAttribute("src", "/img/3.png");
     expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(0);
     // 工作完成，後端自動選用
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", cutout_url: "/c" })];
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, compose_pending: true });
     await act(async () => {
       await lastQc.invalidateQueries();
@@ -822,7 +808,7 @@ describe("EditorPage", () => {
       selected_generation_id: 50,
       placement: { cx: 0.3, cy: 0.5, height: 0.4, flip: true },
     });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" }), mkGen(50, { kind: "composite" })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", cutout_url: "/c" }), mkGen(50, { kind: "composite" })];
     setup();
     const stage = await screen.findByTestId("compose-stage");
     expect(JSON.parse(stage.getAttribute("data-placement")!)).toEqual({ cx: 0.3, cy: 0.5, height: 0.4, flip: true });
@@ -834,7 +820,7 @@ describe("EditorPage", () => {
 
   it("位置寫入失敗：不合成，狀態列顯示「位置尚未儲存」與「更新失敗，重試」；位置重試成功後自動合成", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4, selected_generation_id: 50 });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" }), mkGen(50, { kind: "composite" })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", cutout_url: "/c" }), mkGen(50, { kind: "composite" })];
     failWith["PUT /api/pages/1/placement"] = 500;
     setup();
     await userEvent.click(within(await screen.findByTestId("compose-stage")).getByRole("button", { name: "stub-move" }));
@@ -852,7 +838,7 @@ describe("EditorPage", () => {
 
   it("構圖：角色動作沒有遮罩（後端 cutout_url 為 null）→ 舞台拿不到去背圖（由舞台說明要重新產生）", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", mask_url: null, cutout_url: null })];
+    gens = [mkGen(3, { kind: "background" }), mkGen(4, { kind: "pose", cutout_url: null })];
     setup();
     const stage = await screen.findByTestId("compose-stage");
     expect(stage).toHaveAttribute("data-cutout", "");
@@ -861,7 +847,7 @@ describe("EditorPage", () => {
 
   it("構圖：背景沒有圖 → 舞台拿到 null（說明而不是一直載入中）", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    gens = [mkGen(3, { kind: "background", image_url: null }), mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    gens = [mkGen(3, { kind: "background", image_url: null }), mkGen(4, { kind: "pose", cutout_url: "/c" })];
     setup();
     const stage = await screen.findByTestId("compose-stage");
     expect(stage).toHaveAttribute("data-bg", "");
@@ -870,7 +856,7 @@ describe("EditorPage", () => {
 
   it("構圖：選用的背景不在這頁的紀錄裡 → 說明，不是一直載入中", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3, pose_generation_id: 4 });
-    gens = [mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    gens = [mkGen(4, { kind: "pose", cutout_url: "/c" })];
     setup();
     expect(await screen.findByText("找不到選用的背景或角色動作，請重新選一張")).toBeInTheDocument();
     expect(screen.queryByTestId("compose-stage")).not.toBeInTheDocument();
@@ -944,7 +930,7 @@ describe("EditorPage", () => {
 
   it("角色動作已選好時上傳背景圖 → 自動合成", async () => {
     pages[0] = mkPage(1, { pose_generation_id: 4 });
-    gens = [mkGen(4, { kind: "pose", mask_url: "/m", cutout_url: "/c" })];
+    gens = [mkGen(4, { kind: "pose", cutout_url: "/c" })];
     setup();
     await screen.findByRole("region", { name: "背景" });
     await userEvent.upload(

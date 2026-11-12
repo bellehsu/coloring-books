@@ -195,7 +195,6 @@ def test_key_builders_unchanged(storage):
     assert storage.generation_image(3, 7) == "books/3/generations/7.png"
     assert storage.generation_mask(3, 7) == "books/3/generations/7_mask.png"
     assert storage.lineart(3, 5, "ab") == "books/3/pages/5/lineart_ab.png"
-    assert storage.preview(7, "k") == "cache/previews/7_k.png"
 
 
 # ---------- LocalStorage 簽章 ----------

@@ -62,7 +62,7 @@ const book = {
   cover_url: null,
   shared_at: null,
   layout: { content_px: [2244, 3272] },
-  stats: { pages: 3, passed: 2, needs_fix: 0, no_selection: 0 },
+  stats: { pages: 3, passed: 2 },
 };
 
 const gen = (id: number, kind: Generation["kind"], extra: Partial<Generation> = {}) =>
@@ -73,16 +73,11 @@ const gen = (id: number, kind: Generation["kind"], extra: Partial<Generation> = 
     kind,
     status: "succeeded",
     discarded: false,
-    prompt: "",
     user_text: "",
-    seed: 1,
     width: 100,
     height: 140,
     image_url: `/api/generations/${id}/image`,
-    mask_url: null,
     cutout_url: kind === "pose" ? `/api/generations/${id}/cutout` : null,
-    pose_mode: null,
-    background_style: null,
     source: "generated",
     error: null,
     elapsed_s: 1,
@@ -130,12 +125,11 @@ beforeEach(() => {
       if (url.startsWith("/api/books/1/generations")) return json(gens);
       if (url === "/api/pages/5/qa")
         return json({ status: "passed", errors: [], warnings: [], gaps: [[0.2, 0.3], [0.6, 0.7]], gap_count: 2,
-          dangling_count: 0, near_miss_count: 0, metrics: {}, character_check: null, qa_note: "", forced_pass_reason: null,
+          character_check: null, qa_note: "", forced_pass_reason: null,
           lineart_url: "/api/pages/5/lineart?v=k1" });
       if (url === "/api/pages/5/lineart/edits" && method === "GET") return json({ generation_id: 30, strokes: [] });
       if (url.startsWith("/api/pages/5/lineart/edits") && method === "PUT")
-        return json({ status: "passed", errors: [], warnings: [], gaps: [], gap_count: 0, dangling_count: 0,
-          near_miss_count: 0, metrics: {}, character_check: null, qa_note: "", forced_pass_reason: null,
+        return json({ status: "passed", errors: [], warnings: [], gaps: [], gap_count: 0, character_check: null, qa_note: "", forced_pass_reason: null,
           lineart_url: "/api/pages/5/lineart?v=k2" });
       if (method === "POST" && /\/api\/pages\/5\/(undo|redo|restore|accept)$/.test(url)) return json(page);
       if (method === "POST" && url.startsWith("/api/pages/5/poses")) return json(gen(21, "pose", { status: "queued" }), 202);

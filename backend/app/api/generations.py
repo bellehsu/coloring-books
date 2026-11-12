@@ -47,7 +47,6 @@ class QueueStatus(BaseModel):
     state: WorkerState
     last_error: str | None
     queued: int
-    running_id: int | None
     # 供狀態膠囊估算剩餘時間：排隊中／執行中（舊→新），與各類型最近成功的耗時（新→舊）。
     pending: list[PendingJob]
     recent: list[RecentJob]
@@ -100,26 +99,6 @@ def get_generation_image(
     if not found:
         raise HTTPException(404, "圖片檔案遺失")
     return signed_redirect(request, storage, gen.image_path)
-
-
-@router.get("/generations/{gen_id}/mask")
-def get_generation_mask(
-    request: Request,
-    gen_id: int,
-    session: Session = Depends(get_session),
-    storage: Storage = Depends(get_storage),
-    owner: Owner = Depends(current_owner),
-) -> Response:
-    gen = owned_generation(session, owner, gen_id)
-    if not gen.mask_path:
-        raise HTTPException(404, "這筆生成紀錄沒有遮罩")
-    try:
-        found = storage.exists(gen.mask_path)
-    except ValueError:
-        found = False
-    if not found:
-        raise HTTPException(404, "遮罩檔案遺失")
-    return signed_redirect(request, storage, gen.mask_path)
 
 
 @router.get("/generations/{gen_id}/cutout")
@@ -261,13 +240,10 @@ def queue_status(
     owner: Owner = Depends(current_owner),
 ) -> QueueStatus:
     """全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。
-    非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。"""
+    非 admin 看不到任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。"""
     queued = session.exec(
         select(func.count()).select_from(Generation).where(col(Generation.status) == GenStatus.QUEUED)
     ).one()
-    running_id = session.exec(
-        select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job()).limit(1)
-    ).first()
     pending = session.exec(
         select(Generation.kind)
         .where(
@@ -297,7 +273,6 @@ def queue_status(
         state=worker.state,
         last_error=_queue_error(worker, owner),
         queued=queued,
-        running_id=running_id if owner.is_admin else None,
         pending=[PendingJob(kind=k.value) for k in pending],
         recent=recent,
     )

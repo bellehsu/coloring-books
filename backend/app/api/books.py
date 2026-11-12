@@ -72,13 +72,6 @@ def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
         stats = BookStats(
             pages=len(pages),
             passed=sum(p.status == PageStatus.PASSED for p in pages),
-            needs_fix=sum(
-                p.selected_generation_id is not None
-                and bool(p.qa_json)
-                and bool(json.loads(p.qa_json).get("errors"))
-                for p in pages
-            ),
-            no_selection=sum(p.selected_generation_id is None for p in pages),
             ready=states.count("ready"),
             attention=states.count("attention"),
             working=states.count("working"),
@@ -257,7 +250,7 @@ def create_character_candidates(
     book = owned_book(session, owner, book_id)
     if book.character_generation_id is not None and not body.confirm_change:
         raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
-    # 一次一張：body.count 是舊前端送的，忽略。再按一次＝再產生一張，變化語不重複這本書上一張
+    # 一次一張：再按一次＝再產生一張，變化語不重複這本書上一張
     seed = body.seed if body.seed is not None else random.randint(0, MAX_SEED)
     variation = pick_character_variation(
         random.Random(), exclude=_last_character_variation(session, book_id)

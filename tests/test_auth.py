@@ -146,7 +146,6 @@ def test_revoked_owner_gets_401_next_request(client, app):
     image_urls = [
         f"/api/generations/{ids[0]}/image",
         f"/api/pages/{p['id']}/lineart",
-        f"/api/generations/{ids[0]}/lineart-preview",
     ]
     for url in image_urls:
         assert client.get(url, follow_redirects=False).status_code == 302, url
@@ -286,8 +285,8 @@ def test_queue_has_no_content(client, app):
     assert r.status_code == 200
     body = r.json()
     assert secret not in r.text
-    assert set(body) <= {"state", "last_error", "queued", "running_id", "pending", "recent"}
-    assert body["queued"] == 1 and body["running_id"] is None and body["last_error"] is None
+    assert set(body) <= {"state", "last_error", "queued", "pending", "recent"}
+    assert body["queued"] == 1 and body["last_error"] is None
     assert body["pending"] == [{"kind": "character"}, {"kind": "character"}]
     for job in body["recent"]:
         assert set(job) == {"kind", "elapsed_s"}
@@ -302,7 +301,7 @@ def test_queue_has_no_content(client, app):
     app.state.worker.last_error = secret
     login(client, tadm)
     body = client.get("/api/system/queue").json()
-    assert body["last_error"] == secret and body["running_id"] is not None
+    assert body["last_error"] == secret
 
 
 # --- B10：已有不同身分的 session 時，邀請連結要先確認才切換 ---

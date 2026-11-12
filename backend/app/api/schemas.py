@@ -60,23 +60,13 @@ class BookUpdate(BaseModel):
 
 
 class LayoutOut(BaseModel):
-    paper_mm: tuple[float, float]
-    content_mm: tuple[float, float]
     content_px: tuple[int, int]
     generation_size: tuple[int, int]
-    safe_inset_mm: float | None
-    page_px: tuple[int, int]
-    content_offset_px: tuple[int, int]
-    trim_box_px: tuple[int, int, int, int] | None
-    safe_box_px: tuple[int, int, int, int] | None
-    ratio_group: str
 
 
 class BookStats(BaseModel):
     pages: int = 0
     passed: int = 0
-    needs_fix: int = 0  # 已選圖且目前 QA 有錯誤的頁數（進階編輯用；線沒接起來也算，首頁書卡不用）
-    no_selection: int = 0
     # B 的每頁狀態（GET /books/{id}/overview 的 state）各幾頁，首頁書卡用；加起來等於 pages
     ready: int = 0
     attention: int = 0
@@ -96,7 +86,6 @@ class SharedBookOut(BaseModel):
     author: str
     paper_size: PaperSize
     page_count: int
-    cover_page_id: int
     cover_image_url: str  # 封面頁的分享圖（帶 ?v=）
     shared_at: datetime
     mine: bool
@@ -144,16 +133,8 @@ class BookOut(BaseModel):
             character_description=book.character_description,
             character_generation_id=book.character_generation_id,
             layout=LayoutOut(
-                paper_mm=lay.paper_mm,
-                content_mm=lay.content_mm,
                 content_px=lay.content_px,
                 generation_size=lay.generation_size,
-                safe_inset_mm=lay.safe_inset_mm,
-                page_px=lay.page_px,
-                content_offset_px=lay.content_offset_px,
-                trim_box_px=lay.trim_box_px,
-                safe_box_px=lay.safe_box_px,
-                ratio_group=lay.ratio_group,
             ),
             stats=stats or BookStats(),
             cover_url=cover_url,
@@ -165,7 +146,6 @@ class BookOut(BaseModel):
 
 class CharacterCandidatesCreate(BaseModel):
     description: DescriptionStr
-    count: int = Field(default=4, ge=1, le=8)
     seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
     confirm_change: bool = False  # 已設定角色時：使用者確認要換角色（A 的「再畫一隻」）
 
@@ -181,36 +161,6 @@ class RestoreIn(BaseModel):
     item: Literal["background", "pose", "lines"]
 
 
-# 角色動作模式與背景風格：新列一律 precise／simple（Qwen）；fast／detailed 只出現在 Phase 9 以前的 SDXL 舊列，
-# GenerationOut 照舊回報，前端才能替舊縮圖標「快速」／「細緻」。
-PoseMode = Literal["precise", "fast"]
-BackgroundStyle = Literal["simple", "detailed"]
-
-
-def pose_mode_of(gen: Generation) -> PoseMode | None:
-    """角色動作的模式（看 request_json，排隊中、還沒有 workflow_name 也算得出來）；
-    其他 kind 為 None。Phase 5 的舊列沒有 pose_mode（或內容讀不懂）→ "fast"。"""
-    if gen.kind != GenKind.POSE:
-        return None
-    try:
-        mode = json.loads(gen.request_json or "{}").get("pose_mode")
-    except (ValueError, AttributeError):
-        return "fast"
-    return "precise" if mode == "precise" else "fast"
-
-
-def background_style_of(gen: Generation) -> BackgroundStyle | None:
-    """背景的實際風格（看 request_json，排隊中也算得出來）；其他 kind 為 None。
-    背景風格上線前的舊列沒有 background_style（或內容讀不懂）→ "detailed"。上傳的圖片沒有風格 → None。"""
-    if gen.kind != GenKind.BACKGROUND or gen.engine == "upload":
-        return None
-    try:
-        style = json.loads(gen.request_json or "{}").get("background_style")
-    except (ValueError, AttributeError):
-        return "detailed"
-    return "simple" if style == "simple" else "detailed"
-
-
 class GenerationOut(BaseModel):
     id: int
     book_id: int
@@ -218,16 +168,11 @@ class GenerationOut(BaseModel):
     kind: GenKind
     status: GenStatus
     discarded: bool
-    prompt: str
     user_text: str  # 使用者輸入的原文（角色描述或場景描述）
-    seed: int
     width: int
     height: int
     image_url: str | None
-    mask_url: str | None  # pose：去背遮罩
     cutout_url: str | None  # pose：裁好的去背 RGBA 圖
-    pose_mode: PoseMode | None  # pose：精準／快速；其他 kind 為 None
-    background_style: BackgroundStyle | None  # background：實際風格（簡潔／細緻）；其他 kind 為 None
     source: Literal["generated", "upload"]  # engine == "upload"：使用者上傳的圖
     error: str | None
     elapsed_s: float | None
@@ -251,16 +196,11 @@ class GenerationOut(BaseModel):
             kind=gen.kind,
             status=gen.status,
             discarded=gen.discarded,
-            prompt=gen.prompt,
             user_text=gen.user_text,
-            seed=gen.seed,
             width=gen.width,
             height=gen.height,
             image_url=f"/api/generations/{gen.id}/image" if gen.image_path else None,
-            mask_url=f"/api/generations/{gen.id}/mask" if gen.mask_path else None,
             cutout_url=f"/api/generations/{gen.id}/cutout" if gen.mask_path else None,
-            pose_mode=pose_mode_of(gen),
-            background_style=background_style_of(gen),
             source="upload" if gen.engine == "upload" else "generated",
             error=public_engine_error(gen.error, is_admin),
             elapsed_s=gen.elapsed_s,
@@ -283,7 +223,6 @@ class PageUpdate(BaseModel):
     # 要印哪幾行（未送＝不動；只收 true／false，null 也是 422）
     caption_show_zh: StrictBool = None  # type: ignore[assignment]
     caption_show_en: StrictBool = None  # type: ignore[assignment]
-    controlnet_strength: float | None = None  # 構圖草圖已停用（0006 已移除欄位）：舊前端會送，照收但忽略
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
 
@@ -305,13 +244,10 @@ class SelectGeneration(BaseModel):
 
 class PoseCreate(BaseModel):
     action: ActionStr  # 動作文字（不帶場景描述）
-    mode: str | None = None  # 舊前端會送精準／快速；忽略（只有 Qwen 一種）
 
 
 class BackgroundCreate(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    style: str | None = None  # 舊前端會送簡潔／細緻；忽略（只有 Qwen 一種）
+    model_config = ConfigDict(extra="ignore")  # 沒有參數；舊客戶端送的 style 等欄位忽略
 
 
 class PagePlacement(BaseModel):
@@ -493,9 +429,6 @@ class QAOut(BaseModel):
     warnings: list[QAMessage]
     gaps: list[tuple[float, float]]  # 相對座標 (x/w, y/h)
     gap_count: int
-    dangling_count: int
-    near_miss_count: int
-    metrics: dict[str, Any]
     character_check: CharacterCheck | None
     qa_note: str
     forced_pass_reason: str | None
@@ -509,9 +442,6 @@ class QAOut(BaseModel):
             warnings=_messages(qa.warnings),
             gaps=list(qa.gaps),
             gap_count=qa.gap_count,
-            dangling_count=qa.dangling_count,
-            near_miss_count=qa.near_miss_count,
-            metrics=qa.metrics,
             character_check=page.character_check,
             qa_note=page.qa_note,
             forced_pass_reason=page.forced_pass_reason,

@@ -1316,46 +1316,6 @@
         }
       }
     },
-    "/api/generations/{gen_id}/mask": {
-      "get": {
-        "tags": [
-          "generations"
-        ],
-        "summary": "Get Generation Mask",
-        "operationId": "get_generation_mask_api_generations__gen_id__mask_get",
-        "parameters": [
-          {
-            "name": "gen_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Gen Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/generations/{gen_id}/cutout": {
       "get": {
         "tags": [
@@ -1535,7 +1495,7 @@
           "generations"
         ],
         "summary": "Queue Status",
-        "description": "全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。\n非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。",
+        "description": "全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。\n非 admin 看不到任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。",
         "operationId": "queue_status_api_system_queue_get",
         "responses": {
           "200": {
@@ -1828,68 +1788,6 @@
                 "schema": {
                   "$ref": "#/components/schemas/AutofixOut"
                 }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/generations/{gen_id}/lineart-preview": {
-      "get": {
-        "tags": [
-          "lineart"
-        ],
-        "summary": "Lineart Preview",
-        "description": "角色或頁面候選的線稿預覽（不含修改圖層），依所屬繪本目前的內容尺寸。",
-        "operationId": "lineart_preview_api_generations__gen_id__lineart_preview_get",
-        "parameters": [
-          {
-            "name": "gen_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Gen Id"
-            }
-          },
-          {
-            "name": "detail",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/LineDetail",
-              "default": "standard"
-            }
-          },
-          {
-            "name": "line_width_px",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 16,
-              "minimum": 8,
-              "default": 11,
-              "title": "Line Width Px"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
               }
             }
           },
@@ -3042,19 +2940,6 @@
             "type": "integer",
             "title": "Gap Count"
           },
-          "dangling_count": {
-            "type": "integer",
-            "title": "Dangling Count"
-          },
-          "near_miss_count": {
-            "type": "integer",
-            "title": "Near Miss Count"
-          },
-          "metrics": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Metrics"
-          },
           "character_check": {
             "anyOf": [
               {
@@ -3096,9 +2981,6 @@
           "warnings",
           "gaps",
           "gap_count",
-          "dangling_count",
-          "near_miss_count",
-          "metrics",
           "character_check",
           "qa_note",
           "forced_pass_reason",
@@ -3108,19 +2990,7 @@
         "title": "AutofixOut"
       },
       "BackgroundCreate": {
-        "properties": {
-          "style": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Style"
-          }
-        },
+        "properties": {},
         "type": "object",
         "title": "BackgroundCreate"
       },
@@ -3406,16 +3276,6 @@
             "title": "Passed",
             "default": 0
           },
-          "needs_fix": {
-            "type": "integer",
-            "title": "Needs Fix",
-            "default": 0
-          },
-          "no_selection": {
-            "type": "integer",
-            "title": "No Selection",
-            "default": 0
-          },
           "ready": {
             "type": "integer",
             "title": "Ready",
@@ -3505,13 +3365,6 @@
             "maxLength": 800,
             "minLength": 1,
             "title": "Description"
-          },
-          "count": {
-            "type": "integer",
-            "maximum": 8.0,
-            "minimum": 1.0,
-            "title": "Count",
-            "default": 4
           },
           "seed": {
             "anyOf": [
@@ -3687,17 +3540,9 @@
             "type": "boolean",
             "title": "Discarded"
           },
-          "prompt": {
-            "type": "string",
-            "title": "Prompt"
-          },
           "user_text": {
             "type": "string",
             "title": "User Text"
-          },
-          "seed": {
-            "type": "integer",
-            "title": "Seed"
           },
           "width": {
             "type": "integer",
@@ -3718,17 +3563,6 @@
             ],
             "title": "Image Url"
           },
-          "mask_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mask Url"
-          },
           "cutout_url": {
             "anyOf": [
               {
@@ -3739,36 +3573,6 @@
               }
             ],
             "title": "Cutout Url"
-          },
-          "pose_mode": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "precise",
-                  "fast"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pose Mode"
-          },
-          "background_style": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "simple",
-                  "detailed"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Background Style"
           },
           "source": {
             "type": "string",
@@ -3846,16 +3650,11 @@
           "kind",
           "status",
           "discarded",
-          "prompt",
           "user_text",
-          "seed",
           "width",
           "height",
           "image_url",
-          "mask_url",
           "cutout_url",
-          "pose_mode",
-          "background_style",
           "source",
           "error",
           "elapsed_s",
@@ -4015,34 +3814,6 @@
       },
       "LayoutOut": {
         "properties": {
-          "paper_mm": {
-            "prefixItems": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              }
-            ],
-            "type": "array",
-            "maxItems": 2,
-            "minItems": 2,
-            "title": "Paper Mm"
-          },
-          "content_mm": {
-            "prefixItems": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              }
-            ],
-            "type": "array",
-            "maxItems": 2,
-            "minItems": 2,
-            "title": "Content Mm"
-          },
           "content_px": {
             "prefixItems": [
               {
@@ -4070,117 +3841,12 @@
             "maxItems": 2,
             "minItems": 2,
             "title": "Generation Size"
-          },
-          "safe_inset_mm": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Safe Inset Mm"
-          },
-          "page_px": {
-            "prefixItems": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "integer"
-              }
-            ],
-            "type": "array",
-            "maxItems": 2,
-            "minItems": 2,
-            "title": "Page Px"
-          },
-          "content_offset_px": {
-            "prefixItems": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "integer"
-              }
-            ],
-            "type": "array",
-            "maxItems": 2,
-            "minItems": 2,
-            "title": "Content Offset Px"
-          },
-          "trim_box_px": {
-            "anyOf": [
-              {
-                "prefixItems": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "integer"
-                  }
-                ],
-                "type": "array",
-                "maxItems": 4,
-                "minItems": 4
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Trim Box Px"
-          },
-          "safe_box_px": {
-            "anyOf": [
-              {
-                "prefixItems": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "integer"
-                  }
-                ],
-                "type": "array",
-                "maxItems": 4,
-                "minItems": 4
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Safe Box Px"
-          },
-          "ratio_group": {
-            "type": "string",
-            "title": "Ratio Group"
           }
         },
         "type": "object",
         "required": [
-          "paper_mm",
-          "content_mm",
           "content_px",
-          "generation_size",
-          "safe_inset_mm",
-          "page_px",
-          "content_offset_px",
-          "trim_box_px",
-          "safe_box_px",
-          "ratio_group"
+          "generation_size"
         ],
         "title": "LayoutOut"
       },
@@ -4714,17 +4380,6 @@
             "type": "boolean",
             "title": "Caption Show En"
           },
-          "controlnet_strength": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Controlnet Strength"
-          },
           "line_detail": {
             "anyOf": [
               {
@@ -4806,17 +4461,6 @@
             "maxLength": 300,
             "minLength": 1,
             "title": "Action"
-          },
-          "mode": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mode"
           }
         },
         "type": "object",
@@ -4968,19 +4612,6 @@
             "type": "integer",
             "title": "Gap Count"
           },
-          "dangling_count": {
-            "type": "integer",
-            "title": "Dangling Count"
-          },
-          "near_miss_count": {
-            "type": "integer",
-            "title": "Near Miss Count"
-          },
-          "metrics": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Metrics"
-          },
           "character_check": {
             "anyOf": [
               {
@@ -5018,9 +4649,6 @@
           "warnings",
           "gaps",
           "gap_count",
-          "dangling_count",
-          "near_miss_count",
-          "metrics",
           "character_check",
           "qa_note",
           "forced_pass_reason",
@@ -5048,17 +4676,6 @@
             "type": "integer",
             "title": "Queued"
           },
-          "running_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Running Id"
-          },
           "pending": {
             "items": {
               "$ref": "#/components/schemas/PendingJob"
@@ -5079,7 +4696,6 @@
           "state",
           "last_error",
           "queued",
-          "running_id",
           "pending",
           "recent"
         ],
@@ -5509,10 +5125,6 @@
             "type": "integer",
             "title": "Page Count"
           },
-          "cover_page_id": {
-            "type": "integer",
-            "title": "Cover Page Id"
-          },
           "cover_image_url": {
             "type": "string",
             "title": "Cover Image Url"
@@ -5534,7 +5146,6 @@
           "author",
           "paper_size",
           "page_count",
-          "cover_page_id",
           "cover_image_url",
           "shared_at",
           "mine"

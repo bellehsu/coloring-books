@@ -177,9 +177,6 @@ class ComfyClient:
     async def object_info(self) -> dict[str, Any]:
         return await self._get_json("/object_info")
 
-    async def model_folders(self) -> list[str]:
-        return await self._get_json("/models")
-
     async def list_models(self, folder: str) -> list[str] | None:
         """回傳資料夾類型下的模型檔名；資料夾類型未註冊（ComfyUI 回 404）時回傳 None。"""
         resp = await self._request("GET", f"/models/{folder}")

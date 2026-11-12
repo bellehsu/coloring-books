@@ -155,18 +155,6 @@ def test_lineart_existence_uses_db_key(client, app):
     assert spy.calls == []  # 同一個 key：只看資料庫，不呼叫 exists／get
 
 
-def test_missing_preview_object_rerenders(client, app):
-    _, _, ids = selected_page(client, app)
-    url = f"/api/generations/{ids[0]}/lineart-preview"
-    first = client.get(url)
-    assert first.status_code == 200
-    previews = list(app.state.storage.list(f"cache/previews/{ids[0]}_"))
-    assert len(previews) == 1
-    app.state.storage.delete(previews[0])
-    again = client.get(url)
-    assert again.status_code == 200 and again.content == first.content
-
-
 def test_delete_page_removes_objects(client, app):
     app.state.engine.image = color_png()
     b, char_gen = book_with_character(client, app, **A5_HOME)
@@ -176,7 +164,6 @@ def test_delete_page_removes_objects(client, app):
     other = seed_generation(app, b["id"], keep["id"], color_png())
     set_page(app, p["id"], selected_generation_id=gens[0])
     assert client.get(f"/api/pages/{p['id']}/lineart").status_code == 200
-    assert client.get(f"/api/generations/{gens[1]}/lineart-preview").status_code == 200
     storage = app.state.storage
     with app.state.sessions() as s:
         keys = [s.get(Generation, g).image_path for g in gens]
@@ -186,12 +173,10 @@ def test_delete_page_removes_objects(client, app):
     # 一個額外物件（例如舊資料的草圖）也要一起刪掉
     storage.put(f"{page_prefix}sketch.png", b"x")
     assert list(storage.list(page_prefix))
-    assert list(storage.list(f"cache/previews/{gens[1]}_"))
 
     assert client.delete(f"/api/pages/{p['id']}").status_code == 204
     assert list(storage.list(page_prefix)) == []
     assert all(not storage.exists(k) for k in keys)
-    assert list(storage.list(f"cache/previews/{gens[1]}_")) == []
     # 別頁與角色的物件不受影響
     assert storage.exists(other_key) and storage.exists(char_key)
 
@@ -252,10 +237,9 @@ def test_r2_backend_full_flow(r2_app, settings_file):
         gid = confirm(client, p["id"])["selected_generation_id"]
         for url in (f"/api/pages/{p['id']}/lineart", f"/api/pages/{p['id']}/qa/overlay.png",
                     f"/api/pages/{p['id']}/print.png", f"/api/generations/{gid}/image",
-                    f"/api/generations/{pose}/mask", f"/api/generations/{pose}/cutout",
-                    f"/api/generations/{bg}/lineart-preview"):
+                    f"/api/generations/{pose}/cutout"):
             r = client.get(url, follow_redirects=False)
-            if url.endswith(("/lineart", "/image", "/mask", "/lineart-preview")):  # 存放的物件：302 到 R2 簽章網址
+            if url.endswith(("/lineart", "/image")):  # 存放的物件：302 到 R2 簽章網址
                 assert r.status_code == 302, (url, r.text)
                 assert r.headers["location"].startswith("https://s3.amazonaws.com/cb-test/"), url
                 assert "Signature" in r.headers["location"] or "X-Amz-Signature" in r.headers["location"], url
@@ -299,7 +283,7 @@ class FlakyDeleteStorage(SpyStorage):
         return attr
 
 
-@pytest.mark.parametrize("which", ["first_image", "prefix", "preview"])
+@pytest.mark.parametrize("which", ["first_image", "prefix"])
 def test_delete_page_cleanup_continues_after_one_failure(client, app, which):
     """頁面刪除後清物件：某一個刪除失敗只記 log，其他物件照樣刪；回應仍是 204。"""
     app.state.engine.image = color_png()
@@ -308,13 +292,11 @@ def test_delete_page_cleanup_continues_after_one_failure(client, app, which):
     gens = [seed_generation(app, b["id"], p["id"], color_png()) for _ in range(2)]
     set_page(app, p["id"], selected_generation_id=gens[0])
     assert client.get(f"/api/pages/{p['id']}/lineart").status_code == 200
-    assert client.get(f"/api/generations/{gens[1]}/lineart-preview").status_code == 200
     storage = app.state.storage
     with app.state.sessions() as s:
         keys = [s.get(Generation, g).image_path for g in gens]
     page_prefix = f"books/{b['id']}/pages/{p['id']}/"
-    preview = next(iter(storage.list(f"cache/previews/{gens[1]}_")))
-    failing = {"first_image": keys[0], "prefix": page_prefix, "preview": preview}[which]
+    failing = {"first_image": keys[0], "prefix": page_prefix}[which]
     app.state.storage = FlakyDeleteStorage(storage, {failing})
 
     assert client.delete(f"/api/pages/{p['id']}").status_code == 204
@@ -322,10 +304,7 @@ def test_delete_page_cleanup_continues_after_one_failure(client, app, which):
     expect_gone = {
         "image": [k for k in keys if k != failing],
         "prefix": [] if failing == page_prefix else [page_prefix],
-        "preview": [] if failing == preview else [preview],
     }
     assert all(not storage.exists(k) for k in expect_gone["image"])
     for prefix in expect_gone["prefix"]:
         assert list(storage.list(prefix)) == []
-    for k in expect_gone["preview"]:
-        assert not storage.exists(k)

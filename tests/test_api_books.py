@@ -45,10 +45,6 @@ def test_create_and_get_book_with_layout(client):
     b = new_book(client)
     assert b["layout"]["generation_size"] == [864, 1216]
     assert b["layout"]["content_px"] == [2551, 3579]
-    assert b["layout"]["page_px"] == [2551, 3579]
-    assert b["layout"]["trim_box_px"] == [35, 35, 2515, 3543]
-    assert b["layout"]["safe_box_px"] == [94, 94, 2456, 3484]
-    assert b["layout"]["ratio_group"] == "iso"
     assert client.get(f"/api/books/{b['id']}").json() == b
     assert client.post("/api/books", json={"title": "x", "paper_size": "A0",
                                            "print_mode": "home"}).status_code == 422
@@ -94,6 +90,11 @@ def _variation(app, gid):
         return json.loads(s.get(Generation, gid).request_json)["variation"]
 
 
+def _row(app, gid):
+    with app.state.sessions() as s:
+        return s.get(Generation, gid)
+
+
 def test_character_candidates_one_image_per_click(client, app):
     b = new_book(client)
     r = candidates(client, b["id"], seed=100)
@@ -101,9 +102,10 @@ def test_character_candidates_one_image_per_click(client, app):
     gens = r.json()
     assert len(gens) == 1
     g = gens[0]
-    assert g["seed"] == 100 and g["status"] == "queued" and g["kind"] == "character"
+    assert g["status"] == "queued" and g["kind"] == "character"
     assert (g["width"], g["height"]) == QWEN_CHARACTER_SIZE
-    assert "一隻戴帽子的小熊" in g["prompt"]
+    row = _row(app, g["id"])
+    assert row.seed == 100 and "一隻戴帽子的小熊" in row.prompt
     assert g["queue_position"] == 0 and g["image_url"] is None and g["progress"] is None
     with app.state.sessions() as s:
         row = s.get(Generation, g["id"])
@@ -194,7 +196,7 @@ def test_candidates_validate_prompt_length(client, app):
         assert s.exec(select(Generation)).all() == []
     r = client.post(f"/api/books/{b['id']}/character/candidates", json={"description": "熊" * 800})
     assert r.status_code == 202
-    assert len(r.json()[0]["prompt"]) < 2000
+    assert len(_row(app, r.json()[0]["id"]).prompt) < 2000
     assert r.json()[0]["user_text"] == "熊" * 800
 
 
@@ -287,11 +289,11 @@ def test_candidates_blocked_by_racing_set_character(client, app, monkeypatch):
         assert s.exec(select(Generation)).all() == []
 
 
-def test_candidates_seed_range(client):
+def test_candidates_seed_range(client, app):
     b = new_book(client)
     top = 2**32 - 1
     r = candidates(client, b["id"], seed=top)
-    assert r.status_code == 202 and r.json()[0]["seed"] == top
+    assert r.status_code == 202 and _row(app, r.json()[0]["id"]).seed == top
     assert candidates(client, b["id"], seed=top + 1).status_code == 422
     assert candidates(client, b["id"], seed=-1).status_code == 422
 
@@ -374,7 +376,7 @@ def test_book_stats_and_cover(client, app):
     from tests.test_api_pages import new_page
 
     b = new_book(client)
-    assert b["stats"] == {"pages": 0, "passed": 0, "needs_fix": 0, "no_selection": 0,
+    assert b["stats"] == {"pages": 0, "passed": 0,
                           "ready": 0, "attention": 0, "working": 0, "todo": 0}
     assert b["cover_url"] is None
 
@@ -384,7 +386,7 @@ def test_book_stats_and_cover(client, app):
     # p1 通過；p2 選圖但 QA 有缺口（直接寫入 qa_json）
     make_passed(app, p1["id"])
     got = client.get(f"/api/books/{b['id']}").json()
-    assert got["stats"] == {"pages": 3, "passed": 1, "needs_fix": 0, "no_selection": 2,
+    assert got["stats"] == {"pages": 3, "passed": 1,
                             "ready": 1, "attention": 0, "working": 0, "todo": 2}
     # 封面＝position 最小且有選圖的頁；網址與 PageOut.lineart_url 一致
     assert got["cover_url"] == p1["lineart_url"]
@@ -394,7 +396,7 @@ def test_book_stats_and_cover(client, app):
 
     set_page(app, p1["id"], qa_json=_json.dumps({"errors": ["gaps"]}))
     got = client.get(f"/api/books/{b['id']}").json()
-    assert got["stats"]["needs_fix"] == 1
+    assert "needs_fix" not in got["stats"] and "no_selection" not in got["stats"]
     listed = {x["id"]: x for x in client.get("/api/books").json()}
     assert listed[b["id"]]["stats"] == got["stats"]
     assert listed[b["id"]]["cover_url"] == got["cover_url"]

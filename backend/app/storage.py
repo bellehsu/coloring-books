@@ -108,7 +108,6 @@ class Storage(Protocol):
     def generation_image(self, book_id: int, gen_id: int) -> str: ...
     def generation_mask(self, book_id: int, gen_id: int) -> str: ...
     def lineart(self, book_id: int, page_id: int, key: str) -> str: ...
-    def preview(self, gen_id: int, key: str) -> str: ...
 
 
 class _KeyBuilders:
@@ -122,9 +121,6 @@ class _KeyBuilders:
 
     def lineart(self, book_id: int, page_id: int, key: str) -> str:
         return f"books/{book_id}/pages/{page_id}/lineart_{key}.png"
-
-    def preview(self, gen_id: int, key: str) -> str:
-        return f"cache/previews/{gen_id}_{key}.png"
 
 
 _TMP_PREFIX = ".tmp-"

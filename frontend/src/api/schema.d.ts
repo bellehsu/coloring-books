@@ -403,23 +403,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/generations/{gen_id}/mask": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Generation Mask */
-        get: operations["get_generation_mask_api_generations__gen_id__mask_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/generations/{gen_id}/cutout": {
         parameters: {
             query?: never;
@@ -484,7 +467,7 @@ export interface paths {
         /**
          * Queue Status
          * @description 全站共用一張 GPU 的佇列：只回數量與估時用的類型／耗時，不含任何人的內容。
-         *     非 admin 看不到執行中的 id 與任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。
+         *     非 admin 看不到任務失敗訊息（可能來自別人的任務）；引擎無法連線的訊息是系統狀態，照常回。
          */
         get: operations["queue_status_api_system_queue_get"];
         put?: never;
@@ -591,26 +574,6 @@ export interface paths {
          *     oneclick（C 的「自動補線」）：流程做的頁不退回草稿（之後流程重算 auto 層時仍會補上）。
          */
         post: operations["autofix_api_pages__page_id__lineart_autofix_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/generations/{gen_id}/lineart-preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Lineart Preview
-         * @description 角色或頁面候選的線稿預覽（不含修改圖層），依所屬繪本目前的內容尺寸。
-         */
-        get: operations["lineart_preview_api_generations__gen_id__lineart_preview_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1089,14 +1052,6 @@ export interface components {
             ][];
             /** Gap Count */
             gap_count: number;
-            /** Dangling Count */
-            dangling_count: number;
-            /** Near Miss Count */
-            near_miss_count: number;
-            /** Metrics */
-            metrics: {
-                [key: string]: unknown;
-            };
             character_check: components["schemas"]["CharacterCheck"] | null;
             /** Qa Note */
             qa_note: string;
@@ -1108,10 +1063,7 @@ export interface components {
             autofix_added: number;
         };
         /** BackgroundCreate */
-        BackgroundCreate: {
-            /** Style */
-            style?: string | null;
-        };
+        BackgroundCreate: Record<string, never>;
         /** BatchMaterialsIn */
         BatchMaterialsIn: {
             /** Upload Page Ids */
@@ -1216,16 +1168,6 @@ export interface components {
              */
             passed: number;
             /**
-             * Needs Fix
-             * @default 0
-             */
-            needs_fix: number;
-            /**
-             * No Selection
-             * @default 0
-             */
-            no_selection: number;
-            /**
              * Ready
              * @default 0
              */
@@ -1267,11 +1209,6 @@ export interface components {
         CharacterCandidatesCreate: {
             /** Description */
             description: string;
-            /**
-             * Count
-             * @default 4
-             */
-            count: number;
             /** Seed */
             seed?: number | null;
             /**
@@ -1342,26 +1279,16 @@ export interface components {
             status: components["schemas"]["GenStatus"];
             /** Discarded */
             discarded: boolean;
-            /** Prompt */
-            prompt: string;
             /** User Text */
             user_text: string;
-            /** Seed */
-            seed: number;
             /** Width */
             width: number;
             /** Height */
             height: number;
             /** Image Url */
             image_url: string | null;
-            /** Mask Url */
-            mask_url: string | null;
             /** Cutout Url */
             cutout_url: string | null;
-            /** Pose Mode */
-            pose_mode: ("precise" | "fast") | null;
-            /** Background Style */
-            background_style: ("simple" | "detailed") | null;
             /**
              * Source
              * @enum {string}
@@ -1445,16 +1372,6 @@ export interface components {
         };
         /** LayoutOut */
         LayoutOut: {
-            /** Paper Mm */
-            paper_mm: [
-                number,
-                number
-            ];
-            /** Content Mm */
-            content_mm: [
-                number,
-                number
-            ];
             /** Content Px */
             content_px: [
                 number,
@@ -1465,34 +1382,6 @@ export interface components {
                 number,
                 number
             ];
-            /** Safe Inset Mm */
-            safe_inset_mm: number | null;
-            /** Page Px */
-            page_px: [
-                number,
-                number
-            ];
-            /** Content Offset Px */
-            content_offset_px: [
-                number,
-                number
-            ];
-            /** Trim Box Px */
-            trim_box_px: [
-                number,
-                number,
-                number,
-                number
-            ] | null;
-            /** Safe Box Px */
-            safe_box_px: [
-                number,
-                number,
-                number,
-                number
-            ] | null;
-            /** Ratio Group */
-            ratio_group: string;
         };
         /**
          * LineDetail
@@ -1660,8 +1549,6 @@ export interface components {
             caption_show_zh?: boolean;
             /** Caption Show En */
             caption_show_en?: boolean;
-            /** Controlnet Strength */
-            controlnet_strength?: number | null;
             line_detail?: components["schemas"]["LineDetail"] | null;
             /** Line Width Px */
             line_width_px?: number | null;
@@ -1688,8 +1575,6 @@ export interface components {
         PoseCreate: {
             /** Action */
             action: string;
-            /** Mode */
-            mode?: string | null;
         };
         /**
          * PrintMode
@@ -1741,14 +1626,6 @@ export interface components {
             ][];
             /** Gap Count */
             gap_count: number;
-            /** Dangling Count */
-            dangling_count: number;
-            /** Near Miss Count */
-            near_miss_count: number;
-            /** Metrics */
-            metrics: {
-                [key: string]: unknown;
-            };
             character_check: components["schemas"]["CharacterCheck"] | null;
             /** Qa Note */
             qa_note: string;
@@ -1764,8 +1641,6 @@ export interface components {
             last_error: string | null;
             /** Queued */
             queued: number;
-            /** Running Id */
-            running_id: number | null;
             /** Pending */
             pending: components["schemas"]["PendingJob"][];
             /** Recent */
@@ -1913,8 +1788,6 @@ export interface components {
             paper_size: components["schemas"]["PaperSize"];
             /** Page Count */
             page_count: number;
-            /** Cover Page Id */
-            cover_page_id: number;
             /** Cover Image Url */
             cover_image_url: string;
             /**
@@ -2844,37 +2717,6 @@ export interface operations {
             };
         };
     };
-    get_generation_mask_api_generations__gen_id__mask_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                gen_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_generation_cutout_api_generations__gen_id__cutout_get: {
         parameters: {
             query?: never;
@@ -3179,40 +3021,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AutofixOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    lineart_preview_api_generations__gen_id__lineart_preview_get: {
-        parameters: {
-            query?: {
-                detail?: components["schemas"]["LineDetail"];
-                line_width_px?: number;
-            };
-            header?: never;
-            path: {
-                gen_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

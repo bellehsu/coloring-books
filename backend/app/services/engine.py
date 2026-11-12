@@ -17,7 +17,6 @@ RETIRED = "這種生成已停用"
 class GenerationRequest:
     kind: GenKind
     prompt: str
-    negative_prompt: str  # Qwen 的 cfg 為 1 → 不使用；新任務一律存空字串
     seed: int
     width: int
     height: int

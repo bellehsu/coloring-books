@@ -291,10 +291,9 @@ def test_oneclick_page_fields_tasks_history_and_layers(tmp_path):
         assert [v.value for v in StrokeLayer] == ["auto", "user"]
 
 
-def test_storage_lineart_and_preview_paths(tmp_path):
+def test_storage_lineart_path(tmp_path):
     st = LocalStorage(tmp_path, b"test-signing-key")
     assert st.lineart(3, 4, "abc") == "books/3/pages/4/lineart_abc.png"
-    assert st.preview(9, "qa") == "cache/previews/9_qa.png"
 
 
 def test_compose_kinds_and_fields_roundtrip(tmp_path):
@@ -415,4 +414,4 @@ def test_page_out_has_no_sketch_fields():
 
     assert "sketch_url" not in PageOut.model_fields
     assert "controlnet_strength" not in PageOut.model_fields
-    assert "controlnet_strength" in PageUpdate.model_fields  # 舊前端會送：照收但忽略
+    assert "controlnet_strength" not in PageUpdate.model_fields  # 舊客戶端送了也會被忽略（test_api_pages）

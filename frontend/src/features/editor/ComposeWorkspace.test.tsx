@@ -38,16 +38,11 @@ const gen = (id: number, o: O = {}): O => ({
   kind: "background",
   status: "succeeded",
   discarded: false,
-  prompt: "",
   user_text: "",
-  seed: 100 + id,
   width: 864,
   height: 1216,
   image_url: `/img/${id}.png`,
-  mask_url: null,
   cutout_url: null,
-  pose_mode: null,
-  background_style: null,
   source: "generated",
   error: null,
   elapsed_s: 3,
@@ -84,7 +79,7 @@ beforeEach(() => {
       const fail = failWith[`${method} ${url}`];
       if (fail) return j({ detail: "伺服器壞了" }, fail);
       if (url === "/api/books/1") return j({ id: 1, title: "書", character_generation_id: hasCharacter ? 99 : null });
-      if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0, running_id: null });
+      if (url === "/api/system/queue") return j({ state: "idle", last_error: null, queued: 0 });
       if (url.startsWith("/api/books/1/generations")) {
         const q = new URL(url, "http://x").searchParams;
         let list = gens.filter((x) => (!q.get("kind") || x.kind === q.get("kind")) && x.page_id === Number(q.get("page_id")));

@@ -114,7 +114,6 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
     return GenerationRequest(
         kind=GenKind(d["kind"]),
         prompt=d["prompt"],
-        negative_prompt=d["negative_prompt"],
         seed=d["seed"],
         width=d["width"],
         height=d["height"],

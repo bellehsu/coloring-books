@@ -139,7 +139,7 @@ def test_cancel_only_queued(client, app):
 def test_queue_status_reports_engine_unavailable(client, app, engine):
     q = client.get("/api/system/queue").json()
     assert q == {
-        "state": "stopped", "last_error": None, "queued": 0, "running_id": None,
+        "state": "stopped", "last_error": None, "queued": 0,
         "pending": [], "recent": [],
     }
     b = new_book(client)
@@ -150,7 +150,7 @@ def test_queue_status_reports_engine_unavailable(client, app, engine):
     client.portal.call(app.state.worker.run_once)
     q = client.get("/api/system/queue").json()
     assert q["state"] == "engine_unavailable" and q["last_error"]
-    assert q["queued"] == 2 and q["running_id"] is None
+    assert q["queued"] == 2
 
 
 def test_discard_queued_also_cancels(client, app, engine):

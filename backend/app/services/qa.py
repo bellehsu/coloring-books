@@ -185,11 +185,6 @@ def find_candidates(skel: np.ndarray, endpoints: list[Point], max_gap_px: int) -
     return pairs
 
 
-def find_gaps(skel: np.ndarray, endpoints: list[Point], max_gap_px: int) -> list[Point]:
-    """第一階段標記（near-miss）：候選對的中點，已合併彼此距離 < max_gap_px 的標記。像素座標 (x, y)。"""
-    return _merge([_midpoint(e, q) for e, q in find_candidates(skel, endpoints, max_gap_px)], max_gap_px)
-
-
 def _side_label(labels: np.ndarray, x: float, y: float, nx: float, ny: float, start: int, span: int) -> int:
     """從 (x, y) 沿 (nx, ny) 方向、距離 start..start+span 找第一個白色像素的標籤；找不到回傳 0。"""
     h, w = labels.shape

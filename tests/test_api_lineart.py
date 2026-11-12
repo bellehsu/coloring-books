@@ -14,7 +14,7 @@ from app.services.lineart_render import Stroke
 from app.services.layout import PrintMode
 from app.services.qa import QA_MESSAGES, QAReport
 from tests.fake_engine import FakeEngine
-from tests.test_api_books import new_book, run_jobs
+from tests.test_api_books import new_book
 from tests.test_api_pages import book_with_character, new_page
 
 
@@ -127,7 +127,7 @@ def test_lineart_png_and_qa(client, app):
     assert qa["gap_count"] == 0 and qa["errors"] == [] and qa["gaps"] == []
     assert qa["status"] == "draft" and qa["character_check"] is None
     assert qa["qa_note"] == "" and qa["forced_pass_reason"] is None
-    assert "dangling_count" in qa and "region_count" in qa["metrics"]
+    assert not {"dangling_count", "near_miss_count", "metrics"} & set(qa)
     assert qa["lineart_url"].startswith(f"/api/pages/{p['id']}/lineart?v=")
     assert page_out(client, b["id"], p["id"])["lineart_url"] == qa["lineart_url"]
     assert png(client.get(qa["lineart_url"])).size == im.size
@@ -504,9 +504,12 @@ def test_overlay_png(client, app):
     cx, cy = round(gx * w), round(gy * h)
     red = [im.getpixel((cx, cy - 40 + d)) for d in range(-3, 4)]
     assert (255, 0, 0) in red
-    x0, y0, x1, y1 = b["layout"]["trim_box_px"]
+    from app.services.layout import PaperSize, compute_layout
+
+    lay = compute_layout(PaperSize(b["paper_size"]), PrintMode(b["print_mode"]))
+    x0, y0, x1, y1 = lay.trim_box_px
     assert im.getpixel((x0 + 1, (y0 + y1) // 2)) == (0, 0, 255)
-    sx0, sy0, sx1, sy1 = b["layout"]["safe_box_px"]
+    sx0, sy0, sx1, sy1 = lay.safe_box_px
     r_, g_, b_ = im.getpixel((sx0 + 1, (sy0 + sy1) // 2))
     assert g_ > 100 and r_ == 0 and b_ == 0
     # 家用模式不畫框
@@ -514,24 +517,6 @@ def test_overlay_png(client, app):
     im2 = png(client.get(f"/api/pages/{p2['id']}/qa/overlay.png"))
     colors = {c for _, c in im2.getcolors(maxcolors=1 << 16)}
     assert colors <= {(0, 0, 0), (255, 255, 255)}
-
-
-def test_generation_preview(client, app):
-    app.state.engine.image = color_png()
-    b, char_gen = book_with_character(client, app, **A5_HOME)
-    url = f"/api/generations/{char_gen}/lineart-preview"
-    im = png(client.get(url))
-    assert im.mode == "1" and list(im.size) == b["layout"]["content_px"]
-    thin = client.get(url, params={"detail": "detailed", "line_width_px": 8})
-    assert png(thin).size == im.size and thin.content != client.get(url).content
-    assert client.get(url, params={"line_width_px": 17}).status_code == 422
-    assert client.get(url, params={"detail": "fine"}).status_code == 422
-    p = new_page(client, b["id"], scene_prompt="公園")
-    queued = client.post(f"/api/pages/{p['id']}/backgrounds").json()
-    assert client.get(f"/api/generations/{queued['id']}/lineart-preview").status_code == 404
-    run_jobs(client, app)
-    assert png(client.get(f"/api/generations/{queued['id']}/lineart-preview")).size == im.size
-    assert client.get("/api/generations/999/lineart-preview").status_code == 404
 
 
 def test_page_out_aspect_and_no_sketch_url(client, app):
@@ -593,8 +578,7 @@ def test_change_size_recomputes_and_demotes(client, app, monkeypatch):
     assert im.getpixel((w // 2, round(0.12 * (h - 1)))) == 255
 
 
-def test_qa_out_has_near_miss_count(client, app):
-    _, page, _ = selected_page(client, app)
-    r = client.get(f"/api/pages/{page['id']}/qa")
-    assert r.status_code == 200
-    assert isinstance(r.json()["near_miss_count"], int)
+def test_removed_preview_and_mask_endpoints_are_gone(client, app):
+    _, _, ids = selected_page(client, app)
+    for suffix in ("lineart-preview", "mask"):
+        assert client.get(f"/api/generations/{ids[0]}/{suffix}").status_code in (404, 405)

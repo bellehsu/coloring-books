@@ -16,7 +16,7 @@ const book = {
   cover_url: null,
   shared_at: null,
   layout: { content_px: [2244, 3272] },
-  stats: { pages: 3, passed: 2, needs_fix: 0, no_selection: 0 },
+  stats: { pages: 3, passed: 2 },
 };
 
 const pg = (id: number, state: OverviewPage["state"], extra: Partial<OverviewPage> = {}): OverviewPage => ({

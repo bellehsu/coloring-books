@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """清理儲存空間（排程執行；排程方式由雲端階段決定）。
 
-1. 過期的捨棄圖：`discarded_at` 早於 --days 天（預設 30）的生成紀錄，刪掉它的圖片、遮罩與預覽物件，
+1. 過期的捨棄圖：`discarded_at` 早於 --days 天（預設 30）的生成紀錄，刪掉它的圖片與遮罩物件，
    並清空 image_path／mask_path。頁面選用中（selected／background／pose／auto_*）、復原快照用到的、有進行中頁面任務的頁面、書的角色、
    排隊中任務要用的角色圖，捨棄再久也不刪。
 2. 孤兒物件：books/ 底下沒有任何資料列指到的物件（生成圖、遮罩、頁面線稿 lineart_path），
-   以及 cache/previews/ 底下生成紀錄已不存在（或已捨棄且圖已清掉）的預覽。
+   另外一次性清掉 cache/previews/ 底下全部的舊預覽物件（預覽功能已移除，之後沒有新的；這條規則之後可以拿掉）。
    正在寫入的物件不算孤兒：生成紀錄排隊中／執行中，或 id 還沒 commit（大於 sqlite_sequence）。
    與 DB 對不上的物件也不刪：書號大於 DB 最大的書、頁／生成紀錄 id 超出 DB，或該 id 的列屬於另一本書。
 
@@ -56,8 +56,6 @@ _PAGE_KEY = re.compile(r"^books/\d+/pages/(\d+)/")
 # 孤兒同時超過這兩個門檻就整個中止（多半是 DB 與 storage 對不上），除非 --allow-mass-delete
 MASS_DELETE_RATIO = 0.2
 MASS_DELETE_MIN = 20
-# cache/previews/{gen}_{key}.png
-_PREVIEW_KEY = re.compile(r"^cache/previews/(\d+)_[^/]*$")
 
 
 InstanceMismatch = instance.InstanceMismatch  # DB 與 storage 不是一組：什麼都不能刪（結束碼 4）
@@ -82,7 +80,7 @@ class GcReport:
     skipped_in_flight: int = 0
     skipped_mismatched: int = 0  # 物件與 DB 對不上（書／頁 id 超出 DB，或屬於另一本書）：不刪
     aborted: bool = False  # 孤兒太多，什麼都沒刪
-    mass_candidates: int = 0  # 孤兒（books/＋預覽）
+    mass_candidates: int = 0  # 孤兒（books/）
     abort_reason: str = ""
     referenced: int = 0  # 列出的物件裡有資料列指到的
     listed: int = 0
@@ -121,8 +119,8 @@ def _character_refs(gens: Sequence[Generation]) -> set[str]:
     return refs
 
 
-_SNAPSHOT_GEN_FIELDS = ("background_generation_id", "pose_generation_id", "selected_generation_id",
-                        "composite_generation_id")
+# 復原快照（history.snapshot_of）只固定背景與角色動作；不固定合成圖（composite），所以合成圖不受快照保護
+_SNAPSHOT_GEN_FIELDS = ("background_generation_id", "pose_generation_id")
 
 
 def _snapshot_gen_ids(snapshot_json: str) -> set[int]:
@@ -247,9 +245,8 @@ def _classify_book_key(state: _State, key: str) -> str:
     return "orphan"
 
 
-def _orphans(state: _State, book_keys: Sequence[str], preview_keys: Sequence[str],
-             report: GcReport) -> tuple[list[str], list[str]]:
-    """回傳 (books/ 的孤兒, 預覽孤兒)；略過的分別計入 skipped_in_flight／skipped_mismatched。"""
+def _orphans(state: _State, book_keys: Sequence[str], report: GcReport) -> list[str]:
+    """回傳 books/ 的孤兒；略過的分別計入 skipped_in_flight／skipped_mismatched。"""
     orphans: list[str] = []
     for key in book_keys:
         if key in state.referenced:
@@ -262,37 +259,8 @@ def _orphans(state: _State, book_keys: Sequence[str], preview_keys: Sequence[str
             report.skipped_mismatched += 1
         else:
             orphans.append(key)
-    previews: list[str] = []
-    for key in preview_keys:
-        gid = _preview_gid(key)
-        if gid is None:
-            continue  # 不認得的檔名：不動
-        if gid in state.expired:
-            report.referenced += 1  # 由過期步驟處理
-            continue
-        if gid > state.seq:
-            report.skipped_in_flight += 1
-            continue
-        if _preview_is_orphan(state, gid):
-            previews.append(key)
-        else:
-            report.referenced += 1
-    report.mass_candidates = len(orphans) + len(previews)
-    return orphans, previews
-
-
-def _preview_gid(key: str) -> int | None:
-    m = _PREVIEW_KEY.match(key)
-    return int(m.group(1)) if m else None
-
-
-def _preview_is_orphan(state: _State, gid: int) -> bool:
-    """生成紀錄已不存在（id 不超過 sqlite_sequence），或是已被 GC 清掉圖的捨棄紀錄（例如清掉後預覽刪失敗）。
-    只認「捨棄＋沒有圖」：預覽 key 沒有書號，對不上的 DB 裡同 id、沒有圖的列不能讓活的預覽被刪。"""
-    if gid > state.seq:
-        return False
-    gen = state.gens.get(gid)
-    return gen is None or (gen[3] and gen[1] is None and gen[0] not in _IN_FLIGHT)
+    report.mass_candidates = len(orphans)
+    return orphans
 
 
 def _over(n: int, total: int) -> bool:
@@ -319,13 +287,13 @@ def run_gc(sessions, storage: Storage, *, days: int = DEFAULT_DAYS, dry_run: boo
     report = GcReport(dry_run=dry_run, days=days, cutoff=now - timedelta(days=days))
     # 先列物件再讀 DB：列出之後才 commit 的列，讀 DB 時就看得到。身分標記永遠不列入（不能被刪）
     book_keys = [k for k in storage.list("books/") if k != instance.MARKER_KEY]
-    preview_keys = list(storage.list("cache/previews/"))
-    report.listed = len(book_keys) + len(preview_keys)
+    preview_keys = list(storage.list("cache/previews/"))  # 一次性清理舊預覽：不算進孤兒比例，也不看 DB
+    report.listed = len(book_keys)
     with sessions() as s:
         state = _load_state(s, now, days)
 
     # 孤兒太多多半是 DB 與 storage 對不上（設定指錯 DB／bucket）：整個中止，連過期的也不刪
-    orphans, previews = _orphans(state, book_keys, preview_keys, report)
+    orphans = _orphans(state, book_keys, report)
     reason = None if allow_mass_delete else _mass_delete_reason(report)
     if reason:
         report.aborted = True
@@ -352,17 +320,16 @@ def run_gc(sessions, storage: Storage, *, days: int = DEFAULT_DAYS, dry_run: boo
             cleared = _clear_expired(s, sorted(state.expired), report.cutoff)
     report.expired_generations = len(cleared)
     for gid in sorted(cleared):
-        keys = state.expired[gid] + [k for k in preview_keys if _preview_gid(k) == gid]
-        report.expired_objects += sum(drop("expired", k) for k in keys)
+        report.expired_objects += sum(drop("expired", k) for k in state.expired[gid])
 
     # 2. 孤兒：刪之前再讀一次參照（縮短與其他行程競爭的時間）
-    if not dry_run and (orphans or previews):
+    if not dry_run and orphans:
         with sessions() as s:
             fresh = _load_state(s, now, days)
         orphans = [k for k in orphans if k not in fresh.referenced and _classify_book_key(fresh, k) == "orphan"]
-        previews = [k for k in previews if _preview_is_orphan(fresh, _preview_gid(k))]
     report.orphan_objects = sum(drop("orphan", k) for k in orphans)
-    report.orphan_previews = sum(drop("orphan-preview", k) for k in previews)
+    # 一次性清理：cache/previews/ 底下的舊預覽物件一律刪（沒有程式再寫它）；之後可以拿掉這條規則
+    report.orphan_previews = sum(drop("orphan-preview", k) for k in preview_keys)
     return report
 
 

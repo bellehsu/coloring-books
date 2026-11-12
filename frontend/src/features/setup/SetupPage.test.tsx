@@ -19,7 +19,7 @@ const bookOf = (o: J = {}): J => ({
   cover_url: null,
   shared_at: null,
   layout: { content_px: [2244, 3272] },
-  stats: { pages: 0, passed: 0, needs_fix: 0, no_selection: 0 },
+  stats: { pages: 0, passed: 0 },
   ...o,
 });
 const charGen = (id: number, o: J = {}): J => ({
@@ -30,7 +30,6 @@ const charGen = (id: number, o: J = {}): J => ({
   status: "succeeded",
   discarded: false,
   user_text: "一隻圓圓的小白兔",
-  seed: id,
   image_url: `/api/generations/${id}/image`,
   source: "generated",
   error: null,

@@ -256,7 +256,7 @@ def test_demo_engine_reports_progress_and_size():
     from app.services.engine import GenerationRequest
 
     steps: list[tuple[int, int]] = []
-    req = GenerationRequest(kind=GenKind.PAGE, prompt="p", negative_prompt="", seed=5, width=864, height=1216)
+    req = GenerationRequest(kind=GenKind.PAGE, prompt="p", seed=5, width=864, height=1216)
     res = asyncio.run(fake_backend.DemoEngine(delay_s=0.03).generate(req, lambda v, m: steps.append((v, m))))
     assert steps == [(1, 3), (2, 3), (3, 3)]
     assert Image.open(io.BytesIO(res.image)).size == (864, 1216)
@@ -279,7 +279,7 @@ def test_demo_engine_kinds(kind, size, has_mask):
     from app.models import GenKind
     from app.services.engine import GenerationRequest
 
-    req = GenerationRequest(kind=GenKind(kind), prompt="p", negative_prompt="", seed=1, width=size[0], height=size[1])
+    req = GenerationRequest(kind=GenKind(kind), prompt="p", seed=1, width=size[0], height=size[1])
     res = asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req))
     assert Image.open(io.BytesIO(res.image)).size == size
     assert set(res.extra_images) == ({"mask"} if has_mask else set())
@@ -298,7 +298,7 @@ def test_demo_engine_pose_records_variation():
     from app.models import GenKind
     from app.services.engine import GenerationRequest
 
-    req = GenerationRequest(kind=GenKind.POSE, prompt="p", negative_prompt="", seed=1, width=832, height=1216,
+    req = GenerationRequest(kind=GenKind.POSE, prompt="p", seed=1, width=832, height=1216,
                             variation="facing left")
     res = asyncio.run(fake_backend.DemoEngine(delay_s=0).generate(req))
     img = Image.open(io.BytesIO(res.image))
@@ -375,7 +375,6 @@ def test_fake_backend_full_flow(settings_file, tmp_path, monkeypatch):
         assert c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"}).status_code == 202
         pose = _wait_succeeded(c, book["id"], "pose", 1)[0]
         assert (pose["width"], pose["height"]) == (832, 1216)
-        assert pose["pose_mode"] == "precise"
         assert pose["cutout_url"]
         assert c.get(pose["cutout_url"]).status_code == 200
         assert c.post(f"/api/pages/{page['id']}/pose", json={"generation_id": pose["id"]}).status_code == 200
@@ -488,7 +487,6 @@ def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch
     app = fake_backend.create_demo_app(tmp_path / "s", load_settings(settings_file),
                                        engine=fake_backend.DemoEngine(delay_s=0.02))
     with TestClient(app) as c:
-        assert app.state.preflight is None
         book = c.post("/api/books", json={"title": "示範", "paper_size": "a4", "print_mode": "print_shop"}).json()
         c.post(f"/api/books/{book['id']}/character/candidates", json={"description": "a cat", "count": 1})
         char = _wait_succeeded(c, book["id"], "character", 1)[0]
@@ -496,14 +494,13 @@ def test_fake_backend_ignores_local_comfyui(settings_file, tmp_path, monkeypatch
         page = c.post(f"/api/books/{book['id']}/pages", json={"scene_prompt": "park"}).json()
         res = c.post(f"/api/pages/{page['id']}/poses", json={"action": "waving one hand"})
         assert res.status_code == 202, res.text
-        assert _wait_succeeded(c, book["id"], "pose", 1)[0]["pose_mode"] == "precise"
+        assert _wait_succeeded(c, book["id"], "pose", 1)[0]["kind"] == "pose"
     assert seen == []
     # 對照：同一個 ComfyUI 下真的跑 preflight，workflow 會被判定不能用（上面的結果不是巧合）
     app2 = app_main.create_app(fake_backend.demo_settings(tmp_path / "s2", load_settings(settings_file)),
                                engine=fake_backend.DemoEngine(delay_s=0), start_worker=False)
     with TestClient(app2):
-        report = app2.state.preflight
-        assert report is not None and report.comfy_reachable and not report.ok
+        pass
     assert "/object_info" in seen
 
 
@@ -778,6 +775,10 @@ def _page(sessions, book_id, **kw) -> int:
         return p.id
 
 
+def _preview_key(gen_id: int) -> str:
+    return f"cache/previews/{gen_id}_k.png"  # 舊版預覽物件（功能已移除，只有 storage_gc 會清）
+
+
 def _gen(sessions, storage, book_id, page_id=None, *, kind="composite", status="succeeded", image=True,
          mask=False, discarded_days=None, request_json="{}", preview=False) -> int:
     """一筆 generation；image／mask 為 True 時寫入物件並記在列上。discarded_days：幾天前捨棄。"""
@@ -799,7 +800,7 @@ def _gen(sessions, storage, book_id, page_id=None, *, kind="composite", status="
             g.mask_path = storage.generation_mask(book_id, g.id)
             storage.put(g.mask_path, b"mask")
         if preview:
-            storage.put(storage.preview(g.id, "k"), b"pv")
+            storage.put(_preview_key(g.id), b"pv")
         s.commit()
         return g.id
 
@@ -996,7 +997,7 @@ def _owner_with_data(sessions, storage, name, **kw) -> dict:
     b1 = _book(sessions, oid)
     b2 = _book(sessions, oid)
     p = _page(sessions, b1)
-    g = _gen(sessions, storage, b1, p, kind="pose", mask=True, preview=True)
+    g = _gen(sessions, storage, b1, p, kind="pose", mask=True)
     q = _gen(sessions, storage, b1, p, status="queued", image=False)
     lin = storage.lineart(b1, p, "abc")
     storage.put(lin, b"lin")
@@ -1034,8 +1035,7 @@ def _counts(sessions, d) -> dict:
 
 
 def _owned_keys(storage, d) -> set[str]:
-    keys = {k for b in d["books"] for k in storage.list(f"books/{b}/")}
-    return keys | {k for g in d["gens"] for k in storage.list(f"cache/previews/{g}_")}
+    return {k for b in d["books"] for k in storage.list(f"books/{b}/")}
 
 
 def test_delete_data_removes_rows_and_objects_only_for_that_owner(invites, settings_file, capsys):
@@ -1045,7 +1045,7 @@ def test_delete_data_removes_rows_and_objects_only_for_that_owner(invites, setti
     b = _owner_with_data(sessions, storage, "阿華")
     before_b = _counts(sessions, b)
     keys_b = _owned_keys(storage, b)
-    assert len(_owned_keys(storage, a)) == 4 and len(keys_b) == 4
+    assert len(_owned_keys(storage, a)) == 3 and len(keys_b) == 3
 
     assert invites.main(["--settings", str(settings_file), "delete-data", "--id", str(a["owner"]), "--yes"]) == 0
     assert before_b["edits"] == 2 and before_b["tasks"] == 1 and before_b["history"] == 1
@@ -1168,7 +1168,7 @@ def _gc_world(settings_file):
         s.commit()
     inflight = ids["gone"] + 10  # 還沒 commit 的列（id 大於 sqlite_sequence）：物件先寫、列後 commit
     storage.put(storage.generation_image(b, inflight), b"new")
-    storage.put(storage.preview(inflight, "k"), b"pv")
+    storage.put(_preview_key(inflight), b"pv")
     lin_cur, lin_old = storage.lineart(b, p, "cur"), storage.lineart(b, p, "old")
     storage.put(lin_cur, b"l")
     storage.put(lin_old, b"l")
@@ -1184,11 +1184,11 @@ def _gc_world(settings_file):
          pose_generation_id=ids["pose"], lineart_path=lin_cur, lineart_key="cur")
     _set(sessions, Book, b, character_generation_id=ids["char"])
 
-    expired = {storage.generation_image(b, ids["old"]), storage.generation_mask(b, ids["old"]),
-               storage.preview(ids["old"], "k")}
+    expired = {storage.generation_image(b, ids["old"]), storage.generation_mask(b, ids["old"])}
     orphans = {storage.generation_image(b, ids["gone"]), storage.generation_mask(b, ids["gone"]),
                lin_old, sketch}
-    orphan_previews = {storage.preview(ids["gone"], "k")}
+    # 一次性清理：cache/previews/ 底下全部刪（不管生成紀錄還在不在、是否進行中）
+    orphan_previews = {_preview_key(ids[n]) for n in ("old", "live", "gone")} | {_preview_key(inflight)}
     return sessions, storage, ids, {"expired": expired, "orphans": orphans, "orphan_previews": orphan_previews,
                                     "mismatched": {beyond, wrong_book}}
 
@@ -1210,9 +1210,9 @@ def test_gc_dry_run_deletes_nothing(storage_gc, settings_file, capsys):
     assert _keys(storage) == keys and _paths(sessions) == paths
     assert "dry-run" in out.lower()
     rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=True)
-    assert (rep.expired_generations, rep.expired_objects) == (1, 3)
-    assert (rep.orphan_objects, rep.orphan_previews) == (4, 1)
-    assert (rep.skipped_in_flight, rep.skipped_mismatched) == (3, 2) and not rep.aborted
+    assert (rep.expired_generations, rep.expired_objects) == (1, 2)
+    assert (rep.orphan_objects, rep.orphan_previews) == (4, 4)
+    assert (rep.skipped_in_flight, rep.skipped_mismatched) == (2, 2) and not rep.aborted
     assert _keys(storage) == keys and _paths(sessions) == paths
 
 
@@ -1228,7 +1228,7 @@ def test_gc_deletes_only_expired_discarded_and_orphans(storage_gc, settings_file
     assert after[ids["old"]] == (None, None)  # 物件刪了，key 清掉
     for name in ("recent", "live", "sel", "bg", "pose", "char", "ref"):
         assert after[ids[name]] == paths[ids[name]], name  # 選用中的、角色、排隊任務要用的，捨棄再久也不刪
-    assert "1 筆，已刪除物件 3 個" in out and "books/ 4 個、cache/previews/ 1 個" in out
+    assert "1 筆，已刪除物件 2 個" in out and "books/ 4 個、cache/previews/ 4 個" in out
     assert "對不上）：2 個" in out
     # 再跑一次：沒有東西可刪
     rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=False)
@@ -1264,7 +1264,7 @@ def test_gc_keeps_auto_selected_generations(storage_gc, settings_file, field):
     assert storage.exists(storage.generation_image(b, old))
 
 
-@pytest.mark.parametrize("field", ["background_generation_id", "pose_generation_id", "composite_generation_id"])
+@pytest.mark.parametrize("field", ["background_generation_id", "pose_generation_id"])
 def test_gc_keeps_generations_referenced_by_history_snapshots(storage_gc, settings_file, field):
     from app.models import PageHistory
 
@@ -1384,7 +1384,7 @@ def test_gc_mismatched_db_deletes_nothing_live(storage_gc, settings_file, tmp_pa
     oid, _ = _owner(sessions, "a", is_admin=True)
     b = _book(sessions, oid)
     p = _page(sessions, b)
-    live = [_gen(sessions, storage, b, p, preview=True) for _ in range(30)]
+    live = [_gen(sessions, storage, b, p) for _ in range(30)]
     lin = storage.lineart(b, p, "cur")
     storage.put(lin, b"l")
     _set(sessions, Page, p, lineart_path=lin, selected_generation_id=live[0])
@@ -1560,29 +1560,26 @@ def test_gc_mismatched_guard_overridden_by_allow(storage_gc, settings_file):
     assert storage.exists(storage.generation_image(b, live))
 
 
-def test_gc_deletes_leftover_previews_of_cleared_generation(storage_gc, settings_file):
-    # 捨棄、圖已被 GC 清掉的生成紀錄（例如清掉後預覽刪失敗）：留下的預覽也清掉；
-    # 沒捨棄、沒有圖的列（可能是對不上的 DB）不算，預覽 key 沒有書號無法核對
-    from app.models import Generation, utcnow
-
+def test_gc_deletes_every_old_preview_object(storage_gc, settings_file):
+    """一次性清理：cache/previews/ 底下全部刪（預覽功能已移除），不看生成紀錄；dry-run 不刪；books/ 的物件不動。"""
     _, sessions, storage = _env(settings_file)
     oid, _ = _owner(sessions, "a", is_admin=True)
     b = _book(sessions, oid)
-    g = _gen(sessions, storage, b, preview=True)
-    keep = _gen(sessions, storage, b, preview=True)
-    not_discarded = _gen(sessions, storage, b, preview=True)
-    for gid, discarded in ((g, True), (not_discarded, False)):
-        storage.delete(storage.generation_image(b, gid))
-        _set(sessions, Generation, gid, image_path=None, discarded=discarded,
-             discarded_at=utcnow() if discarded else None)
+    live = _gen(sessions, storage, b, preview=True)
+    previews = [_preview_key(live), "cache/previews/999_k.png", "cache/previews/odd-name.png"]
+    for k in previews[1:]:
+        storage.put(k, b"pv")
+    before = _keys(storage)
+    rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=True)
+    assert rep.orphan_previews == 3 and _keys(storage) == before
     rep = storage_gc.run_gc(sessions, storage, days=30)
-    assert rep.orphan_previews == 1
-    assert not storage.exists(storage.preview(g, "k"))
-    assert storage.exists(storage.preview(keep, "k")) and storage.exists(storage.preview(not_discarded, "k"))
+    assert rep.orphan_previews == 3 and not rep.aborted
+    assert not any(storage.exists(k) for k in previews)
+    assert storage.exists(storage.generation_image(b, live))
 
 
-def test_gc_small_overlap_wrong_db_deletes_no_previews(storage_gc, settings_file, tmp_path):
-    """對不上的 DB（10 筆同 id、沒有圖、屬於另一本書的列）低於中止門檻：活的預覽與圖一個都不刪。"""
+def test_gc_small_overlap_wrong_db_deletes_nothing(storage_gc, settings_file, tmp_path):
+    """對不上的 DB（10 筆同 id、沒有圖、屬於另一本書的列）低於中止門檻：活的圖一個都不刪。"""
     from app.db import init_db, make_engine, session_factory
     from app.models import Page
 
@@ -1590,7 +1587,7 @@ def test_gc_small_overlap_wrong_db_deletes_no_previews(storage_gc, settings_file
     oid, _ = _owner(sessions, "a", is_admin=True)
     b = _book(sessions, oid)
     p = _page(sessions, b)
-    live = [_gen(sessions, storage, b, p, preview=True) for _ in range(20)]
+    live = [_gen(sessions, storage, b, p) for _ in range(20)]
     _set(sessions, Page, p, selected_generation_id=live[0])
     eng = make_engine(tmp_path / "other.db")
     init_db(eng)
@@ -1627,7 +1624,7 @@ def test_gc_refuses_wrong_db_with_full_id_overlap(storage_gc, settings_file, tmp
     _, sessions, storage = _env(settings_file)
     oid, _ = _owner(sessions, "a", is_admin=True)
     b = _book(sessions, oid)
-    [_gen(sessions, storage, b, preview=True) for _ in range(10)]
+    [_gen(sessions, storage, b) for _ in range(10)]
     path, other = _other_db(tmp_path, storage)
     o2, _ = _owner(other, "x", is_admin=True)
     _bulk_gens(other, _book(other, o2), 10)  # 同書號、同 id、沒有圖：每個物件看起來都是孤兒

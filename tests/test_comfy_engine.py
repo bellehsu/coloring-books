@@ -21,7 +21,7 @@ QWEN_MODELS = {
 
 def make_req(tmp_path: Path, kind=GenKind.CHARACTER, character=False, width=832, height=1216, **kw):
     char = png_bytes() if character else None  # 引擎收 bytes（worker 從 Storage 讀出）
-    return GenerationRequest(kind=kind, prompt="a cat", negative_prompt="", seed=7, width=width, height=height,
+    return GenerationRequest(kind=kind, prompt="a cat", seed=7, width=width, height=height,
                              character_image=char, **kw)
 
 
@@ -44,7 +44,7 @@ def test_workflows_are_three_qwen_routes():
 
 
 def test_generation_request_has_no_sdxl_fields():
-    req = GenerationRequest(kind=GenKind.CHARACTER, prompt="p", negative_prompt="", seed=1, width=8, height=8)
+    req = GenerationRequest(kind=GenKind.CHARACTER, prompt="p", seed=1, width=8, height=8)
     for gone in ("structure_image", "structure_strength", "pose_mode", "background_style"):
         assert not hasattr(req, gone), gone
     assert req.variation is None and req.character_image is None

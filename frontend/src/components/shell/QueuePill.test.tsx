@@ -11,14 +11,13 @@ const q = (o: object = {}, pending: Kind[] = [], recent: object[] = []) => ({
     state: "idle",
     last_error: null,
     queued: 0,
-    running_id: null,
     pending: pending.map((kind) => ({ kind })),
     recent,
     ...o,
   },
 });
 const busy = (n: number, kind: Kind = "pose", recent: object[] = []) =>
-  q({ state: "running", queued: n - 1, running_id: 1 }, Array(n).fill(kind), recent);
+  q({ state: "running", queued: n - 1 }, Array(n).fill(kind), recent);
 
 describe("QueuePill", () => {
   beforeEach(() => {

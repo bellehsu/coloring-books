@@ -2,8 +2,7 @@
 
 啟動：uvicorn app.main:app --app-dir backend
 啟動時會跑一次 preflight 並寫入 log；失敗只記錄，不讓服務當機（startup_preflight=False 時略過，例如假後端）。
-preflight 結果快取在 app.state.preflight（啟動時與每次 GET /api/system/preflight 更新）。
-生成請求不看這份快取（不先擋）：缺模型或節點時由生成失敗回報。
+生成請求不看 preflight 結果（不先擋）：缺模型或節點時由生成失敗回報。
 """
 
 from __future__ import annotations
@@ -70,7 +69,6 @@ def create_app(
             app.state.storage,
             s.queue.retry_backoff_s,
         )
-        app.state.preflight = None  # None＝還沒檢查過
         font_problem = check_caption_font(s.paths.caption_font)
         if font_problem:  # 不擋啟動：只有「有頁面文字」的頁面匯出會 409
             log.warning("頁面文字字型不能用（paths.caption_font）：%s", font_problem)
@@ -141,11 +139,10 @@ def create_app(
             log.info("storage instance 身分標記已建立：%s", res.db_id)
 
     async def _preflight(app: FastAPI):
-        """跑 preflight 並更新快取 app.state.preflight。"""
+        """跑 preflight 並回傳報告（不快取）。"""
         s: Settings = app.state.settings
         async with ComfyClient(s.comfy.url, request_timeout_s=s.comfy.request_timeout_s) as client:
             report = await run_preflight(client, app.state.registry, caption_font=s.paths.caption_font)
-        app.state.preflight = report
         return report
 
     @app.get("/api/system/preflight", dependencies=[Depends(require_admin)])

@@ -110,9 +110,8 @@ def test_generate_and_pick_background(client, app):
     assert r.status_code == 202, r.text
     g = r.json()
     assert g["kind"] == "background" and g["status"] == "queued"
-    assert g["user_text"] == "公園裡的大樹" and "公園裡的大樹" in g["prompt"]
+    assert g["user_text"] == "公園裡的大樹" and "公園裡的大樹" in gen_row(app, g["id"]).prompt
     assert [g["width"], g["height"]] == b["layout"]["generation_size"]
-    assert g["mask_url"] is None
     run_jobs(client, app)
     req = app.state.engine.requests[-1]
     assert req.kind == GenKind.BACKGROUND
@@ -144,9 +143,8 @@ def test_background_default_style_simple(client, app, body):
     r = _bg_post(client, p["id"], body)
     assert r.status_code == 202, r.text
     g = r.json()
-    assert g["background_style"] == "simple"
     assert g["user_text"] == "公園裡的大樹"
-    assert g["prompt"].startswith("公園裡的大樹. ")
+    assert gen_row(app, g["id"]).prompt.startswith("公園裡的大樹. ")
     row = gen_row(app, g["id"])
     assert row.negative_prompt == ""
     rj = _rj(app, g["id"])
@@ -154,12 +152,11 @@ def test_background_default_style_simple(client, app, body):
     assert not {"background_style_requested", "structure_image", "structure_strength"} & set(rj)
     # 構圖變化語：每張隨機一個（校正過的清單），寫進 prompt 並記在 request_json
     assert rj["variation"] in QWEN_BACKGROUND_VARIATIONS
-    assert g["prompt"] == qwen_background_prompt("公園裡的大樹", rj["variation"])
+    assert gen_row(app, g["id"]).prompt == qwen_background_prompt("公園裡的大樹", rj["variation"])
     assert rj["negative_prompt"] == ""
     run_jobs(client, app)
     req = app.state.engine.requests[-1]
     assert req.kind == GenKind.BACKGROUND and req.variation == rj["variation"]
-    assert client.get(f"/api/generations/{g['id']}").json()["background_style"] == "simple"
 
 
 @pytest.mark.parametrize("style", ["detailed", "simple", "qwen", None])
@@ -169,32 +166,19 @@ def test_background_ignores_style(client, app, style):
     r = _bg_post(client, p["id"], {"style": style})
     assert r.status_code == 202, r.text
     g = r.json()
-    assert g["background_style"] == "simple"
     rj = _rj(app, g["id"])
     assert rj["background_style"] == "simple" and rj["negative_prompt"] == ""
-    assert g["prompt"] == qwen_background_prompt("公園", rj["variation"])
+    assert gen_row(app, g["id"]).prompt == qwen_background_prompt("公園", rj["variation"])
     assert gen_row(app, g["id"]).negative_prompt == ""
-
-
-def qwen_missing_report(workflow):
-    """快取的 preflight：這個 Qwen workflow 缺 GGUF 模型。"""
-    from app.services.preflight import MissingModel, PreflightReport, WorkflowReport
-
-    return PreflightReport(ok=False, comfy_url="http://x", comfy_reachable=True, workflows=[
-        WorkflowReport(name=workflow, ok=False, version="1", missing_models=[
-            MissingModel("qwen_edit_2511_q4km", "qwen-image-edit-2511-Q4_K_M.gguf", "unet", "沒有此檔案")]),
-    ])
 
 
 def test_background_ignores_preflight(client, app):
     """快取的 preflight 說 qwen_background 缺模型：照樣排簡潔，不存草圖快照、不先擋（缺東西時由生成失敗回報）。"""
     b = new_book(client)
     p = new_page(client, b["id"], scene_prompt="公園")
-    app.state.preflight = qwen_missing_report("qwen_background")
     r = _bg_post(client, p["id"], None)
     assert r.status_code == 202, r.text
     g = r.json()
-    assert g["background_style"] == "simple"
     assert "structure_image" not in _rj(app, g["id"])
     assert not list(app.state.storage.root.rglob("sketch_*.png"))  # 沒有生成用的草圖快照
 
@@ -207,7 +191,7 @@ def test_background_simple_records_variation(client, app, monkeypatch):
     )
     p = new_page(client, new_book(client)["id"], scene_prompt="公園")
     g = _bg_post(client, p["id"], None).json()
-    assert g["prompt"] == qwen_background_prompt("公園", "seen from far away")
+    assert gen_row(app, g["id"]).prompt == qwen_background_prompt("公園", "seen from far away")
     assert g["user_text"] == "公園"
     assert _rj(app, g["id"])["variation"] == "seen from far away"
 
@@ -240,7 +224,7 @@ def test_background_simple_regenerate_never_repeats_variation(client, app):
         g = _bg_post(client, p["id"], None).json()
         v = _rj(app, g["id"])["variation"]
         assert v in QWEN_BACKGROUND_VARIATIONS and v != prev
-        assert g["prompt"] == qwen_background_prompt("公園", v)
+        assert gen_row(app, g["id"]).prompt == qwen_background_prompt("公園", v)
         prev = v
 
 
@@ -302,65 +286,17 @@ def test_batch_ignores_style(client, app):
     """批次：preflight 說缺模型時，全都排簡潔（Qwen），不存草圖快照。"""
     b = new_book(client)
     pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(3)]
-    app.state.preflight = qwen_missing_report("qwen_background")
     scenes = {p["id"]: p["scene_prompt"] for p in pages}
     out = batch(client, b["id"])
     assert out["skipped"] == []
     assert [g["page_id"] for g in out["queued"]] == [p["id"] for p in pages]
     for g in out["queued"]:
-        assert g["background_style"] == "simple"
         rj = _rj(app, g["id"])
         assert rj["background_style"] == "simple" and rj["negative_prompt"] == ""
         assert "structure_image" not in rj
-        assert g["prompt"] == qwen_background_prompt(scenes[g["page_id"]], rj["variation"])
+        assert gen_row(app, g["id"]).prompt == qwen_background_prompt(scenes[g["page_id"]], rj["variation"])
     assert not list(app.state.storage.root.rglob("sketch_*.png"))  # 沒有生成用的草圖快照
 
-
-def test_generation_out_background_style_old_row_detailed(client, app):
-    b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"], scene_prompt="公園")
-    old = gen_background(client, app, p["id"])
-    with app.state.sessions() as s:  # 模擬 Phase 7 以前的舊列：request_json 沒有風格欄位
-        row = s.get(Generation, old)
-        d = json.loads(row.request_json)
-        for k in ("background_style", "variation"):
-            d.pop(k)
-        row.request_json = json.dumps(d)
-        s.add(row)
-        s.commit()
-    assert client.get(f"/api/generations/{old}").json()["background_style"] == "detailed"
-    pose = gen_pose(client, app, p["id"])
-    assert client.get(f"/api/generations/{pose}").json()["background_style"] is None
-    queued = gen_background(client, app, p["id"], run=False)
-    assert client.get(f"/api/generations/{queued}").json()["background_style"] == "simple"
-
-
-def test_background_style_from_generation_tolerates_bad_request_json():
-    from app.api.schemas import GenerationOut
-
-    for rj in ("", "{oops", "[]", '{"background_style": "qwen"}'):
-        g = Generation(id=1, book_id=1, page_id=1, kind=GenKind.BACKGROUND, user_text="", prompt="",
-                       negative_prompt="", seed=0, width=8, height=8, request_json=rj)
-        assert GenerationOut.from_generation(g).background_style == "detailed", rj
-
-
-def test_old_rows_keep_badges(client, app):
-    """Phase 9 以前的快速（SDXL）角色動作與細緻背景：GenerationOut 照舊標「快速」／「細緻」。"""
-    b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"], scene_prompt="公園")
-    pose = gen_pose(client, app, p["id"])
-    bg = gen_background(client, app, p["id"])
-    for gid, key, value in ((pose, "pose_mode", "fast"), (bg, "background_style", "detailed")):
-        with app.state.sessions() as s:
-            row = s.get(Generation, gid)
-            row.request_json = json.dumps({key: value})
-            s.add(row)
-            s.commit()
-    assert client.get(f"/api/generations/{pose}").json()["pose_mode"] == "fast"
-    assert client.get(f"/api/generations/{bg}").json()["background_style"] == "detailed"
-    from app.api.schemas import GenerationOut
-
-    assert GenerationOut.from_generation(gen_row(app, pose)).pose_mode == "fast"
 
 
 # ---- 角色動作 ------------------------------------------------------------------
@@ -374,16 +310,13 @@ def test_generate_and_pick_pose(client, app):
     g = r.json()
     assert g["kind"] == "pose" and g["user_text"] == "waving hand"
     assert (g["width"], g["height"]) == POSE_SIZE
-    assert "waving hand" in g["prompt"] and "廚房" not in g["prompt"]
+    assert "waving hand" in gen_row(app, g["id"]).prompt and "廚房" not in gen_row(app, g["id"]).prompt
     run_jobs(client, app)
     req = app.state.engine.requests[-1]
     assert req.kind == GenKind.POSE and (req.width, req.height) == POSE_SIZE
     assert req.character_image == app.state.storage.get(gen_row(app, char_gen).image_path)
     g = client.get(f"/api/generations/{g['id']}").json()
-    assert g["mask_url"] == f"/api/generations/{g['id']}/mask"
-    m = client.get(g["mask_url"])
-    assert m.status_code == 200 and m.headers["content-type"] == "image/png"
-    assert Image.open(io.BytesIO(m.content)).format == "PNG"
+    assert g["cutout_url"] == f"/api/generations/{g['id']}/cutout"
     page = picked(client, p["id"], "pose", g["id"])
     assert page["pose_generation_id"] == g["id"]
 
@@ -417,16 +350,15 @@ def test_pose_defaults_to_precise(client, app, monkeypatch):
     r = client.post(f"/api/pages/{p['id']}/poses", json={"action": " waving hand "})
     assert r.status_code == 202, r.text
     g = r.json()
-    assert g["pose_mode"] == "precise"  # 排隊中（還沒有 workflow_name）也有正確的模式
     assert g["user_text"] == "waving hand"
-    assert g["prompt"] == qwen_pose_prompt("waving hand")
+    assert gen_row(app, g["id"]).prompt == qwen_pose_prompt("waving hand")
     row = gen_row(app, g["id"])
     assert row.negative_prompt == ""
     rj = request_of(app, g["id"])
     assert rj["pose_mode"] == "precise" and "variation" in rj and rj["variation"] is None
     run_jobs(client, app)
     req = app.state.engine.requests[-1]
-    assert req.negative_prompt == "" and (req.width, req.height) == POSE_SIZE
+    assert (req.width, req.height) == POSE_SIZE
 
 
 @pytest.mark.parametrize("mode", ["fast", "precise", "qwen", None])
@@ -440,10 +372,9 @@ def test_pose_ignores_mode(client, app, monkeypatch, mode):
     r = client.post(f"/api/pages/{p['id']}/poses", json={"action": "揮手", "mode": mode})
     assert r.status_code == 202, r.text
     g = r.json()
-    assert g["pose_mode"] == "precise"
     rj = request_of(app, g["id"])
     assert rj["pose_mode"] == "precise" and rj["variation"] == "facing left"
-    assert g["prompt"] == qwen_pose_prompt("揮手", "facing left")
+    assert gen_row(app, g["id"]).prompt == qwen_pose_prompt("揮手", "facing left")
     assert gen_row(app, g["id"]).negative_prompt == ""
 
 
@@ -451,10 +382,8 @@ def test_pose_has_no_preflight_precheck(client, app):
     """快取的 preflight 說 Qwen 缺模型也照樣排隊（沒有 503）；缺東西時由生成失敗回報。"""
     b, _ = book_with_character(client, app)
     p = new_page(client, b["id"])
-    app.state.preflight = qwen_missing_report("qwen_edit_pose_cutout")
     r = client.post(f"/api/pages/{p['id']}/poses", json={"action": "x"})
     assert r.status_code == 202, r.text
-    assert r.json()["pose_mode"] == "precise"
 
 
 def test_pose_records_variation(client, app, monkeypatch):
@@ -464,8 +393,8 @@ def test_pose_records_variation(client, app, monkeypatch):
     b, _ = book_with_character(client, app)
     p = new_page(client, b["id"])
     g = client.post(f"/api/pages/{p['id']}/poses", json={"action": "waving hand"}).json()
-    assert g["prompt"] == qwen_pose_prompt("waving hand", "facing left")
-    assert "facing left" in g["prompt"] and g["user_text"] == "waving hand"
+    assert gen_row(app, g["id"]).prompt == qwen_pose_prompt("waving hand", "facing left")
+    assert "facing left" in gen_row(app, g["id"]).prompt and g["user_text"] == "waving hand"
     assert request_of(app, g["id"])["variation"] == "facing left"
     run_jobs(client, app)
     assert app.state.engine.requests[-1].variation == "facing left"
@@ -487,7 +416,7 @@ def test_pose_regenerate_never_repeats_variation(client, app):
         g = _pose_post(client, p["id"])
         v = request_of(app, g["id"])["variation"]
         assert v in QWEN_POSE_VARIATIONS and v != prev
-        assert g["prompt"] == qwen_pose_prompt("waving hand", v)
+        assert gen_row(app, g["id"]).prompt == qwen_pose_prompt("waving hand", v)
         prev = v
 
 
@@ -601,40 +530,7 @@ def test_pose_with_facing_phrase_only_gets_energy_variations(client, app, phrase
         assert v in QWEN_POSE_VARIATIONS[2:]
 
 
-def test_pose_mode_out_for_old_rows_and_other_kinds(client, app):
-    b, _ = book_with_character(client, app)
-    p = new_page(client, b["id"])
-    old = gen_pose(client, app, p["id"])
-    with app.state.sessions() as s:  # 模擬 Phase 5 的舊列：request_json 沒有 pose_mode
-        row = s.get(Generation, old)
-        d = json.loads(row.request_json)
-        d.pop("pose_mode")
-        d.pop("variation")
-        row.request_json = json.dumps(d)
-        s.add(row)
-        s.commit()
-    assert client.get(f"/api/generations/{old}").json()["pose_mode"] == "fast"
-    bg = gen_background(client, app, p["id"])
-    assert client.get(f"/api/generations/{bg}").json()["pose_mode"] is None
-    queued = gen_pose(client, app, p["id"], run=False)
-    assert client.get(f"/api/generations/{queued}").json()["pose_mode"] == "precise"
 
-
-def test_pose_mode_from_generation_tolerates_bad_request_json():
-    from app.api.schemas import GenerationOut
-
-    for rj in ("", "{oops", "[]", '{"pose_mode": "qwen"}'):
-        g = Generation(id=1, book_id=1, page_id=1, kind=GenKind.POSE, user_text="", prompt="",
-                       negative_prompt="", seed=0, width=8, height=8, request_json=rj)
-        assert GenerationOut.from_generation(g).pose_mode == "fast", rj
-
-
-def test_mask_endpoint_404s(client, app):
-    b, p, bg, pose = compose_ready(client, app)
-    assert client.get(f"/api/generations/{bg}/mask").status_code == 404
-    assert client.get("/api/generations/999/mask").status_code == 404
-    app.state.storage.delete(gen_row(app, pose).mask_path)
-    assert client.get(f"/api/generations/{pose}/mask").status_code == 404
 
 
 def test_cutout_alpha_and_size(client, app):
@@ -784,7 +680,7 @@ def test_compose_creates_composite(client, app):
     assert client.get(f"/api/generations/{gid}/image").status_code == 200
     assert client.get(page["lineart_url"]).status_code == 200
     out = client.get(f"/api/generations/{gid}").json()
-    assert out["kind"] == "composite" and out["mask_url"] is None
+    assert out["kind"] == "composite" and out["cutout_url"] is None
 
 
 def test_compose_uses_page_placement(client, app):
@@ -1286,7 +1182,6 @@ def test_upload_background_has_no_style_and_measures_time(client, app, monkeypat
     p = new_page(client, b["id"])
     gid = upload_bg(client, p["id"], png_bytes()).json()["background_generation_id"]
     out = client.get(f"/api/generations/{gid}").json()
-    assert out["background_style"] is None
     assert out["elapsed_s"] == pytest.approx(0.75)
 
 

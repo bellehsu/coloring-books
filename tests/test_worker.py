@@ -67,7 +67,7 @@ def test_encode_decode_roundtrip(tmp_path):
     assert "中文" in text  # ensure_ascii=False
     storage.put("books/1/generations/1.png", b"char-png")
     req = decode_request(text, storage)
-    assert req.kind == GenKind.POSE and req.prompt == "中文" and req.negative_prompt == "" and req.seed == 3
+    assert req.kind == GenKind.POSE and req.prompt == "中文" and req.seed == 3
     assert (req.width, req.height, req.variation) == (10, 20, "facing left")
     assert req.character_image == b"char-png"  # 引擎收 bytes；request_json 仍記 key
 

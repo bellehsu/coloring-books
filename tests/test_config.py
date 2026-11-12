@@ -9,7 +9,6 @@ from app.config import PROJECT_ROOT, SettingsError, load_settings
 def test_load_settings_resolves_and_validates(settings_file: Path):
     s = load_settings(settings_file)
     assert s.comfy.url == "http://comfy.test:8188"
-    assert s.comfy.ws_url == "ws://comfy.test:8188/ws"
     assert s.paths.database.is_absolute()
 
 

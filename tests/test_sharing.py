@@ -108,7 +108,7 @@ def test_list_visibility(world):
     it = items[0]
     assert it["author"] == "小明" and it["page_count"] == 2 and it["mine"] is False
     assert it["title"] == shared["title"] and it["paper_size"] == shared["paper_size"]
-    assert it["cover_page_id"] == sp[0]["id"] and it["shared_at"]
+    assert "cover_page_id" not in it and it["shared_at"]
     # A 自己看：不含自己的書（首頁用徽章標示），只有 B 的
     as_(client, sids["a"])
     assert [i["id"] for i in client.get("/api/shared/books").json()] == [mine_b["id"]]

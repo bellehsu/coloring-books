@@ -101,7 +101,7 @@ def assert_others_can_write_while_put_blocked(client, app, g: GatedStorage):
     assert time.monotonic() - t0 < 3  # 沒有等 busy timeout
     # 暫存的上傳／合成列不是 GPU 任務：佇列狀態不顯示它
     q = client.get("/api/system/queue").json()
-    assert q["running_id"] is None and q["pending"] == []
+    assert q["pending"] == []
 
 
 def test_busy_timeout_is_raised(app, client):

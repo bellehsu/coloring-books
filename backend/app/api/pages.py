@@ -197,7 +197,6 @@ def update_page(
         page.caption_show_zh = body.caption_show_zh
     if body.caption_show_en is not None:
         page.caption_show_en = body.caption_show_en
-    # body.controlnet_strength：構圖草圖已停用，舊前端送的值忽略
     lines_changed = False
     if body.line_detail is not None and body.line_detail != page.line_detail:
         page.line_detail = body.line_detail
@@ -259,7 +258,6 @@ def delete_page(
         session.rollback()  # 頁面流程正在寫這頁的合成圖與線稿
         raise HTTPException(409, "這一頁正在自動處理，請稍後再刪")
     gens = session.exec(select(Generation).where(col(Generation.page_id) == page_id)).all()
-    gen_ids = [g.id for g in gens]
     image_paths = [p for g in gens for p in (g.image_path, g.mask_path) if p]
     session.exec(delete(LineartEdit).where(col(LineartEdit.page_id) == page_id))
     session.exec(delete(PageTask).where(col(PageTask.page_id) == page_id))
@@ -287,12 +285,3 @@ def delete_page(
     # 結尾的 / 不可省：books/1/pages/1 會連 books/1/pages/10 一起刪
     page_prefix = f"books/{book_id}/pages/{page_id}/"
     attempt(page_prefix, storage.delete_prefix, page_prefix)
-    for gid in gen_ids:
-        prefix = f"cache/previews/{gid}_"
-        try:
-            keys = list(storage.list(prefix))
-        except Exception:  # noqa: BLE001
-            log.warning("刪除頁面 %s 的物件失敗：列出 %s", page_id, prefix, exc_info=True)
-            continue
-        for key in keys:
-            attempt(key, storage.delete, key)
