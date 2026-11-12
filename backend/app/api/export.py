@@ -1,20 +1,18 @@
 """匯出端點：書本 PDF、匯出摘要、單頁列印 PNG。同步 `def`（CPU 工作走 threadpool）。"""
 
-import io
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from PIL import Image
 from sqlmodel import Session, col, select
 
 from app.api.deps import current_owner, get_caption_font, get_session, get_storage, owned_book, owned_page
 from app.models import Book, Owner, Page, PageStatus
 from app.services.captions import CAPTION_FONT_MISSING, CaptionFontMissing
-from app.services.export import build_pdf, compose_page, png_bytes
+from app.services.export import build_pdf, layout_print_page, png_bytes
+from app.services.imageio import png_to_ink
 from app.services.layout import compute_layout
 from app.services.page_lineart import LineartUnavailable, ensure_page_lineart, read_page_lineart
 from app.storage import Storage
@@ -30,17 +28,16 @@ def _ordered_pages(session: Session, book_id: int) -> list[Page]:
     ).all())
 
 
-def composed_page(session: Session, storage: Storage, book: Book, page: Page, font_path: Path | None):
+def print_page_image(session: Session, storage: Storage, book: Book, page: Page, font_path: Path | None):
     """列印頁的唯一出口（擁有者 PDF、print.png、分享圖、分享 PDF）：線稿＋頁面文字。字型不能用 → 409。"""
     layout = compute_layout(book.paper_size, book.print_mode)
     try:
         _lin, data = read_page_lineart(session, storage, page.id)
     except LineartUnavailable as e:
         raise HTTPException(409, f"第 {page.position + 1} 頁：{e.message}") from e
-    with Image.open(io.BytesIO(data)) as im:
-        ink = np.asarray(im.convert("L")) < 128
+    ink = png_to_ink(data)
     try:
-        return compose_page(ink, layout, (page.caption_zh, page.caption_en), font_path,
+        return layout_print_page(ink, layout, (page.caption_zh, page.caption_en), font_path,
                             show=(page.caption_show_zh, page.caption_show_en))
     except CaptionFontMissing as e:
         raise HTTPException(409, CAPTION_FONT_MISSING) from e
@@ -67,7 +64,7 @@ def book_pdf(session: Session, storage: Storage, book: Book, include: Include,
     images = []
     for p in candidates:
         try:
-            img = composed_page(session, storage, book, p, font_path)
+            img = print_page_image(session, storage, book, p, font_path)
         except HTTPException:
             if skip_unrenderable:
                 continue
@@ -144,5 +141,5 @@ def print_png(
     if page.selected_generation_id is None:
         raise HTTPException(409, "這一頁還沒有選定圖片")
     book = owned_book(session, owner, page.book_id)
-    return Response(content=png_bytes(composed_page(session, storage, book, page, font_path)),
+    return Response(content=png_bytes(print_page_image(session, storage, book, page, font_path)),
                     media_type="image/png")

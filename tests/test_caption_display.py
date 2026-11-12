@@ -23,7 +23,7 @@ from app.config import load_settings
 from app.main import create_app
 from app.models import Page, PageHistory
 from app.services.captions import band_box, render_caption_page
-from app.services.export import compose_page
+from app.services.export import layout_print_page
 from sqlmodel import col, select
 from tests.fake_engine import FakeEngine
 from tests.test_api_history import C, history_rows, page_json, ready, redo, undo
@@ -42,48 +42,48 @@ def art_above(page: Image.Image, layout) -> np.ndarray:
     return content_of(page, layout)[:y0]
 
 
-# --- compose_page ----------------------------------------------------------------------
+# --- layout_print_page ----------------------------------------------------------------------
 
 @pytest.mark.parametrize("layout", [A4_HOME, A4_SHOP], ids=["a4-home", "a4-shop"])
 def test_both_on_is_unchanged(layout):
     ink = synthetic_art(layout)
-    assert compose_page(ink, layout, (None, None), FONT, show=(True, True)).tobytes() == \
+    assert layout_print_page(ink, layout, (None, None), FONT, show=(True, True)).tobytes() == \
         legacy_compose(ink, layout).tobytes()
-    assert compose_page(ink, layout, (ZH, EN), FONT, show=(True, True)).tobytes() == \
-        compose_page(ink, layout, (ZH, EN), FONT).tobytes() == \
+    assert layout_print_page(ink, layout, (ZH, EN), FONT, show=(True, True)).tobytes() == \
+        layout_print_page(ink, layout, (ZH, EN), FONT).tobytes() == \
         render_caption_page(ink, layout, ZH, EN, FONT).tobytes()
 
 
 @pytest.mark.parametrize("layout", [A4_HOME, A4_SHOP], ids=["a4-home", "a4-shop"])
 def test_only_enabled_lines_print(layout):
     ink = synthetic_art(layout)
-    only_zh = compose_page(ink, layout, (ZH, EN), FONT, show=(True, False))
-    only_en = compose_page(ink, layout, (ZH, EN), FONT, show=(False, True))
-    assert only_zh.tobytes() == compose_page(ink, layout, (ZH, None), FONT).tobytes()
-    assert only_en.tobytes() == compose_page(ink, layout, (None, EN), FONT).tobytes()
+    only_zh = layout_print_page(ink, layout, (ZH, EN), FONT, show=(True, False))
+    only_en = layout_print_page(ink, layout, (ZH, EN), FONT, show=(False, True))
+    assert only_zh.tobytes() == layout_print_page(ink, layout, (ZH, None), FONT).tobytes()
+    assert only_en.tobytes() == layout_print_page(ink, layout, (None, EN), FONT).tobytes()
     assert only_zh.tobytes() != only_en.tobytes()
 
 
 def test_enabled_line_without_text_prints_nothing_for_that_line():
     """開著的那行沒有字：那行不印；另一行關著 → 沒有要印的字，和沒有字的頁一樣（沒有文字帶）。"""
     ink = synthetic_art(A4_HOME)
-    assert compose_page(ink, A4_HOME, (None, EN), FONT, show=(True, False)).tobytes() == \
+    assert layout_print_page(ink, A4_HOME, (None, EN), FONT, show=(True, False)).tobytes() == \
         legacy_compose(ink, A4_HOME).tobytes()
-    assert compose_page(ink, A4_HOME, ("", EN), FONT, show=(True, True)).tobytes() == \
-        compose_page(ink, A4_HOME, (None, EN), FONT).tobytes()
+    assert layout_print_page(ink, A4_HOME, ("", EN), FONT, show=(True, True)).tobytes() == \
+        layout_print_page(ink, A4_HOME, (None, EN), FONT).tobytes()
 
 
 @pytest.mark.parametrize("layout", [A4_HOME, A4_SHOP, A5_HOME], ids=["a4-home", "a4-shop", "a5-home"])
 @pytest.mark.parametrize("captions", [(ZH, EN), (None, None), ("", " ")], ids=["text", "none", "blank"])
 def test_both_off_reserves_an_empty_band(layout, captions):
     ink = synthetic_art(layout)
-    page = compose_page(ink, layout, captions, FONT, show=(False, False))
+    page = layout_print_page(ink, layout, captions, FONT, show=(False, False))
     assert page.mode == "1" and page.size == layout.page_px
     got = content_of(page, layout)
     x0, y0, x1, y1 = band_box(layout)
     assert not got[y0:].any()  # 文字帶（以及帶下方）整條空白：沒有字、沒有寫字線、沒有線稿
     # 線稿和有字的頁一樣縮到帶的上方，不放大回全尺寸
-    with_text = compose_page(ink, layout, (ZH, EN), FONT)
+    with_text = layout_print_page(ink, layout, (ZH, EN), FONT)
     assert np.array_equal(got[:y0], art_above(with_text, layout))
     assert page.tobytes() != legacy_compose(ink, layout).tobytes()
     _ax0, _ay0, _ax1, ay1 = bbox(got)
@@ -92,15 +92,15 @@ def test_both_off_reserves_an_empty_band(layout, captions):
 
 def test_both_off_needs_no_font():
     ink = synthetic_art(A5_HOME)
-    want = compose_page(ink, A5_HOME, (ZH, EN), FONT, show=(False, False)).tobytes()
-    assert compose_page(ink, A5_HOME, (ZH, EN), MISSING, show=(False, False)).tobytes() == want
-    assert compose_page(ink, A5_HOME, (None, None), None, show=(False, False)).tobytes() == want
+    want = layout_print_page(ink, A5_HOME, (ZH, EN), FONT, show=(False, False)).tobytes()
+    assert layout_print_page(ink, A5_HOME, (ZH, EN), MISSING, show=(False, False)).tobytes() == want
+    assert layout_print_page(ink, A5_HOME, (None, None), None, show=(False, False)).tobytes() == want
 
 
 def test_both_off_print_shop_band_is_inside_safe_box_and_blank():
     layout = A4_SHOP
     ink = synthetic_art(layout)
-    page = compose_page(ink, layout, (ZH, EN), FONT, show=(False, False))
+    page = layout_print_page(ink, layout, (ZH, EN), FONT, show=(False, False))
     got = content_of(page, layout)
     sx0, sy0, sx1, sy1 = layout.safe_box_px
     x0, y0, x1, y1 = band_box(layout)
@@ -179,13 +179,13 @@ def test_flags_reach_pdf_and_shared_views(client, app, monkeypatch):
     b, p = passed_page(client, app, paper_size="a5", print_mode="home")
     patch(client, p["id"], caption_zh=ZH, caption_en=EN, caption_show_zh=False)
     seen = []
-    real = export_api.compose_page
+    real = export_api.layout_print_page
 
     def spy(ink, layout, captions=(None, None), font_path=None, show=(True, True)):
         seen.append(show)
         return real(ink, layout, captions, font_path, show=show)
 
-    monkeypatch.setattr(export_api, "compose_page", spy)
+    monkeypatch.setattr(export_api, "layout_print_page", spy)
     png(client, p["id"])
     assert client.get(f"/api/books/{b['id']}/export.pdf").status_code == 200
     assert client.put(f"/api/books/{b['id']}/share", json={"shared": True}).status_code == 200

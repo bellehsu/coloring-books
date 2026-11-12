@@ -15,7 +15,7 @@ from PIL import Image
 from sqlmodel import Session, col, select
 
 from app.api.deps import current_owner, get_caption_font, get_session, get_storage, parse_db_id
-from app.api.export import book_pdf, composed_page, pdf_response
+from app.api.export import book_pdf, print_page_image, pdf_response
 from app.api.pages import page_outs
 from app.api.schemas import SharedBookDetailOut, SharedBookOut, SharedPageOut
 from app.models import Book, Owner, Page, PageStatus
@@ -129,7 +129,7 @@ def shared_page_image(
     if page.id not in {p.id for p in pages}:
         raise _gone()
     try:
-        img = composed_page(session, storage, book, page, font_path)
+        img = print_page_image(session, storage, book, page, font_path)
     except HTTPException:
         raise _gone() from None  # 線稿讀不到：對檢視者就是沒有這一頁
     session.refresh(page)

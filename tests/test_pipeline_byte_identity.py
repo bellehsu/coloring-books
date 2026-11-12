@@ -15,9 +15,10 @@ from PIL import Image
 
 from app.services import lineart_post
 from app.services.compose import Placement, compose
-from app.services.export import compose_page
+from app.services.export import layout_print_page
 from app.services.layout import PaperSize, PrintMode, compute_layout
-from app.services.lineart_render import LineDetail, ink_to_png, render_base
+from app.services.imageio import ink_to_png
+from app.services.lineart_render import LineDetail, render_base
 from app.services.qa import evaluate
 from app.storage import load_rgb
 from tests.conftest import REPO
@@ -84,10 +85,10 @@ def cases() -> dict[str, str]:
     flat = lineart_post.load_image(io.BytesIO(synthetic_rgba_png()))
     out["render_rgba_flattened"] = h_ink(render_base(flat, (500, 700), LineDetail.STANDARD, 11)[0])
     # 列印頁（無字、有字）
-    out["print_page_home"] = h(compose_page(ink, a4).tobytes())
+    out["print_page_home"] = h(layout_print_page(ink, a4).tobytes())
     shop = compute_layout(PaperSize.A5, PrintMode.PRINT_SHOP)
     small = render_base(syn, shop.content_px, LineDetail.STANDARD, 11)[0]
-    out["print_page_shop_captions"] = h(compose_page(small, shop, ("消防車", "Fire Engine"), FONT).tobytes())
+    out["print_page_shop_captions"] = h(layout_print_page(small, shop, ("消防車", "Fire Engine"), FONT).tobytes())
     # 合成（RGBA 背景）與上傳壓平
     bg = Image.open(io.BytesIO(synthetic_rgba_png()))
     pose = Image.fromarray(synthetic_color(200, 300), "RGB")

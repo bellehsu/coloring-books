@@ -17,8 +17,9 @@ from app.models import (
 )
 from app.services import history
 from app.services.pipeline import enqueue_page_task
-from app.services.compose import composite_matches, page_placement
+from app.services.compose import page_placement
 from app.services.layout import compute_layout
+from app.services.page_compose import composite_matches
 from app.services.page_lineart import lineart_key, on_pipeline, strokes_json_by_generation
 from app.services.usage import refund_generations
 from app.services.worker import GenerationWorker
@@ -192,7 +193,7 @@ def update_page(
         page.caption_zh = body.caption_zh
     if "caption_en" in body.model_fields_set:
         page.caption_en = body.caption_en
-    # 要印哪幾行：只影響列印頁（composed_page），線稿與 QA 不變
+    # 要印哪幾行：只影響列印頁（print_page_image），線稿與 QA 不變
     if body.caption_show_zh is not None:
         page.caption_show_zh = body.caption_show_zh
     if body.caption_show_en is not None:

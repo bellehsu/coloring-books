@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -10,9 +9,9 @@ from typing import Literal
 
 import cv2
 import numpy as np
-from PIL import Image
 
 from app.services import lineart_post
+from app.services.imageio import ink_to_png  # noqa: F401  (re-export：實驗腳本沿用舊匯入路徑)
 from app.services.lineart_extract import extract
 
 RENDER_VERSION = 1  # 演算法改變時 +1，讓快取失效
@@ -76,10 +75,3 @@ def apply_strokes(ink: np.ndarray, strokes: Sequence[Stroke]) -> np.ndarray:
         x0, y0, m = patch
         out[y0:y0 + m.shape[0], x0:x0 + m.shape[1]][m] = s.op == "draw"
     return out
-
-
-def ink_to_png(ink: np.ndarray, dpi: int = 300) -> bytes:
-    arr = np.where(ink, 0, 255).astype(np.uint8)
-    buf = io.BytesIO()
-    Image.fromarray(arr, mode="L").convert("1", dither=Image.Dither.NONE).save(buf, format="PNG", dpi=(dpi, dpi))
-    return buf.getvalue()

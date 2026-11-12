@@ -12,9 +12,10 @@ from sqlmodel import Session, col, select
 
 from app.models import Book, Generation, GenKind, LineartEdit, Page, PageStatus, StrokeLayer, utcnow
 from app.services import lineart_post
+from app.services.imageio import ink_to_png
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
-    RENDER_VERSION, Stroke, apply_strokes, ink_to_png, render_base,
+    RENDER_VERSION, Stroke, apply_strokes, render_base,
 )
 from app.services import qa as qa_mod
 from app.services.qa import QAReport, evaluate

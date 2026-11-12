@@ -10,10 +10,11 @@ from PIL import Image
 
 from app.services.captions import render_caption_page
 from app.services.caption_text import normalize_caption
+from app.services.imageio import ink_to_bilevel
 from app.services.layout import Layout
 
 
-def compose_page(ink: np.ndarray, layout: Layout,
+def layout_print_page(ink: np.ndarray, layout: Layout,
                  captions: tuple[str | None, str | None] = (None, None),
                  font_path: Path | None = None,
                  show: tuple[bool, bool] = (True, True)) -> Image.Image:
@@ -29,11 +30,8 @@ def compose_page(ink: np.ndarray, layout: Layout,
     zh, en = (normalize_caption(c) if on else None for c, on in zip(captions, (show_zh, show_en)))
     if zh or en or not (show_zh or show_en):
         return render_caption_page(ink, layout, zh, en, font_path)
-    content = Image.fromarray(np.where(ink, 0, 255).astype(np.uint8), mode="L").convert(
-        "1", dither=Image.Dither.NONE
-    )
     page = Image.new("1", layout.page_px, 1)
-    page.paste(content, layout.content_offset_px)
+    page.paste(ink_to_bilevel(ink), layout.content_offset_px)
     return page
 
 

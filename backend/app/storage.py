@@ -25,6 +25,7 @@ import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .config import SettingsError
+from .services.imageio import flatten_on_white
 
 if TYPE_CHECKING:
     from .config import Settings
@@ -540,14 +541,7 @@ def _flatten_on_white(im: Image.Image) -> Image.Image:
     """轉成 RGB；有透明度的圖先合成到白底；16-bit／32-bit 灰階（I;16、I、F）先縮成 8-bit。"""
     if im.mode.startswith("I") or im.mode == "F":
         return _high_depth_to_l(im).convert("RGB")
-    has_alpha = im.mode in ("RGBA", "LA", "PA") or (
-        im.mode == "P" and "transparency" in im.info
-    )
-    if has_alpha:
-        rgba = im.convert("RGBA")
-        bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-        return Image.alpha_composite(bg, rgba).convert("RGB")
-    return im.convert("RGB")
+    return flatten_on_white(im)
 
 
 def load_rgb(

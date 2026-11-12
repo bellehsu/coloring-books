@@ -27,6 +27,9 @@ from typing import Any
 
 import cv2
 import numpy as np
+from PIL import Image
+
+from app.services.imageio import flatten_on_white
 
 # 每個方法的參數預設值（同時也是允許的參數白名單）
 METHODS: dict[str, dict[str, float | int]] = {
@@ -104,9 +107,7 @@ def _rgb(img: np.ndarray) -> np.ndarray:
     if img.ndim == 2:
         return cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
     if img.shape[2] == 4:
-        rgb = img[..., :3].astype(np.float32)
-        a = img[..., 3:4].astype(np.float32) / 255.0
-        return (rgb * a + 255.0 * (1 - a)).round().astype(np.uint8)
+        return np.asarray(flatten_on_white(Image.fromarray(img, "RGBA")))
     return img[..., :3]
 
 

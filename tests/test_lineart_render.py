@@ -5,7 +5,8 @@ import numpy as np
 from PIL import Image
 
 from app.services import lineart_render as lr
-from app.services.lineart_render import LineDetail, Stroke, apply_strokes, ink_to_png, render_base
+from app.services.imageio import ink_to_png
+from app.services.lineart_render import LineDetail, Stroke, apply_strokes, render_base
 
 
 def test_detail_controls_sigma(monkeypatch):
