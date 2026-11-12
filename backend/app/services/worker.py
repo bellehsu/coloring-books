@@ -50,9 +50,14 @@ def worker_job():
     return or_(col(Generation.engine).is_(None), col(Generation.engine).not_in(LOCAL_ENGINES))
 
 
+ENGINE_REQUEUES = "engine_requeues"  # request_json 的計數：因引擎連不上而放回佇列的次數（worker 自己寫）
+MAX_ENGINE_REQUEUES = 3
+ENGINE_GAVE_UP = "繪圖服務一直連不上，已停止重試"
+
+
 # request_json 的核心欄位（extra 不能蓋掉）
 _CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
-                        "variation"})
+                        "variation", ENGINE_REQUEUES})
 
 
 def encode_request(
@@ -336,9 +341,14 @@ class GenerationWorker:
             self.last_error = None
             self.state = WorkerState.IDLE
         except EngineUnavailable as e:
-            self._finish(gen_id, status=GenStatus.QUEUED, started_at=None)
-            self.last_error = str(e)
-            self.state = WorkerState.ENGINE_UNAVAILABLE
+            requeues = self._requeue_count(gen.request_json) + 1
+            if requeues > MAX_ENGINE_REQUEUES:
+                self._fail(gen_id, ENGINE_GAVE_UP)
+            else:
+                self._finish(gen_id, status=GenStatus.QUEUED, started_at=None,
+                             request_json=self._with_requeues(gen.request_json, requeues))
+                self.last_error = str(e)
+                self.state = WorkerState.ENGINE_UNAVAILABLE
         except EngineError as e:
             self._fail(gen_id, str(e))
         except Exception as e:  # noqa: BLE001  單筆任務的任何例外都不可殺死 worker
@@ -347,6 +357,25 @@ class GenerationWorker:
         finally:
             self.progress.pop(gen_id, None)
         return True
+
+    @staticmethod
+    def _requeue_count(request_json: str | None) -> int:
+        try:
+            n = json.loads(request_json or "{}").get(ENGINE_REQUEUES, 0)
+        except (TypeError, ValueError, AttributeError):
+            return 0
+        return n if isinstance(n, int) and not isinstance(n, bool) else 0
+
+    @staticmethod
+    def _with_requeues(request_json: str | None, n: int) -> str:
+        try:
+            d = json.loads(request_json or "{}")
+        except (TypeError, ValueError):
+            d = {}
+        if not isinstance(d, dict):
+            d = {}
+        d[ENGINE_REQUEUES] = n
+        return json.dumps(d, ensure_ascii=False, sort_keys=True)
 
     def _fail(self, gen_id: int, message: str) -> None:
         if self._finish(gen_id, status=GenStatus.FAILED, error=message, finished_at=utcnow()):

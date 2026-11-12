@@ -1,11 +1,11 @@
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from app.db import init_db, make_engine, session_factory
-from app.models import Book, GenKind, Generation, GenStatus, Owner
+from app.models import Book, GenKind, Generation, GenStatus, Owner, Usage
 from app.services.engine import EngineError, EngineUnavailable
 from app.services.layout import PaperSize, PrintMode
 from app.services.worker import (
@@ -223,6 +223,40 @@ async def test_engine_unavailable_keeps_job_queued_and_retries(env):
     await worker.run_once()
     assert get(sessions, gid).status == GenStatus.SUCCEEDED
     assert worker.state != WorkerState.ENGINE_UNAVAILABLE
+
+
+async def test_unavailable_requeue_cap(env):
+    worker, engine, sessions, _ = env
+    engine.error = EngineUnavailable("comfy down")
+    gid = add_gen(sessions, request_json=encode_request(
+        kind=GenKind.CHARACTER, prompt="p", negative_prompt="n", seed=7, width=64, height=64,
+        extra={"usage_day": "2026-11-12", "usage_owner": 1}))
+    with sessions() as s:
+        s.add(Usage(owner_id=1, day=date(2026, 11, 12), generations=1))
+        s.commit()
+    for i in range(3):
+        await worker.run_once()
+        g = get(sessions, gid)
+        assert g.status == GenStatus.QUEUED
+        assert json.loads(g.request_json)["engine_requeues"] == i + 1
+    await worker.run_once()
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED and g.error == "繪圖服務一直連不上，已停止重試"
+    assert json.loads(g.request_json)["usage_refunded"] is True
+    with sessions() as s:
+        assert s.get(Usage, (1, date(2026, 11, 12))).generations == 0
+    assert len(engine.requests) == 4
+
+
+async def test_http_error_fails_job_once(env):
+    worker, engine, sessions, _ = env
+    engine.error = EngineError("GET /view 回傳 HTTP 404")
+    gid = add_gen(sessions)
+    await worker.run_once()
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED and "404" in g.error
+    assert await worker.run_once() is False
+    assert len(engine.requests) == 1
 
 
 async def test_cancelled_during_run_is_not_overwritten(env):
