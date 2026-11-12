@@ -303,3 +303,69 @@ def test_queue_has_no_content(client, app):
     login(client, tadm)
     body = client.get("/api/system/queue").json()
     assert body["last_error"] == secret and body["running_id"] is not None
+
+
+# --- B10：已有不同身分的 session 時，邀請連結要先確認才切換 ---
+
+
+def test_invite_with_other_session_redirects_to_switch(client, app):
+    _, token_a = new_owner(app, "小明")
+    _, token_b = new_owner(app, "阿華")
+    sid = login(client, token_a)
+    r = client.get(f"/i/{token_b}", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/switch-account#{token_b}"
+    assert "set-cookie" not in r.headers
+    assert client.cookies[COOKIE] == sid  # 沒有被覆蓋
+    assert client.get("/api/me").json()["name"] == "小明"
+
+
+def test_invite_same_owner_or_no_session_sets_cookie(client, app):
+    owner, token = new_owner(app, "小明")
+    _, other = new_owner(app, "阿華")
+    # 沒有 session
+    r = client.get(f"/i/{token}", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/" and COOKIE in r.headers["set-cookie"]
+    # 同一個 owner：照常換新 session
+    r = client.get(f"/i/{token}", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/" and COOKIE in r.headers["set-cookie"]
+    # 壞掉的 cookie 不算有效 session
+    client.cookies.clear()
+    client.cookies.set(COOKIE, "forged")
+    r = client.get(f"/i/{other}", follow_redirects=False)
+    assert r.headers["location"] == "/" and COOKIE in r.headers["set-cookie"]
+    # 目前身分已被撤銷：不算有效 session
+    revoke(app, owner.id)
+    client.cookies.clear()
+    client.cookies.set(COOKIE, "forged")
+    r = client.get(f"/i/{other}", follow_redirects=False)
+    assert r.headers["location"] == "/"
+
+
+def test_accept_post_sets_cookie(client, app):
+    _, token_a = new_owner(app, "小明")
+    _, token_b = new_owner(app, "阿華")
+    login(client, token_a)
+    r = client.post("/api/invites/accept", json={"token": token_b})
+    assert r.status_code == 200 and r.json() == {"name": "阿華"}
+    assert "httponly" in r.headers["set-cookie"].lower() and "samesite=lax" in r.headers["set-cookie"].lower()
+    assert client.get("/api/me").json()["name"] == "阿華"
+
+
+def test_accept_bad_or_revoked_token_404(client, app):
+    owner, token = new_owner(app, "小明")
+    r = client.post("/api/invites/accept", json={"token": "nope"})
+    assert r.status_code == 404 and "set-cookie" not in r.headers
+    revoke(app, owner.id)
+    r = client.post("/api/invites/accept", json={"token": token})
+    assert r.status_code == 404 and "set-cookie" not in r.headers
+
+
+def test_peek_returns_name_and_bad_token_404(client, app):
+    owner, token = new_owner(app, "小明")
+    r = client.get("/api/invites/peek", headers={"X-Invite-Token": token})
+    assert r.status_code == 200 and r.json() == {"name": "小明"}
+    assert "set-cookie" not in r.headers
+    for headers in ({"X-Invite-Token": "nope"}, {}):
+        assert client.get("/api/invites/peek", headers=headers).status_code == 404
+    revoke(app, owner.id)
+    assert client.get("/api/invites/peek", headers={"X-Invite-Token": token}).status_code == 404

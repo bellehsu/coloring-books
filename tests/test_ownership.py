@@ -30,11 +30,16 @@ NO_OWNED_ID = {
     ("GET", "/api/admin/invites"),  # 管理者專用（非管理者 404，見 tests/test_admin_invites.py）
     ("POST", "/api/admin/invites"),
     ("GET", "/i/{token}"),  # 邀請連結本身就是憑證
+    ("GET", "/api/invites/peek"),  # 切換身分確認頁：X-Invite-Token 就是憑證
+    ("POST", "/api/invites/accept"),  # 同上（body 的 token）
     ("GET", "/api/files/{key:path}"),  # LocalStorage 的 HMAC 簽章就是憑證（短效）
 }
 # FastAPI 內建的 API 文件（不含任何資料）
 FASTAPI_DOCS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
-PUBLIC = {("GET", "/i/{token}"), ("GET", "/api/files/{key:path}")}
+PUBLIC = {
+    ("GET", "/i/{token}"), ("GET", "/api/files/{key:path}"),
+    ("GET", "/api/invites/peek"), ("POST", "/api/invites/accept"),
+}
 # 擁有者檢查用的 404 訊息（別人的資源與不存在的資源一樣）
 NOT_FOUND = {"找不到這本繪本", "找不到這一頁", "找不到這筆生成紀錄"}
 # 同一個 id 的其他寫法：pydantic 寬鬆模式把 "1.0"、"1.00"、" 1"、"+1"、"01" 都轉成 1

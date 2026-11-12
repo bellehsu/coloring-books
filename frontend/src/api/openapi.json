@@ -2752,6 +2752,98 @@
         }
       }
     },
+    "/api/invites/peek": {
+      "get": {
+        "tags": [
+          "invites"
+        ],
+        "summary": "Peek Invite",
+        "description": "切換身分確認頁用：這個邀請 token 是誰的。token 放 header（不進網址與日誌）；壞的或已撤銷 404。",
+        "operationId": "peek_invite_api_invites_peek_get",
+        "parameters": [
+          {
+            "name": "x-invite-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Invite-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteName"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/invites/accept": {
+      "post": {
+        "tags": [
+          "invites"
+        ],
+        "summary": "Accept Invite",
+        "description": "使用者在確認頁按「切換」：效果同 GET /i/{token}（設 cookie），但是同源 POST。壞的或已撤銷 404。",
+        "operationId": "accept_invite_api_invites_accept_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteName"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me": {
       "get": {
         "tags": [
@@ -2882,6 +2974,19 @@
   },
   "components": {
     "schemas": {
+      "AcceptBody": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "AcceptBody"
+      },
       "AutofixIn": {
         "properties": {
           "generation_id": {
@@ -3812,6 +3917,19 @@
           "name"
         ],
         "title": "InviteCreate"
+      },
+      "InviteName": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "InviteName"
       },
       "InviteOut": {
         "properties": {

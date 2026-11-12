@@ -908,6 +908,58 @@ def test_invites_revoke_kills_sessions_and_link(invites, settings_file, capsys):
     assert invites.main(args + ["revoke", "--id", "999"]) == 1
 
 
+def test_revoke_cancels_queued_and_refunds(invites, settings_file):
+    from sqlmodel import select
+
+    from app.models import Generation, GenStatus, PageTask, PageTaskStatus
+    from app.services.usage import taipei_day
+    from app.models import Usage
+    from app.services import auth
+    from app.services.usage import USAGE_DAY, USAGE_OWNER, USAGE_REFUNDED
+
+    _, sessions, storage = _env(settings_file)
+    d = _owner_with_data(sessions, storage, "小明")
+    other = _owner_with_data(sessions, storage, "阿華")
+    queued_other = other["gens"][1]
+    day = taipei_day(auth.utcnow())
+    _set(sessions, Generation, d["gens"][1],
+         request_json=_json.dumps({USAGE_DAY: day.isoformat(), USAGE_OWNER: d["owner"]}))
+    with sessions() as s:
+        assert s.get(Generation, d["gens"][1]).status == GenStatus.QUEUED
+        task_other = s.exec(select(PageTask).where(PageTask.page_id == other["page"])).one().id
+    assert invites.main(["--settings", str(settings_file), "revoke", "--id", str(d["owner"])]) == 0
+    with sessions() as s:
+        g = s.get(Generation, d["gens"][1])
+        assert g.status == GenStatus.CANCELLED and g.error == "邀請已撤銷"
+        assert s.get(Generation, d["gens"][0]).status == GenStatus.SUCCEEDED
+        task = s.exec(select(PageTask).where(PageTask.page_id == d["page"])).one()
+        assert task.status == PageTaskStatus.FAILED.value and task.error == "邀請已撤銷"
+        # 別人的排隊工作不受影響
+        assert s.get(Generation, queued_other).status == GenStatus.QUEUED
+        assert s.get(PageTask, task_other).status == PageTaskStatus.QUEUED.value
+        assert _json.loads(g.request_json)[USAGE_REFUNDED] is True
+        assert s.exec(select(Usage.generations).where(Usage.owner_id == d["owner"])).one() == 2
+
+
+def test_revoke_leaves_running_job(invites, settings_file):
+    from sqlmodel import select
+
+    from app.models import Generation, GenStatus, PageTask, PageTaskStatus
+
+    _, sessions, storage = _env(settings_file)
+    d = _owner_with_data(sessions, storage, "小明")
+    _set(sessions, Generation, d["gens"][1], status=GenStatus.RUNNING)
+    with sessions() as s:
+        task = s.exec(select(PageTask).where(PageTask.page_id == d["page"])).one()
+        task.status = PageTaskStatus.RUNNING.value
+        s.add(task)
+        s.commit()
+    assert invites.main(["--settings", str(settings_file), "revoke", "--id", str(d["owner"])]) == 0
+    with sessions() as s:
+        assert s.get(Generation, d["gens"][1]).status == GenStatus.RUNNING
+        assert s.exec(select(PageTask).where(PageTask.page_id == d["page"])).one().status == PageTaskStatus.RUNNING.value
+
+
 def test_invites_rotate_issues_new_link_and_drops_sessions(invites, settings_file, capsys):
     from sqlmodel import select
 

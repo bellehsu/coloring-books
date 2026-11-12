@@ -17,10 +17,11 @@ from datetime import datetime, timedelta, timezone
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, delete, select
+from sqlmodel import Session, col, delete, select, update
 
 from app.config import Settings, SettingsError
-from app.models import Owner, OwnerSession, utcnow
+from app.models import Book, Generation, GenStatus, Owner, OwnerSession, Page, PageTask, PageTaskStatus, utcnow
+from app.services.usage import refund_generations
 from app.storage import load_or_create_key_file
 
 SESSION_LIFETIME = timedelta(days=90)
@@ -133,6 +134,29 @@ def delete_sessions(session: Session, owner_id: int) -> int:
     """刪掉 owner 的所有 session（已開過連結的瀏覽器下一個請求就是 401）。回傳筆數。不 commit。"""
     res = session.exec(delete(OwnerSession).where(col(OwnerSession.owner_id) == owner_id))
     return res.rowcount
+
+
+def cancel_owner_queue(session: Session, owner_id: int, *, reason: str) -> int:
+    """取消 owner 的書裡還在排隊的工作：QUEUED generation → CANCELLED（退還額度）、QUEUED 的 PageTask → FAILED
+    （PageTask 沒有 cancelled 狀態），error 都是 reason。RUNNING 的不動，讓它跑完。回傳取消的 generation 數。
+    條件式 UPDATE 會取得寫入鎖，worker 之後無法再認領這些工作。不 commit（呼叫端與主要變更同一個交易）。"""
+    owned = select(Book.id).where(col(Book.owner_id) == owner_id)
+    cancelled = list(session.exec(
+        update(Generation)
+        .where(col(Generation.book_id).in_(owned), col(Generation.status) == GenStatus.QUEUED)
+        .values(status=GenStatus.CANCELLED, error=reason, finished_at=utcnow())
+        .returning(Generation.id)
+    ).scalars().all())
+    refund_generations(session, cancelled)  # 替別人的書排隊的 admin 也拿回額度
+    session.exec(
+        update(PageTask)
+        .where(
+            col(PageTask.page_id).in_(select(Page.id).where(col(Page.book_id).in_(owned))),
+            col(PageTask.status) == PageTaskStatus.QUEUED.value,
+        )
+        .values(status=PageTaskStatus.FAILED.value, error=reason, updated_at=utcnow())
+    )
+    return len(cancelled)
 
 
 def owner_for_token(session: Session, token: str) -> Owner | None:

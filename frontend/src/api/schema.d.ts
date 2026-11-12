@@ -969,6 +969,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/invites/peek": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Peek Invite
+         * @description 切換身分確認頁用：這個邀請 token 是誰的。token 放 header（不進網址與日誌）；壞的或已撤銷 404。
+         */
+        get: operations["peek_invite_api_invites_peek_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invites/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Invite
+         * @description 使用者在確認頁按「切換」：效果同 GET /i/{token}（設 cookie），但是同源 POST。壞的或已撤銷 404。
+         */
+        post: operations["accept_invite_api_invites_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me": {
         parameters: {
             query?: never;
@@ -1025,6 +1065,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AcceptBody */
+        AcceptBody: {
+            /** Token */
+            token: string;
+        };
         /** AutofixIn */
         AutofixIn: {
             /** Generation Id */
@@ -1363,6 +1408,11 @@ export interface components {
              * @default 60
              */
             daily_generation_cap: number;
+        };
+        /** InviteName */
+        InviteName: {
+            /** Name */
+            name: string;
         };
         /**
          * InviteOut
@@ -3760,6 +3810,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    peek_invite_api_invites_peek_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-invite-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteName"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_invite_api_invites_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteName"];
                 };
             };
             /** @description Validation Error */
