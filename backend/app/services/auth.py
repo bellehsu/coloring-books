@@ -159,6 +159,26 @@ def cancel_owner_queue(session: Session, owner_id: int, *, reason: str) -> int:
     return len(cancelled)
 
 
+def cancel_revoked_queues(session: Session) -> int:
+    """已撤銷的 owner 若還有排隊中的工作（撤銷時 RUNNING 的後來被放回佇列，或成功後排了頁面流程），
+    取消掉並 commit；回傳取消的 generation 數。worker 在認領工作之前呼叫，所以撤銷後不會再有這個 owner 的新工作開始。"""
+    owned = select(Book.id).where(col(Book.owner_id) == Owner.id)
+    queued_gen = select(Generation.id).where(
+        col(Generation.book_id).in_(owned), col(Generation.status) == GenStatus.QUEUED
+    ).exists()
+    queued_task = select(PageTask.id).where(
+        col(PageTask.page_id).in_(select(Page.id).where(col(Page.book_id).in_(owned))),
+        col(PageTask.status) == PageTaskStatus.QUEUED.value,
+    ).exists()
+    ids = session.exec(
+        select(Owner.id).where(col(Owner.revoked_at).is_not(None), queued_gen | queued_task)
+    ).all()
+    n = sum(cancel_owner_queue(session, oid, reason="邀請已撤銷") for oid in ids)
+    if ids:
+        session.commit()
+    return n
+
+
 def owner_for_token(session: Session, token: str) -> Owner | None:
     """邀請 token 對應的 owner；不存在或已撤銷回 None。"""
     owner = session.exec(select(Owner).where(Owner.token_hash == hash_token(token))).first()

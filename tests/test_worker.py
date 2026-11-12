@@ -700,3 +700,74 @@ async def test_stop_interrupt_does_not_fail_running_job(env):
     assert g.status == GenStatus.RUNNING and g.error is None
     assert worker.requeue_interrupted() == 1
     assert get(sessions, gid).status == GenStatus.QUEUED
+
+
+# ---- 撤銷：RUNNING 的讓它跑完，但不能再有這個 owner 的新工作開始（B9）----
+
+
+def _revoke_owner(sessions, owner_id=1):
+    from app.models import utcnow
+
+    with sessions() as s:
+        o = s.get(Owner, owner_id)
+        o.revoked_at = utcnow()
+        s.add(o)
+        s.commit()
+
+
+async def test_revoked_owner_requeued_job_is_cancelled_not_run(env):
+    from app.services.usage import USAGE_DAY, USAGE_OWNER, taipei_day
+    from app.models import utcnow
+
+    worker, engine, sessions, _ = env
+    day = taipei_day(utcnow())
+    with sessions() as s:
+        s.add(Usage(owner_id=1, day=day, generations=1))
+        s.commit()
+    base = json.loads(encode_request(kind=GenKind.CHARACTER, prompt="p", negative_prompt="n", seed=7, width=64, height=64))
+    gid = add_gen(sessions, request_json=json.dumps({**base, USAGE_DAY: day.isoformat(), USAGE_OWNER: 1}))
+
+    async def down_after_revoke(req, on_progress=None):  # 執行中被撤銷，之後引擎斷線 -> 放回佇列
+        engine.requests.append(req)
+        _revoke_owner(sessions)
+        raise EngineUnavailable("comfy down")
+
+    engine.generate = down_after_revoke
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.QUEUED  # 放回佇列
+    assert len(engine.requests) == 1
+    assert await worker.run_once() is False  # 下一輪：先取消撤銷者的排隊工作，不再跑引擎
+    g = get(sessions, gid)
+    assert g.status == GenStatus.CANCELLED and g.error == "邀請已撤銷"
+    assert len(engine.requests) == 1
+    with sessions() as s:
+        assert s.get(Usage, (1, day)).generations == 0  # 額度退回
+
+
+async def test_revoked_owner_success_followup_task_not_run(env, monkeypatch):
+    from sqlmodel import select
+
+    from app.models import PageTask, PageTaskStatus
+    from app.services import pipeline
+
+    worker, engine, sessions, _ = env
+    pid = _page(sessions)
+    real = engine.generate
+
+    async def revoke_then_succeed(req, on_progress=None):
+        _revoke_owner(sessions)
+        return await real(req, on_progress)
+
+    engine.generate = revoke_then_succeed
+    add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid)
+    assert await worker.run_once() is True  # 執行中的讓它跑完，並照常排了頁面流程
+    with sessions() as s:
+        task = s.exec(select(PageTask).where(PageTask.page_id == pid)).one()
+        assert task.status == PageTaskStatus.QUEUED.value
+    ran = []
+    monkeypatch.setattr(pipeline, "run_pipeline", lambda *a, **k: ran.append(a), raising=False)
+    assert await worker.run_page_tasks() == 0
+    with sessions() as s:
+        task = s.exec(select(PageTask).where(PageTask.page_id == pid)).one()
+        assert task.status == PageTaskStatus.FAILED.value and task.error == "邀請已撤銷"
+    assert ran == []

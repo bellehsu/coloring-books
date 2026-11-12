@@ -23,7 +23,7 @@ from app.services.engine import (
     GenerationEngine,
     GenerationRequest,
 )
-from app.services import pipeline
+from app.services import auth, pipeline
 from app.services.compose import largest_component
 from app.services.usage import refund_generations
 from app.storage import Storage, StorageNotFound
@@ -270,6 +270,7 @@ class GenerationWorker:
         rowcount 為 0 表示被搶走（或被取消），重試。"""
         while True:
             with self.sessions() as s:
+                auth.cancel_revoked_queues(s)  # 撤銷者的排隊工作先取消，不能被認領
                 order = self._plan(s)
                 if not order:
                     return None
@@ -448,6 +449,7 @@ class GenerationWorker:
         n = 0
         while True:
             with self.sessions() as s:
+                auth.cancel_revoked_queues(s)
                 task = pipeline.claim_page_task(s)
                 if task is None:
                     return n
