@@ -218,7 +218,7 @@ export interface paths {
         put?: never;
         /**
          * Create Background
-         * @description 產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略；舊前端送的 style 忽略。
+         * @description 產生一張背景：只用場景描述，不使用角色參考圖與草圖。body 可省略。
          *     oneclick（C 的「AI 再畫一張」）：好了一定換上去（上傳的背景也換回 AI 畫的）。
          */
         post: operations["create_background_api_pages__page_id__backgrounds_post"];
@@ -241,7 +241,7 @@ export interface paths {
          * Create Materials Batch
          * @description 「產生全部素材」：替整本書每一頁補排缺的背景與角色動作（依頁面順序，每頁先背景再動作）。
          *     略過的頁面回報 kind 與原因；body.upload_page_ids 的頁面改用上傳圖片，背景略過。
-         *     _BATCH_LOCK 讓同時多個呼叫不會重複排隊。整批一次預留 N 次當日額度：不夠就 429，一筆都不排。
+         *     BATCH_LOCK 讓同時多個呼叫不會重複排隊。整批一次預留 N 次當日額度：不夠就 429，一筆都不排。
          */
         post: operations["create_materials_batch_api_books__book_id__materials_batch_post"];
         delete?: never;
@@ -262,7 +262,7 @@ export interface paths {
         /**
          * Create Pose
          * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
-         *     新動作，prompt 只有動作。舊前端送的 mode 忽略；不先檢查 preflight，缺東西時由生成失敗回報。
+         *     新動作，prompt 只有動作。不先檢查 preflight，缺東西時由生成失敗回報。
          *     oneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。
          */
         post: operations["create_pose_api_pages__page_id__poses_post"];
@@ -831,7 +831,7 @@ export interface paths {
          * Retry
          * @description C 的「再試一次」，只處理這一頁（見模組說明）。重排失敗的圖：額度不夠 429、什麼都不排；
          *     沒有失敗的圖、也沒有背景＋角色動作 409。
-         *     與「繼續做」共用 _BATCH_LOCK：兩個分頁同時按，第二個在鎖裡重看時那一種已經在排隊、不再算失敗，
+         *     與「繼續做」共用 BATCH_LOCK：兩個分頁同時按，第二個在鎖裡重看時那一種已經在排隊、不再算失敗，
          *     不會重複排、重複算額度。
          */
         post: operations["retry_api_pages__page_id__retry_post"];
