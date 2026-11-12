@@ -12,15 +12,15 @@ from app.services.lineart_render import LineDetail, Stroke, apply_strokes, rende
 def test_detail_controls_sigma(monkeypatch):
     seen = []
 
-    def fake_extract(img, spec):
-        seen.append(spec)
+    def fake_extract(img, sigma):
+        seen.append(sigma)
         return np.full(img.shape[:2], 255, np.uint8)
 
-    monkeypatch.setattr(lr, "extract", fake_extract)
+    monkeypatch.setattr(lr, "extract_xdog", fake_extract)
     img = np.full((64, 48, 3), 255, np.uint8)
     for d, s in [(LineDetail.SIMPLE, 1.5), (LineDetail.STANDARD, 1.2), (LineDetail.DETAILED, 0.8)]:
         render_base(img, (96, 128), d, 11)
-        assert seen[-1] == {"method": "xdog", "sigma": s}
+        assert seen[-1] == s
 
 
 def test_render_base_size_and_width():
@@ -90,3 +90,14 @@ def test_apply_strokes_matches_legacy():
     ink = rng.random((h, w)) < 0.3
     strokes = random_strokes(rng)
     assert np.array_equal(apply_strokes(ink, strokes), legacy_apply_strokes(ink, strokes))
+
+
+def test_render_lineart_is_render_base_without_metrics():
+    """產品用的 render_lineart（不算指標）與實驗用的 render_base 的線稿逐像素相同；render_params 含所有固定參數。"""
+    rng = np.random.default_rng(3)
+    img = (rng.random((120, 90, 3)) * 255).astype(np.uint8)
+    for d in LineDetail:
+        assert np.array_equal(lr.render_lineart(img, (200, 260), d, 11), render_base(img, (200, 260), d, 11)[0])
+    params = lr.render_params()
+    assert params["xdog"] == [1.6, 20.0, 0.02, 10.0] and params["sigma"]["standard"] == 1.2
+    assert params["close_kernel"] == 7 and params["min_fragment_area"] == 64

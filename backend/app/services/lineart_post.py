@@ -1,5 +1,8 @@
 """線稿後處理（確定性、可測試）。
 
+產品只走 render_ink（固定參數、不算指標）；LineartParams 的其他選項（fit cover/stretch、binarize fixed/adaptive、
+keep_steps）、process()、compute_metrics 與 save_1bit_png 是給 experiments/（Phase 1 矩陣、QA 校正）調參用的。
+
 流程：放大到目標尺寸 → 灰階 → 二值化 → 移除小碎片 → 形態學閉運算封閉缺口 → 統一線寬 → 1-bit PNG。
 每一步都由 LineartParams 參數化；process() 同時回傳品質指標。
 
@@ -29,6 +32,7 @@ import numpy as np
 from PIL import Image
 from skimage.morphology import skeletonize
 
+from app.services import lineart_params as lp
 from app.services.imageio import disk_kernel, flatten_on_white, ink_to_bilevel
 
 A4_300DPI = (2480, 3508)
@@ -245,6 +249,21 @@ def compute_metrics(
 
 
 # ---- 主流程 -------------------------------------------------------------------
+
+def render_ink(gray: np.ndarray, content_px: tuple[int, int], line_width: int) -> np.ndarray:
+    """產品用的精簡版：灰階線稿 → 放大到 content_px → 二值化 → 清理 → 閉運算 → 統一線寬，回傳 ink（True＝黑）。
+    演算法參數一律取自 lineart_params（不看 LineartParams 的預設值），也不算指標。"""
+    w, h = content_px
+    p = LineartParams(
+        target_width=w, target_height=h, fit=lp.FIT, interpolation=lp.INTERPOLATION, binarize=lp.BINARIZE,
+        min_fragment_area=lp.MIN_FRAGMENT_AREA, close_kernel=lp.CLOSE_KERNEL, close_iterations=lp.CLOSE_ITERATIONS,
+        line_width_px=line_width,
+    )
+    p.validate()
+    gray = to_gray(resize_to_target(to_gray(gray), p))
+    cleaned = remove_small_fragments(binarize(gray, p), p.min_fragment_area)
+    return unify_line_width(close_gaps(cleaned, p.close_kernel, p.close_iterations), p.line_width_px)
+
 
 def process(image: np.ndarray | str | Path, params: LineartParams | dict | None = None, *,
             keep_steps: bool = False) -> LineartResult:

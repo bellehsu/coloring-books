@@ -64,13 +64,13 @@ def env(tmp_path):
 def test_cached_until_inputs_change(env, monkeypatch):
     make, storage, pid, gid = env
     calls = []
-    orig = page_lineart.render_base
+    orig = page_lineart.render_lineart
 
     def counting(*a, **k):
         calls.append(1)
         return orig(*a, **k)
 
-    monkeypatch.setattr(page_lineart, "render_base", counting)
+    monkeypatch.setattr(page_lineart, "render_lineart", counting)
     with make() as s:
         r1 = page_lineart.ensure_page_lineart(s, storage, pid)
         r2 = page_lineart.ensure_page_lineart(s, storage, pid)
@@ -238,8 +238,8 @@ def test_qa_version_in_key_forces_rerender(env, monkeypatch):
     from app.services import qa as qa_mod
     make, storage, pid, gid = env
     calls = []
-    orig = page_lineart.render_base
-    monkeypatch.setattr(page_lineart, "render_base",
+    orig = page_lineart.render_lineart
+    monkeypatch.setattr(page_lineart, "render_lineart",
                         lambda *a, **k: (calls.append(1), orig(*a, **k))[1])
     with make() as s:
         r1 = page_lineart.ensure_page_lineart(s, storage, pid)
@@ -291,8 +291,8 @@ def test_read_page_lineart_rerenders_missing_object(env, monkeypatch):
     """資料庫說有線稿、物件卻不見了：read_page_lineart 重算並寫回同一個 key。"""
     make, storage, pid, gid = env
     calls = []
-    orig = page_lineart.render_base
-    monkeypatch.setattr(page_lineart, "render_base",
+    orig = page_lineart.render_lineart
+    monkeypatch.setattr(page_lineart, "render_lineart",
                         lambda *a, **k: (calls.append(1), orig(*a, **k))[1])
     with make() as s:
         lin, data = page_lineart.read_page_lineart(s, storage, pid)

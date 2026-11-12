@@ -15,7 +15,7 @@ from app.services import lineart_post
 from app.services.imageio import ink_to_png
 from app.services.layout import compute_layout
 from app.services.lineart_render import (
-    RENDER_VERSION, Stroke, apply_strokes, render_base,
+    RENDER_VERSION, Stroke, apply_strokes, render_lineart, render_params,
 )
 from app.services import qa as qa_mod
 from app.services.qa import QAReport, evaluate
@@ -145,7 +145,7 @@ def _digest(*parts) -> str:
 
 def lineart_key(gen: Generation, page: Page, content_px, strokes_json: str) -> str:
     return _digest(RENDER_VERSION, qa_mod.QA_VERSION, gen.id, gen.image_path, str(getattr(page.line_detail, "value", page.line_detail)),
-                   page.line_width_px, list(content_px), strokes_json)
+                   page.line_width_px, list(content_px), strokes_json, render_params())
 
 
 def _load(storage: Storage, gen: Generation):
@@ -188,7 +188,7 @@ def ensure_page_lineart(
             return PageLineart(rel, key, QAReport.from_dict(json.loads(page.qa_json)))
 
         color = _load(storage, gen)
-        ink, _metrics = render_base(color, content_px, page.line_detail, page.line_width_px)
+        ink = render_lineart(color, content_px, page.line_detail, page.line_width_px)
         strokes = strokes_from_json(sj)
         if strokes:
             ink = apply_strokes(ink, strokes)
@@ -240,7 +240,7 @@ def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_
         raise LineartUnavailable("這一頁還沒有選定圖片")
     book = session.get(Book, page.book_id)
     content_px = compute_layout(book.paper_size, book.print_mode).content_px
-    ink, _metrics = render_base(_load(storage, gen), content_px, page.line_detail, page.line_width_px)
+    ink = render_lineart(_load(storage, gen), content_px, page.line_detail, page.line_width_px)
     auto = load_strokes(session, gen_id, layer=StrokeLayer.AUTO) if with_auto else []
     return apply_strokes(ink, auto) if auto else ink
 

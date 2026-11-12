@@ -1,10 +1,11 @@
-"""lineart_extract：從彩色插畫擷取線稿（Route C）。全部用合成測試圖。"""
+"""experiments/lineart_methods：線稿擷取方法（Route C 實驗）與產品的 xdog。全部用合成測試圖。"""
 
 import cv2
 import numpy as np
 import pytest
 
-from app.services import lineart_extract as le
+from app.services import lineart_extract
+from experiments import lineart_methods as le
 from app.services.lineart_post import process
 
 H, W = 400, 300
@@ -154,3 +155,15 @@ def test_hybrid_spec_validation():
                      ({"min_line_length": -1}, "min_line_length")]:
         with pytest.raises(ValueError, match=msg):
             le.ExtractSpec.from_dict({"method": "hybrid", **bad})
+
+
+def test_product_extract_xdog_matches_the_experiment_xdog_method():
+    """產品的 extract_xdog(sigma) 與實驗表裡 xdog 方法（預設 k／p／eps／phi）逐像素相同，輸入灰階／RGB／RGBA 都接受。"""
+    img = color_illustration()
+    for sigma in (0.8, 1.2, 1.5):
+        want = le.extract(img, {"method": "xdog", "sigma": sigma})
+        assert np.array_equal(lineart_extract.extract_xdog(img, sigma), want)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    assert lineart_extract.extract_xdog(gray, 1.2).shape == gray.shape
+    rgba = np.dstack([img, np.full(img.shape[:2], 255, np.uint8)])
+    assert np.array_equal(lineart_extract.extract_xdog(rgba, 1.2), lineart_extract.extract_xdog(img, 1.2))

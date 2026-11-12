@@ -10,9 +10,9 @@ from typing import Literal
 import cv2
 import numpy as np
 
-from app.services import lineart_post
+from app.services import lineart_params, lineart_post
 from app.services.imageio import ink_to_png  # noqa: F401  (re-export：實驗腳本沿用舊匯入路徑)
-from app.services.lineart_extract import extract
+from app.services.lineart_extract import extract_xdog
 
 RENDER_VERSION = 1  # 演算法改變時 +1，讓快取失效
 LINE_WIDTH_MIN, LINE_WIDTH_MAX, LINE_WIDTH_DEFAULT = 8, 16, 11
@@ -34,12 +34,31 @@ class Stroke:
     points: tuple[tuple[float, float], ...]
 
 
+def render_params() -> dict:
+    """決定線稿像素的所有固定參數（含各細節的 sigma）：lineart_key 把它整份放進雜湊。"""
+    return {**lineart_params.as_dict(), "sigma": {d.value: s for d, s in DETAIL_SIGMA.items()}}
+
+
+def _xdog_gray(color: np.ndarray, detail: LineDetail) -> np.ndarray:
+    return extract_xdog(color, DETAIL_SIGMA[LineDetail(detail)])
+
+
+def render_lineart(color: np.ndarray, content_px: tuple[int, int], detail: LineDetail,
+                   line_width_px: int) -> np.ndarray:
+    """產品的底稿：彩色圖 → xdog → 後處理，回傳 ink（True＝黑）。不算指標。"""
+    return lineart_post.render_ink(_xdog_gray(color, detail), content_px, line_width_px)
+
+
 def render_base(color: np.ndarray, content_px: tuple[int, int], detail: LineDetail,
                 line_width_px: int) -> tuple[np.ndarray, dict]:
+    """同 render_lineart，另外回傳 lineart_post.process 的品質指標（實驗腳本用；產品用 render_lineart）。"""
     w, h = content_px
-    gray = extract(color, {"method": "xdog", "sigma": DETAIL_SIGMA[LineDetail(detail)]})
-    res = lineart_post.process(gray, {"target_width": w, "target_height": h, "fit": "contain",
-                                      "line_width_px": line_width_px})
+    res = lineart_post.process(_xdog_gray(color, detail), {
+        "target_width": w, "target_height": h, "line_width_px": line_width_px,
+        "fit": lineart_params.FIT, "interpolation": lineart_params.INTERPOLATION,
+        "binarize": lineart_params.BINARIZE, "min_fragment_area": lineart_params.MIN_FRAGMENT_AREA,
+        "close_kernel": lineart_params.CLOSE_KERNEL, "close_iterations": lineart_params.CLOSE_ITERATIONS,
+    })
     return res.ink, res.metrics
 
 
