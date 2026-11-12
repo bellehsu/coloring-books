@@ -215,16 +215,17 @@ export const overviewActive = (o: BookOverview) =>
   o.progress.queued + o.progress.running > 0 || o.pages.some((p) => p.state === "working");
 
 /**
- * 整本書總覽（B）：還在做時每 3 秒輪詢，做完就停。分頁在背景時也照樣輪詢（只在還在做時）：
- * 「可以先去忙，好了會通知你」的分頁標題「✓ 做好了」就是給在別的分頁的人看的。
+ * 整本書總覽：還在做時每 3 秒輪詢，做完就停。background（只有 B 傳 true）：分頁在背景時也照樣輪詢
+ * （只在還在做時）——「可以先去忙，好了會通知你」的分頁標題「✓ 做好了」就是給在別的分頁的人看的；
+ * C 沒有分頁標題通知，在背景不輪詢。
  */
 export const OVERVIEW_POLL_MS = 3000;
-export const useBookOverview = (bookId: number) =>
+export const useBookOverview = (bookId: number, { background = false }: { background?: boolean } = {}) =>
   useQuery({
     queryKey: qk.overview(bookId),
     queryFn: () => api.get<BookOverview>(`/books/${bookId}/overview`),
     refetchInterval: (query) => (query.state.data && overviewActive(query.state.data) ? OVERVIEW_POLL_MS : false),
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: background,
   });
 
 /**

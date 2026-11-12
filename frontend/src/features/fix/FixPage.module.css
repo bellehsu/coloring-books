@@ -334,6 +334,19 @@
   font-weight: 700;
   color: var(--warn-ink);
 }
+/* 線稿 QA 載入失敗：原因＋再試一次（線條列與畫筆舞台共用） */
+.qaError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.qaError p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--warn-ink);
+}
 .restore {
   align-self: center;
   min-height: 44px;

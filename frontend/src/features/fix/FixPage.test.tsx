@@ -1,9 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
-import type { BookOverview, Generation, Page, Placement } from "@/api/client";
+import { DEFAULT_PLACEMENT, type BookOverview, type Generation, type Page, type Placement } from "@/api/client";
+import { movePlacement } from "@/lib/placement";
+import { FIX_POLL_MS } from "./fixApi";
 import { FixPage } from "./FixPage";
 import type { FixFilter } from "./fixState";
 import { mkPage, ovPage } from "./testData";
@@ -29,17 +31,25 @@ vi.mock("@/features/editor/LineFixCanvas", async (orig) => {
     ),
   };
 });
+// realStage.on：用真的 ComposeStage（鍵盤測試）
+const realStage = vi.hoisted(() => ({ on: false }));
 vi.mock("@/features/editor/ComposeStage", async (orig) => {
   const real = await orig<typeof import("@/features/editor/ComposeStage")>();
   return {
     ...real,
-    ComposeStage: (p: { placement: Placement; onChange: (p: Placement) => void; backgroundUrl: string; cutoutUrl: string }) => (
-      <div data-testid="compose" data-bg={p.backgroundUrl} data-cut={p.cutoutUrl} data-cx={p.placement.cx}>
-        <button type="button" onClick={() => p.onChange({ ...p.placement, cx: 0.3 })}>
-          stub-drag
-        </button>
-      </div>
-    ),
+    ComposeStage: (p: import("@/features/editor/ComposeStage").ComposeStageProps) =>
+      realStage.on ? (
+        <real.ComposeStage {...p} />
+      ) : (
+        <div data-testid="compose" data-bg={p.backgroundUrl} data-cut={p.cutoutUrl} data-cx={p.placement.cx}>
+          <button type="button" onClick={() => p.onChange({ ...p.placement, cx: 0.3 })}>
+            stub-drag
+          </button>
+          <button type="button" onClick={() => p.onChange({ ...p.placement, cx: +(p.placement.cx - 0.1).toFixed(2) })}>
+            stub-nudge
+          </button>
+        </div>
+      ),
   };
 });
 
@@ -142,6 +152,8 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
+  realStage.on = false;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -721,5 +733,182 @@ describe("C 處理一頁：製作中的提示", () => {
     page = mkPage({ recompose_pending: true });
     setup();
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("正在重新做這一頁…好了會自動更新"));
+  });
+});
+
+describe("C 處理一頁：失敗的重新合成", () => {
+  it("failed recompose (pending + attention failed): no polling, no 正在重新做 text", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    page = mkPage({ recompose_pending: true, attention: "failed", attention_detail: "合成失敗" });
+    overview.pages[1] = ovPage(5, 1, "attention");
+    setup();
+    await screen.findByRole("region", { name: "為什麼請你看" });
+    const pageGets = () => calls.filter((c) => c.method === "GET" && c.url === "/api/books/1/pages").length;
+    expect(pageGets()).toBe(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FIX_POLL_MS + 500);
+    });
+    expect(pageGets()).toBe(1);
+    expect(screen.queryByText(/正在重新做這一頁/)).toBeNull();
+  });
+});
+
+describe("C 處理一頁：位置存檔（合併、鍵盤 debounce）", () => {
+  const puts = () => posted(/\/api\/pages\/5\/placement\?oneclick=true$/, "PUT");
+  function setSize(img: HTMLElement, w: number, h: number) {
+    Object.defineProperty(img, "naturalWidth", { configurable: true, value: w });
+    Object.defineProperty(img, "naturalHeight", { configurable: true, value: h });
+    fireEvent.load(img);
+  }
+
+  it("holding arrow key yields one placement PUT after release", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    realStage.on = true;
+    setup();
+    fireEvent.click(await screen.findByRole("radio", { name: "彩色原圖" }));
+    setSize(await screen.findByRole("img", { name: "背景圖" }), 1000, 800);
+    setSize(screen.getByTestId("cutout"), 200, 400);
+    const box = screen.getByRole("group", { name: /角色位置/ });
+    let expected = DEFAULT_PLACEMENT;
+    // 按住 → 鍵約一秒（鍵盤自動重複約 30 次）
+    for (let i = 0; i < 30; i++) {
+      fireEvent.keyDown(box, { key: "ArrowRight" });
+      expected = movePlacement(expected, 0.01, 0);
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(puts()).toHaveLength(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].body).toEqual(expected);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(puts()).toHaveLength(1);
+  });
+
+  it("rapid drags send at most one in-flight PUT and the last value wins", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const sent: number[] = [];
+    const realFetch = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (!url.startsWith("/api/pages/5/placement")) return realFetch(url, init);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      sent.push(JSON.parse(String(init?.body)).cx);
+      await gate;
+      try {
+        return await realFetch(url, init);
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    const user = userEvent.setup();
+    setup();
+    await user.click(await screen.findByRole("radio", { name: "彩色原圖" }));
+    const stage = await screen.findByTestId("compose");
+    await user.click(within(stage).getByRole("button", { name: "stub-drag" })); // cx 0.3，送出中
+    await waitFor(() => expect(sent).toEqual([0.3]));
+    for (let i = 0; i < 3; i++) await user.click(within(stage).getByRole("button", { name: "stub-nudge" })); // 0.2 → 0.1 → 0
+    expect(screen.getByTestId("compose")).toHaveAttribute("data-cx", "0");
+    expect(sent).toEqual([0.3]);
+    release();
+    await waitFor(() => expect(sent).toEqual([0.3, 0]));
+    await waitFor(() => expect(puts()).toHaveLength(2));
+    expect(maxInFlight).toBe(1);
+    expect(page.placement).toMatchObject({ cx: 0 });
+  });
+
+  it("beforeunload set while placement in flight", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let sent = false;
+    const realFetch = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/pages/5/placement")) {
+        sent = true;
+        await gate;
+      }
+      return realFetch(url, init);
+    });
+    const unload = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    const user = userEvent.setup();
+    setup();
+    await user.click(await screen.findByRole("radio", { name: "彩色原圖" }));
+    expect(unload()).toBe(false);
+    await user.click(within(await screen.findByTestId("compose")).getByRole("button", { name: "stub-drag" }));
+    await waitFor(() => expect(sent).toBe(true));
+    expect(unload()).toBe(true);
+    release();
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    await waitFor(() => expect(unload()).toBe(false));
+  });
+});
+
+describe("C 處理一頁：文字存檔與復原的順序", () => {
+  it("undo waits for a pending caption save", async () => {
+    page = mkPage({ can_undo: true });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const log: string[] = [];
+    const realFetch = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url === "/api/pages/5?oneclick=true" && init?.method === "PATCH") {
+        log.push("PATCH sent");
+        await gate;
+        const res = await realFetch(url, init);
+        log.push("PATCH done");
+        return res;
+      }
+      if (url === "/api/pages/5/undo") log.push("undo sent");
+      return realFetch(url, init);
+    });
+    const user = userEvent.setup();
+    setup();
+    await user.click(within(await findRow("圖下方的字")).getByRole("button", { name: "改字" }));
+    const zh = screen.getByRole("textbox", { name: "中文字" });
+    fireEvent.change(zh, { target: { value: "郵局" } });
+    const undoBtn = screen.getByRole("button", { name: "復原" });
+    // 離開欄位（blur 送出 PATCH）與按下「復原」在同一輪：按鈕還沒來得及停用
+    act(() => {
+      fireEvent.blur(zh);
+      fireEvent.click(undoBtn);
+    });
+    await waitFor(() => expect(log).toEqual(["PATCH sent"]));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(log).toEqual(["PATCH sent"]);
+    release();
+    await waitFor(() => expect(log).toEqual(["PATCH sent", "PATCH done", "undo sent"]));
+  });
+});
+
+describe("C 處理一頁：線稿 QA 載入失敗", () => {
+  it("QA error shows message and retry", async () => {
+    respond["GET /api/pages/5/qa"] = () => json({ detail: "圖片檔案遺失" }, 404);
+    const user = userEvent.setup();
+    setup();
+    const lines = await findRow("線條");
+    expect(await within(lines).findByText("圖片檔案遺失")).toBeInTheDocument();
+    expect(within(lines).getByRole("button", { name: "再試一次" })).toBeInTheDocument();
+    await user.click(within(lines).getByRole("button", { name: "畫筆" }));
+    const preview = screen.getByRole("region", { name: "預覽" });
+    expect(within(preview).getByText("圖片檔案遺失")).toBeInTheDocument();
+    expect(within(preview).queryByText("載入線稿中…")).toBeNull();
+    delete respond["GET /api/pages/5/qa"];
+    await user.click(within(preview).getByRole("button", { name: "再試一次" }));
+    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
+    expect(calls.filter((c) => c.url === "/api/pages/5/qa")).toHaveLength(2);
   });
 });

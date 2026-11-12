@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,6 +13,7 @@ import {
   useGenerations,
   usePagesFollowJobs,
   useQA,
+  recomposeRunning,
 } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { CaptionField, captionError } from "@/components/ui/CaptionField";
@@ -25,6 +26,7 @@ import chip from "@/features/editor/Inspector.module.css";
 import { flushAllEditsFor, peekEditsQueue } from "@/features/editor/editsQueue";
 import { errMsg } from "@/features/editor/errMsg";
 import { LineFixStage } from "@/features/editor/LineFixStage";
+import { onBeforeUnload } from "@/features/editor/pendingWrites";
 import { ACTION_HINT, EXPRESSIONS, FACING_HINT, FACINGS } from "@/lib/actions";
 import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
 import type { StrokeOp } from "@/lib/strokes";
@@ -131,7 +133,11 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   const router = useRouter();
   const toast = useToast();
   const hasArt = page.selected_generation_id != null;
-  const qa = useQA(pageId, hasArt).data;
+  const qaQ = useQA(pageId, hasArt);
+  const qa = qaQ.data;
+  // QA 載入失敗（例如原圖遺失 404）：畫筆與線條列說明原因，可以再試一次
+  const qaError = !qa && qaQ.error ? errMsg(qaQ.error, "線稿載入失敗") : null;
+  const retryQA = () => void qaQ.refetch();
   const ovPage = overviewPages?.find((p) => p.id === pageId);
   const state = pageState(page, ovPage);
   const { prev, next } = overviewPages ? neighbours(overviewPages, pageId, filter) : { prev: null, next: null };
@@ -150,6 +156,29 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   const actingRef = useRef(false);
   // 復原／重做／還原成功一次就加 1：文字欄位（動作、場景、圖下方的字）丟掉改過的值、改顯示伺服器的
   const [historyEpoch, setHistoryEpoch] = useState(0);
+  // 文字欄位離開時的存檔與「中文／英文」開關的 PATCH（送出中）：復原／重做／還原、可以印、再試一次先等它們
+  const pendingSaves = useRef(new Set<Promise<unknown>>());
+  const [textSaving, setTextSaving] = useState(false);
+  const trackSave = useCallback((p: Promise<unknown>): Promise<unknown> => {
+    const set = pendingSaves.current;
+    set.add(p);
+    setTextSaving(true);
+    const done = () => {
+      set.delete(p);
+      setTextSaving(set.size > 0);
+    };
+    p.then(done, done);
+    return p;
+  }, []);
+  const textSaves = () => Promise.allSettled([...pendingSaves.current]);
+
+  // 關分頁／重新整理：修線（送出中、失敗）、位置或文字還沒存好就請瀏覽器確認
+  const placementPending = placement.hasPending;
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => onBeforeUnload(qc, e, placementPending() || pendingSaves.current.size > 0);
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [qc, placementPending]);
 
   const blocked = penBlocked(page);
   const drawing = drawTool !== null && blocked === null && hasArt;
@@ -157,7 +186,8 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   const poseGen = gens.find((g) => g.id === page.pose_generation_id);
   const bgActive = gens.some((g) => g.kind === "background" && isActive(g));
   const poseActive = gens.some((g) => g.kind === "pose" && isActive(g));
-  const working = page.recompose_pending || state === "working";
+  // 合成失敗（recompose_pending＋attention）不算在做：顯示原因卡與「再試一次」
+  const working = recomposeRunning(page) || state === "working";
 
   /** 送出前先讓畫面上的筆畫寫完（C 與進階編輯的佇列都等；否則晚到的筆畫會蓋掉復原的結果）。 */
   async function flushEdits() {
@@ -181,10 +211,11 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
     }
   }
 
-  /** 復原／重做／還原：先等拖拉的位置與筆畫寫完（晚到的寫入不會蓋掉復原），再收起畫筆
+  /** 復原／重做／還原：先等文字、拖拉的位置與筆畫寫完（晚到的寫入不會蓋掉復原），再收起畫筆
    * （畫布的筆畫在之後重新從伺服器載入）。 */
   const runHistory = (fn: () => Promise<unknown>, fallback: string) =>
     act(async () => {
+      await textSaves();
       await placement.idle();
       await flushEdits();
       setDrawTool(null);
@@ -198,6 +229,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
 
   const accept = () =>
     act(async () => {
+      await textSaves();
       await placement.idle();
       await flushEdits();
       await acceptM.mutateAsync();
@@ -207,6 +239,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   /** 「再試一次」：只處理這一頁（重畫失敗的那張，或重跑這頁的流程）。 */
   const retry = () =>
     act(async () => {
+      await textSaves();
       const r = await retryM.mutateAsync();
       if (r.requeued.length > 0) {
         const what = r.requeued.map((k) => (k === "pose" ? "角色動作" : "背景")).join("和");
@@ -214,7 +247,9 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
       } else toast.show("重新做這一頁了，好了會自動更新", "info");
     }, "沒辦法再試一次");
 
-  const busy = acting || undoM.isPending || redoM.isPending || placement.saving;
+  // 修改列的按鈕不等文字存檔：「換一張」「AI 再畫一張」自己會先存好文字，停用反而會吃掉「改完直接按」的那一下
+  const rowBusy = acting || undoM.isPending || redoM.isPending || placement.saving;
+  const busy = rowBusy || textSaving;
   const acceptBlocked = !page.recompose_pending
     ? null
     : page.attention === "failed"
@@ -278,6 +313,8 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
                 page={page}
                 genId={page.selected_generation_id}
                 qa={qa}
+                qaError={qaError}
+                onRetryQA={retryQA}
                 contentPx={book.layout.content_px}
                 tool={drawTool}
                 onDone={() => setDrawTool(null)}
@@ -304,8 +341,9 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               active={poseActive}
               flushEdits={flushEdits}
               restore={showRestore(page, "pose") ? () => void restore("pose") : null}
-              busy={busy}
+              busy={rowBusy}
               textKey={historyEpoch}
+              trackSave={trackSave}
             />
             <BackgroundRow
               bookId={bookId}
@@ -314,13 +352,16 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               active={bgActive}
               flushEdits={flushEdits}
               restore={showRestore(page, "background") ? () => void restore("background") : null}
-              busy={busy}
+              busy={rowBusy}
               textKey={historyEpoch}
+              trackSave={trackSave}
             />
             <LinesRow
               bookId={bookId}
               page={page}
               qa={qa}
+              qaError={qaError}
+              onRetryQA={retryQA}
               blocked={blocked}
               tool={drawing ? drawTool : null}
               onTool={(t) => {
@@ -328,9 +369,15 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
                 setDrawTool(t);
               }}
               restore={showRestore(page, "lines") ? () => void restore("lines") : null}
-              busy={busy}
+              busy={rowBusy}
             />
-            <CaptionRow bookId={bookId} page={page} textKey={historyEpoch} busy={busy || page.recompose_pending} />
+            <CaptionRow
+              bookId={bookId}
+              page={page}
+              textKey={historyEpoch}
+              busy={rowBusy || page.recompose_pending}
+              trackSave={trackSave}
+            />
           </ul>
           {hasArt && qa && qa.gap_count > 0 && (
             <p className={styles.note}>線沒接起來也可以印；想讓顏色不漏出去，再按「自動補線」或用畫筆接起來。</p>
@@ -439,33 +486,95 @@ function PrintPreview({
   );
 }
 
+/** 方向鍵／＋－ 停下來多久才存（按住時鍵盤自動重複約每秒 30 次，放開後只存一次、只有一步復原）。 */
+const KEY_SAVE_DELAY_MS = 400;
+
+interface PlacementQueue {
+  /** 等著送的（最新為準）。 */
+  next: Placement | null;
+  /** 按鍵停下來才送的。 */
+  keyed: Placement | null;
+  timer: ReturnType<typeof setTimeout> | null;
+  /** 正在送的那一輪（一次只有一個 PUT 在路上）。 */
+  run: Promise<void> | null;
+}
+
 /**
- * 拖完角色的位置存檔（PUT /placement?oneclick=true）：依序送，存好前畫面用 draft。saving 時復原／重做／還原
- * 停用，idle() 讓它們（與「這頁可以印了」）先等位置寫完，晚到的位置不會落在復原之後。
+ * 拖完角色的位置存檔（PUT /placement?oneclick=true，每次後端都存快照、重新合成）：一次只送一個，送出中又改了
+ * 只留最新的一筆，等前一個回來再送（latest-wins）；方向鍵／＋－ 停下來 400 ms 才存。存好前畫面用 draft。
+ * saving 時復原／重做／還原停用，idle() 讓它們（與「這頁可以印了」）先等位置寫完（按鍵等著的立刻送），
+ * 晚到的位置不會落在復原之後。
  */
 function usePlacementSaves(bookId: number, pageId: number) {
-  const toast = useToast();
-  const save = useSavePlacementC(bookId, pageId);
+  const { show } = useToast();
+  const { mutateAsync } = useSavePlacementC(bookId, pageId);
   const [draft, setDraft] = useState<Placement | null>(null);
   const [saving, setSaving] = useState(false);
-  const chain = useRef<Promise<unknown>>(Promise.resolve());
-  const inFlight = useRef(0);
-  const onChange = (p: Placement) => {
-    setDraft(p);
-    setSaving(true);
-    inFlight.current += 1;
-    chain.current = chain.current
-      .then(() => save.mutateAsync(p))
-      .catch((e: unknown) => toast.show(errMsg(e, "位置沒有存起來，請再拖一次"), "error"))
-      .finally(() => {
-        inFlight.current -= 1;
-        if (inFlight.current === 0) {
+  const q = useRef<PlacementQueue>({ next: null, keyed: null, timer: null, run: null });
+
+  const kick = useCallback(
+    function kick() {
+      const s = q.current;
+      if (s.run) return;
+      s.run = (async () => {
+        while (s.next) {
+          const p = s.next;
+          s.next = null;
+          try {
+            await mutateAsync(p);
+          } catch (e) {
+            show(errMsg(e, "位置沒有存起來，請再拖一次"), "error");
+          }
+        }
+      })().finally(() => {
+        s.run = null;
+        if (s.next) kick();
+        else if (!s.timer) {
           setDraft(null);
           setSaving(false);
         }
       });
+    },
+    [mutateAsync, show],
+  );
+  /** 按鍵等著的那一筆現在就送。 */
+  const flushKey = useCallback(() => {
+    const s = q.current;
+    if (!s.timer) return;
+    clearTimeout(s.timer);
+    s.timer = null;
+    s.next = s.keyed;
+    s.keyed = null;
+    kick();
+  }, [kick]);
+  // 卸載（換頁）時按鍵還沒送的也要送
+  useEffect(() => flushKey, [flushKey]);
+
+  const onChange = (p: Placement, via?: "key") => {
+    const s = q.current;
+    setDraft(p);
+    setSaving(true);
+    if (s.timer) clearTimeout(s.timer);
+    s.timer = null;
+    if (via === "key") {
+      s.keyed = p;
+      s.timer = setTimeout(flushKey, KEY_SAVE_DELAY_MS);
+    } else {
+      s.keyed = null;
+      s.next = p;
+      kick();
+    }
   };
-  return { draft, saving, save: onChange, idle: () => chain.current.catch(() => {}) };
+  const idle = async () => {
+    flushKey();
+    while (q.current.run) await q.current.run;
+  };
+  /** 還有位置沒存好（等著按鍵停、等著送、送出中）。 */
+  const hasPending = useCallback(() => {
+    const s = q.current;
+    return s.timer != null || s.next != null || s.run != null;
+  }, []);
+  return { draft, saving, save: onChange, idle, hasPending };
 }
 
 function ColorPreview({
@@ -479,7 +588,7 @@ function ColorPreview({
   bgGen: Generation | undefined;
   poseGen: Generation | undefined;
   draft: Placement | null;
-  onChange: (p: Placement) => void;
+  onChange: (p: Placement, via?: "key") => void;
 }) {
   if (page.background_generation_id != null && page.pose_generation_id != null) {
     const bgUrl = bgGen?.image_url ?? `/api/generations/${page.background_generation_id}/image`;
@@ -508,6 +617,8 @@ function DrawStage({
   page,
   genId,
   qa,
+  qaError,
+  onRetryQA,
   contentPx,
   tool,
   onDone,
@@ -516,6 +627,8 @@ function DrawStage({
   page: Page;
   genId: number;
   qa: QA | undefined;
+  qaError: string | null;
+  onRetryQA: () => void;
   contentPx: [number, number];
   tool: StrokeOp | null;
   onDone: () => void;
@@ -541,11 +654,23 @@ function DrawStage({
           initialTool={tool ?? "draw"}
           hideUndo
         />
+      ) : qaError ? (
+        <QAError message={qaError} onRetry={onRetryQA} />
       ) : (
         <p className={styles.empty} aria-busy="true">
           載入線稿中…
         </p>
       )}
+    </div>
+  );
+}
+
+/** 線稿 QA 載入失敗：後端的原因＋「再試一次」（重抓 QA）。 */
+function QAError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className={styles.qaError}>
+      <p role="alert">{message}</p>
+      <Button onClick={onRetry}>再試一次</Button>
     </div>
   );
 }
@@ -618,6 +743,7 @@ function PoseRow({
   restore,
   busy,
   textKey,
+  trackSave,
 }: {
   bookId: number;
   page: Page;
@@ -627,6 +753,7 @@ function PoseRow({
   restore: (() => void) | null;
   busy: boolean;
   textKey: number;
+  trackSave: (p: Promise<unknown>) => Promise<unknown>;
 }) {
   const id = useId();
   const toast = useToast();
@@ -683,17 +810,22 @@ function PoseRow({
             value={action.value}
             aria-describedby={`${id}-hint`}
             onChange={(e) => action.setValue(e.target.value)}
-            onBlur={() => quiet(action.save())}
+            onBlur={() => quiet(trackSave(action.save()))}
           />
           <p id={`${id}-hint`} className={styles.rowNote}>
             {ACTION_HINT}
           </p>
-          <ExclusiveChips label="表情" group={EXPRESSIONS} text={action.value} onChange={(v) => void quiet(action.setNow(v))} />
+          <ExclusiveChips
+            label="表情"
+            group={EXPRESSIONS}
+            text={action.value}
+            onChange={(v) => void quiet(trackSave(action.setNow(v)))}
+          />
           <ExclusiveChips
             label="面向"
             group={FACINGS}
             text={action.value}
-            onChange={(v) => void quiet(action.setNow(v))}
+            onChange={(v) => void quiet(trackSave(action.setNow(v)))}
             hint={FACING_HINT}
           />
           <p className={styles.rowNote}>改好動作後按「換一張」。</p>
@@ -712,6 +844,7 @@ function BackgroundRow({
   restore,
   busy,
   textKey,
+  trackSave,
 }: {
   bookId: number;
   page: Page;
@@ -721,6 +854,7 @@ function BackgroundRow({
   restore: (() => void) | null;
   busy: boolean;
   textKey: number;
+  trackSave: (p: Promise<unknown>) => Promise<unknown>;
 }) {
   const id = useId();
   const toast = useToast();
@@ -805,7 +939,7 @@ function BackgroundRow({
             className={styles.textarea}
             value={scene.value}
             onChange={(e) => scene.setValue(e.target.value)}
-            onBlur={() => quiet(scene.save())}
+            onBlur={() => quiet(trackSave(scene.save()))}
           />
           <p className={styles.rowNote}>只寫地點和物品，不要寫人物或動物。改好場景後按「AI 再畫一張」。</p>
         </div>
@@ -818,6 +952,8 @@ function LinesRow({
   bookId,
   page,
   qa,
+  qaError,
+  onRetryQA,
   blocked,
   tool,
   onTool,
@@ -827,6 +963,8 @@ function LinesRow({
   bookId: number;
   page: Page;
   qa: QA | undefined;
+  qaError: string | null;
+  onRetryQA: () => void;
   blocked: string | null;
   tool: StrokeOp | null;
   onTool: (t: StrokeOp) => void;
@@ -893,6 +1031,7 @@ function LinesRow({
       }
     >
       {blocked && <p className={styles.rowWarn}>{blocked}</p>}
+      {!noArt && qaError && <QAError message={qaError} onRetry={onRetryQA} />}
     </Row>
   );
 }
@@ -902,7 +1041,19 @@ function LinesRow({
  * 圖下方留一條空白讓小朋友自己寫；「把這個選擇套用到整本書」把這頁的開關套到每一頁。
  * busy（復原中、位置還在存、等著重新合成）時開關與套用停用；存的時候也停用，免得連按蓋來蓋去。
  */
-function CaptionRow({ bookId, page, textKey, busy }: { bookId: number; page: Page; textKey: number; busy: boolean }) {
+function CaptionRow({
+  bookId,
+  page,
+  textKey,
+  busy,
+  trackSave,
+}: {
+  bookId: number;
+  page: Page;
+  textKey: number;
+  busy: boolean;
+  trackSave: (p: Promise<unknown>) => Promise<unknown>;
+}) {
   const id = useId();
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -923,7 +1074,7 @@ function CaptionRow({ bookId, page, textKey, busy }: { bookId: number; page: Pag
   const toggle = (field: "caption_show_zh" | "caption_show_en") => {
     if (off) return;
     setToggling(true);
-    void quiet(savePage({ [field]: !page[field] })).finally(() => setToggling(false));
+    void quiet(trackSave(savePage({ [field]: !page[field] }))).finally(() => setToggling(false));
   };
   const applyToBook = () => {
     if (off) return;
@@ -979,8 +1130,8 @@ function CaptionRow({ bookId, page, textKey, busy }: { bookId: number; page: Pag
       </div>
       {open && (
         <div id={`${id}-panel`} className={styles.panel}>
-          <CaptionField kind="zh" value={zh.value} onChange={zh.setValue} onBlur={() => quiet(zh.save())} />
-          <CaptionField kind="en" value={en.value} onChange={en.setValue} onBlur={() => quiet(en.save())} />
+          <CaptionField kind="zh" value={zh.value} onChange={zh.setValue} onBlur={() => quiet(trackSave(zh.save()))} />
+          <CaptionField kind="en" value={en.value} onChange={en.setValue} onBlur={() => quiet(trackSave(en.save()))} />
           <p className={styles.rowNote}>選填，印在圖的下方。離開欄位就會存。</p>
         </div>
       )}

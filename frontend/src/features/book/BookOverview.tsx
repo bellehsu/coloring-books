@@ -53,7 +53,7 @@ export function BookOverview({ bookId }: { bookId: number }) {
   const qc = useQueryClient();
   const toast = useToast();
   const book = useBook(bookId);
-  const overview = useBookOverview(bookId);
+  const overview = useBookOverview(bookId, { background: true });
   const plan = useProducePlan(bookId);
   const produceM = useProduce(bookId);
   const [filter, setFilter] = useState<Filter>("all");

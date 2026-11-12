@@ -13,9 +13,12 @@ export function hasPendingWrites(qc: QueryClient): boolean {
   return allEditsQueues(qc).some((e) => e.busy() || e.failed);
 }
 
-/** beforeunload：還有沒存好的修改就請瀏覽器確認離開（關分頁、重新整理）。 */
-export function onBeforeUnload(qc: QueryClient, e: BeforeUnloadEvent): void {
-  if (!hasPendingWrites(qc)) return;
+/**
+ * beforeunload：還有沒存好的修改就請瀏覽器確認離開（關分頁、重新整理）。
+ * pending：呼叫端自己的、不在這裡追蹤的寫入（C 的位置與文字存檔）還沒結束。
+ */
+export function onBeforeUnload(qc: QueryClient, e: BeforeUnloadEvent, pending = false): void {
+  if (!pending && !hasPendingWrites(qc)) return;
   e.preventDefault();
   // 舊版 Chrome／Safari 要設 returnValue 才會詢問
   e.returnValue = "";

@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import {
   useBatchMaterials,
+  useBookOverview,
+  OVERVIEW_POLL_MS,
   useCharacterCandidates,
   useCompose,
   useGenerateBackground,
@@ -66,6 +68,37 @@ describe("polling", () => {
     await waitFor(() => expect(f).toHaveBeenCalledTimes(1));
     await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
     expect(f).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("useBookOverview background polling", () => {
+  const active = {
+    book_id: 1,
+    pages: [],
+    progress: { queued: 1, running: 0, done: 0 },
+    estimate_s: 10,
+    deferred_count: 0,
+    run_started_at: null,
+  };
+  afterEach(() => focusManager.setFocused(undefined));
+
+  async function pollsInBackground(opts?: { background?: boolean }) {
+    const f = vi.fn().mockImplementation(async () => jsonRes(active));
+    vi.stubGlobal("fetch", f);
+    const { wrapper } = setup();
+    renderHook(() => useBookOverview(1, opts), { wrapper });
+    await waitFor(() => expect(f).toHaveBeenCalledTimes(1));
+    act(() => focusManager.setFocused(false));
+    await act(async () => { await vi.advanceTimersByTimeAsync(OVERVIEW_POLL_MS * 2 + 100); });
+    return f.mock.calls.length;
+  }
+
+  it("C overview does not poll in background", async () => {
+    expect(await pollsInBackground()).toBe(1);
+  });
+
+  it("B overview (background: true) keeps polling in a background tab", async () => {
+    expect(await pollsInBackground({ background: true })).toBe(3);
   });
 });
 
