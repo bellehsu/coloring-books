@@ -330,6 +330,16 @@ def restore(session: Session, page: Page, item: str) -> bool:
     return True
 
 
+def has_both_slots(page: Page) -> bool:
+    """背景與角色動作都選好了：頁面流程才合成得出來（等著重新合成才有意義）。"""
+    return all(getattr(page, field) is not None for field, _auto in SLOTS.values())
+
+
+def can_compose_after(page: Page, kind: GenKind) -> bool:
+    """把 kind 那一格換成新圖之後，背景與角色動作是不是都有（另一格已經選好）。"""
+    return all(getattr(page, field) is not None for k, (field, _auto) in SLOTS.items() if k != kind)
+
+
 def take_generation(session: Session, gen: Generation) -> bool:
     """C 的「換一張／AI 再畫一張」產生好了：先存快照，換上這張並記成 auto_*（使用者之前選的也換掉：
     這就是他要的新圖），筆畫清掉（重新合成）。不 commit；回傳有沒有換，換不上去丟 HistoryError。"""
@@ -341,7 +351,8 @@ def take_generation(session: Session, gen: Generation) -> bool:
     if getattr(page, field) == gen.id:
         return False
     push_snapshot(session, page)
-    set_pending_strokes(session, page.id, CLEARED)
+    if can_compose_after(page, gen.kind):  # 少了另一張就合成不了：標成等著重新合成會讓 C 一直顯示「製作中」
+        set_pending_strokes(session, page.id, CLEARED)
     if not set_slot(session, page.id, gen.kind, gen.id, auto=True):
         raise HistoryError("新的圖已不能用")  # 呼叫端 rollback（快照也不留）
     return True

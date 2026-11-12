@@ -19,7 +19,7 @@ from tests.fake_engine import FakeEngine
 from tests.test_api_books import run_jobs
 from tests.test_api_compose import composites, gen_background, gen_pose, png_bytes
 from tests.test_api_lineart import get_page
-from tests.test_pipeline import drain, layer, produced, queued
+from tests.test_pipeline import book_page, drain, layer, produced, queued
 
 
 @pytest.fixture
@@ -451,6 +451,39 @@ def test_recompose_pending_flag(client, app):
     out = undo(client, pid)  # 流程還沒跑：位置回到 c1 的，compose_pending 是 False，但筆畫還沒寫回
     assert out["recompose_pending"] is True and out["compose_pending"] is False
     drain(client, app)
+    assert page_json(client, pid)["recompose_pending"] is False
+
+
+def test_c_regenerate_background_without_pose_is_not_stuck_recomposing(client, app):
+    """還沒有角色動作的頁按「AI 再畫一張」背景：合成不了，不可以標成等著重新合成（C 會一直顯示「製作中」）。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    drain(client, app)
+    r = client.post(f"/api/pages/{pid}/backgrounds", params=C)
+    assert r.status_code == 202
+    run_jobs(client, app)
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == r.json()["id"] and pg.pose_generation_id is None
+    assert pg.pending_user_strokes is None
+    assert page_json(client, pid)["recompose_pending"] is False
+
+
+def test_stale_pending_without_pose_is_not_reported_and_heals_when_pose_arrives(client, app):
+    """舊資料：沒有角色動作卻留著 pending_user_strokes="[]"。PageOut 不回報等著重新合成；角色動作好了照常合成、清掉。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    drain(client, app)
+    with app.state.sessions() as s:
+        s.get(Page, pid).pending_user_strokes = history.CLEARED
+        s.commit()
+    assert page_json(client, pid)["recompose_pending"] is False
+    gen_pose(client, app, pid)
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.status == PageStatus.PASSED and pg.pending_user_strokes is None
     assert page_json(client, pid)["recompose_pending"] is False
 
 
