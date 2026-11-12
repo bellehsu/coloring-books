@@ -1,18 +1,17 @@
 """generation 查詢、圖片、捨棄、取消與佇列狀態端點。"""
 
 import io
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image
-from pydantic import BaseModel
 from sqlalchemy import case, literal
 from sqlmodel import Session, col, func, select, update
 
 from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
 from app.api.files import signed_redirect
-from app.api.schemas import GenerationOut
+from app.api.schemas import GenerationOut, GenerationUpdate, PendingJob, QueueStatus, RecentJob
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
@@ -26,31 +25,8 @@ router = APIRouter(prefix="/api", tags=["generations"])
 IMAGE_CLEARED = "這張圖已被清理，無法還原"
 
 
-class GenerationUpdate(BaseModel):
-    discarded: bool
-
-
 _ETA_KINDS = (GenKind.CHARACTER, GenKind.BACKGROUND, GenKind.POSE)
 _RECENT_PER_KIND = 10
-
-
-class PendingJob(BaseModel):
-    kind: Literal["character", "background", "pose"]
-
-
-class RecentJob(BaseModel):
-    kind: Literal["character", "background", "pose"]
-    elapsed_s: float
-
-
-class QueueStatus(BaseModel):
-    state: WorkerState
-    last_error: str | None
-    queued: int
-    # 供狀態膠囊估算剩餘時間：排隊中／執行中（舊→新），與各類型最近成功的耗時（新→舊）。
-    pending: list[PendingJob]
-    recent: list[RecentJob]
-
 
 
 def _queue_error(worker: GenerationWorker, owner: Owner) -> str | None:

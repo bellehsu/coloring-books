@@ -27,8 +27,8 @@ from app.api.schemas import (
     ProduceOut,
     ProducePlanOut,
     RunProgress,
-    lineart_url,
 )
+from app.api.urls import generation_image_url, lineart_url_is_current
 from app.models import Generation, GenKind, GenStatus, Owner, PageStatus, PageTask, PageTaskStatus, utcnow
 from app.services import usage
 from app.services.jobs import BATCH_LOCK, BookState, add_queued, build_job, has_character
@@ -168,7 +168,7 @@ def book_overview(
     for page, po in zip(pages, page_outs(session, pages)):
         st = page_state(page, busy)
         gap_count = None
-        fresh = page.lineart_key and po.lineart_url == lineart_url(page.id, page.lineart_key)
+        fresh = lineart_url_is_current(page.id, page.lineart_key, po.lineart_url)
         if fresh and page.qa_json:
             gap_count = json.loads(page.qa_json).get("gap_count")
         sel = page.selected_generation_id
@@ -181,7 +181,7 @@ def book_overview(
             caption_en=page.caption_en,
             caption_show_zh=page.caption_show_zh,
             caption_show_en=page.caption_show_en,
-            thumb_url=f"/api/generations/{sel}/image" if sel is not None else None,
+            thumb_url=generation_image_url(sel) if sel is not None else None,
             lineart_url=po.lineart_url,
             attention_detail=page.attention_detail if page.attention else None,
         ))

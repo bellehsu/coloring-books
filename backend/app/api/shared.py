@@ -18,6 +18,7 @@ from app.api.deps import current_owner, get_caption_font, get_session, get_stora
 from app.api.export import book_pdf, print_page_image, pdf_response
 from app.api.pages import page_outs
 from app.api.schemas import SharedBookDetailOut, SharedBookOut, SharedPageOut
+from app.api.urls import shared_page_image_url
 from app.models import Book, Owner, Page, PageStatus
 from app.services.export import png_bytes
 from app.storage import Storage
@@ -45,7 +46,7 @@ def _image_urls(session: Session, pages: list[Page]) -> dict[int, str]:
         raw = "|".join((out.lineart_url or "", p.caption_zh or "", p.caption_en or "",
                         f"{int(p.caption_show_zh)}{int(p.caption_show_en)}"))
         v = hashlib.sha256(raw.encode()).hexdigest()[:16]
-        urls[p.id] = f"/api/shared/pages/{p.id}/image.png?v={v}"
+        urls[p.id] = shared_page_image_url(p.id, v)
     return urls
 
 

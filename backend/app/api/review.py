@@ -1,38 +1,22 @@
 """角色檢查與頁面通過／取消通過。一本書由一個人做 QA。"""
 
-from typing import Annotated
-
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, StringConstraints
 from sqlalchemy import case, literal
 from sqlmodel import Session, col, update
 
 from app.api.deps import current_owner, get_session, get_storage, owned_page
 from app.api.pages import page_out
-from app.api.schemas import PageOut
+from app.api.schemas import CharacterCheckIn, PageOut, PassIn
 from app.models import CharacterCheck, Owner, Page, PageStatus, utcnow
 from app.services.page_lineart import LineartUnavailable, ensure_page_lineart
 from app.storage import Storage
 
 router = APIRouter(prefix="/api", tags=["review"])
 
-NoteStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
-ReasonStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
-
 NO_SELECTION = "這一頁還沒有選定圖片"
 CHARACTER_NOT_CONFIRMED = "請先確認角色外型與設定一致"
 CHANGED = "頁面剛被修改，請重新檢查"
 STALE_CHECK = "選定的圖片已更換，請重新檢查"
-
-
-class CharacterCheckIn(BaseModel):
-    generation_id: int
-    result: CharacterCheck
-    note: NoteStr = ""
-
-
-class PassIn(BaseModel):
-    force_reason: ReasonStr | None = None
 
 
 @router.post("/pages/{page_id}/character-check", response_model=PageOut)
