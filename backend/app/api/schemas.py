@@ -8,6 +8,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, S
 from pydantic_core import PydanticCustomError
 
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
+from app.services import history
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS  # noqa: F401  (re-export)
 from app.services.caption_text import normalize_caption
 from app.services.compose import Placement
@@ -416,7 +417,8 @@ class PageOut(BaseModel):
             auto_background_generation_id=page.auto_background_generation_id,
             auto_pose_generation_id=page.auto_pose_generation_id,
             has_user_strokes=has_user_strokes,
-            recompose_pending=page.pending_user_strokes is not None,
+            # 少了背景或角色動作就合成不了，不算等著（舊資料可能留著 "[]"；角色動作好了流程照常合成、清掉）
+            recompose_pending=page.pending_user_strokes is not None and history.has_both_slots(page),
             can_undo=can_undo,
             can_redo=can_redo,
             created_at=page.created_at,
