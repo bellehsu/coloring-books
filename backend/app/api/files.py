@@ -14,7 +14,8 @@ from app.storage import LocalStorage, Storage, StorageNotFound
 
 router = APIRouter(prefix="/api", tags=["files"])
 
-REDIRECT_CACHE_CONTROL = "private, max-age=60"
+REDIRECT_MAX_AGE = 60  # config.py 的 storage.signed_url_ttl_s 下限 = 這個值 + 30
+REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 
 
 def signed_redirect(request: Request, storage: Storage, key: str) -> RedirectResponse:

@@ -159,11 +159,11 @@ def test_settings_storage_rejects_credentials_in_yaml(settings_file: Path, clean
 
 def test_settings_storage_yaml_and_relative_cache_dir(settings_file: Path, clean_storage_env):
     data = yaml.safe_load(settings_file.read_text())
-    data["storage"] = {"backend": "local", "signed_url_ttl_s": 60, "cache_dir": "tmp_cache",
+    data["storage"] = {"backend": "local", "signed_url_ttl_s": 90, "cache_dir": "tmp_cache",
                        "cache_max_bytes": 1000}
     settings_file.write_text(yaml.safe_dump(data))
     s = load_settings(settings_file)
-    assert s.storage.signed_url_ttl_s == 60
+    assert s.storage.signed_url_ttl_s == 90
     assert s.storage.cache_dir == PROJECT_ROOT / "tmp_cache"
     assert s.storage.cache_max_bytes == 1000
     data["storage"] = {"backend": "s3"}

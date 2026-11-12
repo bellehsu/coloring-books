@@ -27,6 +27,7 @@ from .services.engine import GenerationEngine
 from .services.instance import ensure_instance, mismatch_hint, storage_label
 from .services.preflight import format_report, run_preflight
 from .services.worker import GenerationWorker
+from .api.guards import BodyLimitMiddleware, CrossSiteWriteMiddleware
 from .services.workflow_registry import WorkflowRegistry
 from .storage import make_storage
 
@@ -97,6 +98,9 @@ def create_app(
             db.dispose()
 
     app = FastAPI(title="Coloring Books", lifespan=lifespan)
+    # 在路由與相依性之前：先擋超大 body（B1）與跨站寫入（B2）
+    app.add_middleware(CrossSiteWriteMiddleware)
+    app.add_middleware(BodyLimitMiddleware)
     # 每個 API 路由先確認登入（current_owner），再確認路徑裡的 book／page／generation id 屬於這個 owner
     # （別人的 → 404），都在 body 驗證與端點本身之前。例外：/api/files（HMAC 簽章就是憑證）與 /i/{token}。
     owned = [Depends(require_owned_path)]

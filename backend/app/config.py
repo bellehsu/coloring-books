@@ -78,7 +78,8 @@ class StorageSettings(BaseModel):
     backend: Literal["local", "r2"] = "local"
     r2: R2Settings = R2Settings()
     # 簽章網址有效秒數；網址拿到就立刻用（302 轉址），所以很短
-    signed_url_ttl_s: int = Field(120, gt=0)
+    # 下限 = api/files.py 的 REDIRECT_MAX_AGE（302 快取 60 秒）+ 30 秒餘裕，否則快取的轉址會指到過期網址（B11）
+    signed_url_ttl_s: int = Field(120, ge=90)
     # R2 物件的本機快取（只是加速，隨時可刪）；None＝<paths.storage_dir>/r2_cache。實際放在 <cache_dir>/<bucket>
     cache_dir: Path | None = None
     cache_max_bytes: int = Field(2 * 1024**3, gt=0)

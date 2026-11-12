@@ -1325,7 +1325,7 @@ def test_upload_rejects_bad_file(client, app):
     p = new_page(client, b["id"])
     r = upload_bg(client, p["id"], b"not an image")
     assert r.status_code == 400 and "無法解析" in r.json()["detail"]
-    r = upload_bg(client, p["id"], b"x" * 11_000_000)
+    r = upload_bg(client, p["id"], b"x" * 10_500_000)
     assert r.status_code == 400
     assert get_page(app, p["id"]).background_generation_id is None
     assert not list(app.state.storage.root.rglob("generation*"))
