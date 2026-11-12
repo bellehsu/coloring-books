@@ -22,9 +22,14 @@ from app.services.engine import (
     EngineError,
     EngineUnavailable,
     GenerationEngine,
-    GenerationRequest,
 )
 from app.services import auth, pipeline
+from app.services.gen_request import (
+    ENGINE_REQUEUES,
+    ENGINE_UNAVAILABLE_SINCE,
+    decode_request,
+    is_retired,
+)
 from app.services.compose import largest_component
 from app.services.usage import refund_generations
 from app.storage import Storage, StorageNotFound
@@ -51,8 +56,6 @@ def worker_job():
     return or_(col(Generation.engine).is_(None), col(Generation.engine).not_in(LOCAL_ENGINES))
 
 
-ENGINE_REQUEUES = "engine_requeues"  # request_json 的計數：因引擎連不上而放回佇列的次數（worker 自己寫）
-ENGINE_UNAVAILABLE_SINCE = "engine_unavailable_since"  # request_json：第一次連不上的時間（UTC ISO；worker 自己寫）
 MAX_ENGINE_REQUEUES = 3
 # 連不上超過 MAX_ENGINE_REQUEUES 次、而且距第一次連不上已滿這麼多秒，才標成失敗（ComfyUI 重啟等短暫中斷不算）
 ENGINE_GIVE_UP_AFTER_S = 600
@@ -60,75 +63,12 @@ WRITE_RETRY_DELAYS = (0.2, 0.5, 1.0)  # 收尾寫入失敗時的退避秒數
 ENGINE_GAVE_UP = "繪圖服務一直連不上，已停止重試"
 
 
-# request_json 的核心欄位（extra 不能蓋掉）
-_CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
-                        "variation", ENGINE_REQUEUES, ENGINE_UNAVAILABLE_SINCE})
-
-
 def _now() -> datetime:
     """目前時間（UTC）；測試替換它來模擬時間經過。"""
     return datetime.now(timezone.utc)
 
 
-def encode_request(
-    *,
-    kind: GenKind,
-    prompt: str,
-    negative_prompt: str,
-    seed: int,
-    width: int,
-    height: int,
-    character_image: str | None = None,
-    variation: str | None = None,
-    extra: dict | None = None,
-) -> str:
-    """產生 Generation.request_json；character_image 為 Storage 的物件 key（來源紀錄，不存 bytes），variation 一律寫入（可為 null）。
-    extra 併入 JSON，只當來源紀錄（例如 pose_mode、background_style）；引擎不讀，不能蓋掉核心欄位。"""
-    d = {
-        "kind": GenKind(kind).value,
-        "prompt": prompt,
-        "negative_prompt": negative_prompt,
-        "seed": seed,
-        "width": width,
-        "height": height,
-        "character_image": character_image,
-        "variation": variation,
-    }
-    if extra:
-        clash = _CORE_KEYS & set(extra)
-        if clash:
-            raise ValueError(f"extra 不能覆寫核心欄位：{', '.join(sorted(clash))}")
-        d.update(extra)
-    return json.dumps(d, ensure_ascii=False, sort_keys=True)
-
-
-def _is_retired(d: dict) -> bool:
-    """需要已停用路線的請求：舊整頁流程，或明確要求 SDXL 的快速動作／細緻背景。
-    沒有 pose_mode／background_style 的列照 Qwen 執行（新列只把它們當來源紀錄）。"""
-    return d.get("kind") == GenKind.PAGE.value or d.get("pose_mode") == "fast" \
-        or d.get("background_style") == "detailed"
-
-
 CHARACTER_MISSING = "角色參考圖檔案遺失，請重新選擇角色"
-
-
-def decode_request(text: str, storage: Storage) -> GenerationRequest:
-    """還原 GenerationRequest；character_image 的 key 從 Storage 讀成 bytes。
-    key 不合法丟 ValueError；物件不存在丟 StorageNotFound。
-    需要已停用路線的請求丟 ValueError(RETIRED)。舊列多出的 structure_* 等欄位忽略。"""
-    d = json.loads(text)
-    if _is_retired(d):
-        raise ValueError(RETIRED)
-    rel = d.get("character_image")
-    return GenerationRequest(
-        kind=GenKind(d["kind"]),
-        prompt=d["prompt"],
-        seed=d["seed"],
-        width=d["width"],
-        height=d["height"],
-        character_image=None if rel is None else storage.get(rel),
-        variation=d.get("variation"),
-    )
 
 
 class GenerationWorker:
@@ -236,7 +176,7 @@ class GenerationWorker:
             ).all()
             for gen in rows:
                 try:
-                    retired = _is_retired(json.loads(gen.request_json))
+                    retired = is_retired(json.loads(gen.request_json))
                 except (ValueError, TypeError, AttributeError):
                     continue  # 無法解析的列留給 run_once 回報
                 if retired:

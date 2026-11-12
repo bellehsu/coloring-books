@@ -23,14 +23,12 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlmodel import Session, col, select, update
 
 from app.models import Generation, GenStatus, Owner, Usage, utcnow
+from app.services.gen_request import USAGE_DAY, USAGE_OWNER, USAGE_REFUNDED
 
 log = logging.getLogger(__name__)
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 DAILY_CAP_REACHED = "今天的生成次數已用完，明天再來"
-USAGE_DAY = "usage_day"
-USAGE_OWNER = "usage_owner"
-USAGE_REFUNDED = "usage_refunded"
 _REFUNDABLE = (GenStatus.FAILED, GenStatus.CANCELLED)
 
 

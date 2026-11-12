@@ -2,7 +2,7 @@
 
 from PIL import Image
 
-from app.services.upload_bg import cover_crop
+from app.services.uploads import cover_crop
 
 SIZE = (896, 1152)
 
@@ -48,7 +48,7 @@ def test_cover_crop_never_stretches():
 
 
 def test_letterbox_fits_without_cropping_on_white():
-    from app.services.upload_bg import letterbox
+    from app.services.uploads import letterbox
 
     out, box = letterbox(Image.new("RGB", (2000, 900), "red"), (832, 1216))
     assert out.size == (832, 1216) and out.mode == "RGB"

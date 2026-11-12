@@ -32,6 +32,7 @@ from sqlmodel import Session, col, delete, select, update
 
 from app.models import Generation, GenKind, Page, PageHistory, PageStatus, StrokeLayer, utcnow
 from app.services.page_compose import is_usable, slot_change_values, usable_conditions
+from app.services.slots import SLOTS, newest_usable_ai
 from app.services.page_lineart import load_strokes, on_pipeline, save_strokes, strokes_from_json, strokes_to_json
 
 MAX_SNAPSHOTS = 50
@@ -43,11 +44,6 @@ RECOMPOSE_PENDING = "這一頁正在重新合成，請稍候再畫"
 RECOMPOSE_FAILED = "這一頁合成失敗，請先按「再試一次」"
 NO_AUTO = {GenKind.BACKGROUND: "沒有自動畫的背景可以還原", GenKind.POSE: "沒有自動畫的角色動作可以還原"}
 
-SLOTS = {
-    GenKind.BACKGROUND: ("background_generation_id", "auto_background_generation_id"),
-    GenKind.POSE: ("pose_generation_id", "auto_pose_generation_id"),
-}
-UPLOAD_ENGINE = "upload"
 CLEARED = "[]"
 
 
@@ -287,12 +283,7 @@ def auto_target(session: Session, page: Page, kind: GenKind) -> int:
     auto = getattr(page, auto_field)
     if auto is not None and is_usable(session.get(Generation, auto), kind, page.id):
         return auto
-    newest = session.exec(
-        select(Generation.id)
-        .where(col(Generation.page_id) == page.id, *usable_conditions(kind),
-               (col(Generation.engine).is_(None)) | (col(Generation.engine) != UPLOAD_ENGINE))
-        .order_by(col(Generation.id).desc())
-    ).first()
+    newest = newest_usable_ai(session, page.id, kind)
     if newest is None:
         raise HistoryError(NO_AUTO[kind])
     return newest

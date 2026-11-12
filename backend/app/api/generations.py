@@ -62,15 +62,6 @@ def _queue_error(worker: GenerationWorker, owner: Owner) -> str | None:
     return None
 
 
-def _out(gen: Generation, worker: GenerationWorker, owner: Owner) -> GenerationOut:
-    return GenerationOut.from_generation(
-        gen,
-        queue_position=worker.queue_position(gen.id),
-        progress=worker.progress.get(gen.id),
-        is_admin=owner.is_admin,
-    )
-
-
 @router.get("/generations/{gen_id}", response_model=GenerationOut)
 def get_generation(
     gen_id: int,
@@ -78,7 +69,7 @@ def get_generation(
     worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    return _out(owned_generation(session, owner, gen_id), worker, owner)
+    return GenerationOut.for_worker(owned_generation(session, owner, gen_id), worker, is_admin=owner.is_admin)
 
 
 @router.get("/generations/{gen_id}/image")
@@ -149,7 +140,7 @@ def list_generations(
     if not include_discarded:
         stmt = stmt.where(col(Generation.discarded).is_(False))
     gens = session.exec(stmt.order_by(col(Generation.id).desc())).all()
-    return [_out(g, worker, owner) for g in gens]
+    return [GenerationOut.for_worker(g, worker, is_admin=owner.is_admin) for g in gens]
 
 
 @router.patch("/generations/{gen_id}", response_model=GenerationOut)
@@ -208,7 +199,7 @@ def update_generation(
             raise HTTPException(409, IMAGE_CLEARED)
         raise HTTPException(409, "這筆生成紀錄正被頁面使用或作為角色，無法捨棄")
     session.refresh(gen)
-    return _out(gen, worker, owner)
+    return GenerationOut.for_worker(gen, worker, is_admin=owner.is_admin)
 
 
 @router.post("/generations/{gen_id}/cancel", response_model=GenerationOut)
@@ -230,7 +221,7 @@ def cancel_generation(
     if res.rowcount == 0:
         raise HTTPException(409, "只有排隊中的任務可以取消")
     session.refresh(gen)
-    return _out(gen, worker, owner)
+    return GenerationOut.for_worker(gen, worker, is_admin=owner.is_admin)
 
 
 @router.get("/system/queue", response_model=QueueStatus)

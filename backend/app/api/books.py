@@ -15,6 +15,7 @@ from sqlalchemy import true
 from sqlmodel import Session, col, select, update
 
 from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
+from app.api.pages import page_outs
 from app.api.schemas import (
     BookCreate,
     BookOut,
@@ -29,26 +30,26 @@ from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, PageSt
 from app.services.layout import PaperSize, ratio_group
 from app.services.page_compose import store_outside_tx
 from app.services.page_lineart import ensure_page_lineart, on_pipeline
-from app.services.pipeline import UPLOAD_ENGINE, enqueue_page_task
+from app.services.pipeline import enqueue_page_task
 from app.services import usage
-from app.services.upload_bg import letterbox
+from app.services.gen_request import encode_request
+from app.services.jobs import MAX_SEED, last_variations
+from app.services.page_state import busy_page_ids, page_state
+from app.services.slots import UPLOAD_ENGINE
+from app.services.uploads import letterbox, mark_stored, read_upload
 from app.storage import Storage
 from app.services.prompts import QWEN_CHARACTER_SIZE, pick_character_variation, qwen_character_prompt
-from app.services.worker import GenerationWorker, encode_request
+from app.services.worker import GenerationWorker
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/books", tags=["books"])
 
 CHARACTER_SIZE = QWEN_CHARACTER_SIZE
-MAX_SEED = 2**32 - 1
 
 
 
 def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
     """附上統計與封面；所有繪本的頁面一次查完，封面頁再交給 page_outs 算 lineart_url。"""
-    from app.api.pages import page_outs  # 避免與 pages.py 循環匯入
-    from app.api.produce import busy_page_ids, page_state  # 同上（produce 匯入 pages）
-
     ids = [b.id for b in books]
     by_book: dict[int, list[Page]] = {i: [] for i in ids}
     if ids:
@@ -224,18 +225,10 @@ def set_share(
 def _last_character_variation(session: Session, book_id: int) -> str | None:
     """這本書最近一筆有變化語的角色候選（依 id，不論狀態、是否丟棄）用的變化語；沒有回 None。
     沒有變化語的舊列（SDXL 時代）略過。"""
-    for rj in session.exec(
-        select(Generation.request_json)
-        .where(Generation.book_id == book_id, Generation.kind == GenKind.CHARACTER)
-        .order_by(col(Generation.id).desc())
-    ):
-        try:
-            d = json.loads(rj)
-        except (TypeError, ValueError):
-            continue
-        if isinstance(d, dict) and isinstance(d.get("variation"), str):
-            return d["variation"]
-    return None
+    found = last_variations(
+        session, col(Generation.book_id) == book_id, col(Generation.kind) == GenKind.CHARACTER
+    )
+    return found[0] if found else None
 
 
 @router.post("/{book_id}/character/candidates", status_code=202, response_model=list[GenerationOut])
@@ -296,11 +289,7 @@ def create_character_candidates(
     session.commit()
     worker.notify()
     # 回傳仍是清單（現行前端以清單處理候選）
-    return [
-        GenerationOut.from_generation(
-            gen, queue_position=worker.queue_position(gen.id), progress=worker.progress.get(gen.id)
-        )
-    ]
+    return [GenerationOut.for_worker(gen, worker)]
 
 
 CHARACTER_SET = "這本繪本的角色已經設定"
@@ -393,8 +382,6 @@ def upload_character(
     """「↑ 上傳自己的主角」：驗證同上傳背景，等比例縮放到角色尺寸、置中貼在白底（不去背），
     存成 engine="upload"、request_json.uploaded=true 的 CHARACTER 並設為角色。
     已設定角色時要 confirm_change=true（表單欄位），否則 409。不計當日生成次數。"""
-    from app.api.compose import _mark_stored, read_upload  # compose 匯入本模組
-
     book = owned_book(session, owner, book_id)
     if book.character_generation_id is not None and not confirm_change:
         raise HTTPException(409, CHARACTER_SET)
@@ -427,7 +414,7 @@ def upload_character(
         elapsed_s=time.monotonic() - started,
     )
     gen_id, rel = store_outside_tx(session, storage, gen, buf.getvalue())
-    _mark_stored(session, storage, gen, rel, "上傳的主角剛被移除，請重新上傳")
+    mark_stored(session, storage, gen, rel, "上傳的主角剛被移除，請重新上傳")
     # 主角已經是一筆有圖的成功紀錄：之後設定失敗（例如同時被設定了別的角色）也不刪它的物件
     _select_character(session, book_id, gen_id, None, confirm_change)
     session.refresh(book)

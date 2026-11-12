@@ -12,18 +12,15 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from PIL import Image
-from pydantic import TypeAdapter, ValidationError
 from sqlmodel import Session, col, select
 
-from app.api.deps import current_owner, get_caption_font, get_session, get_storage
+from app.api.deps import current_owner, get_caption_font, get_session, get_storage, parse_db_id
 from app.api.export import book_pdf, composed_page, pdf_response
 from app.api.pages import page_outs
 from app.api.schemas import SharedBookDetailOut, SharedBookOut, SharedPageOut
-from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Owner, Page, PageStatus
+from app.models import Book, Owner, Page, PageStatus
 from app.services.export import png_bytes
 from app.storage import Storage
-
-_INT = TypeAdapter(int)
 
 
 def _bounded_ids(request: Request, _owner: Owner = Depends(current_owner)) -> None:
@@ -31,12 +28,7 @@ def _bounded_ids(request: Request, _owner: Owner = Depends(current_owner)) -> No
     for name in ("book_id", "page_id"):
         if name not in request.path_params:
             continue
-        try:
-            value = _INT.validate_python(request.path_params[name])
-        except ValidationError:
-            raise HTTPException(404, SHARED_NOT_FOUND) from None
-        if not SQLITE_INT_MIN <= value <= SQLITE_INT_MAX:
-            raise HTTPException(404, SHARED_NOT_FOUND)
+        parse_db_id(request.path_params[name], SHARED_NOT_FOUND)
 
 
 router = APIRouter(prefix="/api/shared", tags=["shared"], dependencies=[Depends(_bounded_ids)])

@@ -184,7 +184,7 @@ def test_background_ignores_preflight(client, app):
 
 
 def test_background_simple_records_variation(client, app, monkeypatch):
-    from app.api import compose as compose_api
+    from app.services import jobs as compose_api
 
     monkeypatch.setattr(
         compose_api, "pick_background_variation", lambda rng, exclude=None: "seen from far away"
@@ -229,7 +229,7 @@ def test_background_simple_regenerate_never_repeats_variation(client, app):
 
 
 def test_background_simple_excludes_latest_simple_any_status(client, app, monkeypatch):
-    from app.api import compose as compose_api
+    from app.services import jobs as compose_api
 
     calls: list[str | None] = []
     real = compose_api.pick_background_variation
@@ -260,7 +260,7 @@ def test_background_simple_excludes_latest_simple_any_status(client, app, monkey
 
 
 def test_batch_simple_excludes_latest_simple_per_page(client, app, monkeypatch):
-    from app.api import compose as compose_api
+    from app.services import jobs as compose_api
 
     b = new_book(client)
     pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(2)]
@@ -342,7 +342,7 @@ def request_of(app, gen_id) -> dict:
 
 
 def test_pose_defaults_to_precise(client, app, monkeypatch):
-    from app.api import compose as compose_api
+    from app.services import jobs as compose_api
 
     monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng, exclude=None, facing=False: None)
     b, _ = book_with_character(client, app)
@@ -364,7 +364,7 @@ def test_pose_defaults_to_precise(client, app, monkeypatch):
 @pytest.mark.parametrize("mode", ["fast", "precise", "qwen", None])
 def test_pose_ignores_mode(client, app, monkeypatch, mode):
     """舊前端送的 mode 一律忽略：只有精準（Qwen）一種。"""
-    from app.api import compose as compose_api
+    from app.services import jobs as compose_api
 
     monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng, exclude=None, facing=False: "facing left")
     b, _ = book_with_character(client, app)
@@ -387,7 +387,7 @@ def test_pose_has_no_preflight_precheck(client, app):
 
 
 def test_pose_records_variation(client, app, monkeypatch):
-    from app.api import compose as compose_api
+    from app.services import jobs as compose_api
 
     monkeypatch.setattr(compose_api, "pick_pose_variation", lambda rng, exclude=None, facing=False: "facing left")
     b, _ = book_with_character(client, app)
@@ -421,7 +421,7 @@ def test_pose_regenerate_never_repeats_variation(client, app):
 
 
 def test_pose_excludes_latest_pose_any_status(client, app, monkeypatch):
-    from app.api import compose as compose_api
+    from app.services import jobs as compose_api
 
     calls = []
     real = compose_api.pick_pose_variation
@@ -445,7 +445,7 @@ def test_pose_excludes_latest_pose_any_status(client, app, monkeypatch):
 
 
 def test_batch_pose_excludes_latest_pose_per_page(client, app, monkeypatch):
-    from app.api import compose as compose_api
+    from app.services import jobs as compose_api
 
     b, _ = book_with_character(client, app, **A5_HOME)
     p1 = new_page(client, b["id"], scene_prompt="公園", action_prompt="揮手")
@@ -486,7 +486,10 @@ def test_poses_with_facing_alternate(client, app):
 
 
 def test_last_pose_variations_newest_first_skips_malformed(client, app):
-    from app.api.compose import _last_pose_variations
+    from app.services.jobs import last_variations
+
+    def _last_pose_variations(s, page_id, n=2):
+        return last_variations(s, Generation.page_id == page_id, Generation.kind == GenKind.POSE, n=n)
 
     b, _ = book_with_character(client, app)
     p = new_page(client, b["id"])
@@ -950,7 +953,7 @@ def _files(storage):
 
 
 def test_compose_race_inputs_changed(client, app, monkeypatch):
-    import app.api.compose as compose_api
+    import app.services.jobs as compose_api
     import app.services.page_compose as page_compose
 
     b, p, bg, pose = compose_ready(client, app)
@@ -1153,7 +1156,7 @@ def test_batch_backgrounds_concurrent_calls_queue_once_per_page(client, app, mon
     import time
     from concurrent.futures import ThreadPoolExecutor
 
-    import app.api.compose as compose_api
+    import app.services.jobs as compose_api
 
     b = new_book(client)
     pages = [new_page(client, b["id"], scene_prompt=f"場景{i}") for i in range(3)]

@@ -15,14 +15,14 @@ from app.storage import LocalStorage, Storage, StorageNotFound
 router = APIRouter(prefix="/api", tags=["files"])
 
 REDIRECT_MAX_AGE = 60  # config.py 的 storage.signed_url_ttl_s 下限 = 這個值 + 30
-REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
+SIGNED_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 
 
 def signed_redirect(request: Request, storage: Storage, key: str) -> RedirectResponse:
     """302 到 storage.signed_url(key)。呼叫端要先確認物件存在（不存在要回 404，不是死網址）。"""
     ttl = request.app.state.settings.storage.signed_url_ttl_s
     return RedirectResponse(storage.signed_url(key, ttl), status_code=302,
-                            headers={"Cache-Control": REDIRECT_CACHE_CONTROL})
+                            headers={"Cache-Control": SIGNED_CACHE_CONTROL})
 
 
 @router.get("/files/{key:path}")
@@ -42,4 +42,4 @@ def get_file(
         raise HTTPException(404, "圖片檔案遺失") from None
     media_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
     return Response(content=data, media_type=media_type,
-                    headers={"Cache-Control": REDIRECT_CACHE_CONTROL})
+                    headers={"Cache-Control": SIGNED_CACHE_CONTROL})

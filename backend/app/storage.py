@@ -172,7 +172,8 @@ def _prune_empty_dirs(root: Path, prefix: str) -> None:
 
 
 class LocalStorage(_KeyBuilders):
-    """以資料夾為後端。signed_url 指向後端 /api/files/{key}，以 HMAC 簽章（測試與假後端用）。"""
+    """以資料夾為後端。signed_url 指向後端 /api/files/{key}，以 HMAC 簽章。這是 `storage.backend: local` 的正式後端（設定範本的預設值），
+    不是只給測試用的假後端：檢查與錯誤處理要跟 R2 一樣小心。"""
 
     def __init__(self, root: Path, signing_key: bytes):
         """signing_key 必填：同一個 storage 的每個實例（多個行程、重啟後）都要用同一把，簽出的網址才驗得過。"""

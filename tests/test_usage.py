@@ -20,7 +20,9 @@ from app.models import Book, Generation, GenKind, GenStatus, Owner, Usage
 from app.services import auth, usage
 from app.services.engine import EngineError
 from app.services.layout import PaperSize, PrintMode
-from app.services.worker import GenerationWorker, RETIRED, encode_request
+from app.services.engine import RETIRED
+from app.services.gen_request import encode_request
+from app.services.worker import GenerationWorker
 from app.storage import LocalStorage
 from tests.fake_engine import FakeEngine
 from tests.test_api_books import candidates, new_book, run_jobs

@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 from pydantic_core import PydanticCustomError
@@ -16,6 +16,9 @@ from app.services.engine import public_engine_error
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
 from app.services.qa import QA_MESSAGES, QAReport
+
+if TYPE_CHECKING:
+    from app.services.worker import GenerationWorker
 
 # 請求裡的資料列 id：超出 SQLite INTEGER 的回 422（不然查詢時 OverflowError → 500）
 DbId = Annotated[int, Field(ge=SQLITE_INT_MIN, le=SQLITE_INT_MAX)]
@@ -207,6 +210,14 @@ class GenerationOut(BaseModel):
             queue_position=queue_position,
             progress=progress,
             created_at=gen.created_at,
+        )
+
+    @classmethod
+    def for_worker(cls, gen: Generation, worker: "GenerationWorker", *, is_admin: bool = False) -> "GenerationOut":
+        """附上 worker 的排隊位置與進度。"""
+        return cls.from_generation(
+            gen, queue_position=worker.queue_position(gen.id), progress=worker.progress.get(gen.id),
+            is_admin=is_admin,
         )
 
 

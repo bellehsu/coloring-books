@@ -8,12 +8,8 @@ from app.db import init_db, make_engine, session_factory
 from app.models import Book, GenKind, Generation, GenStatus, Owner, Usage
 from app.services.engine import EngineError, EngineUnavailable
 from app.services.layout import PaperSize, PrintMode
-from app.services.worker import (
-    GenerationWorker,
-    WorkerState,
-    decode_request,
-    encode_request,
-)
+from app.services.gen_request import decode_request, encode_request
+from app.services.worker import GenerationWorker, WorkerState
 from app.storage import LocalStorage, StorageNotFound
 from tests.fake_engine import FakeEngine
 
