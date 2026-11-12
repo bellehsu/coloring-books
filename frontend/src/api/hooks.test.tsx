@@ -4,10 +4,8 @@ import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-
 import type { ReactNode } from "react";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import {
-  useBatchMaterials,
   useBookOverview,
   OVERVIEW_POLL_MS,
-  useCharacterCandidates,
   useCompose,
   useGenerateBackground,
   useGeneratePose,
@@ -141,26 +139,6 @@ describe("compose-flow hooks", () => {
     // 同 useSelectBackground：上傳等於改選背景，頁面的線稿／QA／書的統計都要重抓
     for (const k of [qk.generationsOf(1), qk.pages(1), qk.qa(5), qk.edits(5), qk.book(1), qk.exportSummary(1)])
       expect(keys()).toContain(JSON.stringify(k));
-  });
-
-  it("useCharacterCandidates POST /books/1/character/candidates 只帶描述（後端一次一張，不送 count）", async () => {
-    const { f, wrapper, keys } = run();
-    const { result } = renderHook(() => useCharacterCandidates(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ description: "一隻小兔子" }); });
-    expect(f.mock.calls[0][0]).toBe("/api/books/1/character/candidates");
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ description: "一隻小兔子" });
-    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
-  });
-
-  it("useBatchMaterials POST /books/1/materials/batch 帶 upload_page_ids", async () => {
-    const { f, wrapper, keys } = run();
-    const { result } = renderHook(() => useBatchMaterials(1), { wrapper });
-    await act(async () => { await result.current.mutateAsync({ upload_page_ids: [4] }); });
-    expect(f.mock.calls[0][0]).toBe("/api/books/1/materials/batch");
-    expect(f.mock.calls[0][1].method).toBe("POST");
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ upload_page_ids: [4] });
-    expect(keys()).toContain(JSON.stringify(qk.generationsOf(1)));
-    expect(keys()).toContain(JSON.stringify(qk.pages(1)));
   });
 
   it("useGeneratePose POST /pages/5/poses 只帶 action（不帶產生方式）", async () => {

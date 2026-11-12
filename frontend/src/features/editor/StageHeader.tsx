@@ -15,16 +15,8 @@ export const DEFAULT_MODE: EditorMode = "compose";
 
 export const isEditorMode = (v: string | null): v is EditorMode => MODES.some((m) => m.value === v);
 
-/** 舊網址的模式（五個分頁時代）對到現在的兩步：背景／角色 → 構圖、QA 檢查 → 補線；其他 → 構圖。 */
-const LEGACY_MODES = new Map<string, EditorMode>([
-  ["background", "compose"],
-  ["pose", "compose"],
-  ["qa", "line"],
-]);
-
-/** 網址的 mode 參數 → 編輯器模式（書籤與舊連結照常可用）。 */
-export const normalizeMode = (v: string | null): EditorMode =>
-  isEditorMode(v) ? v : ((v != null && LEGACY_MODES.get(v)) || DEFAULT_MODE);
+/** 網址的 mode 參數 → 編輯器模式；未知值一律回構圖。 */
+export const normalizeMode = (v: string | null): EditorMode => (isEditorMode(v) ? v : DEFAULT_MODE);
 
 /** C 改過、頁面流程還在重新合成時的說明（補線停用的原因，也顯示在舞台上方）。 */
 export const RECOMPOSING_NOTICE = "這一頁正在重新合成…好了會自動更新";

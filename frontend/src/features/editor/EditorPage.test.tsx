@@ -430,24 +430,14 @@ describe("EditorPage", () => {
     expect(screen.queryByTestId("compose-stage")).not.toBeInTheDocument();
   });
 
-  it("舊網址的模式：mode=background／pose → 構圖；mode=qa → 補線", async () => {
-    search = "page=1&mode=pose";
-    setup();
-    await screen.findAllByRole("tab");
-    expect(composeTab()).toHaveAttribute("aria-selected", "true");
-    cleanup();
-    search = "page=1&mode=background";
-    setup();
-    await screen.findAllByRole("tab");
-    expect(composeTab()).toHaveAttribute("aria-selected", "true");
-    cleanup();
-    search = "page=1&mode=qa";
-    pages[0] = mkPage(1, { selected_generation_id: 5 });
-    gens = [mkGen(5)];
-    setup();
-    expect(await screen.findByTestId("linefix")).toBeInTheDocument();
-    expect(lineTab()).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("finish-panel")).toBeInTheDocument();
+  it("未知或舊的 mode（pose／background／qa）一律回構圖", async () => {
+    for (const mode of ["pose", "background", "qa"]) {
+      search = `page=1&mode=${mode}`;
+      setup();
+      await screen.findAllByRole("tab");
+      expect(composeTab()).toHaveAttribute("aria-selected", "true");
+      cleanup();
+    }
   });
 
   it("legacy page keeps line tab：舊流程頁（選定圖是 page）可以補線；改選背景不清掉舊圖", async () => {

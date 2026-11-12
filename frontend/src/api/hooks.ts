@@ -9,7 +9,6 @@ import { api } from "./client";
 import { placementSaverFor } from "@/features/editor/placementSaver";
 import type { components } from "./schema";
 import type {
-  BatchMaterials,
   Book,
   BookOverview,
   Edits,
@@ -264,15 +263,6 @@ function invalidateJobs(qc: QueryClient, bookId: number) {
   ]);
 }
 
-/** invalidate: books */
-export function useCreateBook() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (b: S["BookCreate"]) => api.post<Book>("/books", b),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.books() }),
-  });
-}
-
 /** invalidate: book, books（紙張或模式改變也影響頁面版面與 QA） */
 export function useUpdateBook(bookId: number) {
   const qc = useQueryClient();
@@ -301,22 +291,6 @@ export function useShareBook(bookId: number) {
         qc.invalidateQueries({ queryKey: qk.books() }),
         qc.invalidateQueries({ queryKey: qk.sharedBooks() }),
       ]),
-  });
-}
-
-/**
- * 產生一張角色候選（後端一次只排一張；舊版的 count 後端會忽略，所以不送）→ generations, queue。
- * 變化語不重複上一張由後端處理。
- */
-export function useCharacterCandidates(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (
-      b: Omit<S["CharacterCandidatesCreate"], "count" | "confirm_change"> & { confirm_change?: boolean },
-    ) =>
-      api.post<Generation[]>(`/books/${bookId}/character/candidates`, b),
-    onSuccess: () =>
-      Promise.all([invalidateJobs(qc, bookId), qc.invalidateQueries({ queryKey: qk.producePlan(bookId) })]),
   });
 }
 
@@ -362,21 +336,6 @@ export function useSetupCharacter() {
     onSuccess: (book) => afterCharacterSet(qc, book),
   });
   return { generate, choose, upload };
-}
-
-/** invalidate: book, books, generations */
-export function useSetCharacter(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (generationId: number) =>
-      api.post<Book>(`/books/${bookId}/character`, { generation_id: generationId }),
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: qk.book(bookId) }),
-        qc.invalidateQueries({ queryKey: qk.books() }),
-        qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
-      ]),
-  });
 }
 
 /** invalidate: pages, book, books */
@@ -520,20 +479,6 @@ export function useUploadBackground(bookId: number) {
     mutationFn: ({ pageId, file }: { pageId: number; file: File }) =>
       api.upload<Page>(`/pages/${pageId}/backgrounds/upload`, file),
     onSuccess: (_d, v) => Promise.all([invalidatePage(qc, bookId, v.pageId), invalidateJobs(qc, bookId)]),
-  });
-}
-
-/**
- * 產生全部素材：替整本書每一頁補排缺的背景與角色動作（後端略過已有／沒描述的）。
- * upload_page_ids：改用上傳圖片的頁，不排背景 → generations, pages, queue
- */
-export function useBatchMaterials(bookId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body?: S["BatchMaterialsIn"]) =>
-      api.post<BatchMaterials>(`/books/${bookId}/materials/batch`, body),
-    onSuccess: () =>
-      Promise.all([qc.invalidateQueries({ queryKey: qk.pages(bookId) }), invalidateJobs(qc, bookId)]),
   });
 }
 

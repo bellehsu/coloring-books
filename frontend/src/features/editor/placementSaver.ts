@@ -12,9 +12,6 @@ export interface PlacementSaver {
   savePlacement(pageId: number, p: Placement): void;
   /** 等這頁位置寫完；最後一次寫入失敗 → reject。 */
   whenIdle(pageId: number): Promise<void>;
-  /** 任何一頁有位置在送出中或待送。 */
-  busy(): boolean;
-  busyPage(pageId: number): boolean;
   failed(pageId: number): boolean;
   /** 重送最後 save 的位置（失敗後的「重試」）；沒存過則不動作。 */
   retry(pageId: number): void;
@@ -69,8 +66,6 @@ export function placementSaverFor(qc: QueryClient): PlacementSaver {
       q.push(pageId, p);
     },
     whenIdle: (pageId) => q.whenIdle(pageId),
-    busy: () => q.anyBusy(),
-    busyPage: (pageId) => q.busy(pageId),
     failed: (pageId) => q.failed(pageId),
     hasPending: (pageId) => (pageId == null ? q.anyBusy() || q.anyFailed() : q.busy(pageId) || q.failed(pageId)),
     retry(pageId) {

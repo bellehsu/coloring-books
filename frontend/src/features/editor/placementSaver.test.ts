@@ -51,7 +51,7 @@ describe("placementSaverFor", () => {
     const spy = vi.spyOn(qc, "invalidateQueries");
     const s = placementSaverFor(qc);
     for (let i = 1; i <= 5; i++) s.savePlacement(1, at(i / 10));
-    expect(s.busy()).toBe(true);
+    expect(s.hasPending()).toBe(true);
     let idle = false;
     void s.whenIdle(1).then(() => (idle = true));
     await tick();
@@ -67,7 +67,7 @@ describe("placementSaverFor", () => {
     await tick();
     expect(idle).toBe(true);
     expect(gates).toHaveLength(2);
-    expect(s.busy()).toBe(false);
+    expect(s.hasPending()).toBe(false);
     expect(spy).toHaveBeenCalledWith({ queryKey: ["pages", 7] });
   });
 

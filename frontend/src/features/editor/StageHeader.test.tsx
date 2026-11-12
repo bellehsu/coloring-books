@@ -51,11 +51,11 @@ describe("StageHeader 回到處理這一頁", () => {
 });
 
 describe("modes", () => {
-  it("normalizeMode maps background/pose→compose and qa→line", () => {
+  it("normalizeMode keeps known modes; unknown (incl. old bookmark modes) → compose", () => {
     expect(normalizeMode("background")).toBe("compose");
     expect(normalizeMode("pose")).toBe("compose");
     expect(normalizeMode("compose")).toBe("compose");
-    expect(normalizeMode("qa")).toBe("line");
+    expect(normalizeMode("qa")).toBe("compose");
     expect(normalizeMode("line")).toBe("line");
     expect(normalizeMode(null)).toBe("compose");
     expect(normalizeMode("whatever")).toBe("compose");

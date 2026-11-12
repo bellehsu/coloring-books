@@ -26,8 +26,6 @@ import {
 import { ZOOM_MAX, ZOOM_MIN, clampZoom, placePaper, stepZoom, wheelZoom } from "./zoom";
 import styles from "./LineFixCanvas.module.css";
 
-export { ZOOM_MAX, ZOOM_MIN } from "./zoom";
-
 export interface LineFixCanvasProps {
   /** 伺服器渲染好的線稿（已套用修改圖層），帶 ?v=；只有字串改變才會重載圖片。 */
   lineartUrl: string;

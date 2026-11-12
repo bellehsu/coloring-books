@@ -470,7 +470,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const shell = (body: ReactNode) => (
     <>
       <AppBar crumbs={[{ label: "我的繪本", href: "/" }, { label: b.title, href: `/books/${b.id}` }]} />
-      <BookBar book={b} current="pages" onExport={() => setExportOpen(true)} onSettings={() => setSettingsOpen(true)} />
+      <BookBar book={b} onExport={() => setExportOpen(true)} onSettings={() => setSettingsOpen(true)} />
       {!hasCharacter && (
         <p className={styles.notice}>
           這本繪本還沒設定角色，不能產生角色動作。<Link href={characterHref}>前往角色工作室</Link>
