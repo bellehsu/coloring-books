@@ -6,6 +6,7 @@ Phase 9 只有三條 Qwen-Image-Edit-2511 路線（spec 2026-11-10 §4.7）。�
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from collections.abc import Callable
@@ -25,6 +26,7 @@ WORKFLOWS: dict[GenKind, str] = {
     GenKind.POSE: "qwen_edit_pose_cutout",
 }
 UPLOAD_SUBFOLDER = "coloring_books"
+INTERRUPT_TIMEOUT_S = 3.0
 
 
 class ComfyEngine:
@@ -33,14 +35,21 @@ class ComfyEngine:
         self.client_factory = client_factory
         self.registry = registry
         self.run_timeout_s = run_timeout_s
-        self._upload_cache: dict[str, str] = {}  # 內容 hash 名稱 → ComfyUI 中的名稱
 
     async def _upload(self, client: ComfyClient, data: bytes, suffix: str) -> str:
         name = f"{hashlib.sha256(data).hexdigest()[:12]}_{suffix}.png"
-        if name not in self._upload_cache:
-            res = await client.upload_image(data, name, subfolder=UPLOAD_SUBFOLDER)
-            self._upload_cache[name] = client.uploaded_ref(res)
-        return self._upload_cache[name]
+        # 每次都上傳（約 1–2 MB，overwrite 是冪等的）：ComfyUI 的 input 被清掉也不會讓動作生成一直失敗
+        res = await client.upload_image(data, name, subfolder=UPLOAD_SUBFOLDER, overwrite=True)
+        return client.uploaded_ref(res)
+
+    async def interrupt(self) -> None:
+        """盡力中斷 ComfyUI 正在跑的 prompt（短逾時，任何錯誤都忽略）。"""
+        try:
+            async with self.client_factory() as client:
+                await asyncio.wait_for(client.interrupt(), timeout=INTERRUPT_TIMEOUT_S)
+        except Exception:  # noqa: BLE001
+            pass
+
 
     async def generate(self, req: GenerationRequest, on_progress: ProgressFn | None = None) -> GenerationResult:
         try:

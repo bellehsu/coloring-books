@@ -172,6 +172,9 @@ class DemoEngine:
         self.delay_s = delay_s
         self.progress_steps = progress_steps
 
+    async def interrupt(self) -> None:
+        return None
+
     async def generate(self, req: GenerationRequest, on_progress: ProgressFn | None = None) -> GenerationResult:
         start = time.monotonic()
         n = max(1, self.progress_steps)

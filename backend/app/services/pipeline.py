@@ -33,6 +33,7 @@ from app.models import (
     Generation, GenKind, GenStatus, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer, utcnow,
 )
 from app.services import history
+from app.services.engine import public_engine_error
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix
 from app.services.lineart_render import apply_strokes
 from app.services.page_compose import (
@@ -229,7 +230,7 @@ def on_generation_failed(session: Session, gen_id: int) -> None:
         return
     session.exec(
         update(Page).where(col(Page.id) == gen.page_id)
-        .values(attention=ATTENTION_FAILED, attention_detail=gen.error or GENERATION_FAILED, updated_at=utcnow())
+        .values(attention=ATTENTION_FAILED, attention_detail=public_engine_error(gen.error, False) or GENERATION_FAILED, updated_at=utcnow())
     )
     session.commit()
 

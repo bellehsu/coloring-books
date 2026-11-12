@@ -52,6 +52,7 @@ def worker_job():
 
 ENGINE_REQUEUES = "engine_requeues"  # request_json 的計數：因引擎連不上而放回佇列的次數（worker 自己寫）
 MAX_ENGINE_REQUEUES = 3
+WRITE_RETRY_DELAYS = (0.2, 0.5, 1.0)  # 收尾寫入失敗時的退避秒數
 ENGINE_GAVE_UP = "繪圖服務一直連不上，已停止重試"
 
 
@@ -140,6 +141,8 @@ class GenerationWorker:
         self._wakeup = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._in_engine = False  # 引擎正在跑一筆（stop() 時才需要中斷 ComfyUI）
+        self._unfinished: dict[int, Callable[[], object]] = {}  # 收尾寫入一直失敗的列：下一輪迴圈前補寫
 
     # ---- 生命週期 ----
     async def start(self) -> None:
@@ -159,6 +162,11 @@ class GenerationWorker:
         if pipeline._wakeup == self.notify:
             pipeline.set_wakeup(None)
         if task is not None:
+            if self._in_engine:  # 盡力中斷 ComfyUI 正在跑的 prompt，重啟後才不會白跑兩次
+                try:
+                    await self.engine.interrupt()
+                except Exception:  # noqa: BLE001
+                    log.warning("stop：中斷引擎失敗", exc_info=True)
             task.cancel()
             try:
                 await task
@@ -298,20 +306,24 @@ class GenerationWorker:
                 # Storage 可能是遠端（R2）：讀寫放到 thread，不卡住 event loop
                 req = await asyncio.to_thread(decode_request, gen.request_json, self.storage)
             except StorageNotFound:
-                self._fail(gen_id, CHARACTER_MISSING)
+                await self._fail_retrying(gen_id, CHARACTER_MISSING)
                 return True
             except ValueError as e:
                 if str(e) == RETIRED:  # 已停用的路線：只回報原因
-                    self._fail(gen_id, RETIRED)
+                    await self._fail_retrying(gen_id, RETIRED)
                     return True
-                self._fail(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
+                await self._fail_retrying(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
                 return True
             except Exception as e:  # noqa: BLE001
-                self._fail(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
+                await self._fail_retrying(gen_id, f"無法解析請求：{type(e).__name__}: {e}")
                 return True
-            result = await self.engine.generate(
-                req, lambda value, maximum: self.progress.__setitem__(gen_id, (value, maximum))
-            )
+            self._in_engine = True
+            try:
+                result = await self.engine.generate(
+                    req, lambda value, maximum: self.progress.__setitem__(gen_id, (value, maximum))
+                )
+            finally:
+                self._in_engine = False
             rel = self.storage.generation_image(gen.book_id, gen_id)
             await asyncio.to_thread(self.storage.put, rel, result.image)
             mask_rel = None
@@ -321,8 +333,7 @@ class GenerationWorker:
                 if req.kind == GenKind.POSE:
                     mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
                 await asyncio.to_thread(self.storage.put, mask_rel, mask_png)
-            done = self._finish(
-                gen_id,
+            values = dict(
                 mask_path=mask_rel,
                 status=GenStatus.SUCCEEDED,
                 image_path=rel,
@@ -336,24 +347,31 @@ class GenerationWorker:
                 error=None,
                 finished_at=utcnow(),
             )
-            if done:
-                self._after_success(gen_id)
+
+            def write_success() -> None:
+                if self._finish(gen_id, **values):
+                    self._after_success(gen_id)
+
+            await self._write_retrying(gen_id, write_success)
             self.last_error = None
             self.state = WorkerState.IDLE
         except EngineUnavailable as e:
             requeues = self._requeue_count(gen.request_json) + 1
             if requeues > MAX_ENGINE_REQUEUES:
-                self._fail(gen_id, ENGINE_GAVE_UP)
+                await self._fail_retrying(gen_id, ENGINE_GAVE_UP)
             else:
-                self._finish(gen_id, status=GenStatus.QUEUED, started_at=None,
-                             request_json=self._with_requeues(gen.request_json, requeues))
+                requeue_json = self._with_requeues(gen.request_json, requeues)
+                await self._write_retrying(
+                    gen_id,
+                    lambda: self._finish(gen_id, status=GenStatus.QUEUED, started_at=None, request_json=requeue_json),
+                )
                 self.last_error = str(e)
                 self.state = WorkerState.ENGINE_UNAVAILABLE
         except EngineError as e:
-            self._fail(gen_id, str(e))
+            await self._fail_retrying(gen_id, str(e))
         except Exception as e:  # noqa: BLE001  單筆任務的任何例外都不可殺死 worker
             log.exception("generation %s crashed", gen_id)
-            self._fail(gen_id, f"非預期錯誤：{type(e).__name__}: {e}")
+            await self._fail_retrying(gen_id, f"非預期錯誤：{type(e).__name__}: {e}")
         finally:
             self.progress.pop(gen_id, None)
         return True
@@ -376,6 +394,30 @@ class GenerationWorker:
             d = {}
         d[ENGINE_REQUEUES] = n
         return json.dumps(d, ensure_ascii=False, sort_keys=True)
+
+    async def _write_retrying(self, gen_id: int, write: Callable[[], object]) -> None:
+        """收尾寫入（資料庫暫時鎖住等）失敗時退避重試；仍失敗就記在 _unfinished，下一輪迴圈前補寫。從不丟例外。"""
+        for delay in (None, *WRITE_RETRY_DELAYS):
+            if delay is not None:
+                await asyncio.sleep(delay)
+            try:
+                write()
+                self._unfinished.pop(gen_id, None)
+                return
+            except Exception:  # noqa: BLE001
+                log.exception("generation %s：收尾寫入失敗", gen_id)
+        self._unfinished[gen_id] = write
+
+    async def _fail_retrying(self, gen_id: int, message: str) -> None:
+        await self._write_retrying(gen_id, lambda: self._fail(gen_id, message))
+
+    async def _retry_unfinished(self) -> None:
+        for gen_id, write in list(self._unfinished.items()):
+            try:
+                write()
+                self._unfinished.pop(gen_id, None)
+            except Exception:  # noqa: BLE001
+                log.exception("generation %s：補寫收尾仍失敗", gen_id)
 
     def _fail(self, gen_id: int, message: str) -> None:
         if self._finish(gen_id, status=GenStatus.FAILED, error=message, finished_at=utcnow()):
@@ -433,6 +475,7 @@ class GenerationWorker:
             # 先清除再取任務：任務執行中到達的 notify() 會讓事件保持 set，不會遺失
             self._wakeup.clear()
             try:
+                await self._retry_unfinished()
                 did = await self.run_once()
                 await self.run_page_tasks()  # 每張生成之後（與閒置時）先做完排隊的頁面流程
             except Exception:  # noqa: BLE001  例如資料庫暫時錯誤；退避後繼續

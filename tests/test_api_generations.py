@@ -223,3 +223,40 @@ def test_queue_status_recent_only_current_comfy_workflows(client, app):
     ])
     recent = client.get("/api/system/queue").json()["recent"]
     assert recent == [{"kind": "background", "elapsed_s": 60.0}, {"kind": "pose", "elapsed_s": 90.0}]
+
+
+def _act_as_non_admin(app):
+    """同一位 owner，但不是 admin（dependency override，不動資料庫）。"""
+    from sqlmodel import select
+
+    from app.api.deps import current_owner
+    from app.models import Owner
+
+    with app.state.sessions() as s:
+        o = s.exec(select(Owner)).first()
+        fake = Owner(id=o.id, name=o.name, token_hash=o.token_hash, is_admin=False)
+    app.dependency_overrides[current_owner] = lambda: fake
+
+
+def test_engine_error_text_hidden_from_non_admin(client, app, engine):
+    raw = "ComfyUI 無法連線：無法連線 ComfyUI（http://127.0.0.1:8188）：All connection attempts failed"
+    fixed = "繪圖服務暫時無法連線，稍後會自動重試"
+    b = new_book(client)
+    g = candidates(client, b["id"], seed=1, count=1).json()[0]
+    engine.error = EngineUnavailable(raw)
+    client.portal.call(app.state.worker.run_once)
+    assert "127.0.0.1:8188" in client.get("/api/system/queue").json()["last_error"]  # admin：原文
+    # 一筆含位址的失敗錯誤
+    from app.models import Generation, GenStatus
+
+    with app.state.sessions() as s:
+        row = s.get(Generation, g["id"])
+        row.status, row.error = GenStatus.FAILED, "GET http://127.0.0.1:8188/view 失敗"
+        s.add(row)
+        s.commit()
+    assert "127.0.0.1:8188" in client.get(f"/api/generations/{g['id']}").json()["error"]
+    _act_as_non_admin(app)
+    q = client.get("/api/system/queue").json()
+    assert q["last_error"] == fixed
+    assert client.get(f"/api/generations/{g['id']}").json()["error"] == fixed
+    assert "127.0.0.1" not in client.get(f"/api/books/{b['id']}/generations").text

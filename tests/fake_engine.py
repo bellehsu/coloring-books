@@ -38,7 +38,11 @@ class FakeEngine:
         self.image: bytes = make_png()
         self.delay_s: float = 0.0
         self.mask_override: bytes | None = None  # 指定時取代預設遮罩
+        self.interrupts = 0
         self.pose_mask: bool = True  # kind=pose 時是否附上遮罩（設 False 測失敗）
+
+    async def interrupt(self) -> None:
+        self.interrupts += 1
 
     async def generate(self, req: GenerationRequest, on_progress: ProgressFn | None = None) -> GenerationResult:
         import asyncio

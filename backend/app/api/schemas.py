@@ -12,6 +12,7 @@ from app.services import history
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS  # noqa: F401  (re-export)
 from app.services.caption_text import normalize_caption
 from app.services.compose import Placement
+from app.services.engine import public_engine_error
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
 from app.services.qa import QA_MESSAGES, QAReport
@@ -241,6 +242,7 @@ class GenerationOut(BaseModel):
         *,
         queue_position: int | None = None,
         progress: tuple[int, int] | None = None,
+        is_admin: bool = False,
     ) -> "GenerationOut":
         return cls(
             id=gen.id,
@@ -260,7 +262,7 @@ class GenerationOut(BaseModel):
             pose_mode=pose_mode_of(gen),
             background_style=background_style_of(gen),
             source="upload" if gen.engine == "upload" else "generated",
-            error=gen.error,
+            error=public_engine_error(gen.error, is_admin),
             elapsed_s=gen.elapsed_s,
             queue_position=queue_position,
             progress=progress,

@@ -291,12 +291,12 @@ def test_queue_has_no_content(client, app):
     assert body["pending"] == [{"kind": "character"}, {"kind": "character"}]
     for job in body["recent"]:
         assert set(job) == {"kind", "elapsed_s"}
-    # 引擎無法連線的訊息是系統狀態（不含任何人的內容），照常顯示
+    # 引擎無法連線是系統狀態（不含任何人的內容）：非管理者只看到固定訊息，不含內部位址
     from app.services.worker import WorkerState
 
     app.state.worker.state = WorkerState.ENGINE_UNAVAILABLE
     app.state.worker.last_error = "ComfyUI 無法連線"
-    assert client.get("/api/system/queue").json()["last_error"] == "ComfyUI 無法連線"
+    assert client.get("/api/system/queue").json()["last_error"] == "繪圖服務暫時無法連線，稍後會自動重試"
     # admin 看得到全部
     app.state.worker.state = WorkerState.IDLE
     app.state.worker.last_error = secret

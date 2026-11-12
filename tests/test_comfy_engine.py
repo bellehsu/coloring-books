@@ -109,13 +109,22 @@ async def test_character_progress_and_defaults(tmp_path):
     assert res.params == {"prompt": "a cat", "seed": 7, "width": 832, "height": 1216}
 
 
-async def test_pose_upload_is_cached(tmp_path):
+async def test_pose_uploads_character_every_time(tmp_path):
     fake = FakeComfy()
     eng = make_engine(fake)
     req = make_req(tmp_path, kind=GenKind.POSE, character=True)
     await eng.generate(req)
     await eng.generate(req)
-    assert len(fake.uploads) == 1
+    assert len(fake.uploads) == 2
+
+
+async def test_interrupt_calls_comfy_and_swallows_errors(tmp_path):
+    fake = FakeComfy()
+    eng = make_engine(fake)
+    await eng.interrupt()
+    assert fake.interrupted
+    eng.client_factory = lambda: (_ for _ in ()).throw(RuntimeError("down"))
+    await eng.interrupt()  # 不丟例外
 
 
 async def test_engine_rejects_page_kind(tmp_path):

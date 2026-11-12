@@ -589,3 +589,78 @@ async def test_autoselect_never_replaces(env):
     add_gen(sessions, kind=GenKind.BACKGROUND, page_id=pid)
     assert await worker.run_once() is True
     assert _page_row(sessions, pid).background_generation_id == first
+
+
+async def test_finish_write_retried_then_succeeds(env, monkeypatch):
+    worker, engine, sessions, _ = env
+    gid = add_gen(sessions)
+    sleeps = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(d):
+        sleeps.append(d)
+        await real_sleep(0)
+
+    monkeypatch.setattr("app.services.worker.asyncio.sleep", fake_sleep)
+    fails = {"n": 2}
+
+    # 只讓「收尾」的 commit 失敗：_claim 之後才開始計
+    orig_finish = worker._finish
+
+    def flaky_finish(*a, **kw):
+        if fails["n"] > 0:
+            fails["n"] -= 1
+            raise RuntimeError("database is locked")
+        return orig_finish(*a, **kw)
+
+    monkeypatch.setattr(worker, "_finish", flaky_finish)
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.SUCCEEDED
+    assert sleeps == [0.2, 0.5]
+
+
+async def test_finish_write_all_attempts_fail_then_retried_next_loop(env, monkeypatch):
+    worker, engine, sessions, _ = env
+    gid = add_gen(sessions)
+
+    async def no_sleep(d):
+        pass
+
+    monkeypatch.setattr("app.services.worker.asyncio.sleep", no_sleep)
+    orig_finish = worker._finish
+    broken = {"on": True}
+
+    def flaky_finish(*a, **kw):
+        if broken["on"]:
+            raise RuntimeError("database is locked")
+        return orig_finish(*a, **kw)
+
+    monkeypatch.setattr(worker, "_finish", flaky_finish)
+    await worker.run_once()
+    assert get(sessions, gid).status == GenStatus.RUNNING
+    assert gid in worker._unfinished
+    broken["on"] = False
+    await worker._retry_unfinished()
+    assert get(sessions, gid).status == GenStatus.SUCCEEDED
+    assert not worker._unfinished
+
+
+async def test_stop_interrupts_running_engine(env):
+    worker, engine, sessions, _ = env
+    engine.delay_s = 5
+    add_gen(sessions)
+    await worker.start()
+    for _ in range(100):
+        if worker.state == WorkerState.RUNNING:
+            break
+        await asyncio.sleep(0.01)
+    await worker.stop()
+    assert engine.interrupts == 1
+
+
+async def test_stop_idle_does_not_interrupt(env):
+    worker, engine, sessions, _ = env
+    await worker.start()
+    await asyncio.sleep(0.05)
+    await worker.stop()
+    assert engine.interrupts == 0

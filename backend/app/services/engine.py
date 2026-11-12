@@ -51,3 +51,18 @@ ProgressFn = Callable[[int, int], None]
 
 class GenerationEngine(Protocol):
     async def generate(self, req: GenerationRequest, on_progress: ProgressFn | None = None) -> GenerationResult: ...
+
+    async def interrupt(self) -> None:
+        """盡力中斷執行中的生成（後端停止時呼叫）；沒有東西可中斷或失敗都不丟例外。"""
+        ...
+
+
+ENGINE_UNREACHABLE_PUBLIC = "繪圖服務暫時無法連線，稍後會自動重試"
+_INTERNAL_MARKERS = ("127.0.0.1", "localhost", "http://", "https://")
+
+
+def public_engine_error(text: str | None, is_admin: bool) -> str | None:
+    """給 API 回應用：非管理者看不到引擎的內部位址與連線細節，含位址的錯誤原文換成固定中文訊息。"""
+    if text is None or is_admin:
+        return text
+    return ENGINE_UNREACHABLE_PUBLIC if any(m in text for m in _INTERNAL_MARKERS) else text
