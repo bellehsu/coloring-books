@@ -14,7 +14,8 @@ export default defineConfig([
         {
           patterns: [
             {
-              group: ["@/features/editor", "@/features/editor/*", "**/features/editor", "**/features/editor/*", "../editor", "../editor/*"],
+              // 別名（@/features/editor）與任何深度的相對路徑（../editor、../../editor/x）都擋
+              regex: "^(@/features/editor|(\\.\\./)+(features/)?editor)(/|$)|(^|/)features/editor(/|$)",
               message: "features/fix 與 features/editing 不能 import features/editor（共用的放 features/editing）。",
             },
           ],

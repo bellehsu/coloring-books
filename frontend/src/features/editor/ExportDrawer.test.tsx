@@ -113,6 +113,26 @@ describe("ExportDrawer", () => {
     HTMLAnchorElement.prototype.click = orig;
   });
 
+  it("說明這本書的版面（紙張、印刷模式、每頁尺寸）", async () => {
+    summary = { total: 1, passed: 1, exportable_ids: [1], ready_ids: [1], skipped: [] };
+    setup();
+    await waitFor(() => expect(screen.getByTestId("passed-count")).toHaveTextContent("1"));
+    expect(screen.getByText(/A4 印刷廠版面：每頁 21.6 × 30.3 cm（含 3 mm 出血）/)).toBeInTheDocument();
+  });
+
+  it("沒有可以印的頁時下載按鈕停用，提示「還沒有可以印的頁面。」", async () => {
+    summary = {
+      total: 1,
+      passed: 0,
+      exportable_ids: [],
+      ready_ids: [],
+      skipped: [{ page_id: 1, position: 0, reason: "not_passed" }],
+    };
+    setup();
+    expect(await screen.findByText("還沒有可以印的頁面。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /下載 PDF/ })).toBeDisabled();
+  });
+
   it("include 切換改變請求網址並觸發下載（檔名取自 filename*）", async () => {
     summary = {
       total: 2,
