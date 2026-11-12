@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { composePage, createBook, createPage, ok, setCharacter, uniqueTitle } from "./seed";
+import { composePage, createBook, createPage, ok, setCharacter, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 /**
  * 圖下方的字要印哪幾行（Phase 13b）：C 的「中文」「英文」開關（多選）→ print.png 跟著變；兩個都關時文字帶

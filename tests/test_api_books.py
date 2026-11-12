@@ -9,7 +9,7 @@ from app.main import create_app
 from app.models import Generation, GenKind, GenStatus
 from app.services import prompts
 from app.services.prompts import QWEN_CHARACTER_SIZE, qwen_character_prompt
-from app.services.worker import encode_request
+from app.services.gen_request import encode_request
 from tests.fake_engine import FakeEngine
 
 

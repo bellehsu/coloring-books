@@ -14,9 +14,10 @@ import {
 } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { errMsg } from "@/features/editor/errMsg";
-import { printedCaptions } from "@/features/fix/fixState";
+import { errMsg } from "@/features/editing/errMsg";
+import { fixHref, printedCaptions } from "@/features/fix/fixState";
 import { formatRemaining } from "@/lib/eta";
+import { NO_QUOTA } from "@/lib/limits";
 import { ExportSheet } from "./ExportSheet";
 import {
   FILTERS,
@@ -31,12 +32,7 @@ import {
 } from "./overviewState";
 import styles from "./BookOverview.module.css";
 
-const NO_QUOTA = "今天的生成次數已用完，明天再來";
 const DONE_TITLE = "✓ 做好了";
-
-/** C 的網址；從「請看一下」篩選（或「去看那一頁」）打開時帶 ?filter=attention，C 的上一頁／下一頁只在要看的頁之間跳。 */
-const pageHref = (bookId: number, pageId: number, attention = false) =>
-  `/books/${bookId}/page/${pageId}${attention ? "?filter=attention" : ""}`;
 
 const todoCount = (o: Overview) => o.pages.filter((p) => p.state === "todo").length;
 
@@ -240,7 +236,7 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
   }
   const lookLink =
     mode !== "running" && mode !== "notStarted" && firstAttention ? (
-      <Link href={pageHref(book.id, firstAttention.id, true)} className={`${styles.pillLink} ${styles.pillSky} ${styles.action}`}>
+      <Link href={fixHref(book.id, firstAttention.id, "attention")} className={`${styles.pillLink} ${styles.pillSky} ${styles.action}`}>
         去看那一頁 →
       </Link>
     ) : null;
@@ -330,7 +326,7 @@ function PageCard({
   return (
     <li className={styles.cell}>
       <Link
-        href={pageHref(bookId, p.id, attention)}
+        href={fixHref(bookId, p.id, attention ? "attention" : null)}
         className={`${styles.card} ${p.state === "attention" ? styles.cardAttention : ""}`}
       >
         <div className={styles.frame}>

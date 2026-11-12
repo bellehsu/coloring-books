@@ -1,5 +1,7 @@
 import { expect, test, type Browser, type BrowserContext } from "@playwright/test";
-import { composePage, createBook, createPage, ok, setCharacter, uniqueTitle } from "./seed";
+import { composePage, createBook, createPage, ok, setCharacter, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 /** 同 isolation.spec：假後端的 POST /api/_test/invite 建立邀請，在全新的 context 開 /i/{token}。 */
 async function inviteContext(browser: Browser, baseURL: string, name: string): Promise<BrowserContext> {

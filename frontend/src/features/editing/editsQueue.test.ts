@@ -2,7 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/hooks";
 import type { Stroke } from "@/lib/strokes";
-import { editsQueueFor, flushAllEditsFor, forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
+import { editsBusyFor, editsQueueFor, flushAllEditsFor, forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
 
 const s = (x: number): Stroke => ({ op: "draw", width_px: 11, points: [[x, x]] });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -137,6 +137,19 @@ describe("editsQueueFor", () => {
     forgetEditsQueues(qc, 30);
     expect(peekEditsQueue(qc, 30, 2)).toBeUndefined();
     expect(peekEditsQueue(qc, 30, 3)).toBeUndefined();
+  });
+
+  it("editsBusyFor：兩個佇列（進階編輯與 C）有一個還在送就是 true", async () => {
+    const qc = new QueryClient();
+    expect(editsBusyFor(qc, 41, 7)).toBe(false);
+    editsQueueFor(qc, 1, 41, 7, { oneclick: true }).push([s(0.1)]);
+    expect(editsBusyFor(qc, 41, 7)).toBe(true);
+    expect(editsBusyFor(qc, 41, 8)).toBe(false);
+    await tick();
+    resolvers.shift()!({ gap_count: 0 });
+    await tick();
+    await tick();
+    expect(editsBusyFor(qc, 41, 7)).toBe(false);
   });
 
   it("flushAllEditsFor：同一頁同一張圖的兩個佇列（進階編輯與 C）都送完才 resolve；都沒有就馬上 resolve", async () => {

@@ -89,6 +89,74 @@ def produced(client, app, **kw):
     return b, p, bg, pose
 
 
+def test_finished_tasks_pruned_to_five(client, app):
+    b, p = book_page(client, app)
+    other = new_page(client, b["id"], scene_prompt="海邊", action_prompt="跳")["id"]
+    pid = p["id"]
+    with app.state.sessions() as s:
+        ids = []
+        for _ in range(8):
+            t = PageTask(page_id=pid, status=PageTaskStatus.RUNNING.value)
+            s.add(t)
+            s.flush()
+            ids.append(t.id)
+        s.add(PageTask(page_id=pid, status=PageTaskStatus.QUEUED.value))
+        oid = PageTask(page_id=other, status=PageTaskStatus.SUCCEEDED.value)
+        s.add(oid)
+        s.commit()
+        other_ids = [oid.id]
+    for i, tid in enumerate(ids):
+        with app.state.sessions() as s:
+            pipeline.finish_page_task(s, tid, PageTaskStatus.SUCCEEDED if i % 2 else PageTaskStatus.FAILED, None)
+    mine = tasks(app, pid)
+    finished = [t.id for t in mine if t.status in (PageTaskStatus.SUCCEEDED.value, PageTaskStatus.FAILED.value)]
+    assert finished == ids[-5:]  # 只留最新的 5 筆
+    assert len([t for t in mine if t.status == PageTaskStatus.QUEUED.value]) == 1  # 進行中的不動
+    assert [t.id for t in tasks(app, other)] == other_ids  # 別頁不受影響
+
+
+def _add_finished_run(app, pid, n, started):
+    """在 started 之後完成 n 筆工作（RUNNING → finish_page_task），回傳 id。"""
+    ids = []
+    for _ in range(n):
+        with app.state.sessions() as s:
+            t = PageTask(page_id=pid, status=PageTaskStatus.RUNNING.value)
+            s.add(t)
+            s.commit()
+            tid = t.id
+        with app.state.sessions() as s:
+            pipeline.finish_page_task(s, tid, PageTaskStatus.SUCCEEDED, None)
+        ids.append(tid)
+    return ids
+
+
+def test_prune_keeps_in_run_finished_tasks(client, app):
+    from datetime import timedelta
+    from app.models import Book, utcnow
+
+    b, p = book_page(client, app)
+    pid = p["id"]
+    with app.state.sessions() as s:
+        book = s.get(Book, b["id"])
+        book.produce_started_at = utcnow() - timedelta(minutes=5)
+        s.add(book)
+        old = PageTask(page_id=pid, status=PageTaskStatus.SUCCEEDED.value,
+                       created_at=book.produce_started_at - timedelta(days=1))
+        s.add(old)
+        s.commit()
+        old_id = old.id
+    ids = _add_finished_run(app, pid, 7, None)
+    kept = [t.id for t in tasks(app, pid)]
+    assert kept == ids  # 這一輪的 7 筆都留著；更早的（超過 5 筆之外）才刪
+    assert old_id not in kept
+
+
+def test_prune_without_run_start_keeps_five(client, app):
+    b, p = book_page(client, app)
+    ids = _add_finished_run(app, p["id"], 7, None)
+    assert [t.id for t in tasks(app, p["id"])] == ids[-5:]
+
+
 # ---- 完整流程 ----------------------------------------------------------------------
 
 

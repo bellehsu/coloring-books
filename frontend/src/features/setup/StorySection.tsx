@@ -3,11 +3,11 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { AI_PROMPT } from "@/features/story/aiPrompt";
-import { ThemePackDialog } from "@/features/story/ThemePackDialog";
 import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
+import { AI_PROMPT } from "./aiPrompt";
 import type { DraftPage, PreviewEntry, StoryPreview } from "./storyPreview";
+import { ThemePackDialog } from "./ThemePackDialog";
 import styles from "./SetupPage.module.css";
 
 export interface StorySectionProps {
@@ -57,7 +57,7 @@ export function StorySection({
 
   const count =
     pasted > 0
-      ? `讀到 ${pasted} 段${existing > 0 ? `（這本書已經有 ${existing} 頁：空的欄位才會填入）` : ""}`
+      ? `讀到 ${pasted} 段${problems.length > 0 ? `，${problems.length} 段不會匯入` : ""}${existing > 0 ? `（這本書已經有 ${existing} 頁：空的欄位才會填入）` : ""}`
       : existing > 0
         ? `這本書有 ${existing} 頁。要加頁就把故事貼在上面。`
         : null;

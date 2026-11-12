@@ -14,10 +14,10 @@ from app.services.compose import (
     DEFAULT_PLACEMENT,
     Placement,
     compose,
-    composite_matches,
     largest_component,
     page_placement,
 )
+from app.services.page_compose import composite_matches
 
 BG = (200, 220, 255)
 FG = (255, 0, 0)

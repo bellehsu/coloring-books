@@ -2,11 +2,12 @@
 
 import json
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 from pydantic_core import PydanticCustomError
 
+from app.api.urls import generation_cutout_url, generation_image_url, lineart_url
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, CharacterCheck, Generation, GenKind, GenStatus, Page, PageStatus
 from app.services import history
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS  # noqa: F401  (re-export)
@@ -16,6 +17,11 @@ from app.services.engine import public_engine_error
 from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_MAX, LINE_WIDTH_MIN, LineDetail
 from app.services.qa import QA_MESSAGES, QAReport
+
+from app.services.worker import WorkerState
+
+if TYPE_CHECKING:
+    from app.services.worker import GenerationWorker
 
 # 請求裡的資料列 id：超出 SQLite INTEGER 的回 422（不然查詢時 OverflowError → 500）
 DbId = Annotated[int, Field(ge=SQLITE_INT_MIN, le=SQLITE_INT_MAX)]
@@ -199,8 +205,8 @@ class GenerationOut(BaseModel):
             user_text=gen.user_text,
             width=gen.width,
             height=gen.height,
-            image_url=f"/api/generations/{gen.id}/image" if gen.image_path else None,
-            cutout_url=f"/api/generations/{gen.id}/cutout" if gen.mask_path else None,
+            image_url=generation_image_url(gen.id) if gen.image_path else None,
+            cutout_url=generation_cutout_url(gen.id) if gen.mask_path else None,
             source="upload" if gen.engine == "upload" else "generated",
             error=public_engine_error(gen.error, is_admin),
             elapsed_s=gen.elapsed_s,
@@ -208,6 +214,26 @@ class GenerationOut(BaseModel):
             progress=progress,
             created_at=gen.created_at,
         )
+
+    @classmethod
+    def for_worker(cls, gen: Generation, worker: "GenerationWorker", *, is_admin: bool = False) -> "GenerationOut":
+        """附上 worker 的排隊位置與進度。"""
+        return cls.from_generation(
+            gen, queue_position=worker.queue_position(gen.id), progress=worker.progress.get(gen.id),
+            is_admin=is_admin,
+        )
+
+    @classmethod
+    def for_worker_many(
+        cls, gens: list[Generation], worker: "GenerationWorker", *, is_admin: bool = False
+    ) -> list["GenerationOut"]:
+        """for_worker 的批次版：排隊位置一次算完。"""
+        positions = worker.queue_positions([g.id for g in gens])
+        return [
+            cls.from_generation(g, queue_position=positions[g.id], progress=worker.progress.get(g.id),
+                                is_admin=is_admin)
+            for g in gens
+        ]
 
 
 class PageCreate(BaseModel):
@@ -264,10 +290,6 @@ class PagePlacement(BaseModel):
     @classmethod
     def from_json(cls, text: str | None) -> "PagePlacement | None":
         return None if not text else cls(**Placement.from_dict(json.loads(text)).to_dict())
-
-
-def lineart_url(page_id: int, key: str | None) -> str:
-    return f"/api/pages/{page_id}/lineart" + (f"?v={key}" if key else "")
 
 
 class PageOut(BaseModel):
@@ -547,3 +569,42 @@ class InviteOut(BaseModel):
     created_at: datetime
     revoked: bool
     link: str | None
+
+
+# ---- 生成紀錄與佇列 ---------------------------------------------------------------
+
+class GenerationUpdate(BaseModel):
+    discarded: bool
+
+
+class PendingJob(BaseModel):
+    kind: Literal["character", "background", "pose"]
+
+
+class RecentJob(BaseModel):
+    kind: Literal["character", "background", "pose"]
+    elapsed_s: float
+
+
+class QueueStatus(BaseModel):
+    state: WorkerState
+    last_error: str | None
+    queued: int
+    # 供狀態膠囊估算剩餘時間：排隊中／執行中（舊→新），與各類型最近成功的耗時（新→舊）。
+    pending: list[PendingJob]
+    recent: list[RecentJob]
+
+
+# ---- 角色檢查與通過 ---------------------------------------------------------------
+
+NoteStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
+ReasonStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
+
+class CharacterCheckIn(BaseModel):
+    generation_id: int
+    result: CharacterCheck
+    note: NoteStr = ""
+
+
+class PassIn(BaseModel):
+    force_reason: ReasonStr | None = None

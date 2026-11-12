@@ -748,7 +748,7 @@ def test_retry_without_images_is_409(client, app):
 
 
 def test_concurrent_retry_queues_and_charges_once(client, app, monkeypatch):
-    """兩個分頁同時按「再試一次」：與「繼續做」共用 _BATCH_LOCK，鎖裡重看失敗的圖，只排一張、只算 1 次。"""
+    """兩個分頁同時按「再試一次」：與「繼續做」共用 BATCH_LOCK，鎖裡重看失敗的圖，只排一張、只算 1 次。"""
     import threading
     import time
 

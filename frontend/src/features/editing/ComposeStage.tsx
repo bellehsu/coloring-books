@@ -10,9 +10,11 @@ import {
 } from "react";
 import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
 import { cornerResize, movePlacement, placementBox, resizePlacement } from "@/lib/placement";
-import type { AutoComposeStatus } from "./autoCompose";
-import editorStyles from "./EditorPage.module.css";
+import stage from "./stage.module.css";
 import styles from "./ComposeStage.module.css";
+
+/** 自動合成的狀態（進階編輯的 autoCompose 回報，ComposeStatus 顯示）。 */
+export type AutoComposeStatus = "idle" | "pending" | "running" | "error";
 
 export interface ComposeStageProps {
   /** 選用背景的圖；沒有時顯示說明（請重新產生）。 */
@@ -316,9 +318,9 @@ export function ComposeStatus({
   return (
     <>
       {placementFailed && (
-        <span role="alert" data-testid="placement-save-failed" className={`${editorStyles.saveFailed} ${editorStyles.placementSaveFailed}`}>
+        <span role="alert" data-testid="placement-save-failed" className={`${stage.saveFailed} ${stage.placementSaveFailed}`}>
           位置尚未儲存
-          <button type="button" className={editorStyles.retry} onClick={onRetryPlacement}>
+          <button type="button" className={stage.retry} onClick={onRetryPlacement}>
             重試
           </button>
         </span>

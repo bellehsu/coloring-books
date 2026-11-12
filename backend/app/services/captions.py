@@ -1,7 +1,7 @@
 """頁面文字：把中英文字以空心字印在線稿下方的文字帶（Phase 11 spec §4.2、§4.6）。
 
 只在頁面至少有一行要印的文字，或兩行都選了不印（留空白帶給小朋友自己寫，Phase 13b）時使用；
-其他頁面由 export.compose_page 照舊處理（一個像素都不變）。兩行都是 None 時帶照留、整條空白，不需要字型。
+其他頁面由 export.layout_print_page 照舊處理（一個像素都不變）。兩行都是 None 時帶照留、整條空白，不需要字型。
 
 版面（內容座標）：
 - 文字帶＝內容高度的 15%，貼齊內容區底部；印刷廠模式則貼齊安全區底部、左右也在安全區內。
@@ -24,6 +24,7 @@ from PIL import Image, ImageDraw, ImageFont
 from skimage.morphology import skeletonize
 
 from app.services.caption_text import normalize_caption
+from app.services.imageio import disk_kernel
 from app.services.layout import Layout
 
 CAPTION_FONT_MISSING = "找不到字型檔，無法印出頁面文字"
@@ -129,10 +130,6 @@ def _lines(zh: str | None, en: str | None) -> list[tuple[str, float, float]]:
     return [(zh or en or "", SINGLE_CENTER, ZH_SIZE)]
 
 
-def _disk(radius: int) -> np.ndarray:
-    return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
-
-
 def outline_px(solid: np.ndarray) -> int:
     """這一行字的外框粗細：骨架上至少 HOLLOW_MIN 的點在 erode(s) 後仍在字形內（中間留白）的最大 s。"""
     sk = skeletonize(solid)
@@ -140,7 +137,7 @@ def outline_px(solid: np.ndarray) -> int:
         return OUTLINE_MIN_PX
     m = solid.astype(np.uint8)
     for s in range(OUTLINE_MAX_PX, OUTLINE_MIN_PX, -1):
-        if cv2.erode(m, _disk(s), borderValue=0)[sk].mean() >= HOLLOW_MIN:
+        if cv2.erode(m, disk_kernel(2 * s + 1), borderValue=0)[sk].mean() >= HOLLOW_MIN:
             return s
     return OUTLINE_MIN_PX
 
@@ -157,7 +154,7 @@ def caption_line(text: str, size: int, font_path: Path | None) -> tuple[np.ndarr
         empty = np.zeros((1, 1), bool)
         return empty, empty, OUTLINE_MIN_PX
     s = outline_px(solid)
-    outline = solid & ~cv2.erode(solid.astype(np.uint8), _disk(s), borderValue=0).astype(bool)
+    outline = solid & ~cv2.erode(solid.astype(np.uint8), disk_kernel(2 * s + 1), borderValue=0).astype(bool)
     ys, xs = np.nonzero(solid)
     box = (slice(int(ys.min()), int(ys.max()) + 1), slice(int(xs.min()), int(xs.max()) + 1))
     return outline[box], solid[box], s
@@ -174,7 +171,7 @@ def _render_line(text: str, size: int, max_w: float, font_path: Path | None) -> 
 
 def render_caption_page(ink: np.ndarray, layout: Layout, zh: str | None, en: str | None,
                         font_path: Path | None) -> Image.Image:
-    """線稿（True＝黑）＋頁面文字 → 版面大小的 1-bit 白底圖（和 compose_page 一樣貼在 content_offset_px）。
+    """線稿（True＝黑）＋頁面文字 → 版面大小的 1-bit 白底圖（和 layout_print_page 一樣貼在 content_offset_px）。
     zh、en 都沒有 → 文字帶留白（線稿一樣縮到帶上方）。"""
     zh = normalize_caption(zh)  # 舊資料也可能有換行、零寬字元：先正規化再排版
     en = normalize_caption(en)

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Book, Page, QA } from "@/api/client";
 import { ToastProvider } from "@/components/ui/Toast";
-import { editsQueueFor } from "./editsQueue";
+import { editsQueueFor } from "@/features/editing/editsQueue";
 import { FinishPanel, type FinishPanelProps } from "./FinishPanel";
 
 type O = Record<string, unknown>;

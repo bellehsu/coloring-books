@@ -9,7 +9,7 @@
  *   合成失敗時，補線沒變就不再問（重試），失敗後又補了線（記號不同）就再問一次。
  * - 合成失敗停在 error，不自動重試；flush（「更新失敗，重試」）或下一次 schedule 再試。
  */
-export type AutoComposeStatus = "idle" | "pending" | "running" | "error";
+import type { AutoComposeStatus } from "@/features/editing/ComposeStage";
 
 export interface AutoComposeOptions {
   /** 最後一次變化之後等多久才合成；預設 600 ms。 */

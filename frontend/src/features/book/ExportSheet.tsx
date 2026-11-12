@@ -5,7 +5,7 @@ import type { Book, OverviewPage } from "@/api/client";
 import { useExportSummary } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Drawer } from "@/components/ui/Drawer";
-import { ExportOptions } from "@/features/editor/ExportDrawer";
+import { ExportOptions } from "@/features/editing/ExportOptions";
 import styles from "./ExportSheet.module.css";
 
 export interface ExportSheetProps {
@@ -101,9 +101,7 @@ export function ExportSheet({ onClose, book, pages }: ExportSheetProps) {
           <ExportOptions
             book={book}
             active
-            variant="book"
             initialInclude={withAttention ? "all" : "ready"}
-            emptyPassedHint="還沒有可以印的頁面。"
           />
         </>
       )}

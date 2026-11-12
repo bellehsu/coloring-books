@@ -1,5 +1,5 @@
 import { crc32, deflateSync } from "node:zlib";
-import { expect, type APIRequestContext } from "@playwright/test";
+import { expect, request as pwRequest, test, type APIRequestContext } from "@playwright/test";
 
 /** 經 Next 的 /api 代理直接呼叫（假）後端，準備測試資料。 */
 
@@ -144,6 +144,42 @@ export async function uploadBackground(
       multipart: { file: { name: "bg.png", mimeType: "image/png", buffer: png } },
     }),
   );
+}
+
+/**
+ * 所有 spec 共用一個假後端、一條全域生成佇列：會排生成的 spec 結束（afterAll）時呼叫，
+ * 等排隊中與執行中的任務都做完（輪詢 GET /api/system/queue），下一個 spec 才不會被前面留下的任務拖慢。
+ */
+export async function drainQueue(request: APIRequestContext, timeoutMs = 60_000): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const q = await ok<{ state: string; queued: number; pending: unknown[] }>(await request.get("/api/system/queue"));
+        return q.queued === 0 && q.pending.length === 0;
+      },
+      { timeout: timeoutMs, message: "生成佇列沒有在時限內清空" },
+    )
+    .toBe(true);
+}
+
+/**
+ * 在 spec 檔最上層呼叫一次：每個測試結束（afterEach，同一檔案裡下一個測試不會被前一個留下的任務拖慢，
+ * 例如 oneclick 的「開始做這本書」排了整本）與整個檔案結束（afterAll）都清空佇列。
+ */
+export function drainQueueAfterAll(): void {
+  test.afterEach(async ({ request }) => {
+    test.setTimeout(test.info().timeout + 60_000);
+    await drainQueue(request);
+  });
+  test.afterAll(async () => {
+    test.setTimeout(90_000);
+    const ctx = await pwRequest.newContext({ baseURL: test.info().project.use.baseURL });
+    try {
+      await drainQueue(ctx);
+    } finally {
+      await ctx.dispose();
+    }
+  });
 }
 
 /** 每次執行都不同的書名（本機重用伺服器時資料會累積）。 */

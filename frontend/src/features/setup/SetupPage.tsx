@@ -8,7 +8,7 @@ import { api, ApiError, type Book, type Page } from "@/api/client";
 import { qk, useBook, useGenerations, usePages, useProduce, useProducePlan, useUpdateBook } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { errMsg } from "@/features/editor/errMsg";
+import { errMsg } from "@/features/editing/errMsg";
 import { PAPER_LABELS, PAPER_SIZES, PRINT_MODE_LABELS, ratioGroup, type PaperSize, type PrintMode } from "@/lib/layout";
 import { applyImport } from "./applyImport";
 import { CharacterSection } from "./CharacterSection";

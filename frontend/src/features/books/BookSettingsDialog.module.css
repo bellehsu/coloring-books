@@ -1,3 +1,165 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.input {
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--surface);
+}
+.fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.legend {
+  padding: 0;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+.sizes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 104px), 1fr));
+  gap: 8px;
+}
+.modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 10px;
+}
+.card {
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  min-height: 44px;
+}
+.card.on {
+  background: var(--accent-softer);
+  border: 2px solid var(--accent);
+}
+.sizeCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+}
+.shapeBox {
+  height: 44px;
+  display: grid;
+  place-items: center;
+}
+.shape {
+  display: block;
+  border: 1.5px solid var(--muted-3);
+  border-radius: 2px;
+  background: var(--surface);
+}
+.shapeOn {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.sizeName {
+  font-size: 15px;
+  font-weight: 500;
+}
+.dim {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.modeCard {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  text-align: left;
+}
+.modeText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.modeName {
+  font-weight: 500;
+}
+.modeText .dim {
+  font-size: 13px;
+}
+.homeIcon {
+  width: 44px;
+  height: 58px;
+  flex-shrink: 0;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--muted-3);
+  display: grid;
+  place-items: center;
+}
+.homeInner {
+  width: 30px;
+  height: 44px;
+  background: var(--accent-soft);
+}
+.shopIcon {
+  width: 44px;
+  height: 58px;
+  flex-shrink: 0;
+  background: var(--accent-soft);
+  display: grid;
+  place-items: center;
+}
+.shopInner {
+  width: 36px;
+  height: 50px;
+  border: 1px dashed var(--accent);
+}
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: 13px;
+  color: var(--muted-2);
+}
+.summary b {
+  color: var(--ink);
+  font-weight: 500;
+}
+.error {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--danger);
+  font-size: 14px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* 不能改的尺寸（比例不同）與改紙張後的提醒 */
 .locked {
   opacity: 0.55;
   cursor: not-allowed;

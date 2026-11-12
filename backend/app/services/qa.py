@@ -11,7 +11,7 @@
    涵蓋「兩個線頭距離小於 N px」與「線頭靠近另一條線」。
 3. 第二階段（漏色判定）：缺口必須真的會漏色，而不只是差一點接上（例如髮絲末端停在輪廓旁，
    沒有圍住任何東西）。把所有候選橋一次畫上去，白色區域 4-連通標記；橋兩側屬於不同區域、
-   且兩區面積都 >= lineart_post 的 min_region_area 才算缺口。
+   且兩區面積都 >= QAThresholds.min_region_area 才算缺口。
 4. 彼此距離 < max_gap_px 的標記只留一個（兩個面對面的線頭算一個缺口）。
    gap_count / gaps 只算會漏色的缺口；near_miss_count 為第一階段（合併後）的數量。
 
@@ -29,6 +29,7 @@ import cv2
 import numpy as np
 from skimage.morphology import skeletonize
 
+from app.services import lineart_params
 from app.services.lineart_post import LineartParams, compute_metrics
 
 # QA 演算法或 QAThresholds 預設值有任何改動時都要加 1；它會進入線稿快取 key，讓舊的 QA 結果失效重算。
@@ -56,6 +57,7 @@ class QAThresholds:
     black_fill_warn: float = 0.005  # black_fill_ratio > 此值 → 警告
     tiny_region_warn: int = 150  # tiny_region_count > 此值 → 警告
     fragment_warn: int = 80  # fragment_count > 此值 → 警告
+    min_region_area: int = 3000  # 缺口兩側的白色區域面積都 >= 此值才算會漏色；面積 < 此值的區域算「過小」
 
 
 @dataclass
@@ -244,11 +246,12 @@ def find_leaks(ink: np.ndarray, candidates: list[Pair], line_width_px: int, min_
 def evaluate(ink: np.ndarray, line_width_px: int, thresholds: QAThresholds = QAThresholds()) -> QAReport:
     ink = np.asarray(ink, dtype=bool)
     h, w = ink.shape
-    params = LineartParams(line_width_px=line_width_px)
+    params = LineartParams(line_width_px=line_width_px, min_region_area=thresholds.min_region_area,
+                           min_fragment_area=lineart_params.MIN_FRAGMENT_AREA)
     skel, endpoints = find_endpoints(ink, thresholds.border_px)
     candidates = find_candidates(skel, endpoints, thresholds.max_gap_px)
     near_miss = _merge([_midpoint(e, q) for e, q in candidates], thresholds.max_gap_px)
-    leak_pairs = find_leaks(ink, candidates, line_width_px, params.min_region_area, thresholds.max_gap_px)
+    leak_pairs = find_leaks(ink, candidates, line_width_px, thresholds.min_region_area, thresholds.max_gap_px)
     gap_px = [_midpoint(e, q) for e, q in leak_pairs]
 
     all_metrics = compute_metrics(ink, params)

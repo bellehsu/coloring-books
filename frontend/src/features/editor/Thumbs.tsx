@@ -5,7 +5,7 @@ import type { Generation } from "@/api/client";
 import { useCancelGeneration, useGenerations, useUpdateGeneration } from "@/api/hooks";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
-import { errMsg } from "./errMsg";
+import { errMsg } from "@/features/editing/errMsg";
 import styles from "./Thumbs.module.css";
 
 /** 有縮圖列的種類。合成圖（composite）沒有：只能經由合成產生，不可 /select。 */

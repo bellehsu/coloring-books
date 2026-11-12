@@ -25,6 +25,7 @@ import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .config import SettingsError
+from .services.imageio import flatten_on_white
 
 if TYPE_CHECKING:
     from .config import Settings
@@ -172,7 +173,8 @@ def _prune_empty_dirs(root: Path, prefix: str) -> None:
 
 
 class LocalStorage(_KeyBuilders):
-    """以資料夾為後端。signed_url 指向後端 /api/files/{key}，以 HMAC 簽章（測試與假後端用）。"""
+    """以資料夾為後端。signed_url 指向後端 /api/files/{key}，以 HMAC 簽章。這是 `storage.backend: local` 的正式後端（設定範本的預設值），
+    不是只給測試用的假後端：檢查與錯誤處理要跟 R2 一樣小心。"""
 
     def __init__(self, root: Path, signing_key: bytes):
         """signing_key 必填：同一個 storage 的每個實例（多個行程、重啟後）都要用同一把，簽出的網址才驗得過。"""
@@ -539,14 +541,7 @@ def _flatten_on_white(im: Image.Image) -> Image.Image:
     """轉成 RGB；有透明度的圖先合成到白底；16-bit／32-bit 灰階（I;16、I、F）先縮成 8-bit。"""
     if im.mode.startswith("I") or im.mode == "F":
         return _high_depth_to_l(im).convert("RGB")
-    has_alpha = im.mode in ("RGBA", "LA", "PA") or (
-        im.mode == "P" and "transparency" in im.info
-    )
-    if has_alpha:
-        rgba = im.convert("RGBA")
-        bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-        return Image.alpha_composite(bg, rgba).convert("RGB")
-    return im.convert("RGB")
+    return flatten_on_white(im)
 
 
 def load_rgb(

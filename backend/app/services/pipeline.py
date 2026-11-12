@@ -27,13 +27,15 @@ from typing import Callable
 
 from sqlalchemy import case, func, insert, literal
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, or_, select, update
+from sqlmodel import Session, col, delete, select, update
 
 from app.models import (
-    Generation, GenKind, GenStatus, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer, utcnow,
+    Book, Generation, GenKind, GenStatus, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer, utcnow,
 )
 from app.services import history
 from app.services.engine import public_engine_error
+from app.services.gen_request import TAKE
+from app.services.slots import SLOTS, newest_usable_ai
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix
 from app.services.lineart_render import apply_strokes
 from app.services.page_compose import (
@@ -59,12 +61,10 @@ UNEXPECTED = "自動處理這一頁時發生錯誤，請再試一次"
 GENERATION_FAILED = "圖片產生失敗，請重新產生"
 REQUEUE_DUPLICATE = "伺服器重新啟動；這一頁已有排隊中的工作"
 
-UPLOAD_ENGINE = history.UPLOAD_ENGINE  # 上傳的背景（api/compose.upload_background）：使用者的選擇，不是自動選圖的候選
-SLOTS = history.SLOTS
-TAKE = "take"  # request_json 的旗標：C 的「換一張／AI 再畫一張」，好了一定換上去
-
 _QUEUED = PageTaskStatus.QUEUED.value
 _RUNNING = PageTaskStatus.RUNNING.value
+_FINISHED = (PageTaskStatus.SUCCEEDED.value, PageTaskStatus.FAILED.value)
+FINISHED_TASKS_KEPT = 5  # 每頁保留的已完成 page_task 筆數
 
 
 class PipelineFailed(Exception):
@@ -163,6 +163,20 @@ def finish_page_task(session: Session, task_id: int, status: PageTaskStatus, err
         update(PageTask).where(col(PageTask.id) == task_id, col(PageTask.status) == _RUNNING)
         .values(status=status.value, error=error, updated_at=utcnow())
     )
+    page_id = session.exec(select(PageTask.page_id).where(col(PageTask.id) == task_id)).first()
+    if page_id is not None:
+        # 每頁只留最新 FINISHED_TASKS_KEPT 筆已完成的工作（A16）；但這一輪（created_at >= produce_started_at）
+        # 的不刪，B 的「做好 N / M 張」要算它們
+        stale = select(PageTask.id).where(
+            col(PageTask.page_id) == page_id, col(PageTask.status).in_(_FINISHED)
+        ).order_by(col(PageTask.id).desc()).offset(FINISHED_TASKS_KEPT)
+        started = session.exec(
+            select(Book.produce_started_at).join(Page, col(Page.book_id) == col(Book.id)).where(col(Page.id) == page_id)
+        ).first()
+        cond = col(PageTask.id).in_(stale)
+        if started is not None:
+            cond = cond & (col(PageTask.created_at) < started)
+        session.exec(delete(PageTask).where(cond))
     session.commit()
 
 
@@ -238,10 +252,6 @@ def on_generation_failed(session: Session, gen_id: int) -> None:
 # ---- 選圖 -----------------------------------------------------------------------------
 
 
-def _auto_candidates():
-    return or_(col(Generation.engine).is_(None), col(Generation.engine) != UPLOAD_ENGINE)
-
-
 def auto_select(session: Session, page_id: int, *, fill_only: bool = False, snapshot: bool = False) -> bool:
     """背景與角色動作：使用者選的不動；否則換成最新一張可用的生成（不含上傳的），並記到 auto_*。
     fill_only（頁面流程的第 1 步）：只補空的欄位，已經有圖的不換。換成新圖只在新圖產生好的時候
@@ -260,11 +270,7 @@ def auto_select(session: Session, page_id: int, *, fill_only: bool = False, snap
         current, auto = getattr(page, field), getattr(page, auto_field)
         if current is not None and (current != auto or fill_only):
             continue  # 使用者選的（或只補空的欄位）
-        newest = session.exec(
-            select(Generation.id)
-            .where(col(Generation.page_id) == page_id, *usable_conditions(kind), _auto_candidates())
-            .order_by(col(Generation.id).desc())
-        ).first()
+        newest = newest_usable_ai(session, page_id, kind)
         if newest is None or newest == current:
             continue
         still_valid = (

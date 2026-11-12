@@ -8,19 +8,19 @@
 
 「再試一次」（retry）：只處理這一頁。這頁最新一張背景／角色動作是失敗的（之後沒有成功的同一種）就重排那一種
 （同 C 的「換一張」：take，好了就換上去；算 1 次當日額度，用完 429）；沒有就重跑這頁的頁面流程（不計次數）。
-與「繼續做」共用 _BATCH_LOCK，同時按兩次只排一次、只算一次。
+與「繼續做」共用 BATCH_LOCK，同時按兩次只排一次、只算一次。
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, literal
 from sqlmodel import Session, col, select, update
 
-from app.api.compose import _BATCH_LOCK, _background_job, _enqueue_jobs, _pose_job, _take, has_character
 from app.api.deps import current_owner, get_session, get_worker, owned_book, owned_page
 from app.api.pages import page_out
 from app.api.schemas import PageOut, RestoreIn, RetryOut
 from app.models import Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
 from app.services import history
+from app.services.jobs import BATCH_LOCK, background_job, enqueue_jobs, has_character, pose_job, take
 from app.services.pipeline import enqueue_page_task
 from app.services.worker import GenerationWorker
 
@@ -144,9 +144,9 @@ def retry(
 ) -> RetryOut:
     """C 的「再試一次」，只處理這一頁（見模組說明）。重排失敗的圖：額度不夠 429、什麼都不排；
     沒有失敗的圖、也沒有背景＋角色動作 409。
-    與「繼續做」共用 _BATCH_LOCK：兩個分頁同時按，第二個在鎖裡重看時那一種已經在排隊、不再算失敗，
+    與「繼續做」共用 BATCH_LOCK：兩個分頁同時按，第二個在鎖裡重看時那一種已經在排隊、不再算失敗，
     不會重複排、重複算額度。"""
-    with _BATCH_LOCK:  # 鎖裡才讀頁面與失敗的圖（同 produce）
+    with BATCH_LOCK:  # 鎖裡才讀頁面與失敗的圖（同 produce）
         page = owned_page(session, owner, page_id)
         session.refresh(page)
         book = owned_book(session, owner, page.book_id)
@@ -157,15 +157,15 @@ def retry(
             jobs = []
             for kind in kinds:
                 if kind == GenKind.BACKGROUND:
-                    jobs.append(_take(_background_job(session, book, page), True))
+                    jobs.append(take(background_job(session, book, page), True))
                 else:
                     failed = session.exec(
                         select(Generation).where(Generation.page_id == page_id, Generation.kind == kind)
                         .order_by(col(Generation.id).desc())
                     ).first()
                     action = (failed.user_text if failed else "") or page.action_prompt
-                    jobs.append(_take(_pose_job(session, book, page, action), True))
-            _enqueue_jobs(session, worker, owner, jobs)  # 預留額度＋排隊＋commit；不夠 429
+                    jobs.append(take(pose_job(session, book, page, action), True))
+            enqueue_jobs(session, worker, owner, jobs)  # 預留額度＋排隊＋commit；不夠 429
             session.refresh(page)
             return RetryOut(**page_out(session, page).model_dump(),
                             requeued=[k.value for k in kinds], pipeline=False)

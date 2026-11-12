@@ -18,7 +18,6 @@ from sqlmodel import Session, col, delete, select, update
 
 from app.models import Generation, GenKind, GenStatus, Page, PageStatus, utcnow
 from app.services.compose import COMPOSE_VERSION, DEGENERATE_MASK, Placement, compose, page_placement
-from app.services.compose import composite_matches
 from app.storage import Storage, StorageNotFound
 
 log = logging.getLogger(__name__)
@@ -27,6 +26,19 @@ NEED_BACKGROUND = "請先選好背景"
 NEED_POSE = "請先選好角色動作"
 FILE_MISSING = "圖片檔案遺失，請重新產生"
 INPUTS_CHANGED = "背景、角色動作或位置剛被更改，請重新確認合成"
+
+
+def composite_matches(gen: Generation, bg_id: int, pose_id: int, placement: Placement) -> bool:
+    """gen（合成圖 generation）是否正是以這組背景＋角色動作＋位置（Placement.key()）
+    用目前版本（COMPOSE_VERSION）的演算法合成的。只看紀錄，不檢查檔案或狀態。"""
+    if gen.kind != GenKind.COMPOSITE or gen.workflow_version != COMPOSE_VERSION:
+        return False
+    try:
+        p = json.loads(gen.params_json or "")
+        return (p["background_generation_id"] == bg_id and p["pose_generation_id"] == pose_id
+                and Placement.from_dict(p["placement"]).key() == placement.key())
+    except (ValueError, KeyError, TypeError):
+        return False
 
 
 class ComposeError(Exception):
@@ -146,7 +158,7 @@ def finish_stored(session: Session, gen_id: int, rel: str, **values):
     )
 
 
-def load_image(storage: Storage, rel: str | None) -> Image.Image:
+def get_pil_image(storage: Storage, rel: str | None) -> Image.Image:
     """從 Storage 讀出圖片；key 是空的或物件不存在丟 FileNotFoundError。"""
     if not rel:
         raise FileNotFoundError(rel)
@@ -212,9 +224,9 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
     if target is None:
         started_at, t0 = utcnow(), time.monotonic()
         try:
-            bg_img = load_image(storage, bg.image_path)
-            pose_img = load_image(storage, pose.image_path)
-            mask_img = load_image(storage, pose.mask_path)
+            bg_img = get_pil_image(storage, bg.image_path)
+            pose_img = get_pil_image(storage, pose.image_path)
+            mask_img = get_pil_image(storage, pose.mask_path)
         except (OSError, ValueError) as e:  # 檔案不在、壞掉或路徑不合法
             raise ComposeError(FILE_MISSING) from e
         try:

@@ -5,21 +5,22 @@ import numpy as np
 from PIL import Image
 
 from app.services import lineart_render as lr
-from app.services.lineart_render import LineDetail, Stroke, apply_strokes, ink_to_png, render_base
+from app.services.imageio import ink_to_png
+from app.services.lineart_render import LineDetail, Stroke, apply_strokes, render_base
 
 
 def test_detail_controls_sigma(monkeypatch):
     seen = []
 
-    def fake_extract(img, spec):
-        seen.append(spec)
+    def fake_extract(img, sigma):
+        seen.append(sigma)
         return np.full(img.shape[:2], 255, np.uint8)
 
-    monkeypatch.setattr(lr, "extract", fake_extract)
+    monkeypatch.setattr(lr, "extract_xdog", fake_extract)
     img = np.full((64, 48, 3), 255, np.uint8)
     for d, s in [(LineDetail.SIMPLE, 1.5), (LineDetail.STANDARD, 1.2), (LineDetail.DETAILED, 0.8)]:
         render_base(img, (96, 128), d, 11)
-        assert seen[-1] == {"method": "xdog", "sigma": s}
+        assert seen[-1] == s
 
 
 def test_render_base_size_and_width():
@@ -89,3 +90,30 @@ def test_apply_strokes_matches_legacy():
     ink = rng.random((h, w)) < 0.3
     strokes = random_strokes(rng)
     assert np.array_equal(apply_strokes(ink, strokes), legacy_apply_strokes(ink, strokes))
+
+
+def test_render_lineart_is_render_base_without_metrics():
+    """產品用的 render_lineart（不算指標）與實驗用的 render_base 的線稿逐像素相同；render_params 含所有固定參數。"""
+    rng = np.random.default_rng(3)
+    img = (rng.random((120, 90, 3)) * 255).astype(np.uint8)
+    for d in LineDetail:
+        assert np.array_equal(lr.render_lineart(img, (200, 260), d, 11), render_base(img, (200, 260), d, 11)[0])
+    params = lr.render_params()
+    assert params["xdog"] == [1.6, 20.0, 0.02, 10.0] and params["sigma"]["standard"] == 1.2
+    assert params["close_kernel"] == 7 and params["min_fragment_area"] == 64
+
+
+def test_algorithm_parameters_snapshot():
+    """線稿／QA 的演算法參數凍結：改了就要把版本號加 1（lineart_key 不含這些值）。"""
+    from app.services.qa import QAThresholds
+
+    msg = "lineart 參數改了：請把 RENDER_VERSION／QA_VERSION 加 1，再更新這個快照"
+    assert lr.render_params() == {
+        "xdog": [1.6, 20.0, 0.02, 10.0], "fit": "contain", "interpolation": "lanczos", "binarize": "otsu",
+        "min_fragment_area": 64, "close_kernel": 7, "close_iterations": 1,
+        "sigma": {"simple": 1.5, "standard": 1.2, "detailed": 0.8},
+    }, msg
+    assert vars(QAThresholds()) == {
+        "max_gap_px": 40, "border_px": 12, "gap_error_min": 1, "black_fill_warn": 0.005,
+        "tiny_region_warn": 150, "fragment_warn": 80, "min_region_area": 3000,
+    }, msg

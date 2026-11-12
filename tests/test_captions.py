@@ -26,7 +26,7 @@ from app.services.captions import (
     check_caption_font,
     render_caption_page,
 )
-from app.services.export import compose_page
+from app.services.export import layout_print_page
 from app.services.layout import Layout, PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import LINE_WIDTH_DEFAULT as LINE_W
 from tests.conftest import REPO
@@ -41,7 +41,7 @@ A5_HOME = compute_layout(PaperSize.A5, PrintMode.HOME)
 
 
 def legacy_compose(ink: np.ndarray, layout: Layout) -> Image.Image:
-    """Phase 11 之前的 compose_page（逐字複製），用來確認沒有文字的頁面一個像素都沒變。"""
+    """Phase 11 之前的 layout_print_page（逐字複製），用來確認沒有文字的頁面一個像素都沒變。"""
     content = Image.fromarray(np.where(ink, 0, 255).astype(np.uint8), mode="L").convert(
         "1", dither=Image.Dither.NONE
     )
@@ -115,11 +115,11 @@ def enclosed_white(region: np.ndarray, min_area: int = 50) -> list[int]:
 def test_no_captions_is_byte_identical(layout):
     ink = synthetic_art(layout)
     want = legacy_compose(ink, layout).tobytes()
-    assert compose_page(ink, layout).tobytes() == want
-    assert compose_page(ink, layout, (None, None), FONT).tobytes() == want
-    assert compose_page(ink, layout, ("", "  "), FONT).tobytes() == want
+    assert layout_print_page(ink, layout).tobytes() == want
+    assert layout_print_page(ink, layout, (None, None), FONT).tobytes() == want
+    assert layout_print_page(ink, layout, ("", "  "), FONT).tobytes() == want
     # 沒有文字時不需要字型
-    assert compose_page(ink, layout, (None, None), Path("/nope/missing.ttf")).tobytes() == want
+    assert layout_print_page(ink, layout, (None, None), Path("/nope/missing.ttf")).tobytes() == want
 
 
 # --- 版面：文字帶、線稿縮放與置中 ---------------------------------------------------------
@@ -279,7 +279,7 @@ def test_thin_strokes_stay_hollow_at_the_smallest_band():
 def test_output_is_one_bit_page():
     page = render_caption_page(synthetic_art(A4_SHOP), A4_SHOP, "消防車", "Fire Engine", FONT)
     assert page.mode == "1" and page.size == A4_SHOP.page_px
-    via_compose = compose_page(synthetic_art(A4_SHOP), A4_SHOP, ("消防車", "Fire Engine"), FONT)
+    via_compose = layout_print_page(synthetic_art(A4_SHOP), A4_SHOP, ("消防車", "Fire Engine"), FONT)
     assert via_compose.tobytes() == page.tobytes()
 
 
@@ -328,14 +328,14 @@ def test_two_lines_sit_at_30_and_78_percent():
 def test_missing_font_with_captions_raises(tmp_path):
     ink = synthetic_art(A5_HOME)
     with pytest.raises(CaptionFontMissing) as e:
-        compose_page(ink, A5_HOME, ("消防車", None), tmp_path / "missing.ttf")
+        layout_print_page(ink, A5_HOME, ("消防車", None), tmp_path / "missing.ttf")
     assert str(e.value) == CAPTION_FONT_MISSING == "找不到字型檔，無法印出頁面文字"
     with pytest.raises(CaptionFontMissing):
-        compose_page(ink, A5_HOME, (None, "Bus"), None)
+        layout_print_page(ink, A5_HOME, (None, "Bus"), None)
     bad = tmp_path / "bad.ttf"
     bad.write_bytes(b"not a font")
     with pytest.raises(CaptionFontMissing):
-        compose_page(ink, A5_HOME, ("消防車", None), bad)
+        layout_print_page(ink, A5_HOME, ("消防車", None), bad)
 
 
 def test_check_caption_font(tmp_path):
@@ -348,7 +348,7 @@ def test_check_caption_font(tmp_path):
 
 
 
-# --- API：print.png、擁有者 PDF、分享圖與分享 PDF 都經過 composed_page ----------------------
+# --- API：print.png、擁有者 PDF、分享圖與分享 PDF 都經過 print_page_image ----------------------
 
 @pytest.fixture
 def app(settings_file):
@@ -419,13 +419,13 @@ def test_book_pdf_and_shared_views_carry_captions(client, app, monkeypatch):
     b, p = passed_page(client, app, paper_size="a5", print_mode="home")
     caption(client, b, p, "火車", "Train")
     seen = []
-    real = export_api.compose_page
+    real = export_api.layout_print_page
 
     def spy(ink, layout, captions=(None, None), font_path=None, show=(True, True)):
         seen.append((captions, font_path))
         return real(ink, layout, captions, font_path, show=show)
 
-    monkeypatch.setattr(export_api, "compose_page", spy)
+    monkeypatch.setattr(export_api, "layout_print_page", spy)
     owner_png = page_png(client, p)
     assert client.get(f"/api/books/{b['id']}/export.pdf").status_code == 200
     assert client.put(f"/api/books/{b['id']}/share", json={"shared": True}).status_code == 200

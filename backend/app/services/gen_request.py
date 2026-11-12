@@ -1,0 +1,90 @@
+"""Generation.request_json 的編碼／解碼，以及放在裡面的控制欄位。
+
+request_json 不只是來源紀錄：核心欄位（kind、prompt、seed…）是引擎的輸入；`extra` 還承載
+流程與帳務的控制旗標，其他模組會讀、也會改寫它們，所以重建 request_json（例如日後的「重跑」）
+必須保留：
+- `take`（TAKE）：C 的「換一張／AI 再畫一張」，好了一定換上去（services/pipeline.py 讀）。
+- `usage_day`／`usage_owner`／`usage_refunded`：當日額度的計數與退回依據（services/usage.py 寫、
+  `refund_generations` 改寫）；遺失它們就不會退、或重複退。
+- `engine_requeues`／`engine_unavailable_since`：引擎連不上時放回佇列的計數（只有 worker 寫，
+  `encode_request` 的 extra 不能帶，在 _CORE_KEYS 裡受保護）。
+其餘 extra（pose_mode、background_style、source、uploaded…）才只是來源紀錄，引擎不讀。
+"""
+
+from __future__ import annotations
+
+import json
+
+from app.models import GenKind
+from app.services.engine import RETIRED, GenerationRequest
+from app.storage import Storage
+
+ENGINE_REQUEUES = "engine_requeues"  # request_json 的計數：因引擎連不上而放回佇列的次數（worker 自己寫）
+ENGINE_UNAVAILABLE_SINCE = "engine_unavailable_since"  # request_json：第一次連不上的時間（UTC ISO；worker 自己寫）
+TAKE = "take"  # request_json 的旗標：C 的「換一張／AI 再畫一張」，好了一定換上去
+USAGE_DAY = "usage_day"
+USAGE_OWNER = "usage_owner"
+USAGE_REFUNDED = "usage_refunded"
+
+# request_json 的核心欄位（extra 不能蓋掉）。TAKE 與 USAGE_* 是排隊時由 extra 帶入的控制欄位，不在此列
+_CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
+                        "variation", ENGINE_REQUEUES, ENGINE_UNAVAILABLE_SINCE})
+
+
+def encode_request(
+    *,
+    kind: GenKind,
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    width: int,
+    height: int,
+    character_image: str | None = None,
+    variation: str | None = None,
+    extra: dict | None = None,
+) -> str:
+    """產生 Generation.request_json；character_image 為 Storage 的物件 key（來源紀錄，不存 bytes），variation 一律寫入（可為 null）。
+    extra 併入 JSON：來源紀錄（pose_mode、background_style…）與控制旗標（TAKE、USAGE_*，見模組說明）；
+    引擎只讀核心欄位，extra 不能蓋掉核心欄位。"""
+    d = {
+        "kind": GenKind(kind).value,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "seed": seed,
+        "width": width,
+        "height": height,
+        "character_image": character_image,
+        "variation": variation,
+    }
+    if extra:
+        clash = _CORE_KEYS & set(extra)
+        if clash:
+            raise ValueError(f"extra 不能覆寫核心欄位：{', '.join(sorted(clash))}")
+        d.update(extra)
+    return json.dumps(d, ensure_ascii=False, sort_keys=True)
+
+
+def is_retired(d: dict) -> bool:
+    """需要已停用路線的請求：舊整頁流程，或明確要求 SDXL 的快速動作／細緻背景。
+    沒有 pose_mode／background_style 的列照 Qwen 執行（新列只把它們當來源紀錄）。"""
+    return d.get("kind") == GenKind.PAGE.value or d.get("pose_mode") == "fast" \
+        or d.get("background_style") == "detailed"
+
+
+def decode_request(text: str, storage: Storage) -> GenerationRequest:
+    """還原 GenerationRequest；character_image 的 key 從 Storage 讀成 bytes。
+    key 不合法丟 ValueError；物件不存在丟 StorageNotFound。
+    需要已停用路線的請求丟 ValueError(RETIRED)。舊列多出的 structure_* 等欄位忽略。"""
+    d = json.loads(text)
+    if is_retired(d):
+        raise ValueError(RETIRED)
+    rel = d.get("character_image")
+    return GenerationRequest(
+        kind=GenKind(d["kind"]),
+        prompt=d["prompt"],
+        seed=d["seed"],
+        width=d["width"],
+        height=d["height"],
+        character_image=None if rel is None else storage.get(rel),
+        variation=d.get("variation"),
+    )

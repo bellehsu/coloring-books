@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { composePage, createBook, createPage, setCharacter, uniqueTitle } from "./seed";
+import { composePage, createBook, createPage, setCharacter, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 const PHONE = { width: 390, height: 844 };
 const VIEWPORTS = [PHONE, { width: 1440, height: 900 }] as const;

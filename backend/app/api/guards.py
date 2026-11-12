@@ -9,9 +9,9 @@
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.api.compose import MAX_BG_UPLOAD_BYTES
+from app.services.uploads import MAX_UPLOAD_BYTES
 
-UPLOAD_LIMIT = MAX_BG_UPLOAD_BYTES + 1_000_000  # 檔案本體 + multipart 外框
+UPLOAD_LIMIT = MAX_UPLOAD_BYTES + 1_000_000  # 檔案本體 + multipart 外框
 API_LIMIT = 2_000_000
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 

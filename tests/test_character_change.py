@@ -80,9 +80,9 @@ def test_upload_character_validation(client, app):
     b = new_book(client)
     assert upload_char(client, b["id"], b"not an image").status_code == 400
     assert upload_char(client, b["id"], png_bytes(size=(40, 40))).status_code == 400  # 太小
-    from app.api.compose import MAX_BG_UPLOAD_BYTES
+    from app.services.uploads import MAX_UPLOAD_BYTES
 
-    assert upload_char(client, b["id"], b"\0" * (MAX_BG_UPLOAD_BYTES + 1)).status_code == 400
+    assert upload_char(client, b["id"], b"\0" * (MAX_UPLOAD_BYTES + 1)).status_code == 400
     buf = io.BytesIO()
     Image.new("1", (9000, 8000)).save(buf, "PNG")  # 7200 萬像素：超過上限
     r = upload_char(client, b["id"], buf.getvalue())

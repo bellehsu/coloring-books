@@ -1,5 +1,5 @@
 import type { Generation, Page, QA } from "@/api/client";
-import { recomposeRunning } from "@/api/hooks";
+import { recomposeRunning } from "./pageState";
 import { STATE_LABEL } from "@/features/book/overviewState";
 
 /**

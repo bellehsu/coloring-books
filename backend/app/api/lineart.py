@@ -27,7 +27,8 @@ from app.models import Generation, Owner, Page, StrokeLayer
 from app.services import history
 from app.services.pipeline import ATTENTION_FAILED, enqueue_page_task
 from app.services.worker import GenerationWorker
-from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix, read_ink
+from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix
+from app.services.imageio import png_to_ink
 from app.services.layout import compute_layout
 from app.services.lineart_render import Stroke
 from app.services.page_lineart import (
@@ -262,7 +263,7 @@ def autofix(
         except LineartUnavailable as e:
             raise HTTPException(409, e.message) from e
     else:
-        pre = read_ink(data)  # 沒有 user 層：線稿圖就是底稿＋auto 層
+        pre = png_to_ink(data)  # 沒有 user 層：線稿圖就是底稿＋auto 層
     added = plan_autofix(pre, user, lin.qa.gap_count, lin.qa.bridges, width,
                          room_strokes=MAX_STROKES - len(existing), room_points=points_left)
 

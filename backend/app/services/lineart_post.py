@@ -1,5 +1,8 @@
 """線稿後處理（確定性、可測試）。
 
+產品只走 render_ink（固定參數、不算指標）；LineartParams 的其他選項（fit cover/stretch、binarize fixed/adaptive、
+keep_steps）、process()、compute_metrics 與 save_1bit_png 是給 experiments/（Phase 1 矩陣、QA 校正）調參用的。
+
 流程：放大到目標尺寸 → 灰階 → 二值化 → 移除小碎片 → 形態學閉運算封閉缺口 → 統一線寬 → 1-bit PNG。
 每一步都由 LineartParams 參數化；process() 同時回傳品質指標。
 
@@ -28,6 +31,9 @@ import cv2
 import numpy as np
 from PIL import Image
 from skimage.morphology import skeletonize
+
+from app.services import lineart_params as lp
+from app.services.imageio import disk_kernel, flatten_on_white, ink_to_bilevel
 
 A4_300DPI = (2480, 3508)
 
@@ -106,20 +112,14 @@ def load_image(path: str | Path | BinaryIO) -> np.ndarray:
     """讀成 RGB uint8；有透明度時合成到白底。path 可以是檔案路徑或 file-like（例如 io.BytesIO）。"""
     with Image.open(path) as im:
         im.load()
-        if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
-            im = im.convert("RGBA")
-            bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
-            im = Image.alpha_composite(bg, im)
-        return np.asarray(im.convert("RGB"))
+        return np.asarray(flatten_on_white(im))
 
 
 def to_gray(img: np.ndarray) -> np.ndarray:
     if img.ndim == 2:
         return img.astype(np.uint8)
     if img.shape[2] == 4:
-        rgb = img[..., :3].astype(np.float32)
-        a = img[..., 3:4].astype(np.float32) / 255.0
-        img = (rgb * a + 255.0 * (1 - a)).astype(np.uint8)
+        img = np.asarray(flatten_on_white(Image.fromarray(img, "RGBA")))
     return cv2.cvtColor(img[..., :3], cv2.COLOR_RGB2GRAY)
 
 
@@ -175,14 +175,10 @@ def remove_small_fragments(ink: np.ndarray, min_area: int) -> np.ndarray:
     return keep[labels]
 
 
-def _disk(diameter: int) -> np.ndarray:
-    return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (diameter, diameter))
-
-
 def close_gaps(ink: np.ndarray, kernel: int, iterations: int = 1) -> np.ndarray:
     if kernel <= 1 or iterations <= 0:
         return ink.copy()
-    out = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_CLOSE, _disk(kernel), iterations=iterations)
+    out = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_CLOSE, disk_kernel(kernel), iterations=iterations)
     return out > 0
 
 
@@ -193,14 +189,13 @@ def unify_line_width(ink: np.ndarray, width: int) -> np.ndarray:
     skel = skeletonize(ink)
     if width == 1:
         return skel
-    return cv2.dilate(skel.astype(np.uint8), _disk(width)) > 0
+    return cv2.dilate(skel.astype(np.uint8), disk_kernel(width)) > 0
 
 
 def save_1bit_png(ink: np.ndarray, path: str | Path, dpi: int = 300) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    arr = np.where(ink, 0, 255).astype(np.uint8)
-    Image.fromarray(arr, mode="L").convert("1", dither=Image.Dither.NONE).save(path, dpi=(dpi, dpi), optimize=True)
+    ink_to_bilevel(ink).save(path, dpi=(dpi, dpi), optimize=True)
     return path
 
 
@@ -212,7 +207,7 @@ def gray_pixel_ratio(gray: np.ndarray, low: int, high: int) -> float:
 
 def black_fill_ratio(ink: np.ndarray, line_width_px: int) -> float:
     k = max(3, 2 * max(line_width_px, 1) + 1)
-    opened = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_OPEN, _disk(k))
+    opened = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_OPEN, disk_kernel(k))
     return float(opened.mean())
 
 
@@ -256,6 +251,21 @@ def compute_metrics(
 
 
 # ---- 主流程 -------------------------------------------------------------------
+
+def render_ink(gray: np.ndarray, content_px: tuple[int, int], line_width: int) -> np.ndarray:
+    """產品用的精簡版：灰階線稿 → 放大到 content_px → 二值化 → 清理 → 閉運算 → 統一線寬，回傳 ink（True＝黑）。
+    演算法參數一律取自 lineart_params（不看 LineartParams 的預設值），也不算指標。"""
+    w, h = content_px
+    p = LineartParams(
+        target_width=w, target_height=h, fit=lp.FIT, interpolation=lp.INTERPOLATION, binarize=lp.BINARIZE,
+        min_fragment_area=lp.MIN_FRAGMENT_AREA, close_kernel=lp.CLOSE_KERNEL, close_iterations=lp.CLOSE_ITERATIONS,
+        line_width_px=line_width,
+    )
+    p.validate()
+    gray = to_gray(resize_to_target(to_gray(gray), p))
+    cleaned = remove_small_fragments(binarize(gray, p), p.min_fragment_area)
+    return unify_line_width(close_gaps(cleaned, p.close_kernel, p.close_iterations), p.line_width_px)
+
 
 def process(image: np.ndarray | str | Path, params: LineartParams | dict | None = None, *,
             keep_steps: bool = False) -> LineartResult:

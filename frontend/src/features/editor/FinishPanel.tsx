@@ -10,8 +10,8 @@ import { Icons } from "@/components/ui/Icons";
 import { Segmented } from "@/components/ui/Segmented";
 import { useToast } from "@/components/ui/Toast";
 import { useAcceptPage } from "@/features/fix/fixApi";
-import { flushAllEditsFor, peekEditsQueue } from "./editsQueue";
-import { errMsg } from "./errMsg";
+import { flushAllEditsFor, peekEditsQueue } from "@/features/editing/editsQueue";
+import { errMsg } from "@/features/editing/errMsg";
 import styles from "./FinishPanel.module.css";
 
 type Detail = Page["line_detail"];
@@ -102,7 +102,7 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
   async function doAutofix() {
     if (genId == null || !begin()) return;
     try {
-      // 修線畫布掛著：用它的補線（補上的線併進畫面上的筆畫，之後的寫入才不會蓋掉）
+      // 修線畫布掛著：用它的補線（先讓畫面上的筆畫寫完、補線期間延後寫入；補上的線存在 auto 圖層）
       const run = peekEditsQueue(qc, page.id, genId)?.autofix;
       let added: number | null = null;
       if (run) {

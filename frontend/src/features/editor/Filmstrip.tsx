@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
-import { recomposeRunning } from "@/api/hooks";
+import { recomposeRunning } from "@/lib/pageState";
 import { STATE_LABEL } from "@/features/book/overviewState";
 import styles from "./Filmstrip.module.css";
 

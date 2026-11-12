@@ -1,0 +1,36 @@
+/* 片語／開關晶片（C 的修改列、進階編輯的構圖卡片共用）。 */
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.preset {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.preset[data-added="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.preset:disabled,
+.preset[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+.preset:disabled:not([data-added="true"]),
+.preset[aria-disabled="true"]:not([data-added="true"]) {
+  color: var(--muted-3);
+}
+/* 晶片群組下方的說明（ExclusiveChips 的 hint） */
+.hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-2);
+  line-height: 1.5;
+}

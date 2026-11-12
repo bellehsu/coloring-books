@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -8,12 +9,8 @@ from app.db import init_db, make_engine, session_factory
 from app.models import Book, GenKind, Generation, GenStatus, Owner, Usage
 from app.services.engine import EngineError, EngineUnavailable
 from app.services.layout import PaperSize, PrintMode
-from app.services.worker import (
-    GenerationWorker,
-    WorkerState,
-    decode_request,
-    encode_request,
-)
+from app.services.gen_request import decode_request, encode_request
+from app.services.worker import GenerationWorker, WorkerState
 from app.storage import LocalStorage, StorageNotFound
 from tests.fake_engine import FakeEngine
 
@@ -386,6 +383,27 @@ async def test_fifo_and_queue_position(env):
     assert worker.queue_position(999) is None
 
 
+def test_queue_positions_batch_matches_single(env, monkeypatch):
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    done = add_gen(sessions, status=GenStatus.SUCCEEDED)
+    running = add_gen(sessions, status=GenStatus.RUNNING)
+    late = add_gen(sessions, created_at=t0 + timedelta(seconds=2))
+    first = add_gen(sessions, created_at=t0)
+    mid = add_gen(sessions, created_at=t0 + timedelta(seconds=1))
+    ids = [done, running, late, first, mid, 999]
+    expected = {done: None, running: 0, late: 3, first: 1, mid: 2, 999: None}
+    assert worker.queue_positions(ids) == expected
+    assert {i: worker.queue_position(i) for i in ids} == expected
+    assert worker.queue_positions([]) == {}
+    # 批次版只開一個 session
+    opened = []
+    real = worker.sessions
+    monkeypatch.setattr(worker, "sessions", lambda: opened.append(1) or real())
+    worker.queue_positions(ids)
+    assert len(opened) == 1
+
+
 def test_queue_position_counts_running_job(env):
     worker, _, sessions, _ = env
     running = add_gen(sessions, status=GenStatus.RUNNING)
@@ -471,6 +489,11 @@ async def _wait_status(sessions, gid, status, timeout=2.0):
     await asyncio.wait_for(poll(), timeout)
 
 
+async def _until(cond):
+    while not cond():
+        await asyncio.sleep(0.01)
+
+
 async def test_background_loop_processes_after_notify(env):
     worker, _, sessions, _ = env
     await worker.start()
@@ -479,7 +502,8 @@ async def test_background_loop_processes_after_notify(env):
         gid = add_gen(sessions)
         worker.notify()
         await _wait_status(sessions, gid, GenStatus.SUCCEEDED)
-        assert worker.state == WorkerState.IDLE
+        # 收尾寫入在 thread 裡做：列先變成 SUCCEEDED，worker 稍後才回到 IDLE
+        await asyncio.wait_for(_until(lambda: worker.state == WorkerState.IDLE), 2.0)
     finally:
         await worker.stop()
     assert worker.state == WorkerState.STOPPED
@@ -760,11 +784,31 @@ async def test_stop_interrupts_running_engine(env):
     add_gen(sessions)
     await worker.start()
     for _ in range(100):
-        if worker.state == WorkerState.RUNNING:
+        if worker._in_engine:  # state 先變 RUNNING，之後還要在 thread 解析請求才進到引擎
             break
         await asyncio.sleep(0.01)
     await worker.stop()
     assert engine.interrupts == 1
+
+
+async def test_stop_during_slow_failing_write_ends_stopped(env, monkeypatch):
+    worker, engine, sessions, _ = env
+    gid = add_gen(sessions, status=GenStatus.RUNNING)
+    real = worker._finish
+
+    def slow(*a, **kw):
+        time.sleep(0.3)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(worker, "_finish", slow)
+    task = asyncio.create_task(worker._fail_retrying(gid, "boom"))
+    await asyncio.sleep(0.05)  # 寫入在 thread 裡進行中
+    worker.state = WorkerState.STOPPED
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.5)  # thread 收尾
+    assert worker.state == WorkerState.STOPPED and worker.last_error is None
 
 
 async def test_stop_idle_does_not_interrupt(env):

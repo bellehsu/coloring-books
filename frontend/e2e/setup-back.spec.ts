@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { ok, uniqueTitle } from "./seed";
+import { ok, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 /** D1：在 /books/new 建立書後（網址被 replaceState 換成 /books/{id}/setup），開始做這本書 → 瀏覽器「上一頁」要回到這本書的設定，不是空白新書。 */
 test("建立書、開始做這本書，再按上一頁：看到這本書的「主角與故事」，不會再建一本重複的書", async ({ page }) => {

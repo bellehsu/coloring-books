@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 
-from app.models import Generation, GenKind
+from app.services.imageio import flatten_on_white
 
 # 合成演算法改變時 +1
 COMPOSE_VERSION = "1"
@@ -86,28 +86,6 @@ def page_placement(placement_json: str | None) -> Placement:
     return Placement.from_dict(json.loads(placement_json)) if placement_json else DEFAULT_PLACEMENT
 
 
-def composite_matches(gen: Generation, bg_id: int, pose_id: int, placement: Placement) -> bool:
-    """gen（合成圖 generation）是否正是以這組背景＋角色動作＋位置（Placement.key()）
-    用目前版本（COMPOSE_VERSION）的演算法合成的。只看紀錄，不檢查檔案或狀態。"""
-    if gen.kind != GenKind.COMPOSITE or gen.workflow_version != COMPOSE_VERSION:
-        return False
-    try:
-        p = json.loads(gen.params_json or "")
-        return (p["background_generation_id"] == bg_id and p["pose_generation_id"] == pose_id
-                and Placement.from_dict(p["placement"]).key() == placement.key())
-    except (ValueError, KeyError, TypeError):
-        return False
-
-
-def _flatten(img: Image.Image, color: tuple[int, int, int]) -> Image.Image:
-    """有透明度的圖先鋪在指定底色上再轉 RGB（避免透明處變黑）。"""
-    if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
-        rgba = img.convert("RGBA")
-        base = Image.new("RGBA", rgba.size, color + (255,))
-        return Image.alpha_composite(base, rgba).convert("RGB")
-    return img.convert("RGB")
-
-
 def mask_bbox(mask: Image.Image) -> tuple[int, int, int, int] | None:
     """遮罩 > 128 的外接框；全空時 None。"""
     return mask.convert("L").point(lambda v: 255 if v > 128 else 0).getbbox()
@@ -135,17 +113,11 @@ def compose(
     只使用 mask 決定角色輪廓；pose 本身的 alpha 會被忽略（直接丟掉 alpha 通道）。
     RGBA 背景會先壓平鋪在白底上。mask 與 pose 尺寸必須相同。
     """
-    bg = _flatten(background, (255, 255, 255))
-    pose_rgb = pose.convert("RGB")  # 直接丟掉 alpha，只留 RGB
-    m = mask.convert("L")
-    if m.size != pose_rgb.size:
-        raise ValueError("遮罩與角色圖尺寸不同")
-    bbox = mask_bbox(m)
-    if bbox is None:
-        raise ValueError("遮罩是空的")
-    _check_mask_box(bbox[2] - bbox[0], bbox[3] - bbox[1])
-    pose_rgb = pose_rgb.crop(bbox)
-    m = m.crop(bbox)
+    bg = flatten_on_white(background)
+    cut = cutout(pose, mask)  # 尺寸不同或遮罩全空時丟 ValueError
+    _check_mask_box(*cut.size)
+    pose_rgb = cut.convert("RGB")  # 只留 RGB；輪廓用 alpha（＝裁好的遮罩）
+    m = cut.getchannel("A")
 
     target_h = max(1, round(placement.height * bg.height))
     target_w = min(max(1, round(pose_rgb.width * target_h / pose_rgb.height)), MAX_WIDTH_FACTOR * bg.width)

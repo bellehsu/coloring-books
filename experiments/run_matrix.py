@@ -8,7 +8,7 @@
   python experiments/run_matrix.py summarize experiments/results/<run_dir> [--scores scores.csv]
   python experiments/run_matrix.py reextract experiments/results/<run_dir> --config CONFIG  # 對既有原圖重新擷取線稿
 
-線稿方式可加 extract（Route C：先生成彩色圖再擷取線條，見 app.services.lineart_extract）：
+線稿方式可加 extract（Route C：先生成彩色圖再擷取線條，見 experiments/lineart_methods.py）：
   lineart_methods:
     color_xdog: {prompt: "...", extract: {method: xdog, sigma: 0.8}}
 同一次執行中，workflow 版本與參數完全相同的格子只生成一次，其餘共用原圖（gen_source 記錄來源格子）。
@@ -48,10 +48,10 @@ sys.path.insert(0, str(ROOT))
 
 from app.config import PROJECT_ROOT, SettingsError, load_settings  # noqa: E402
 from app.services.comfy_client import ComfyClient, ComfyError  # noqa: E402
-from app.services.lineart_extract import ExtractSpec, extract  # noqa: E402
 from app.services.lineart_post import LineartParams, load_image, process, save_1bit_png  # noqa: E402
 from app.services.preflight import format_report, run_preflight  # noqa: E402
 from app.services.workflow_registry import ParameterError, WorkflowEntry, WorkflowRegistry  # noqa: E402
+from experiments.lineart_methods import ExtractSpec, extract  # noqa: E402
 from experiments.metrics import METRIC_KEYS, load_scores, summarize, summary_markdown, write_csv  # noqa: E402
 
 UPLOAD_SUBFOLDER = "coloring_books"

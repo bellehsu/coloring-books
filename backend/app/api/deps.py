@@ -119,6 +119,18 @@ _PATH_CHECKS = (
 _INT = TypeAdapter(int)
 
 
+def parse_db_id(raw: object, not_found: str) -> int:
+    """路徑裡的 id 轉成整數；轉不成、或超出 SQLite INTEGER 範圍（不可能存在，查詢會丟 OverflowError → 500）
+    一律 404（not_found）。"""
+    try:
+        value = _INT.validate_python(raw)
+    except ValidationError:
+        raise HTTPException(404, not_found) from None
+    if not SQLITE_INT_MIN <= value <= SQLITE_INT_MAX:
+        raise HTTPException(404, not_found)
+    return value
+
+
 def require_owned_path(
     request: Request,
     owner: Owner = Depends(current_owner),
@@ -133,11 +145,6 @@ def require_owned_path(
     for name, check, not_found in _PATH_CHECKS:
         if name not in request.path_params:
             continue
-        try:
-            value = _INT.validate_python(request.path_params[name])
-        except ValidationError:
-            raise HTTPException(404, not_found) from None
-        if not SQLITE_INT_MIN <= value <= SQLITE_INT_MAX:  # 存不進 SQLite 的 id 不可能存在（查詢會丟 OverflowError）
-            raise HTTPException(404, not_found)
+        value = parse_db_id(request.path_params[name], not_found)
         check(session, owner, value)
     return owner

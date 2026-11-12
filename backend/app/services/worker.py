@@ -22,9 +22,14 @@ from app.services.engine import (
     EngineError,
     EngineUnavailable,
     GenerationEngine,
-    GenerationRequest,
 )
 from app.services import auth, pipeline
+from app.services.gen_request import (
+    ENGINE_REQUEUES,
+    ENGINE_UNAVAILABLE_SINCE,
+    decode_request,
+    is_retired,
+)
 from app.services.compose import largest_component
 from app.services.usage import refund_generations
 from app.storage import Storage, StorageNotFound
@@ -51,8 +56,6 @@ def worker_job():
     return or_(col(Generation.engine).is_(None), col(Generation.engine).not_in(LOCAL_ENGINES))
 
 
-ENGINE_REQUEUES = "engine_requeues"  # request_json 的計數：因引擎連不上而放回佇列的次數（worker 自己寫）
-ENGINE_UNAVAILABLE_SINCE = "engine_unavailable_since"  # request_json：第一次連不上的時間（UTC ISO；worker 自己寫）
 MAX_ENGINE_REQUEUES = 3
 # 連不上超過 MAX_ENGINE_REQUEUES 次、而且距第一次連不上已滿這麼多秒，才標成失敗（ComfyUI 重啟等短暫中斷不算）
 ENGINE_GIVE_UP_AFTER_S = 600
@@ -60,75 +63,12 @@ WRITE_RETRY_DELAYS = (0.2, 0.5, 1.0)  # 收尾寫入失敗時的退避秒數
 ENGINE_GAVE_UP = "繪圖服務一直連不上，已停止重試"
 
 
-# request_json 的核心欄位（extra 不能蓋掉）
-_CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
-                        "variation", ENGINE_REQUEUES, ENGINE_UNAVAILABLE_SINCE})
-
-
 def _now() -> datetime:
     """目前時間（UTC）；測試替換它來模擬時間經過。"""
     return datetime.now(timezone.utc)
 
 
-def encode_request(
-    *,
-    kind: GenKind,
-    prompt: str,
-    negative_prompt: str,
-    seed: int,
-    width: int,
-    height: int,
-    character_image: str | None = None,
-    variation: str | None = None,
-    extra: dict | None = None,
-) -> str:
-    """產生 Generation.request_json；character_image 為 Storage 的物件 key（來源紀錄，不存 bytes），variation 一律寫入（可為 null）。
-    extra 併入 JSON，只當來源紀錄（例如 pose_mode、background_style）；引擎不讀，不能蓋掉核心欄位。"""
-    d = {
-        "kind": GenKind(kind).value,
-        "prompt": prompt,
-        "negative_prompt": negative_prompt,
-        "seed": seed,
-        "width": width,
-        "height": height,
-        "character_image": character_image,
-        "variation": variation,
-    }
-    if extra:
-        clash = _CORE_KEYS & set(extra)
-        if clash:
-            raise ValueError(f"extra 不能覆寫核心欄位：{', '.join(sorted(clash))}")
-        d.update(extra)
-    return json.dumps(d, ensure_ascii=False, sort_keys=True)
-
-
-def _is_retired(d: dict) -> bool:
-    """需要已停用路線的請求：舊整頁流程，或明確要求 SDXL 的快速動作／細緻背景。
-    沒有 pose_mode／background_style 的列照 Qwen 執行（新列只把它們當來源紀錄）。"""
-    return d.get("kind") == GenKind.PAGE.value or d.get("pose_mode") == "fast" \
-        or d.get("background_style") == "detailed"
-
-
 CHARACTER_MISSING = "角色參考圖檔案遺失，請重新選擇角色"
-
-
-def decode_request(text: str, storage: Storage) -> GenerationRequest:
-    """還原 GenerationRequest；character_image 的 key 從 Storage 讀成 bytes。
-    key 不合法丟 ValueError；物件不存在丟 StorageNotFound。
-    需要已停用路線的請求丟 ValueError(RETIRED)。舊列多出的 structure_* 等欄位忽略。"""
-    d = json.loads(text)
-    if _is_retired(d):
-        raise ValueError(RETIRED)
-    rel = d.get("character_image")
-    return GenerationRequest(
-        kind=GenKind(d["kind"]),
-        prompt=d["prompt"],
-        seed=d["seed"],
-        width=d["width"],
-        height=d["height"],
-        character_image=None if rel is None else storage.get(rel),
-        variation=d.get("variation"),
-    )
 
 
 class GenerationWorker:
@@ -236,7 +176,7 @@ class GenerationWorker:
             ).all()
             for gen in rows:
                 try:
-                    retired = _is_retired(json.loads(gen.request_json))
+                    retired = is_retired(json.loads(gen.request_json))
                 except (ValueError, TypeError, AttributeError):
                     continue  # 無法解析的列留給 run_once 回報
                 if retired:
@@ -252,21 +192,35 @@ class GenerationWorker:
         return n
 
     def queue_position(self, gen_id: int) -> int | None:
+        return self.queue_positions([gen_id])[gen_id]
+
+    def queue_positions(self, ids: list[int]) -> dict[int, int | None]:
+        """批次版：一個 session 算出目前的執行順序與 RUNNING，再對每筆查表（A15）。
+        RUNNING＝0；QUEUED＝在 QUEUED 中的順序（有 RUNNING 時 +1）；其餘（含不存在）＝None。"""
+        if not ids:
+            return {}
         with self.sessions() as s:
-            gen = s.get(Generation, gen_id)
-            if gen is None:
-                return None
-            if gen.status == GenStatus.RUNNING:
-                return 0
-            if gen.status != GenStatus.QUEUED:
-                return None
-            order = self._plan(s)
-            if gen_id not in order:  # 讀取之間狀態剛好改變
-                return None
-            running = s.exec(
-                select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job())
-            ).first()
-            return order.index(gen_id) + (1 if running is not None else 0)
+            status = dict(
+                s.exec(select(Generation.id, Generation.status).where(col(Generation.id).in_(set(ids)))).all()
+            )
+            order: dict[int, int] = {}
+            offset = 0
+            if any(st == GenStatus.QUEUED for st in status.values()):
+                order = {gid: i for i, gid in enumerate(self._plan(s))}
+                running = s.exec(
+                    select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job())
+                ).first()
+                offset = 1 if running is not None else 0
+        out: dict[int, int | None] = {}
+        for gid in ids:
+            st = status.get(gid)
+            if st == GenStatus.RUNNING:
+                out[gid] = 0
+            elif st == GenStatus.QUEUED and gid in order:  # 不在順序裡＝讀取之間狀態剛好改變
+                out[gid] = order[gid] + offset
+            else:
+                out[gid] = None
+        return out
 
     def _plan(self, s: Session) -> list[int]:
         """目前 QUEUED 任務的執行順序（與 _claim 取任務的順序相同）：建立時間，再 id。"""
@@ -313,7 +267,7 @@ class GenerationWorker:
 
     # ---- 執行 ----
     async def run_once(self) -> bool:
-        gen = self._claim()
+        gen = await asyncio.to_thread(self._claim)  # 同步 DB 工作放到 thread，不卡 event loop（A17）
         if gen is None:
             return False
         gen_id = gen.id
@@ -344,7 +298,7 @@ class GenerationWorker:
             mask_png = result.extra_images.get("mask")
             if mask_png and req.kind == GenKind.POSE:
                 try:  # 寫任何物件之前先檢查：失敗時不留下沒有列指到的圖
-                    mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
+                    mask_png = await asyncio.to_thread(largest_component, mask_png)  # 丟掉與角色分離的陰影
                 except ValueError as e:  # 去背結果太細長（compose.DEGENERATE_MASK）
                     await self._fail_retrying(gen_id, str(e))
                     return True
@@ -448,7 +402,7 @@ class GenerationWorker:
             if delay is not None:
                 await asyncio.sleep(delay)
             try:
-                write()
+                await asyncio.to_thread(write)
                 self._unfinished.pop(gen_id, None)
                 return
             except Exception:  # noqa: BLE001
@@ -457,11 +411,14 @@ class GenerationWorker:
 
     async def _fail_retrying(self, gen_id: int, message: str) -> None:
         await self._write_retrying(gen_id, lambda: self._fail(gen_id, message))
+        if gen_id not in self._unfinished:  # 狀態只在 event loop 這一側改：stop() 之後 thread 才收尾也不會蓋掉 STOPPED
+            self.last_error = message
+            self.state = WorkerState.IDLE
 
     async def _retry_unfinished(self) -> None:
         for gen_id, write in list(self._unfinished.items()):
             try:
-                write()
+                await asyncio.to_thread(write)
                 self._unfinished.pop(gen_id, None)
             except Exception:  # noqa: BLE001
                 log.exception("generation %s：補寫收尾仍失敗", gen_id)
@@ -473,8 +430,6 @@ class GenerationWorker:
                     pipeline.on_generation_failed(s, gen_id)
             except Exception:  # noqa: BLE001  只記 log：生成已標成失敗
                 log.exception("記下頁面需要注意失敗（generation %s）", gen_id)
-        self.last_error = message
-        self.state = WorkerState.IDLE
 
     def _after_success(self, gen_id: int) -> None:
         """頁面的背景／角色動作：自動選用並排頁面流程；任何失敗只記 log（生成已經成功）。"""

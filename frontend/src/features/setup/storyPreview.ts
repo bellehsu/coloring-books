@@ -8,6 +8,8 @@
  */
 
 import type { Generation, Page, ProducePlan } from "@/api/client";
+import { isActive } from "@/api/hooks";
+import { NO_QUOTA } from "@/lib/limits";
 import { parseStory, planImport, type ImportRow } from "@/lib/storyImport";
 
 /** 後端 SECONDS_PER_IMAGE（api/produce.py）：/produce/plan 沒有可以換算的數字時用。 */
@@ -68,8 +70,6 @@ export type ExistingPage = Pick<
 >;
 
 const NONE: PageMaterials = { hasBackground: false, backgroundUploaded: false, hasPose: false };
-const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
-
 /** 每個已有頁面的素材狀態（gens：這本書的生成紀錄，任何種類）。 */
 export function pageMaterials(
   pages: readonly Pick<Page, "id" | "background_generation_id" | "pose_generation_id" | "selected_generation_id">[],
@@ -176,8 +176,6 @@ export function planCounts(
   const minutes = fits > 0 ? Math.max(1, Math.ceil((fits * perImage) / 60)) : 0;
   return { backgrounds, poses, total, fits, remaining, minutes };
 }
-
-export const NO_QUOTA = "今天的生成次數已用完，明天再來";
 
 /** 底部列的文字：標題、說明，以及今天放不下時的「今天先做 X 張，其餘明天繼續」。 */
 export function planText(c: PlanCounts, ready: boolean): { heading: string; detail: string; defer: string | null } {

@@ -12,18 +12,16 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from PIL import Image
-from pydantic import TypeAdapter, ValidationError
 from sqlmodel import Session, col, select
 
-from app.api.deps import current_owner, get_caption_font, get_session, get_storage
-from app.api.export import book_pdf, composed_page, pdf_response
+from app.api.deps import current_owner, get_caption_font, get_session, get_storage, parse_db_id
+from app.api.export import book_pdf, print_page_image, pdf_response
 from app.api.pages import page_outs
 from app.api.schemas import SharedBookDetailOut, SharedBookOut, SharedPageOut
-from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Owner, Page, PageStatus
+from app.api.urls import shared_page_image_url
+from app.models import Book, Owner, Page, PageStatus
 from app.services.export import png_bytes
 from app.storage import Storage
-
-_INT = TypeAdapter(int)
 
 
 def _bounded_ids(request: Request, _owner: Owner = Depends(current_owner)) -> None:
@@ -31,12 +29,7 @@ def _bounded_ids(request: Request, _owner: Owner = Depends(current_owner)) -> No
     for name in ("book_id", "page_id"):
         if name not in request.path_params:
             continue
-        try:
-            value = _INT.validate_python(request.path_params[name])
-        except ValidationError:
-            raise HTTPException(404, SHARED_NOT_FOUND) from None
-        if not SQLITE_INT_MIN <= value <= SQLITE_INT_MAX:
-            raise HTTPException(404, SHARED_NOT_FOUND)
+        parse_db_id(request.path_params[name], SHARED_NOT_FOUND)
 
 
 router = APIRouter(prefix="/api/shared", tags=["shared"], dependencies=[Depends(_bounded_ids)])
@@ -53,7 +46,7 @@ def _image_urls(session: Session, pages: list[Page]) -> dict[int, str]:
         raw = "|".join((out.lineart_url or "", p.caption_zh or "", p.caption_en or "",
                         f"{int(p.caption_show_zh)}{int(p.caption_show_en)}"))
         v = hashlib.sha256(raw.encode()).hexdigest()[:16]
-        urls[p.id] = f"/api/shared/pages/{p.id}/image.png?v={v}"
+        urls[p.id] = shared_page_image_url(p.id, v)
     return urls
 
 
@@ -137,7 +130,7 @@ def shared_page_image(
     if page.id not in {p.id for p in pages}:
         raise _gone()
     try:
-        img = composed_page(session, storage, book, page, font_path)
+        img = print_page_image(session, storage, book, page, font_path)
     except HTTPException:
         raise _gone() from None  # 線稿讀不到：對檢視者就是沒有這一頁
     session.refresh(page)

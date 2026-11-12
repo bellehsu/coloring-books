@@ -6,10 +6,7 @@ user 層；會被使用者橡皮擦擦到的補線不補（補了也接不起來
 
 from __future__ import annotations
 
-import io
-
 import numpy as np
-from PIL import Image
 
 from app.services.lineart_render import Stroke, apply_strokes, stroke_patch
 from app.services.qa import evaluate
@@ -19,12 +16,6 @@ AUTOFIX_MAX_PASSES = 3  # ruling 2026-11-06：補線會讓別的近缺口變成�
 # 每一層修線各自的上限（PUT 修線的驗證也用這兩個數字）
 MAX_STROKES = 500
 MAX_TOTAL_POINTS = 20000
-
-
-def read_ink(data: bytes) -> np.ndarray:
-    """線稿 PNG → 墨水陣列（True＝黑）。"""
-    with Image.open(io.BytesIO(data)) as im:
-        return np.asarray(im.convert("L")) < 128
 
 
 def bridge_stroke(bridge, w: int, h: int, width_px: int) -> Stroke:

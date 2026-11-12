@@ -1,18 +1,17 @@
 """generation 查詢、圖片、捨棄、取消與佇列狀態端點。"""
 
 import io
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image
-from pydantic import BaseModel
 from sqlalchemy import case, literal
 from sqlmodel import Session, col, func, select, update
 
 from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
 from app.api.files import signed_redirect
-from app.api.schemas import GenerationOut
+from app.api.schemas import GenerationOut, GenerationUpdate, PendingJob, QueueStatus, RecentJob
 from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
@@ -26,31 +25,8 @@ router = APIRouter(prefix="/api", tags=["generations"])
 IMAGE_CLEARED = "這張圖已被清理，無法還原"
 
 
-class GenerationUpdate(BaseModel):
-    discarded: bool
-
-
 _ETA_KINDS = (GenKind.CHARACTER, GenKind.BACKGROUND, GenKind.POSE)
 _RECENT_PER_KIND = 10
-
-
-class PendingJob(BaseModel):
-    kind: Literal["character", "background", "pose"]
-
-
-class RecentJob(BaseModel):
-    kind: Literal["character", "background", "pose"]
-    elapsed_s: float
-
-
-class QueueStatus(BaseModel):
-    state: WorkerState
-    last_error: str | None
-    queued: int
-    # 供狀態膠囊估算剩餘時間：排隊中／執行中（舊→新），與各類型最近成功的耗時（新→舊）。
-    pending: list[PendingJob]
-    recent: list[RecentJob]
-
 
 
 def _queue_error(worker: GenerationWorker, owner: Owner) -> str | None:
@@ -62,15 +38,6 @@ def _queue_error(worker: GenerationWorker, owner: Owner) -> str | None:
     return None
 
 
-def _out(gen: Generation, worker: GenerationWorker, owner: Owner) -> GenerationOut:
-    return GenerationOut.from_generation(
-        gen,
-        queue_position=worker.queue_position(gen.id),
-        progress=worker.progress.get(gen.id),
-        is_admin=owner.is_admin,
-    )
-
-
 @router.get("/generations/{gen_id}", response_model=GenerationOut)
 def get_generation(
     gen_id: int,
@@ -78,7 +45,7 @@ def get_generation(
     worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
-    return _out(owned_generation(session, owner, gen_id), worker, owner)
+    return GenerationOut.for_worker(owned_generation(session, owner, gen_id), worker, is_admin=owner.is_admin)
 
 
 @router.get("/generations/{gen_id}/image")
@@ -149,7 +116,7 @@ def list_generations(
     if not include_discarded:
         stmt = stmt.where(col(Generation.discarded).is_(False))
     gens = session.exec(stmt.order_by(col(Generation.id).desc())).all()
-    return [_out(g, worker, owner) for g in gens]
+    return GenerationOut.for_worker_many(list(gens), worker, is_admin=owner.is_admin)
 
 
 @router.patch("/generations/{gen_id}", response_model=GenerationOut)
@@ -208,7 +175,7 @@ def update_generation(
             raise HTTPException(409, IMAGE_CLEARED)
         raise HTTPException(409, "這筆生成紀錄正被頁面使用或作為角色，無法捨棄")
     session.refresh(gen)
-    return _out(gen, worker, owner)
+    return GenerationOut.for_worker(gen, worker, is_admin=owner.is_admin)
 
 
 @router.post("/generations/{gen_id}/cancel", response_model=GenerationOut)
@@ -230,7 +197,7 @@ def cancel_generation(
     if res.rowcount == 0:
         raise HTTPException(409, "只有排隊中的任務可以取消")
     session.refresh(gen)
-    return _out(gen, worker, owner)
+    return GenerationOut.for_worker(gen, worker, is_admin=owner.is_admin)
 
 
 @router.get("/system/queue", response_model=QueueStatus)

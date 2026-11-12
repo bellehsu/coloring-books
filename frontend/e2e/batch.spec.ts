@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { createBook, createPage, getPages, setCharacter, uniqueTitle } from "./seed";
+import { createBook, createPage, getPages, setCharacter, uniqueTitle, drainQueueAfterAll } from "./seed";
+
+drainQueueAfterAll();
 
 test("產生全部素材：有場景的頁排背景、有動作的頁排角色動作，上傳頁略過背景；完成後自動選用", async ({ request }) => {
   const book = await createBook(request, uniqueTitle("e2e 產生全部素材"));
