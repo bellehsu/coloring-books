@@ -9,7 +9,7 @@ import type { Stroke, StrokeOp } from "@/lib/strokes";
 import { editsQueueFor, type EditsEntry } from "./editsQueue";
 import { errMsg } from "./errMsg";
 import { LineFixCanvas } from "./LineFixCanvas";
-import styles from "./EditorPage.module.css";
+import styles from "./stage.module.css";
 
 export interface LineFixStageProps {
   bookId: number;

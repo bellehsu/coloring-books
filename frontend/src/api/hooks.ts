@@ -6,7 +6,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { api } from "./client";
-import { placementSaverFor } from "@/features/editor/placementSaver";
+import { placementSaverFor } from "@/features/editing/placementSaver";
 import type { components } from "./schema";
 import type {
   Book,

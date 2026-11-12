@@ -5,7 +5,7 @@ import type { Book, OverviewPage } from "@/api/client";
 import { useExportSummary } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Drawer } from "@/components/ui/Drawer";
-import { ExportOptions } from "@/features/editor/ExportDrawer";
+import { ExportOptions } from "@/features/editing/ExportOptions";
 import styles from "./ExportSheet.module.css";
 
 export interface ExportSheetProps {

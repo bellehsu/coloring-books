@@ -9,12 +9,15 @@ import { CaptionField, captionError } from "@/components/ui/CaptionField";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import {
-  ACTION_HINT, ACTIONS, activePhrase, appendPhrase, EXPRESSIONS, FACING_HINT, FACINGS, hasPhrase, setExclusivePhrase,
+  ACTION_HINT, ACTIONS, appendPhrase, EXPRESSIONS, FACING_HINT, FACINGS, hasPhrase,
 } from "@/lib/actions";
 import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
-import { errMsg } from "./errMsg";
+import { errMsg } from "@/features/editing/errMsg";
 import { thumbNumber, Thumbs, useThumbList } from "./Thumbs";
+import { ExclusiveChips } from "@/features/editing/ExclusiveChips";
+import chips from "@/features/editing/chips.module.css";
+import { usePageText } from "@/features/editing/usePageText";
 import panel from "./Inspector.module.css";
 import styles from "./ComposeWorkspace.module.css";
 
@@ -126,52 +129,6 @@ function CollapseButton({
       <Icons.chevron size={16} className={styles.collapseChev} />
     </button>
   );
-}
-
-/**
- * 頁面上的一個文字欄位：沒改過就顯示伺服器的值；改過的值在 save() 時送出（同一個值不重送，
- * 送出中的請求會被等待）。失敗時 toast，save() reject，下次會重送。
- * resetKey 變了（C 的復原／重做／還原之後）就丟掉改過的值、改顯示伺服器的值，之前送過的也不再算「已送」。
- */
-export function usePageText(serverValue: string, send: (v: string) => Promise<unknown>, resetKey: number = 0) {
-  const [edited, setEdited] = useState<string | null>(null);
-  const [key, setKey] = useState(resetKey);
-  const sent = useRef<{ value: string; p: Promise<unknown>; key: number } | null>(null);
-  if (key !== resetKey) {
-    setKey(resetKey);
-    setEdited(null);
-  }
-  const value = key !== resetKey ? serverValue : (edited ?? serverValue);
-  /** 這一輪（resetKey）送過的；復原之前送的不算，同樣的文字再打一次要重送。 */
-  const live = () => (sent.current?.key === resetKey ? sent.current : null);
-
-  // 送出一律串在前一筆之後（忽略前一筆的失敗），伺服器依點擊順序收到，最後落地的一定是最新的文字。
-  const enqueue = (v: string): Promise<unknown> => {
-    const last = live();
-    if (last?.value === v) return last.p;
-    const prev = sent.current?.p;
-    const p = (prev ? prev.catch(() => {}) : Promise.resolve()).then(() => send(v));
-    const entry = { value: v, p, key: resetKey };
-    sent.current = entry;
-    p.catch(() => {
-      if (sent.current === entry) sent.current = null;
-    });
-    return p;
-  };
-
-  const save = (): Promise<unknown> => {
-    if (edited === null || key !== resetKey) return Promise.resolve();
-    const last = live();
-    if (last?.value !== edited && !last && edited === serverValue) return Promise.resolve();
-    return enqueue(edited);
-  };
-  /** 設定值並立刻送出（晶片點擊用）；送的是 v，不是還沒更新的 edited。 */
-  const setNow = (v: string): Promise<unknown> => {
-    setEdited(v);
-    if (!live() && v === serverValue) return Promise.resolve();
-    return enqueue(v);
-  };
-  return { value, setValue: setEdited, setNow, save };
 }
 
 /** 一次只跑一個（整段 await 期間停用按鈕；ref 擋住同一輪 render 前的第二次點擊）。 */
@@ -469,7 +426,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
               {action.value.length} / {MAX_ACTION}
             </span>
           </div>
-          <div className={panel.presets} role="group" aria-label="常用動作">
+          <div className={chips.presets} role="group" aria-label="常用動作">
             {ACTIONS.map((a) => {
               const added = hasPhrase(action.value, a.phrase);
               const tooLong = !added && appendPhrase(action.value, a.phrase).length > MAX_ACTION;
@@ -477,7 +434,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
                 <button
                   key={a.phrase}
                   type="button"
-                  className={panel.preset}
+                  className={chips.preset}
                   data-added={added}
                   disabled={added || tooLong}
                   aria-label={added ? `${a.label}（已加入）` : undefined}
@@ -502,49 +459,5 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
         </div>
       </details>
     </section>
-  );
-}
-
-/** 單選的片語晶片群組（表情、面向）：再按一次作用中的取消；改選另一個會取代原本的。 */
-export function ExclusiveChips({
-  label, group, text, onChange, hint,
-}: {
-  label: string;
-  group: { label: string; phrase: string }[];
-  text: string;
-  onChange: (v: string) => void;
-  hint?: string;
-}) {
-  const hintId = useId();
-  const active = activePhrase(text, group);
-  return (
-    <>
-      <div className={panel.presets} role="group" aria-label={label} aria-describedby={hint ? hintId : undefined}>
-        {group.map((g) => {
-          const on = g.phrase === active;
-          const tooLong = !on && setExclusivePhrase(text, group, g.phrase).length > MAX_ACTION;
-          return (
-            <button
-              key={g.phrase}
-              type="button"
-              className={panel.preset}
-              data-added={on}
-              aria-pressed={on}
-              disabled={tooLong}
-              title={tooLong ? `再加入會超過 ${MAX_ACTION} 字` : undefined}
-              onClick={() => onChange(setExclusivePhrase(text, group, on ? null : g.phrase))}
-            >
-              {on ? <span aria-hidden="true">✓ </span> : null}
-              {g.label}
-            </button>
-          );
-        })}
-      </div>
-      {hint ? (
-        <p id={hintId} className={styles.hint}>
-          {hint}
-        </p>
-      ) : null}
-    </>
   );
 }

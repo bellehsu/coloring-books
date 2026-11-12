@@ -18,8 +18,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 // 修線畫布與合成舞台換成可操作的替身（兩者另有測試）
-vi.mock("@/features/editor/LineFixCanvas", async (orig) => {
-  const real = await orig<typeof import("@/features/editor/LineFixCanvas")>();
+vi.mock("@/features/editing/LineFixCanvas", async (orig) => {
+  const real = await orig<typeof import("@/features/editing/LineFixCanvas")>();
   return {
     ...real,
     LineFixCanvas: (p: { strokes: unknown[]; onChange: (s: unknown[]) => void; initialTool?: string }) => (
@@ -33,11 +33,11 @@ vi.mock("@/features/editor/LineFixCanvas", async (orig) => {
 });
 // realStage.on：用真的 ComposeStage（鍵盤測試）
 const realStage = vi.hoisted(() => ({ on: false }));
-vi.mock("@/features/editor/ComposeStage", async (orig) => {
-  const real = await orig<typeof import("@/features/editor/ComposeStage")>();
+vi.mock("@/features/editing/ComposeStage", async (orig) => {
+  const real = await orig<typeof import("@/features/editing/ComposeStage")>();
   return {
     ...real,
-    ComposeStage: (p: import("@/features/editor/ComposeStage").ComposeStageProps) =>
+    ComposeStage: (p: import("@/features/editing/ComposeStage").ComposeStageProps) =>
       realStage.on ? (
         <real.ComposeStage {...p} />
       ) : (

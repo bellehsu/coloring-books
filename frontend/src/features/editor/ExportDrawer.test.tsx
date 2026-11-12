@@ -4,9 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
 import type { Book } from "@/api/client";
-import { editsQueueFor } from "./editsQueue";
-import { placementSaverFor } from "./placementSaver";
-import { ExportDrawer, ExportOptions } from "./ExportDrawer";
+import { editsQueueFor } from "@/features/editing/editsQueue";
+import { placementSaverFor } from "@/features/editing/placementSaver";
+import { ExportOptions } from "@/features/editing/ExportOptions";
+import { ExportDrawer } from "./ExportDrawer";
 
 const book = {
   id: 1,

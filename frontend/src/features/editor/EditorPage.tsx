@@ -31,20 +31,20 @@ import { checklist } from "@/lib/checklist";
 import { PHONE_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
 import { fixHref } from "@/features/fix/fixState";
 import { createAutoCompose } from "./autoCompose";
-import { ComposePreview, ComposeStage, ComposeStatus } from "./ComposeStage";
+import { ComposePreview, ComposeStage, ComposeStatus } from "@/features/editing/ComposeStage";
 import { CaptionPreview } from "./CaptionPreview";
 import { ComposeWorkspace } from "./ComposeWorkspace";
-import { flushAllEditsFor, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
-import { forgetDeletedPage, forgetPageId } from "./forgetPage";
-import { errMsg } from "./errMsg";
+import { flushAllEditsFor, peekEditsQueue, pruneEditsQueues } from "@/features/editing/editsQueue";
+import { forgetDeletedPage, forgetPageId } from "@/features/editing/forgetPage";
+import { errMsg } from "@/features/editing/errMsg";
 import { BookSettingsDialog } from "@/features/books/BookSettingsDialog";
 import { ExportDrawer } from "./ExportDrawer";
 import { Filmstrip } from "./Filmstrip";
 import { FinishPanel } from "./FinishPanel";
 import { Inspector } from "./Inspector";
-import { LineFixStage } from "./LineFixStage";
-import { onBeforeUnload } from "./pendingWrites";
-import { placementSaverFor } from "./placementSaver";
+import { LineFixStage } from "@/features/editing/LineFixStage";
+import { onBeforeUnload } from "@/features/editing/pendingWrites";
+import { placementSaverFor } from "@/features/editing/placementSaver";
 import type { ThumbKind } from "./Thumbs";
 import {
   allowedMode,
@@ -57,7 +57,8 @@ import {
   type EditorMode,
   type ModeGate,
 } from "./StageHeader";
-import { ZoomControls } from "./LineFixCanvas";
+import { ZoomControls } from "@/features/editing/LineFixCanvas";
+import stageStyles from "@/features/editing/stage.module.css";
 import styles from "./EditorPage.module.css";
 
 const isActive = (g: Generation) => g.status === "queued" || g.status === "running";
@@ -513,11 +514,11 @@ export function EditorPage({ bookId }: { bookId: number }) {
   const contentPx = b.layout.content_px;
   const placement: Placement = savedPlacement ?? current.placement ?? DEFAULT_PLACEMENT;
   const loadingMsg = pageGens.isError ? (
-    <p role="alert" className={styles.stageMsg}>
+    <p role="alert" className={stageStyles.stageMsg}>
       {errMsg(pageGens.error, "無法載入圖片")}
     </p>
   ) : (
-    <p className={styles.stageMsg} aria-busy="true">
+    <p className={stageStyles.stageMsg} aria-busy="true">
       載入中…
     </p>
   );
@@ -535,7 +536,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
     // 兩個都選了才能擺位置；圖片缺漏（沒有圖、沒有遮罩 → 沒有 cutout_url）由 ComposeStage 說明要重新產生
     stage =
       !hasBg && !hasPose ? (
-        <p className={styles.stageMsg}>
+        <p className={stageStyles.stageMsg}>
           {busyKind("background") || busyKind("pose") ? "背景與角色動作產生中…" : "先選好背景和角色動作"}
         </p>
       ) : !hasBg || !hasPose ? (
@@ -570,7 +571,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           }
         />
       ) : pageGens.data && !pageGens.isFetching ? (
-        <p role="alert" className={styles.stageMsg}>
+        <p role="alert" className={stageStyles.stageMsg}>
           找不到選用的背景或角色動作，請重新選一張
         </p>
       ) : (
@@ -622,11 +623,11 @@ export function EditorPage({ bookId }: { bookId: number }) {
         onZoomChange={setZoom}
       />
     ) : qaQ.isError ? (
-      <p role="alert" className={styles.stageMsg}>
+      <p role="alert" className={stageStyles.stageMsg}>
         {errMsg(qaQ.error, "無法載入線稿")}
       </p>
     ) : (
-      <p className={styles.stageMsg} aria-busy="true">
+      <p className={stageStyles.stageMsg} aria-busy="true">
         線稿計算中…
       </p>
     );

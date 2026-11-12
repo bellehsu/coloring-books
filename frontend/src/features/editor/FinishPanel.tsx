@@ -10,8 +10,8 @@ import { Icons } from "@/components/ui/Icons";
 import { Segmented } from "@/components/ui/Segmented";
 import { useToast } from "@/components/ui/Toast";
 import { useAcceptPage } from "@/features/fix/fixApi";
-import { flushAllEditsFor, peekEditsQueue } from "./editsQueue";
-import { errMsg } from "./errMsg";
+import { flushAllEditsFor, peekEditsQueue } from "@/features/editing/editsQueue";
+import { errMsg } from "@/features/editing/errMsg";
 import styles from "./FinishPanel.module.css";
 
 type Detail = Page["line_detail"];

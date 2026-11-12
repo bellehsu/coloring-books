@@ -14,7 +14,7 @@ import {
 } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { errMsg } from "@/features/editor/errMsg";
+import { errMsg } from "@/features/editing/errMsg";
 import { printedCaptions } from "@/features/fix/fixState";
 import { formatRemaining } from "@/lib/eta";
 import { ExportSheet } from "./ExportSheet";

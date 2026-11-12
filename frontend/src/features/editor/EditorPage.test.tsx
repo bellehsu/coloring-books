@@ -27,8 +27,8 @@ type LineProps = {
   gaps: unknown[];
   statusOverride?: React.ReactNode;
 };
-vi.mock("./LineFixCanvas", async (orig) => {
-  const real = await orig<typeof import("./LineFixCanvas")>();
+vi.mock("@/features/editing/LineFixCanvas", async (orig) => {
+  const real = await orig<typeof import("@/features/editing/LineFixCanvas")>();
   return {
     ...real,
     LineFixCanvas: (p: LineProps) => (
@@ -46,9 +46,9 @@ vi.mock("./LineFixCanvas", async (orig) => {
 });
 
 // ---------- 合成舞台換成替身：這裡只測 EditorPage 傳進去的回呼與狀態列（背景／角色動作卡片用真的） ----------
-type ComposeStageProps = import("./ComposeStage").ComposeStageProps;
-vi.mock("./ComposeStage", async (orig) => {
-  const real = await orig<typeof import("./ComposeStage")>();
+type ComposeStageProps = import("@/features/editing/ComposeStage").ComposeStageProps;
+vi.mock("@/features/editing/ComposeStage", async (orig) => {
+  const real = await orig<typeof import("@/features/editing/ComposeStage")>();
   return {
     ...real,
     ComposeStage: (p: ComposeStageProps) => (

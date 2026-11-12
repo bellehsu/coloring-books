@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { placementSaverFor } from "@/features/editor/placementSaver";
+import { placementSaverFor } from "@/features/editing/placementSaver";
 import {
   useBookOverview,
   OVERVIEW_POLL_MS,

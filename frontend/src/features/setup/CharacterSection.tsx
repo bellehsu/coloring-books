@@ -6,7 +6,7 @@ import { useGenerations, useSetupCharacter } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
-import { errMsg } from "@/features/editor/errMsg";
+import { errMsg } from "@/features/editing/errMsg";
 import { UPLOAD_ACCEPT } from "@/lib/upload";
 import styles from "./SetupPage.module.css";
 
