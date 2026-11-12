@@ -37,6 +37,19 @@ describe("StageHeader", () => {
   });
 });
 
+describe("StageHeader 回到處理這一頁", () => {
+  it("E10：有 backHref 時顯示「回到處理這一頁」連結", () => {
+    render(
+      <StageHeader mode="compose" onModeChange={() => {}} blockers={{}} idPrefix="x" panelId="x-stage" backHref="/books/1/page/5" />,
+    );
+    expect(screen.getByRole("link", { name: "回到處理這一頁" })).toHaveAttribute("href", "/books/1/page/5");
+  });
+  it("沒有 backHref 就沒有連結", () => {
+    setup();
+    expect(screen.queryByRole("link", { name: "回到處理這一頁" })).not.toBeInTheDocument();
+  });
+});
+
 describe("modes", () => {
   it("normalizeMode maps background/pose→compose and qa→line", () => {
     expect(normalizeMode("background")).toBe("compose");

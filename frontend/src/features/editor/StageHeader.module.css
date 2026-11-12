@@ -79,3 +79,9 @@
   white-space: nowrap;
   border: 0;
 }
+.back {
+  font-size: 14px;
+  color: var(--muted-2);
+  text-decoration: underline;
+  white-space: nowrap;
+}

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/hooks";
 import type { Stroke } from "@/lib/strokes";
 import { editsQueueFor } from "./editsQueue";
-import { hasPendingWrites, onBeforeUnload, whenBookWritesIdle } from "./pendingWrites";
+import { BookWritesError, hasPendingWrites, onBeforeUnload, retryFailedWrites, whenBookWritesIdle } from "./pendingWrites";
 import { placementSaverFor } from "./placementSaver";
 
 const s = (x: number): Stroke => ({ op: "draw", width_px: 11, points: [[x, x]] });
@@ -112,6 +112,39 @@ describe("whenBookWritesIdle", () => {
     );
     await releaseAll(500);
     expect(await w).toMatchObject({ message: "壞了" });
+  });
+
+  it("E4：reject 的錯誤帶出寫入失敗的頁；retryFailedWrites 把最新筆畫再送一次", async () => {
+    const qc = new QueryClient();
+    const e = editsQueueFor(qc, 1, 10, 7);
+    e.push([s(0.1)]);
+    const w = whenBookWritesIdle(qc, 1).then(
+      () => null,
+      (x: unknown) => x,
+    );
+    await releaseAll(500);
+    const err = (await w) as BookWritesError;
+    expect(err).toBeInstanceOf(BookWritesError);
+    expect(err.failures).toEqual([{ pageId: 10, kind: "edits" }]);
+    const r = retryFailedWrites(qc, 1, err.failures);
+    await tick();
+    expect(gates.at(-1)?.method).toBe("PUT");
+    await releaseAll(200);
+    await expect(r).resolves.toBeUndefined();
+    expect(e.failed).toBe(false);
+  });
+
+  it("E9：也等位置存檔（placementSaver）", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(qk.pages(1), [{ id: 10, selected_generation_id: 7 }]);
+    placementSaverFor(qc).savePlacement(10, { cx: 0.5, cy: 0.5, height: 0.6, flip: false });
+    let done = false;
+    const w = whenBookWritesIdle(qc, 1).then(() => (done = true));
+    await tick();
+    expect(done).toBe(false);
+    await releaseAll(200);
+    await w;
+    expect(done).toBe(true);
   });
 
   it("已不是選定圖的修線佇列（失敗後換了選圖）不擋匯出：PDF 只用選定圖", async () => {

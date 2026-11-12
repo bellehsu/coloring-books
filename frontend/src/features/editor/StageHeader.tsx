@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import styles from "./StageHeader.module.css";
 
@@ -68,9 +69,11 @@ export interface StageHeaderProps {
   right?: ReactNode;
   /** 分頁旁的說明（例如 RECOMPOSING_NOTICE）。 */
   notice?: ReactNode;
+  /** 有給：顯示「回到處理這一頁」連結（目前頁的 C）。 */
+  backHref?: string;
 }
 
-export function StageHeader({ mode, onModeChange, blockers, gapCount = 0, idPrefix, panelId, right, notice }: StageHeaderProps) {
+export function StageHeader({ mode, onModeChange, blockers, gapCount = 0, idPrefix, panelId, right, notice, backHref }: StageHeaderProps) {
   const hintId = useId();
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const enabled = (m: EditorMode) => !blockers[m];
@@ -143,6 +146,11 @@ export function StageHeader({ mode, onModeChange, blockers, gapCount = 0, idPref
         <p role="status" className={styles.notice}>
           {notice}
         </p>
+      )}
+      {backHref && (
+        <Link href={backHref} className={styles.back}>
+          回到處理這一頁
+        </Link>
       )}
       {right && <div className={styles.right}>{right}</div>}
     </div>

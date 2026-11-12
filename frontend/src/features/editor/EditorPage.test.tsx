@@ -371,6 +371,15 @@ describe("EditorPage", () => {
     expect(pageButton(1)).toHaveAttribute("aria-current", "true");
   });
 
+  it("E10：書名 crumb 連到 B；舞台標題列有「回到處理這一頁」連到目前頁的 C", async () => {
+    search = "page=2";
+    setup();
+    await screen.findByText("第 2 頁進度");
+    const nav = screen.getByRole("navigation", { name: "目前位置" });
+    expect(within(nav).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(["/", "/books/1"]);
+    expect(screen.getByRole("link", { name: "回到處理這一頁" })).toHaveAttribute("href", "/books/1/page/2");
+  });
+
   it("從網址選頁；切頁更新網址（router.replace）", async () => {
     search = "page=2";
     setup();

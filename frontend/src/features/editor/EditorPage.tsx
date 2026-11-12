@@ -29,6 +29,7 @@ import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
 import { PHONE_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
+import { fixHref } from "@/features/fix/fixState";
 import { createAutoCompose } from "./autoCompose";
 import { ComposePreview, ComposeStage, ComposeStatus } from "./ComposeStage";
 import { CaptionPreview } from "./CaptionPreview";
@@ -455,9 +456,20 @@ export function EditorPage({ bookId }: { bookId: number }) {
     if (currentIdRef.current === pageId) go(pageId, "line");
   };
 
+  /** 匯出前：所有頁還在等（或正在跑）的自動合成先做完，PDF 才是畫面上的內容。 */
+  const settleAutoCompose = async () => {
+    const ids = (pagesQ.data ?? []).map((p) => p.id);
+    await Promise.all(
+      ids.map((id) => {
+        const st = autoCompose.status(id);
+        return st === "pending" || st === "running" ? autoCompose.flush(id) : undefined;
+      }),
+    );
+  };
+
   const shell = (body: ReactNode) => (
     <>
-      <AppBar crumbs={[{ label: "我的繪本", href: "/" }, { label: b.title }]} />
+      <AppBar crumbs={[{ label: "我的繪本", href: "/" }, { label: b.title, href: `/books/${b.id}` }]} />
       <BookBar book={b} current="pages" onExport={() => setExportOpen(true)} onSettings={() => setSettingsOpen(true)} />
       {!hasCharacter && (
         <p className={styles.notice}>
@@ -465,7 +477,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
         </p>
       )}
       {body}
-      <ExportDrawer open={exportOpen} onClose={() => setExportOpen(false)} book={b} />
+      <ExportDrawer open={exportOpen} onClose={() => setExportOpen(false)} book={b} beforeExport={settleAutoCompose} />
       <BookSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} book={b} />
       <Dialog open={askingCurrent} onClose={() => settleAsk(current!.id, false)} title="清掉補過的線？">
         <p className={styles.confirmText}>移動角色會清掉這頁補過的線，要繼續嗎？</p>
@@ -660,6 +672,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           }
           idPrefix={idPrefix}
           panelId={panelId}
+          backHref={fixHref(bookId, current.id)}
           right={mode === "line" ? <ZoomControls zoom={zoom} onZoomChange={setZoom} /> : undefined}
         />
         <div id={panelId} role="tabpanel" aria-labelledby={tabIdOf(idPrefix, mode)} className={`stage ${styles.stage}`}>
