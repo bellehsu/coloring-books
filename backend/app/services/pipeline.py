@@ -215,9 +215,9 @@ def on_generation_succeeded(session: Session, gen_id: int) -> bool:
         except Exception:  # noqa: BLE001  換不上去（例如同時被改）：退回一般的自動選圖
             session.rollback()
             log.warning("換上新圖失敗（generation %s）", gen_id, exc_info=True)
-            auto_select(session, page_id)
+            auto_select(session, page_id)  # take 的快照已經在 take_generation 裡（失敗時一起 rollback 掉了）
     else:
-        auto_select(session, page_id)
+        auto_select(session, page_id, snapshot=True)
     enqueue_page_task(session, page_id)
     session.commit()
     return True
@@ -242,17 +242,20 @@ def _auto_candidates():
     return or_(col(Generation.engine).is_(None), col(Generation.engine) != UPLOAD_ENGINE)
 
 
-def auto_select(session: Session, page_id: int, *, fill_only: bool = False) -> bool:
+def auto_select(session: Session, page_id: int, *, fill_only: bool = False, snapshot: bool = False) -> bool:
     """背景與角色動作：使用者選的不動；否則換成最新一張可用的生成（不含上傳的），並記到 auto_*。
     fill_only（頁面流程的第 1 步）：只補空的欄位，已經有圖的不換。換成新圖只在新圖產生好的時候
     （on_generation_succeeded）；所以「還原成自動畫的那張」與復原選回的圖，不會被流程換成更新的 AI 圖。
     換了圖而選定圖是合成圖時，清掉選定圖並退回草稿（同舊編輯器選圖）。條件式 UPDATE（以讀到的舊值為條件），
-    與使用者同時選圖時使用者的選擇留下。commit；回傳有沒有換。"""
+    與使用者同時選圖時使用者的選擇留下。snapshot：換掉的是原本就有的另一張圖、而且頁面有選定圖時，
+    第一次換之前先存復原快照（同一個交易；一次呼叫最多一筆，什麼都沒換就一起 rollback），
+    讓舊編輯器的「換一張」自動換圖可以在 C 按「↶ 復原」。commit；回傳有沒有換。"""
     page = session.get(Page, page_id)
     if page is None:
         return False
     session.refresh(page)
     changed = False
+    snapshotted = False
     for kind, (field, auto_field) in SLOTS.items():
         current, auto = getattr(page, field), getattr(page, auto_field)
         if current is not None and (current != auto or fill_only):
@@ -269,6 +272,9 @@ def auto_select(session: Session, page_id: int, *, fill_only: bool = False) -> b
             .where(col(Generation.id) == newest, col(Generation.page_id) == page_id, *usable_conditions(kind))
             .exists()
         )
+        if snapshot and not fill_only and not snapshotted and current is not None and page.selected_generation_id is not None:
+            history.push_snapshot(session, page)
+            snapshotted = True
         res = session.exec(
             update(Page)
             .where(col(Page.id) == page_id,
@@ -278,7 +284,10 @@ def auto_select(session: Session, page_id: int, *, fill_only: bool = False) -> b
             .values(**slot_change_values(field, newest), **{auto_field: newest})
         )
         changed |= res.rowcount == 1
-    session.commit()
+    if snapshotted and not changed:
+        session.rollback()  # 沒換成：快照也不留
+    else:
+        session.commit()
     return changed
 
 

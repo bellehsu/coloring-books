@@ -796,3 +796,65 @@ def test_concurrent_retry_queues_and_charges_once(client, app, monkeypatch):
     assert sorted(len(q) for _, q in res) == [0, 1], res  # 一個重排角色動作，另一個只重跑流程
     assert poses() == before_poses + 1
     assert charged() == before_used + 1
+
+
+# ---- 舊編輯器的「換一張」自動換圖要能復原（E2） -----------------------------------------------
+
+
+def draw_old(client, page, strokes):
+    r = client.put(f"/api/pages/{page['id']}/lineart/edits",
+                   json={"generation_id": page["selected_generation_id"], "strokes": strokes})
+    assert r.status_code == 200, r.text
+
+
+def test_old_editor_regenerate_swap_is_undoable(client, app):
+    b, page, bg, pose1 = ready(client, app)
+    pid = page["id"]
+    c1 = page["selected_generation_id"]
+    draw_old(client, page, SCRIBBLE)
+    assert get_page(app, pid).selected_generation_id == c1
+    assert history_rows(app, pid) == []
+    pose2 = gen_pose(client, app, pid)  # 舊編輯器的「換一張」（不是 take）
+    pg = get_page(app, pid)
+    assert pg.pose_generation_id == pose2 and pg.auto_pose_generation_id == pose2
+    assert len(history_rows(app, pid)) == 1
+    drain(client, app)
+    out = undo(client, pid)
+    assert out["pose_generation_id"] == pose1
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.pose_generation_id == pose1 and pg.selected_generation_id == c1
+    assert user_layer(app, c1) == SCRIBBLE
+
+
+def test_fill_only_pushes_no_snapshot(client, app):
+    from app.services.pipeline import auto_select
+    b, page, bg, pose1 = ready(client, app)
+    pid = page["id"]
+    assert history_rows(app, pid) == []  # 第一次補空的欄位：沒有快照
+    # 使用者選回舊的（不等於 auto）：再有一張更新的 AI 圖也不換；補空的流程不換、不存快照
+    pose2 = gen_pose(client, app, pid)
+    assert client.post(f"/api/pages/{pid}/pose", json={"generation_id": pose1}).status_code == 200
+    gen_pose(client, app, pid)
+    assert get_page(app, pid).pose_generation_id == pose1 != pose2
+    n = len(history_rows(app, pid))
+    with app.state.sessions() as s:
+        before = s.get(Page, pid).pose_generation_id
+        assert auto_select(s, pid, fill_only=True) is False
+        assert s.get(Page, pid).pose_generation_id == before
+    assert len(history_rows(app, pid)) == n
+
+
+def test_legacy_page_without_auto_not_swapped_no_snapshot(client, app):
+    b, page, bg, pose1 = ready(client, app)
+    pid = page["id"]
+    with app.state.sessions() as s:
+        p = s.get(Page, pid)
+        p.auto_background_generation_id = None
+        p.auto_pose_generation_id = None
+        s.add(p)
+        s.commit()
+    pose2 = gen_pose(client, app, pid)
+    pg = get_page(app, pid)
+    assert pg.pose_generation_id == pose1 != pose2
+    assert history_rows(app, pid) == []
