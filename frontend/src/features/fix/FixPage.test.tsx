@@ -894,6 +894,59 @@ describe("C 處理一頁：文字存檔與復原的順序", () => {
   });
 });
 
+describe("C 處理一頁：改完文字直接按（按下按鈕時欄位 blur，存檔還在路上）", () => {
+  function gatePatch() {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const log: string[] = [];
+    const realFetch = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url === "/api/pages/5?oneclick=true" && init?.method === "PATCH") {
+        log.push("PATCH sent");
+        await gate;
+        const res = await realFetch(url, init);
+        log.push("PATCH done");
+        return res;
+      }
+      if (url === "/api/pages/5/undo") log.push("undo sent");
+      if (url === "/api/pages/5/accept") log.push("accept sent");
+      return realFetch(url, init);
+    });
+    return { log, release: () => release() };
+  }
+  async function typeCaption(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(within(await findRow("圖下方的字")).getByRole("button", { name: "改字" }));
+    const zh = screen.getByRole("textbox", { name: "中文字" });
+    await user.clear(zh);
+    await user.type(zh, "郵局");
+    expect(zh).toHaveFocus();
+  }
+
+  it("one click on 復原 right after typing: undo is sent after the caption PATCH", async () => {
+    page = mkPage({ can_undo: true });
+    const { log, release } = gatePatch();
+    const user = userEvent.setup();
+    setup();
+    await typeCaption(user);
+    // 按下（mousedown 讓欄位 blur → PATCH 送出、還在路上）再放開：一下就要算數
+    await user.click(screen.getByRole("button", { name: "復原" }));
+    await waitFor(() => expect(log).toEqual(["PATCH sent"]));
+    release();
+    await waitFor(() => expect(log).toEqual(["PATCH sent", "PATCH done", "undo sent"]));
+  });
+
+  it("one click on 這頁可以印了 right after typing: accept is sent after the caption PATCH", async () => {
+    const { log, release } = gatePatch();
+    const user = userEvent.setup();
+    setup();
+    await typeCaption(user);
+    await user.click(screen.getByRole("button", { name: "這頁可以印了 ✓" }));
+    await waitFor(() => expect(log).toEqual(["PATCH sent"]));
+    release();
+    await waitFor(() => expect(log).toEqual(["PATCH sent", "PATCH done", "accept sent"]));
+  });
+});
+
 describe("C 處理一頁：線稿 QA 載入失敗", () => {
   it("QA error shows message and retry", async () => {
     respond["GET /api/pages/5/qa"] = () => json({ detail: "圖片檔案遺失" }, 404);

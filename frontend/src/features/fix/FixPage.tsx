@@ -247,9 +247,9 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
       } else toast.show("重新做這一頁了，好了會自動更新", "info");
     }, "沒辦法再試一次");
 
-  // 修改列的按鈕不等文字存檔：「換一張」「AI 再畫一張」自己會先存好文字，停用反而會吃掉「改完直接按」的那一下
-  const rowBusy = acting || undoM.isPending || redoM.isPending || placement.saving;
-  const busy = rowBusy || textSaving;
+  // 文字存檔中不停用按鈕（只標 aria-busy）：按下按鈕時欄位 blur 才送出存檔，停用會吃掉「改完直接按」的那一下；
+  // 復原／重做／還原、可以印、再試一次自己會先等文字存好（textSaves）
+  const busy = acting || undoM.isPending || redoM.isPending || placement.saving;
   const acceptBlocked = !page.recompose_pending
     ? null
     : page.attention === "failed"
@@ -265,10 +265,10 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
         <h1 className={styles.h1}>{pageTitle(page)}</h1>
         <span className={`${styles.pill} ${styles[`pill_${state}`]}`}>{STATE_LABEL[state]}</span>
         <div className={styles.headActions}>
-          <Button className={styles.headBtn} disabled={!page.can_undo || busy} onClick={() => void undo()}>
+          <Button className={styles.headBtn} disabled={!page.can_undo || busy} aria-busy={textSaving} onClick={() => void undo()}>
             <span aria-hidden="true">↶</span> 復原
           </Button>
-          <Button className={styles.headBtn} disabled={!page.can_redo || busy} onClick={() => void redo()}>
+          <Button className={styles.headBtn} disabled={!page.can_redo || busy} aria-busy={textSaving} onClick={() => void redo()}>
             <span aria-hidden="true">↷</span> 重做
           </Button>
           <nav aria-label="換頁" className={styles.pager}>
@@ -332,7 +332,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
         </section>
 
         <div className={styles.side}>
-          {page.attention === "failed" && <ReasonCard detail={page.attention_detail} busy={busy} onRetry={() => void retry()} />}
+          {page.attention === "failed" && <ReasonCard detail={page.attention_detail} busy={busy} saving={textSaving} onRetry={() => void retry()} />}
           <ul className={styles.items} aria-label="這一頁的東西">
             <PoseRow
               bookId={bookId}
@@ -341,7 +341,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               active={poseActive}
               flushEdits={flushEdits}
               restore={showRestore(page, "pose") ? () => void restore("pose") : null}
-              busy={rowBusy}
+              busy={busy}
               textKey={historyEpoch}
               trackSave={trackSave}
             />
@@ -352,7 +352,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               active={bgActive}
               flushEdits={flushEdits}
               restore={showRestore(page, "background") ? () => void restore("background") : null}
-              busy={rowBusy}
+              busy={busy}
               textKey={historyEpoch}
               trackSave={trackSave}
             />
@@ -369,13 +369,13 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
                 setDrawTool(t);
               }}
               restore={showRestore(page, "lines") ? () => void restore("lines") : null}
-              busy={rowBusy}
+              busy={busy}
             />
             <CaptionRow
               bookId={bookId}
               page={page}
               textKey={historyEpoch}
-              busy={rowBusy || page.recompose_pending}
+              busy={busy || page.recompose_pending}
               trackSave={trackSave}
             />
           </ul>
@@ -383,7 +383,13 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
             <p className={styles.note}>線沒接起來也可以印；想讓顏色不漏出去，再按「自動補線」或用畫筆接起來。</p>
           )}
           {hasArt && (
-            <Button size="lg" className={styles.accept} disabled={busy || acceptBlocked !== null} onClick={() => void accept()}>
+            <Button
+              size="lg"
+              className={styles.accept}
+              disabled={busy || acceptBlocked !== null}
+              aria-busy={textSaving}
+              onClick={() => void accept()}
+            >
               這頁可以印了 ✓
             </Button>
           )}
@@ -421,7 +427,17 @@ function PagerLink({ href, label, arrow, before }: { href: string | null; label:
   );
 }
 
-function ReasonCard({ detail, busy, onRetry }: { detail: string | null; busy: boolean; onRetry: () => void }) {
+function ReasonCard({
+  detail,
+  busy,
+  saving,
+  onRetry,
+}: {
+  detail: string | null;
+  busy: boolean;
+  saving: boolean;
+  onRetry: () => void;
+}) {
   const id = useId();
   return (
     <section aria-labelledby={id} className={styles.reason}>
@@ -430,7 +446,7 @@ function ReasonCard({ detail, busy, onRetry }: { detail: string | null; busy: bo
       </h2>
       <p className={styles.reasonText}>{detail || "這一頁沒做好"}</p>
       <p className={styles.reasonHint}>按「再試一次」重新做這一頁；也可以換一張圖或上傳背景。</p>
-      <Button variant="primary" disabled={busy} onClick={onRetry}>
+      <Button variant="primary" disabled={busy} aria-busy={saving} onClick={onRetry}>
         再試一次
       </Button>
     </section>
