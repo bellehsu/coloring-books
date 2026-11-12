@@ -382,6 +382,27 @@ async def test_fifo_and_queue_position(env):
     assert worker.queue_position(999) is None
 
 
+def test_queue_positions_batch_matches_single(env, monkeypatch):
+    worker, _, sessions, _ = env
+    t0 = datetime.now(timezone.utc)
+    done = add_gen(sessions, status=GenStatus.SUCCEEDED)
+    running = add_gen(sessions, status=GenStatus.RUNNING)
+    late = add_gen(sessions, created_at=t0 + timedelta(seconds=2))
+    first = add_gen(sessions, created_at=t0)
+    mid = add_gen(sessions, created_at=t0 + timedelta(seconds=1))
+    ids = [done, running, late, first, mid, 999]
+    expected = {done: None, running: 0, late: 3, first: 1, mid: 2, 999: None}
+    assert worker.queue_positions(ids) == expected
+    assert {i: worker.queue_position(i) for i in ids} == expected
+    assert worker.queue_positions([]) == {}
+    # 批次版只開一個 session
+    opened = []
+    real = worker.sessions
+    monkeypatch.setattr(worker, "sessions", lambda: opened.append(1) or real())
+    worker.queue_positions(ids)
+    assert len(opened) == 1
+
+
 def test_queue_position_counts_running_job(env):
     worker, _, sessions, _ = env
     running = add_gen(sessions, status=GenStatus.RUNNING)
@@ -467,6 +488,11 @@ async def _wait_status(sessions, gid, status, timeout=2.0):
     await asyncio.wait_for(poll(), timeout)
 
 
+async def _until(cond):
+    while not cond():
+        await asyncio.sleep(0.01)
+
+
 async def test_background_loop_processes_after_notify(env):
     worker, _, sessions, _ = env
     await worker.start()
@@ -475,7 +501,8 @@ async def test_background_loop_processes_after_notify(env):
         gid = add_gen(sessions)
         worker.notify()
         await _wait_status(sessions, gid, GenStatus.SUCCEEDED)
-        assert worker.state == WorkerState.IDLE
+        # 收尾寫入在 thread 裡做：列先變成 SUCCEEDED，worker 稍後才回到 IDLE
+        await asyncio.wait_for(_until(lambda: worker.state == WorkerState.IDLE), 2.0)
     finally:
         await worker.stop()
     assert worker.state == WorkerState.STOPPED
@@ -756,7 +783,7 @@ async def test_stop_interrupts_running_engine(env):
     add_gen(sessions)
     await worker.start()
     for _ in range(100):
-        if worker.state == WorkerState.RUNNING:
+        if worker._in_engine:  # state 先變 RUNNING，之後還要在 thread 解析請求才進到引擎
             break
         await asyncio.sleep(0.01)
     await worker.stop()

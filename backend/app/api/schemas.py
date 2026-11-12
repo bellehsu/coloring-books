@@ -223,6 +223,18 @@ class GenerationOut(BaseModel):
             is_admin=is_admin,
         )
 
+    @classmethod
+    def for_worker_many(
+        cls, gens: list[Generation], worker: "GenerationWorker", *, is_admin: bool = False
+    ) -> list["GenerationOut"]:
+        """for_worker 的批次版：排隊位置一次算完。"""
+        positions = worker.queue_positions([g.id for g in gens])
+        return [
+            cls.from_generation(g, queue_position=positions[g.id], progress=worker.progress.get(g.id),
+                                is_admin=is_admin)
+            for g in gens
+        ]
+
 
 class PageCreate(BaseModel):
     scene_prompt: ScenePromptStr = ""

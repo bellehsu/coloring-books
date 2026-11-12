@@ -116,7 +116,7 @@ def list_generations(
     if not include_discarded:
         stmt = stmt.where(col(Generation.discarded).is_(False))
     gens = session.exec(stmt.order_by(col(Generation.id).desc())).all()
-    return [GenerationOut.for_worker(g, worker, is_admin=owner.is_admin) for g in gens]
+    return GenerationOut.for_worker_many(list(gens), worker, is_admin=owner.is_admin)
 
 
 @router.patch("/generations/{gen_id}", response_model=GenerationOut)

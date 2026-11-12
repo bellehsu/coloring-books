@@ -16,8 +16,10 @@ book.produce_started_at 之後建立、已結束的生成與頁面流程。produ
 """
 
 import json
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, or_, select
 
 from app.api.deps import current_owner, get_session, get_worker, owned_book
 from app.api.pages import page_outs
@@ -47,10 +49,14 @@ def _needed(session: Session, book, state: BookState):
     return [(p, k) for p, k, reason in state.plan(has_character(session, book)) if reason is None]
 
 
-def _tasks(session: Session, page_ids: list[int]) -> list[PageTask]:
+def _tasks(session: Session, page_ids: list[int], started: datetime | None) -> list[PageTask]:
+    """進行中的工作，加上這一輪（created_at >= started）開始後的；更早已完成的不載入（A16）。"""
     if not page_ids:
         return []
-    return list(session.exec(select(PageTask).where(col(PageTask.page_id).in_(page_ids))).all())
+    recent = col(PageTask.status).in_(TASK_ACTIVE)
+    if started is not None:
+        recent = or_(recent, col(PageTask.created_at) >= started)
+    return list(session.exec(select(PageTask).where(col(PageTask.page_id).in_(page_ids), recent)).all())
 
 
 @router.get("/books/{book_id}/produce/plan", response_model=ProducePlanOut)
@@ -87,7 +93,7 @@ def produce(
         state = BookState(session, book_id)
         needed = _needed(session, book, state)
         page_ids = [p.id for p in state.pages]
-        tasks = _tasks(session, page_ids)
+        tasks = _tasks(session, page_ids, None)  # 只需要進行中的
         busy_pages = {t.page_id for t in tasks if t.status in TASK_ACTIVE}
         pipeline_pages = [
             p.id for p in state.pages
@@ -155,7 +161,7 @@ def book_overview(
                 busy.add(page_id)
         elif started is not None and created_at >= started:
             done += 1
-    for t in _tasks(session, [p.id for p in pages]):
+    for t in _tasks(session, [p.id for p in pages], started):
         if t.status in TASK_ACTIVE:
             queued += t.status == PageTaskStatus.QUEUED.value
             running += t.status == PageTaskStatus.RUNNING.value

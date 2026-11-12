@@ -119,7 +119,7 @@ def create_materials_batch(
             else:
                 jobs.append(build_job(session, book, page, kind))
         gens = enqueue_jobs(session, worker, owner, jobs)  # 整批一次預留，不夠就整批 429
-        queued = [GenerationOut.for_worker(g, worker) for g in gens]
+        queued = GenerationOut.for_worker_many(list(gens), worker)
         return BatchMaterialsOut(queued=queued, skipped=skipped)
 
 

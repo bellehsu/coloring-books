@@ -192,21 +192,35 @@ class GenerationWorker:
         return n
 
     def queue_position(self, gen_id: int) -> int | None:
+        return self.queue_positions([gen_id])[gen_id]
+
+    def queue_positions(self, ids: list[int]) -> dict[int, int | None]:
+        """批次版：一個 session 算出目前的執行順序與 RUNNING，再對每筆查表（A15）。
+        RUNNING＝0；QUEUED＝在 QUEUED 中的順序（有 RUNNING 時 +1）；其餘（含不存在）＝None。"""
+        if not ids:
+            return {}
         with self.sessions() as s:
-            gen = s.get(Generation, gen_id)
-            if gen is None:
-                return None
-            if gen.status == GenStatus.RUNNING:
-                return 0
-            if gen.status != GenStatus.QUEUED:
-                return None
-            order = self._plan(s)
-            if gen_id not in order:  # 讀取之間狀態剛好改變
-                return None
-            running = s.exec(
-                select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job())
-            ).first()
-            return order.index(gen_id) + (1 if running is not None else 0)
+            status = dict(
+                s.exec(select(Generation.id, Generation.status).where(col(Generation.id).in_(set(ids)))).all()
+            )
+            order: dict[int, int] = {}
+            offset = 0
+            if any(st == GenStatus.QUEUED for st in status.values()):
+                order = {gid: i for i, gid in enumerate(self._plan(s))}
+                running = s.exec(
+                    select(Generation.id).where(col(Generation.status) == GenStatus.RUNNING, worker_job())
+                ).first()
+                offset = 1 if running is not None else 0
+        out: dict[int, int | None] = {}
+        for gid in ids:
+            st = status.get(gid)
+            if st == GenStatus.RUNNING:
+                out[gid] = 0
+            elif st == GenStatus.QUEUED and gid in order:  # 不在順序裡＝讀取之間狀態剛好改變
+                out[gid] = order[gid] + offset
+            else:
+                out[gid] = None
+        return out
 
     def _plan(self, s: Session) -> list[int]:
         """目前 QUEUED 任務的執行順序（與 _claim 取任務的順序相同）：建立時間，再 id。"""
@@ -253,7 +267,7 @@ class GenerationWorker:
 
     # ---- 執行 ----
     async def run_once(self) -> bool:
-        gen = self._claim()
+        gen = await asyncio.to_thread(self._claim)  # 同步 DB 工作放到 thread，不卡 event loop（A17）
         if gen is None:
             return False
         gen_id = gen.id
@@ -284,7 +298,7 @@ class GenerationWorker:
             mask_png = result.extra_images.get("mask")
             if mask_png and req.kind == GenKind.POSE:
                 try:  # 寫任何物件之前先檢查：失敗時不留下沒有列指到的圖
-                    mask_png = largest_component(mask_png)  # 丟掉與角色分離的陰影
+                    mask_png = await asyncio.to_thread(largest_component, mask_png)  # 丟掉與角色分離的陰影
                 except ValueError as e:  # 去背結果太細長（compose.DEGENERATE_MASK）
                     await self._fail_retrying(gen_id, str(e))
                     return True
@@ -388,7 +402,7 @@ class GenerationWorker:
             if delay is not None:
                 await asyncio.sleep(delay)
             try:
-                write()
+                await asyncio.to_thread(write)
                 self._unfinished.pop(gen_id, None)
                 return
             except Exception:  # noqa: BLE001
@@ -401,7 +415,7 @@ class GenerationWorker:
     async def _retry_unfinished(self) -> None:
         for gen_id, write in list(self._unfinished.items()):
             try:
-                write()
+                await asyncio.to_thread(write)
                 self._unfinished.pop(gen_id, None)
             except Exception:  # noqa: BLE001
                 log.exception("generation %s：補寫收尾仍失敗", gen_id)

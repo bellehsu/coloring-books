@@ -320,6 +320,39 @@ def test_overview_new_book_through_a_full_run(client, app):
     assert [p["state"] for p in ov["pages"]] == ["ready", "ready", "working"]
 
 
+def test_overview_ignores_old_finished_tasks(client, app):
+    from sqlalchemy import event
+    from datetime import timedelta
+
+    login(client, app, cap=60)
+    b, (p1, p2) = book_with_pages(client, app, [("公園", "揮手"), ("海邊", "跳")])
+    produce(client, b["id"])
+    run_all(client, app)
+    before = overview(client, b["id"])
+    started = before["run_started_at"]
+    assert before["progress"]["done"] == 6
+    with app.state.sessions() as s:  # 上一輪留下的大量已完成工作
+        book = s.get(Book, b["id"])
+        old = book.produce_started_at - timedelta(days=1)
+        for pid in (p1["id"], p2["id"]):
+            for _ in range(20):
+                s.add(PageTask(page_id=pid, status=PageTaskStatus.SUCCEEDED.value, created_at=old))
+        s.commit()
+    seen: list[str] = []
+
+    def spy(conn, cursor, statement, *a):
+        if "FROM page_task" in statement:
+            seen.append(statement)
+
+    event.listen(app.state.db, "before_cursor_execute", spy)
+    try:
+        after = overview(client, b["id"])
+    finally:
+        event.remove(app.state.db, "before_cursor_execute", spy)
+    assert after == before and after["run_started_at"] == started
+    assert seen and all("created_at" in q.split("WHERE", 1)[1] for q in seen)  # 在 SQL 就篩掉舊的，不是載入後才過濾
+
+
 def test_pressing_again_while_running_keeps_the_run(client, app):
     login(client, app, cap=60)
     b, (p1, p2) = book_with_pages(client, app, [("公園", "揮手"), ("海邊", "跳")])

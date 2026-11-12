@@ -89,6 +89,32 @@ def produced(client, app, **kw):
     return b, p, bg, pose
 
 
+def test_finished_tasks_pruned_to_five(client, app):
+    b, p = book_page(client, app)
+    other = new_page(client, b["id"], scene_prompt="海邊", action_prompt="跳")["id"]
+    pid = p["id"]
+    with app.state.sessions() as s:
+        ids = []
+        for _ in range(8):
+            t = PageTask(page_id=pid, status=PageTaskStatus.RUNNING.value)
+            s.add(t)
+            s.flush()
+            ids.append(t.id)
+        s.add(PageTask(page_id=pid, status=PageTaskStatus.QUEUED.value))
+        oid = PageTask(page_id=other, status=PageTaskStatus.SUCCEEDED.value)
+        s.add(oid)
+        s.commit()
+        other_ids = [oid.id]
+    for i, tid in enumerate(ids):
+        with app.state.sessions() as s:
+            pipeline.finish_page_task(s, tid, PageTaskStatus.SUCCEEDED if i % 2 else PageTaskStatus.FAILED, None)
+    mine = tasks(app, pid)
+    finished = [t.id for t in mine if t.status in (PageTaskStatus.SUCCEEDED.value, PageTaskStatus.FAILED.value)]
+    assert finished == ids[-5:]  # 只留最新的 5 筆
+    assert len([t for t in mine if t.status == PageTaskStatus.QUEUED.value]) == 1  # 進行中的不動
+    assert [t.id for t in tasks(app, other)] == other_ids  # 別頁不受影響
+
+
 # ---- 完整流程 ----------------------------------------------------------------------
 
 
