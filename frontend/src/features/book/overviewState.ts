@@ -21,9 +21,9 @@ export const STATE_LABEL: Record<PageState, string> = {
 
 /**
  * 要請你看一下的頁：真的有問題（attention），或是批次重畫後換了新的主角動作（review，軟性的：
- * 狀態還是 ready，同時算在「可以印」）。
+ * 狀態還是 ready，同時算在「可以印」）。review 只在 ready 時算：又在製作中的頁先顯示製作中。
  */
-export const inAttention = (p: OverviewPage): boolean => p.state === "attention" || p.review;
+export const inAttention = (p: OverviewPage): boolean => p.state === "attention" || (p.review && p.state === "ready");
 
 const inFilter = (f: Filter, p: OverviewPage) =>
   f === "all" ||

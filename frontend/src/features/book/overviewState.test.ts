@@ -99,6 +99,15 @@ describe("review pages (soft 請看一下)", () => {
     expect(countPages(pages)).toEqual({ all: 3, attention: 2, ready: 2, unfinished: 0 });
     expect(softNote(review)).toBe("請看一下：換了新的主角動作");
   });
+
+  it("a review page that is working again is not in 請看一下 (soft tag only when ready)", () => {
+    const working = pg(2, "working", { review: true, attention_detail: "請看一下：換了新的主角動作" });
+    const pages = [pg(1, "ready"), working];
+    expect(inAttention(working)).toBe(false);
+    expect(filterPages(pages, "attention")).toEqual([]);
+    expect(filterPages(pages, "unfinished").map((p) => p.id)).toEqual([2]);
+    expect(countPages(pages)).toEqual({ all: 2, attention: 0, ready: 1, unfinished: 1 });
+  });
 });
 
 describe("countsLine", () => {

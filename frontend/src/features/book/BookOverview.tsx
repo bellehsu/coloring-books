@@ -392,8 +392,8 @@ function PageCard({
   const n = p.position + 1;
   const src = p.lineart_url ?? p.thumb_url;
   const note = softNote(p);
-  // 批次重畫後換了新動作（review）：狀態還是可以印，但卡片顯示軟性的「請看一下」
-  const pillState = p.review ? "attention" : p.state;
+  // 批次重畫後換了新動作（review）：狀態還是可以印，但卡片顯示軟性的「請看一下」（製作中時照樣顯示製作中）
+  const pillState = p.review && p.state === "ready" ? "attention" : p.state;
   const [cw, ch] = aspect;
   // 卡片下方的字＝這頁真的會印的字（中文優先）；兩個都不印時說圖下方留白
   const printed = printedCaptions(p);

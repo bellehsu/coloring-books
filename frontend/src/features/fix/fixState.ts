@@ -1,5 +1,6 @@
 import type { OverviewPage, Page } from "@/api/client";
 import { normalizeCaption } from "@/lib/limits";
+import { hardAttention } from "@/lib/pageState";
 import { inAttention, type PageState } from "@/features/book/overviewState";
 
 /** C 是從 B 的哪個篩選打開的：「請看一下」時上一頁／下一頁只在要看的頁之間跳。 */
@@ -63,7 +64,7 @@ export function pageTitle(page: Pick<Page, "position" | "caption_zh">): string {
 /** 頁首的狀態：以 B 的總覽為準（含製作中）；總覽還沒載入時由頁面推（review_pose 是軟性的，仍算可以印）。 */
 export function pageState(page: Page, ov: OverviewPage | undefined): PageState {
   if (ov) return ov.state;
-  if (page.attention && page.attention !== "review_pose") return "attention";
+  if (hardAttention(page)) return "attention";
   return page.status === "passed" ? "ready" : "todo";
 }
 

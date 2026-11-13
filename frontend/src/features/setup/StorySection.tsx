@@ -242,7 +242,7 @@ function StoryPreviewRow({
               aria-label={`第 ${e.n} 頁場景`}
               maxLength={MAX_SCENE}
               value={vals.scene}
-              disabled={saving}
+              disabled={saving || disabled}
               onChange={(ev) => setVals({ ...vals, scene: ev.target.value })}
             />
             <input
@@ -251,7 +251,7 @@ function StoryPreviewRow({
               aria-label={`第 ${e.n} 頁動作`}
               maxLength={MAX_ACTION}
               value={vals.action}
-              disabled={saving}
+              disabled={saving || disabled}
               onChange={(ev) => setVals({ ...vals, action: ev.target.value })}
             />
             {e.materials.backgroundUploaded && (
@@ -264,7 +264,7 @@ function StoryPreviewRow({
               placeholder="中文"
               maxLength={MAX_CAPTION_ZH}
               value={vals.zh}
-              disabled={saving}
+              disabled={saving || disabled}
               onChange={(ev) => setVals({ ...vals, zh: ev.target.value })}
             />
             <input
@@ -274,11 +274,11 @@ function StoryPreviewRow({
               placeholder="英文"
               maxLength={MAX_CAPTION_EN}
               value={vals.en}
-              disabled={saving}
+              disabled={saving || disabled}
               onChange={(ev) => setVals({ ...vals, en: ev.target.value })}
             />
             <div className={`${styles.editActions} ${styles.fullRow}`}>
-              <Button disabled={saving} onClick={() => void save()}>
+              <Button disabled={saving || disabled} onClick={() => void save()}>
                 儲存
               </Button>
               <Button disabled={saving} onClick={() => setEditing(false)}>

@@ -111,6 +111,14 @@ describe("BookCard menu", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("刪除 refreshes the queue status (the book's queued work was cancelled)", async () => {
+    const { qc } = setup();
+    qc.setQueryData(qk.queue(), { queued: 2 });
+    await openConfirm();
+    await userEvent.click(screen.getByRole("button", { name: "刪除" }));
+    await waitFor(() => expect(qc.getQueryState(qk.queue())?.isInvalidated).toBe(true));
+  });
+
   it("刪除 sends DELETE and drops the card", async () => {
     const { fetchMock, qc } = setup();
     await openConfirm();

@@ -1030,6 +1030,27 @@ describe("EditorPage", () => {
     await waitFor(() => expect(calledWith("GET", "/api/books/1/pages").length).toBeGreaterThan(before));
   });
 
+  it("等著重新合成而且標了 review_pose（軟標記）：還是「正在重新合成」，不是失敗", async () => {
+    const NOTICE = "這一頁正在重新合成…好了會自動更新";
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, {
+      ...o,
+      selected_generation_id: 50,
+      compose_pending: true,
+      recompose_pending: true,
+      attention: "review_pose",
+      attention_detail: "請看一下：換了新的主角動作",
+      status: "passed",
+    });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    await screen.findByTestId("compose-stage");
+    expect(screen.getAllByRole("status").some((el) => el.textContent === NOTICE)).toBe(true);
+    expect(screen.getAllByRole("status").some((el) => el.textContent?.startsWith("重新合成沒成功"))).toBe(false);
+    expect(lineTab()).toHaveAttribute("aria-disabled", "true");
+    expect(lineTab()).toHaveAccessibleDescription(NOTICE);
+  });
+
   it(
     "重新合成失敗（等著＋請看一下）：說明「重新合成沒成功…」連到這頁的處理頁面、補線停用、頁面標請看一下、不再每 2 秒重抓",
     async () => {

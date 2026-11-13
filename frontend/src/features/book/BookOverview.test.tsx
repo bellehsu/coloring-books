@@ -235,6 +235,19 @@ describe("B 整本書：狀態卡", () => {
     expect(within(card).getByRole("link", { name: "去看那一頁 →" })).toHaveAttribute("href", "/books/1/page/1?filter=attention");
   });
 
+  it("a review page that is working shows 製作中 and is not in the 請看一下 filter", async () => {
+    overview = ov([pg(1, "working", { review: true, attention_detail: "請看一下：換了新的主角動作" }), pg(2, "ready")], {
+      progress: { queued: 0, running: 1, done: 0 },
+    });
+    setup();
+    const list = await screen.findByRole("list", { name: "頁面" });
+    const cards = within(list).getAllByRole("link");
+    expect(cards[0]).toHaveTextContent("製作中");
+    expect(within(cards[0]).queryByText("請看一下", { exact: true })).toBeNull();
+    const filters = screen.getByRole("group", { name: "篩選頁面" });
+    within(filters).getByRole("button", { name: "請看一下 0" });
+  });
+
   it("a book with no pages shows 還沒有頁面, not 做好 0 / 0 頁", async () => {
     overview = ov([], { run_started_at: null, progress: { queued: 0, running: 0, done: 0 } });
     setup();

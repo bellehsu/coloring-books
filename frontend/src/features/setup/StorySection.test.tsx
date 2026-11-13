@@ -163,6 +163,38 @@ describe("StorySection edit existing pages", () => {
     expect(screen.getByRole("button", { name: "儲存" })).toBeInTheDocument();
   });
 
+  it("while the section is disabled the edit inputs and 儲存 are disabled; 取消 still works", async () => {
+    const props = {
+      preview: { entries: [entry()], rows: [], pasted: 0, problems: [] },
+      text: "",
+      onText: vi.fn(),
+      uploads: new Map(),
+      onUpload: vi.fn(),
+      onAddPage: vi.fn(),
+      onDraftChange: vi.fn(),
+      onDraftRemove: vi.fn(),
+      onSavePage: vi.fn(async () => {}),
+      existing: 1,
+    };
+    const { rerender } = render(
+      <ToastProvider>
+        <StorySection {...props} disabled={false} />
+      </ToastProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "編輯" }));
+    rerender(
+      <ToastProvider>
+        <StorySection {...props} disabled />
+      </ToastProvider>,
+    );
+    for (const name of ["場景", "動作", "中文", "英文"]) expect(screen.getByLabelText(`第 1 頁${name}`)).toBeDisabled();
+    expect(screen.getByRole("button", { name: "儲存" })).toBeDisabled();
+    const cancel = screen.getByRole("button", { name: "取消" });
+    expect(cancel).toBeEnabled();
+    await userEvent.click(cancel);
+    expect(screen.queryByRole("button", { name: "儲存" })).toBeNull();
+  });
+
   it("要重畫 chip when redraw_pose or redraw_background", () => {
     mount(entry({ materials: mats({ redrawPose: true }) }));
     expect(screen.getByText("要重畫")).toBeInTheDocument();
