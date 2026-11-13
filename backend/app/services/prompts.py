@@ -5,8 +5,8 @@ qwen_edit_pose_cutout）。Qwen 的 cfg 為 1 → 負向提示詞無效，排除
 import random
 from collections.abc import Sequence
 
-# 線條描述（三個樣板共用）。最終措辭由 Task 16 的 GPU 校正決定（spec §4.8）；不可含大括號（樣板用 .format）。
-OUTLINE_PHRASE = "clean thin black outlines"
+# 線條描述（三個樣板共用）。2026-11-13 GPU 校正後使用者選 medium（experiments/results/phase14_outline_prompt_20261113_1458）；不可含大括號（樣板用 .format）。
+OUTLINE_PHRASE = "clean medium-weight black outlines"
 
 
 def pick_variation(options: Sequence[str], rng: random.Random, exclude: str | None = None) -> str | None:
