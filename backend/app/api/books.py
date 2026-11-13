@@ -49,7 +49,7 @@ CHARACTER_SIZE = QWEN_CHARACTER_SIZE
 
 
 
-def book_outs(session: Session, books: list[Book], viewer: Owner | None = None) -> list[BookOut]:
+def book_outs(session: Session, books: list[Book], viewer: Owner) -> list[BookOut]:
     """附上統計與封面；所有繪本的頁面一次查完，封面頁再交給 page_outs 算 lineart_url。"""
     ids = [b.id for b in books]
     by_book: dict[int, list[Page]] = {i: [] for i in ids}
@@ -79,11 +79,11 @@ def book_outs(session: Session, books: list[Book], viewer: Owner | None = None) 
             working=states.count("working"),
             todo=states.count("todo"),
         )
-        out.append(BookOut.from_book(b, stats, cover_urls.get(b.id), mine=viewer is None or b.owner_id == viewer.id))
+        out.append(BookOut.from_book(b, stats, cover_urls.get(b.id), mine=b.owner_id == viewer.id))
     return out
 
 
-def book_out(session: Session, book: Book, viewer: Owner | None = None) -> BookOut:
+def book_out(session: Session, book: Book, viewer: Owner) -> BookOut:
     return book_outs(session, [book], viewer)[0]
 
 
@@ -96,7 +96,7 @@ def create_book(
     book = Book(title=body.title, paper_size=body.paper_size, print_mode=body.print_mode, owner_id=owner.id)
     session.add(book)
     session.commit()
-    return book_out(session, book)
+    return book_out(session, book, owner)
 
 
 @router.get("", response_model=list[BookOut])

@@ -141,10 +141,9 @@ def cancel_queued_in_books(session: Session, book_ids, *, reason: str) -> int:
     QUEUED 的 PageTask → FAILED（PageTask 沒有 cancelled 狀態），error 都是 reason。RUNNING 的不動。
     回傳取消的 generation 數。條件式 UPDATE 會取得寫入鎖，worker 之後無法再認領這些工作。
     不 commit（呼叫端與主要變更同一個交易）。"""
-    owned = book_ids
     cancelled = list(session.exec(
         update(Generation)
-        .where(col(Generation.book_id).in_(owned), col(Generation.status) == GenStatus.QUEUED)
+        .where(col(Generation.book_id).in_(book_ids), col(Generation.status) == GenStatus.QUEUED)
         .values(status=GenStatus.CANCELLED, error=reason, finished_at=utcnow())
         .returning(Generation.id)
     ).scalars().all())
@@ -152,7 +151,7 @@ def cancel_queued_in_books(session: Session, book_ids, *, reason: str) -> int:
     session.exec(
         update(PageTask)
         .where(
-            col(PageTask.page_id).in_(select(Page.id).where(col(Page.book_id).in_(owned))),
+            col(PageTask.page_id).in_(select(Page.id).where(col(Page.book_id).in_(book_ids))),
             col(PageTask.status) == PageTaskStatus.QUEUED.value,
         )
         .values(status=PageTaskStatus.FAILED.value, error=reason, updated_at=utcnow())
