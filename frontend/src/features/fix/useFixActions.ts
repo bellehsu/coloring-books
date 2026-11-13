@@ -7,7 +7,7 @@ import { flushAllEditsFor } from "@/features/editing/editsQueue";
 import { errMsg } from "@/features/editing/errMsg";
 import { onBeforeUnload } from "@/features/editing/pendingWrites";
 import { useSingleFlight } from "@/lib/useSingleFlight";
-import { useAcceptPage, useRedoPage, useRestorePage, useRetryPage, useUndoPage } from "./fixApi";
+import { useAcceptPage, useRedoPage, useRestorePage, useRetryPage, useSelectPoseC, useUndoPage } from "./fixApi";
 import { fixHref, type FixFilter, type RestoreItem } from "./fixState";
 import type { PlacementSaves } from "./usePlacementSaves";
 
@@ -23,7 +23,7 @@ export interface FixActionsArgs {
 }
 
 /**
- * C 頁首與側欄的動作：復原／重做／還原、這頁可以印了、再試一次（一次只做一件事；失敗 toast），
+ * C 頁首與側欄的動作：復原／重做／還原、換成畫過的另一張角色動作、這頁可以印了、再試一次（一次只做一件事；失敗 toast），
  * 以及文字欄位存檔的追蹤（trackSave）與關分頁前的確認。
  */
 export function useFixActions({ bookId, page, filter, next, placement, closePen }: FixActionsArgs) {
@@ -37,6 +37,7 @@ export function useFixActions({ bookId, page, filter, next, placement, closePen 
   const restoreM = useRestorePage(bookId, pageId);
   const acceptM = useAcceptPage(bookId, pageId);
   const retryM = useRetryPage(bookId, pageId);
+  const selectPoseM = useSelectPoseC(bookId, pageId);
 
   const flight = useSingleFlight();
   // 復原／重做／還原成功一次就加 1：文字欄位（動作、場景、圖下方的字）丟掉改過的值、改顯示伺服器的
@@ -98,6 +99,15 @@ export function useFixActions({ bookId, page, filter, next, placement, closePen 
   const redo = () => runHistory(() => redoM.mutateAsync(), "沒辦法重做");
   const restore = (item: RestoreItem) => runHistory(() => restoreM.mutateAsync(item), "沒辦法還原");
 
+  /** 點「畫過的角色動作」裡的一張：先等文字、位置與筆畫寫完，再換上去（後端先存復原快照）。 */
+  const selectPose = (generationId: number) =>
+    act(async () => {
+      await textSaves();
+      await placement.idle();
+      await flushEdits();
+      await selectPoseM.mutateAsync(generationId);
+    }, "無法換成這張角色動作");
+
   const accept = () =>
     act(async () => {
       await textSaves();
@@ -127,5 +137,18 @@ export function useFixActions({ bookId, page, filter, next, placement, closePen 
       ? "這一頁合成失敗，請先按「再試一次」再印"
       : "這一頁還在重新合成，等它做完再按";
 
-  return { busy, textSaving, trackSave, historyEpoch, flushEdits, undo, redo, restore, accept, retry, acceptBlocked };
+  return {
+    busy,
+    textSaving,
+    trackSave,
+    historyEpoch,
+    flushEdits,
+    undo,
+    redo,
+    restore,
+    selectPose,
+    accept,
+    retry,
+    acceptBlocked,
+  };
 }

@@ -8,7 +8,7 @@ import { errMsg } from "@/features/editing/errMsg";
 import { usePageText } from "@/features/editing/usePageText";
 import { ACTION_HINT, EXPRESSIONS, FACING_HINT, FACINGS } from "@/lib/actions";
 import { MAX_ACTION } from "@/lib/limits";
-import { useRegenerate, useSelectPoseC } from "../fixApi";
+import { useRegenerate } from "../fixApi";
 import { lastSeenPose, markSeenPose } from "../seenPoses";
 import { quiet } from "@/lib/quiet";
 import styles from "../FixPage.module.css";
@@ -21,11 +21,15 @@ const COUNTS: { value: `${Count}`; label: string }[] = [
   { value: "3", label: "3" },
 ];
 
-/** 這頁畫過的角色動作：成功、沒捨棄的，新的在前。 */
+/** 這頁畫過的角色動作：成功、沒捨棄、有圖的，新的在前（src：去背圖，沒有就用原圖）。 */
 function posesOf(gens: readonly Generation[], pageId: number) {
   return gens
     .filter((g) => g.kind === "pose" && g.page_id === pageId && g.status === "succeeded" && !g.discarded)
-    .sort((a, b) => b.id - a.id);
+    .flatMap((g) => {
+      const src = g.cutout_url ?? g.image_url;
+      return src ? [{ g, src }] : [];
+    })
+    .sort((a, b) => b.g.id - a.g.id);
 }
 
 /**
@@ -40,6 +44,7 @@ export function PoseRow({
   hasCharacter,
   active,
   flushEdits,
+  selectPose,
   restore,
   busy,
   textKey,
@@ -52,6 +57,8 @@ export function PoseRow({
   hasCharacter: boolean;
   active: boolean;
   flushEdits: () => Promise<void>;
+  /** 換成畫過的另一張（useFixActions：先等文字、位置與筆畫寫完；進行中算 busy）。 */
+  selectPose: (generationId: number) => Promise<unknown>;
   restore: (() => void) | null;
   busy: boolean;
   textKey: number;
@@ -63,11 +70,10 @@ export function PoseRow({
   const savePage = useSavePage(bookId, page.id);
   const action = usePageText(page.action_prompt, (v) => savePage({ action_prompt: v }), textKey);
   const regen = useRegenerate(bookId, page.id);
-  const select = useSelectPoseC(bookId, page.id);
   const trimmed = action.value.trim();
 
   const poses = posesOf(gens, page.id);
-  const maxId = poses[0]?.id ?? null;
+  const maxId = poses[0]?.g.id ?? null;
   // 打開這頁時讀一次「上次看過的」，之後記下最新的一張；畫面上的「新」留到下次打開
   const [seen, setSeen] = useState(() => ({ pageId: page.id, id: lastSeenPose(page.id) }));
   if (seen.pageId !== page.id) setSeen({ pageId: page.id, id: lastSeenPose(page.id) });
@@ -88,19 +94,13 @@ export function PoseRow({
       .catch((e: unknown) => toast.show(errMsg(e, "無法重畫主角"), "error"));
   };
 
-  const pick = async (g: Generation) => {
-    await flushEdits();
-    await select.mutateAsync(g.id).catch((e: unknown) => toast.show(errMsg(e, "無法換成這張角色動作"), "error"));
-  };
-
   const sub = active ? "正在畫新的一張…" : `這頁畫過 ${poses.length} 張・點一下就換`;
-  const picking = select.isPending || busy;
   return (
     <Row title="角色動作" tint="pink" sub={sub} restore={restore} actions={null}>
       {!hasCharacter && <p className={styles.rowNote}>這本書還沒有主角，先到「主角與故事」設定。</p>}
       {poses.length > 0 && (
         <ul className={styles.poses} aria-label="畫過的角色動作">
-          {poses.map((g, i) => {
+          {poses.map(({ g, src }, i) => {
             const on = g.id === page.pose_generation_id;
             const fresh = lastSeen !== null && g.id > lastSeen;
             return (
@@ -109,14 +109,14 @@ export function PoseRow({
                   type="button"
                   aria-pressed={on}
                   // 不用 disabled：換的時候焦點不會掉到 body
-                  aria-disabled={picking && !on ? true : undefined}
+                  aria-disabled={busy && !on ? true : undefined}
                   className={styles.pose}
                   data-on={on}
-                  onClick={on || picking ? undefined : () => void pick(g)}
+                  onClick={on || busy ? undefined : () => void selectPose(g.id)}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={g.cutout_url ?? g.image_url ?? `/api/generations/${g.id}/cutout`}
+                    src={src}
                     alt={`角色動作第 ${poses.length - i} 張`}
                     className={styles.poseImg}
                     loading="lazy"

@@ -197,6 +197,16 @@ describe("C 處理一頁：頁首", () => {
     await waitFor(() => expect(posted(/\/api\/pages\/5\/redo$/)).toHaveLength(1));
   });
 
+  it("a redrawn page (review_pose) shows 請看一下 in the header but stays printable", async () => {
+    page = mkPage({ status: "passed", attention: "review_pose", attention_detail: "請看一下：換了新的主角動作" });
+    overview = { ...overview, pages: overview.pages.map((p) => (p.id === 5 ? { ...p, state: "ready", review: true } : p)) };
+    setup();
+    await screen.findByRole("heading", { level: 1 });
+    expect(await screen.findByText("請看一下", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("可以印 ✓", { exact: true })).toBeNull();
+    expect(screen.getByRole("button", { name: "這頁可以印了 ✓" })).toBeEnabled();
+  });
+
   it("prev/next go through all pages without a filter", async () => {
     setup();
     const nav = await screen.findByRole("navigation", { name: "換頁" });
@@ -282,6 +292,7 @@ describe("C 處理一頁：請看一下", () => {
     setup();
     const card = await screen.findByRole("region", { name: "為什麼請你看" });
     expect(card).toHaveTextContent("圖片產生失敗，請重新產生");
+    expect(card).toHaveTextContent("按「再試一次」重新做這一頁；也可以重畫主角、AI 再畫一張背景或上傳背景。");
     await user.click(within(card).getByRole("button", { name: "再試一次" }));
     await waitFor(() => expect(posted(/\/api\/pages\/5\/retry$/)).toHaveLength(1));
     expect(posted(/\/produce$/)).toHaveLength(0);
@@ -368,7 +379,7 @@ describe("C 處理一頁：這頁可以印了", () => {
   });
 });
 
-describe("C 處理一頁：換一張（新圖好了就換上去）", () => {
+describe("C 處理一頁：重畫主角／AI 再畫一張（新圖好了就換上去）", () => {
   it("角色動作「重畫主角」 and 背景「AI 再畫一張」 use oneclick so the new image is taken", async () => {
     const user = userEvent.setup();
     setup();
@@ -398,7 +409,7 @@ describe("C 處理一頁：換一張（新圖好了就換上去）", () => {
 });
 
 describe("C 處理一頁：畫過的角色動作與重畫主角（#4B）", () => {
-  /** 這頁畫過的角色動作：20（使用中）、21 失敗、22、23、24 已捨棄；背景與合成圖。 */
+  /** 這頁畫過的角色動作：20（使用中）、21 失敗、22、23、24 已捨棄、26 沒有圖；背景與合成圖。 */
   function withPoses() {
     gens = [
       gen(10, "background"),
@@ -407,6 +418,7 @@ describe("C 處理一頁：畫過的角色動作與重畫主角（#4B）", () =>
       gen(22, "pose"),
       gen(23, "pose"),
       gen(24, "pose", { discarded: true }),
+      gen(26, "pose", { image_url: null, cutout_url: null }),
       gen(30, "composite"),
     ];
   }
@@ -463,6 +475,44 @@ describe("C 處理一頁：畫過的角色動作與重畫主角（#4B）", () =>
     expect(posted(/\/pose\?/)[0]).toMatchObject({ url: "/api/pages/5/pose?oneclick=true", body: { generation_id: 23 } });
     await waitFor(() => expect(within(list).getAllByRole("button")[0]).toHaveAttribute("aria-pressed", "true"));
     expect(screen.getByRole("button", { name: "復原" })).toBeEnabled();
+  });
+
+  it("a pick waits for the action save, and 復原 is disabled until it is done", async () => {
+    withPoses();
+    page = mkPage({ can_undo: true });
+    let releaseSave: () => void = () => {};
+    const saveGate = new Promise<void>((r) => (releaseSave = r));
+    let releasePick: () => void = () => {};
+    const pickGate = new Promise<void>((r) => (releasePick = r));
+    const realFetch = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url === "/api/pages/5?oneclick=true" && init?.method === "PATCH") await saveGate;
+      if (url === "/api/pages/5/pose?oneclick=true" && init?.method === "POST") {
+        await realFetch(url, init); // 記下請求
+        await pickGate;
+        page = { ...page, pose_generation_id: 23 };
+        return json(page);
+      }
+      return realFetch(url, init);
+    });
+    const user = userEvent.setup();
+    setup();
+    const list = await history();
+    const box = screen.getByRole("textbox", { name: "動作描述" });
+    fireEvent.change(box, { target: { value: "開著消防車去郵局" } });
+    fireEvent.blur(box);
+    await user.click(within(list).getAllByRole("button")[0]);
+    // 動作還在存：先不換
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posted(/\/api\/pages\/5\/pose\?/)).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "復原" })).toBeDisabled();
+    releaseSave();
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/pose\?/)).toHaveLength(1));
+    // 換的請求還在路上：復原停用
+    expect(screen.getByRole("button", { name: "復原" })).toBeDisabled();
+    releasePick();
+    await waitFor(() => expect(screen.getByRole("button", { name: "復原" })).toBeEnabled());
+    await waitFor(() => expect(within(list).getAllByRole("button")[0]).toHaveAttribute("aria-pressed", "true"));
   });
 
   it("重畫主角 with 一次畫 2 張 posts count 2 after saving the action", async () => {
