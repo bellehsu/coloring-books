@@ -148,7 +148,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
 
         <div className={styles.side}>
           {page.attention === "failed" && <ReasonCard detail={page.attention_detail} busy={busy} saving={textSaving} onRetry={() => void fix.retry()} />}
-          {page.attention === "review_pose" && <p className={styles.rowWarn}>{page.attention_detail}</p>}
+          {page.attention === "review_pose" && !working && <p className={styles.rowWarn}>{page.attention_detail}</p>}
           <ul className={styles.items} aria-label="這一頁的東西">
             <PoseRow
               bookId={bookId}

@@ -216,6 +216,15 @@ describe("C 處理一頁：頁首", () => {
     expect(within(head).queryByText("請看一下", { exact: true })).toBeNull();
   });
 
+  it("a redrawn page (review_pose) that is working again hides the review note", async () => {
+    page = mkPage({ status: "passed", attention: "review_pose", attention_detail: "請看一下：換了新的主角動作" });
+    overview = { ...overview, pages: overview.pages.map((p) => (p.id === 5 ? { ...p, state: "working", review: true } : p)) };
+    setup();
+    const head = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
+    await waitFor(() => expect(within(head).getByText("製作中", { exact: true })).toBeInTheDocument());
+    expect(screen.queryByText("請看一下：換了新的主角動作")).toBeNull();
+  });
+
   it("prev/next go through all pages without a filter", async () => {
     setup();
     const nav = await screen.findByRole("navigation", { name: "換頁" });

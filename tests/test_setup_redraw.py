@@ -4,7 +4,7 @@
   頁面有角色動作 → redraw_pose。上傳的背景只存文字；圖下方的字不標；C 的 oneclick 與一般 PATCH 不標。
 - /produce 把標了的頁面照空格一樣排（額度內），排到時清掉旗標；角色動作是 take＋review（review_pose），
   背景是 take、沒有 review。放不下（429）的旗標留著。
-- overview：redraw_count 是標了的頁數，不算進 deferred_count（「明天繼續」）。
+- overview：redraw_count 是標了、而且真的畫得出來（有文字；動作還要有主角）的頁數，不算進 deferred_count（「明天繼續」）。
 """
 
 import json
@@ -467,3 +467,13 @@ def test_restore_auto_pose_clears_review_pose_background_restore_keeps_it(client
     page = get_page(app, p1["id"])
     assert page.pose_generation_id == take_pose
     assert (page.attention, page.attention_detail) == (None, None)
+
+
+def test_landed_text_is_none_when_generation_vanished(client, app):
+    """auto_select 的文字保護：被選上的那筆剛好被刪掉（例如刪書和 worker 撞在一起）時不會丟 AttributeError。"""
+    from sqlmodel import Session
+
+    from app.services.pipeline import _landed_text
+
+    with Session(app.state.db) as s:
+        assert _landed_text(s, 987654321) is None

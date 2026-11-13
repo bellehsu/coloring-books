@@ -263,6 +263,11 @@ def on_generation_failed(session: Session, gen_id: int) -> None:
 # ---- 選圖 -----------------------------------------------------------------------------
 
 
+def _landed_text(session: Session, gen_id: int) -> str | None:
+    """被自動選上那張的 user_text（重畫旗標的文字保護用）；那筆剛好被刪掉時回 None（照舊無條件清旗標）。"""
+    g = session.get(Generation, gen_id)
+    return g.user_text if g is not None else None
+
 def auto_select(session: Session, page_id: int, *, fill_only: bool = False, snapshot: bool = False) -> bool:
     """背景與角色動作：使用者選的不動；否則換成最新一張可用的生成（不含上傳的），並記到 auto_*。
     fill_only（頁面流程的第 1 步）：只補空的欄位，已經有圖的不換。換成新圖只在新圖產生好的時候
@@ -298,7 +303,7 @@ def auto_select(session: Session, page_id: int, *, fill_only: bool = False, snap
                    col(getattr(Page, field)).is_not_distinct_from(current),
                    col(getattr(Page, auto_field)).is_not_distinct_from(auto),
                    still_valid)
-            .values(**slot_change_values(field, newest, landed_text=session.get(Generation, newest).user_text),
+            .values(**slot_change_values(field, newest, landed_text=_landed_text(session, newest)),
                     **{auto_field: newest})
         )
         changed |= res.rowcount == 1
