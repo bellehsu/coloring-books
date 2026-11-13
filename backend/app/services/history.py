@@ -232,6 +232,16 @@ def set_pending_strokes(session: Session, page_id: int, strokes_json: str | None
                  .values(pending_user_strokes=strokes_json, updated_at=utcnow()))
 
 
+def clear_review_pose(session: Session, page_id: int) -> None:
+    """角色動作換了（復原／重做、還原成自動畫的那張）：批次重畫的「請看一下」（軟標記 review_pose）不用再看
+    （同 _pick）；其他 attention 不動。"""
+    review = col(Page.attention) == ATTENTION_REVIEW_POSE
+    session.exec(update(Page).where(col(Page.id) == page_id).values(
+        attention=case((review, None), else_=col(Page.attention)),
+        attention_detail=case((review, None), else_=col(Page.attention_detail)),
+    ))
+
+
 def apply_snapshot(session: Session, page: Page, snap: dict) -> bool:
     """套用快照：選回圖與位置、文字，以及使用者筆畫。圖或位置不同（或已經在等重新合成）時，筆畫記在
     pending_user_strokes 等流程合成後寫回；否則直接寫回選定圖的 user 層。回傳要不要排頁面流程。"""
@@ -245,12 +255,8 @@ def apply_snapshot(session: Session, page: Page, snap: dict) -> bool:
             continue  # 圖已不能用（捨棄、清掉）：保留目前的
         if set_slot(session, pid, kind, want, new_selection=False):  # 選回舊的圖：「要重畫」留著
             recompose = True
-            if kind == GenKind.POSE:  # 動作換了：批次重畫的「請看一下」（軟標記）不用再看（同 _pick）
-                review = col(Page.attention) == ATTENTION_REVIEW_POSE
-                session.exec(update(Page).where(col(Page.id) == pid).values(
-                    attention=case((review, None), else_=col(Page.attention)),
-                    attention_detail=case((review, None), else_=col(Page.attention_detail)),
-                ))
+            if kind == GenKind.POSE:
+                clear_review_pose(session, pid)
     placement = snap.get("placement")
     if placement != _placement(page):
         recompose = True
@@ -322,6 +328,8 @@ def restore(session: Session, page: Page, item: str) -> bool:
     set_pending_strokes(session, page.id, CLEARED)
     if not set_slot(session, page.id, kind, target, auto=True):
         raise HistoryError(NO_AUTO[kind])
+    if kind == GenKind.POSE:  # 使用者自己換的動作；還原背景不動軟標記
+        clear_review_pose(session, page.id)
     return True
 
 

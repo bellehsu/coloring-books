@@ -108,6 +108,13 @@ describe("review pages (soft 請看一下)", () => {
     expect(filterPages(pages, "unfinished").map((p) => p.id)).toEqual([2]);
     expect(countPages(pages)).toEqual({ all: 2, attention: 0, ready: 1, unfinished: 1 });
   });
+
+  it("softNote shows the review note only when the page is ready", () => {
+    const detail = "請看一下：換了新的主角動作";
+    expect(softNote(pg(1, "ready", { review: true, attention_detail: detail }))).toBe(detail);
+    expect(softNote(pg(2, "working", { review: true, attention_detail: detail }))).toBeNull();
+    expect(softNote(pg(3, "working", { review: true, attention_detail: detail, gap_count: 2 }))).toBe("2 處線沒接起來（可以不管）");
+  });
 });
 
 describe("countsLine", () => {

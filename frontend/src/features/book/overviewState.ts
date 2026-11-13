@@ -60,7 +60,7 @@ export function cardMode(o: BookOverview): CardMode {
 /** 卡片下方的小字：失敗原因、「請看一下：換了新的主角動作」，或「N 處線沒接起來（可以不管）」。 */
 export function softNote(p: OverviewPage): string | null {
   if (p.state === "attention") return p.attention_detail || "這一頁沒做好，點進去看看";
-  if (p.review && p.attention_detail) return p.attention_detail;
+  if (p.review && p.state === "ready" && p.attention_detail) return p.attention_detail;
   if (p.gap_count) return `${p.gap_count} 處線沒接起來（可以不管）`;
   return null;
 }

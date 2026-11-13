@@ -441,3 +441,29 @@ def test_undo_without_pose_change_keeps_review_pose(client, app):
     r = client.post(f"/api/pages/{p1['id']}/undo")
     assert r.status_code == 200, r.text
     assert get_page(app, p1["id"]).attention == ATTENTION_REVIEW_POSE
+
+
+def test_restore_auto_pose_clears_review_pose_background_restore_keeps_it(client, app):
+    """「還原成自動畫的那張」換了角色動作是使用者自己的選擇：清掉 review_pose；還原背景不動它。"""
+    _, b, (p1, _, _) = ready_book(client, app)
+    old_pose = get_page(app, p1["id"]).pose_generation_id
+    setup_edit(client, p1["id"], scene_prompt="雪地", action_prompt="坐著")
+    produce(client, b["id"])
+    run_all(client, app)
+    page = get_page(app, p1["id"])
+    assert page.attention == ATTENTION_REVIEW_POSE
+    take_pose, auto_bg = page.pose_generation_id, page.auto_background_generation_id
+    # 舊編輯器選回舊的動作與上傳背景（不帶 oneclick：不清軟標記）：之後才有東西可以還原
+    picked(client, p1["id"], "pose", old_pose)
+    assert upload_bg(client, p1["id"], color_png()).status_code == 201
+    assert get_page(app, p1["id"]).attention == ATTENTION_REVIEW_POSE
+    r = client.post(f"/api/pages/{p1['id']}/restore", json={"item": "background"})
+    assert r.status_code == 200, r.text
+    page = get_page(app, p1["id"])
+    assert page.background_generation_id == auto_bg
+    assert page.attention == ATTENTION_REVIEW_POSE  # 還原背景不動它
+    r = client.post(f"/api/pages/{p1['id']}/restore", json={"item": "pose"})
+    assert r.status_code == 200, r.text
+    page = get_page(app, p1["id"])
+    assert page.pose_generation_id == take_pose
+    assert (page.attention, page.attention_detail) == (None, None)
