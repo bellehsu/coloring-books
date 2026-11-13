@@ -12,6 +12,7 @@ import { errMsg } from "@/features/editing/errMsg";
 import { PAPER_LABELS, PAPER_SIZES, PRINT_MODE_LABELS, ratioGroup, type PaperSize, type PrintMode } from "@/lib/layout";
 import { applyImport } from "./applyImport";
 import { CharacterSection } from "./CharacterSection";
+import { useUpdatePageFromSetup } from "./useUpdatePageFromSetup";
 import { StorySection } from "./StorySection";
 import { buildPreview, pageMaterials, planCounts, planText, type DraftPage } from "./storyPreview";
 import styles from "./SetupPage.module.css";
@@ -54,6 +55,7 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
   const gensQ = useGenerations(id, {}, has);
   const plan = useProducePlan(id, has);
   const updateBook = useUpdateBook(id);
+  const updatePage = useUpdatePageFromSetup(id);
   const produce = useProduce(id);
   const paperId = useId();
 
@@ -355,6 +357,9 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
         onAddPage={addDraft}
         onDraftChange={changeDraft}
         onDraftRemove={removeDraft}
+        onSavePage={async (pageId, patch) => {
+          await updatePage.mutateAsync({ pageId, ...patch });
+        }}
         existing={pages.length}
         disabled={phase != null}
       />

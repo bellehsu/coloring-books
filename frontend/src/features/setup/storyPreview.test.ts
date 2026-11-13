@@ -12,6 +12,8 @@ const page = (id: number, position: number, scene = "", action = "", extra: Reco
   background_generation_id: null,
   pose_generation_id: null,
   selected_generation_id: null,
+  redraw_background: false,
+  redraw_pose: false,
   ...extra,
 });
 const gen = (id: number, o: Partial<Generation>): Generation =>
@@ -83,11 +85,11 @@ describe("pageMaterials", () => {
       gen(70, { page_id: 4, kind: "page" }),
     ];
     const m = pageMaterials(pages, gens);
-    expect(m.get(1)).toEqual({ hasBackground: true, backgroundUploaded: true, hasPose: false });
-    expect(m.get(2)).toEqual({ hasBackground: true, backgroundUploaded: false, hasPose: false });
-    expect(m.get(3)).toEqual({ hasBackground: false, backgroundUploaded: false, hasPose: true });
+    expect(m.get(1)).toMatchObject({ hasBackground: true, backgroundUploaded: true, hasPose: false });
+    expect(m.get(2)).toMatchObject({ hasBackground: true, backgroundUploaded: false, hasPose: false });
+    expect(m.get(3)).toMatchObject({ hasBackground: false, backgroundUploaded: false, hasPose: true });
     // 舊流程整頁圖：兩種都不再畫
-    expect(m.get(4)).toEqual({ hasBackground: true, backgroundUploaded: false, hasPose: true });
+    expect(m.get(4)).toMatchObject({ hasBackground: true, backgroundUploaded: false, hasPose: true });
   });
 });
 
@@ -108,7 +110,7 @@ describe("planCounts／planText", () => {
     const withMaterials = buildPreview(
       [page(11, 0, "消防局門口", "開著消防車揮手")],
       STORY,
-      new Map([[11, { hasBackground: true, backgroundUploaded: false, hasPose: true }]]),
+      new Map([[11, { hasBackground: true, backgroundUploaded: false, hasPose: true, redrawBackground: false, redrawPose: false }]]),
     ).entries;
     expect(planCounts(withMaterials, new Set())).toMatchObject({ backgrounds: 2, poses: 2, total: 4, remaining: undefined });
   });
@@ -134,5 +136,21 @@ describe("planCounts／planText", () => {
       defer: null,
     });
     expect(planText(planCounts([], new Set()), true).heading).toBe("準備好了！不用再畫新的圖");
+  });
+});
+
+describe("redraw flags", () => {
+  it("flagged pages count in planCounts", () => {
+    const pages = [page(1, 0, "a", "b", { redraw_pose: true }), page(2, 1, "c", "d", { redraw_background: true })];
+    const gens = [
+      gen(1, { page_id: 1 }),
+      gen(2, { page_id: 1, kind: "pose" }),
+      gen(3, { page_id: 2 }),
+      gen(4, { page_id: 2, kind: "pose" }),
+    ];
+    const m = pageMaterials(pages, gens);
+    expect(m.get(1)).toMatchObject({ hasBackground: true, hasPose: true, redrawBackground: false, redrawPose: true });
+    const entries = buildPreview(pages, "", m).entries;
+    expect(planCounts(entries, new Set())).toMatchObject({ backgrounds: 1, poses: 1, total: 2 });
   });
 });

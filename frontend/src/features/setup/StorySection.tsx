@@ -4,10 +4,12 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { copyText } from "@/lib/copyText";
-import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
+import { errMsg } from "@/features/editing/errMsg";
+import { MAX_ACTION, MAX_CAPTION_EN, MAX_CAPTION_ZH, MAX_SCENE } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import { AI_PROMPT } from "./aiPrompt";
 import type { DraftPage, PreviewEntry, StoryPreview } from "./storyPreview";
+import type { SetupPagePatch } from "./useUpdatePageFromSetup";
 import { CopyPromptDialog } from "./CopyPromptDialog";
 import { ThemePackDialog } from "./ThemePackDialog";
 import styles from "./SetupPage.module.css";
@@ -23,6 +25,8 @@ export interface StorySectionProps {
   onAddPage: () => void;
   onDraftChange: (key: number, patch: Partial<Pick<DraftPage, "scene" | "action">>) => void;
   onDraftRemove: (key: number) => void;
+  /** 已有的頁按「儲存」：只送改過的欄位；失敗要 reject（列留在編輯狀態）。 */
+  onSavePage: (pageId: number, patch: SetupPagePatch) => Promise<void>;
   /** 這本書已經有幾頁。 */
   existing: number;
   disabled: boolean;
@@ -41,6 +45,7 @@ export function StorySection({
   onAddPage,
   onDraftChange,
   onDraftRemove,
+  onSavePage,
   existing,
   disabled,
 }: StorySectionProps) {
@@ -107,6 +112,7 @@ export function StorySection({
               onFile={(f) => onUpload(e.key, f)}
               onDraftChange={(patch) => e.draft != null && onDraftChange(e.draft, patch)}
               onDraftRemove={() => e.draft != null && onDraftRemove(e.draft)}
+              onSavePage={onSavePage}
             />
           ))}
         </ol>
@@ -151,6 +157,7 @@ function StoryPreviewRow({
   onFile,
   onDraftChange,
   onDraftRemove,
+  onSavePage,
 }: {
   entry: PreviewEntry;
   file: File | null;
@@ -158,8 +165,35 @@ function StoryPreviewRow({
   onFile: (f: File | null) => void;
   onDraftChange: (patch: Partial<Pick<DraftPage, "scene" | "action">>) => void;
   onDraftRemove: () => void;
+  onSavePage: (pageId: number, patch: SetupPagePatch) => Promise<void>;
 }) {
+  const toast = useToast();
   const input = useRef<HTMLInputElement>(null);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [vals, setVals] = useState({ scene: "", action: "", zh: "", en: "" });
+  const existingPage = e.pageId != null && e.draft == null;
+  const startEdit = () => {
+    setVals({ scene: e.scene, action: e.action, zh: e.captionZh, en: e.captionEn });
+    setEditing(true);
+  };
+  const save = async () => {
+    const patch: SetupPagePatch = {};
+    if (vals.scene !== e.scene) patch.scene_prompt = vals.scene;
+    if (vals.action !== e.action) patch.action_prompt = vals.action;
+    if (vals.zh !== e.captionZh) patch.caption_zh = vals.zh;
+    if (vals.en !== e.captionEn) patch.caption_en = vals.en;
+    if (Object.keys(patch).length === 0) return setEditing(false);
+    setSaving(true);
+    try {
+      await onSavePage(e.pageId!, patch);
+      setEditing(false);
+    } catch (err) {
+      toast.show(errMsg(err, "沒辦法儲存這一頁"), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
   const uploadedBefore = file == null && e.materials.backgroundUploaded;
   const uploadOn = file != null || uploadedBefore;
   const draft = e.draft != null;
@@ -200,13 +234,66 @@ function StoryPreviewRow({
             />
             {file && <span className={styles.rowText}>（我上傳的 {file.name}）</span>}
           </div>
+        ) : editing ? (
+          <div className={styles.draft}>
+            <input
+              type="text"
+              className={`${styles.input} ${styles.draftInput}`}
+              aria-label={`第 ${e.n} 頁場景`}
+              maxLength={MAX_SCENE}
+              value={vals.scene}
+              disabled={saving}
+              onChange={(ev) => setVals({ ...vals, scene: ev.target.value })}
+            />
+            <input
+              type="text"
+              className={`${styles.input} ${styles.draftInput}`}
+              aria-label={`第 ${e.n} 頁動作`}
+              maxLength={MAX_ACTION}
+              value={vals.action}
+              disabled={saving}
+              onChange={(ev) => setVals({ ...vals, action: ev.target.value })}
+            />
+            {e.materials.backgroundUploaded && (
+              <span className={`${styles.hint} ${styles.fullRow}`}>背景是你上傳的圖，不會重畫</span>
+            )}
+            <input
+              type="text"
+              className={`${styles.input} ${styles.draftInput}`}
+              aria-label={`第 ${e.n} 頁中文`}
+              placeholder="中文"
+              maxLength={MAX_CAPTION_ZH}
+              value={vals.zh}
+              disabled={saving}
+              onChange={(ev) => setVals({ ...vals, zh: ev.target.value })}
+            />
+            <input
+              type="text"
+              className={`${styles.input} ${styles.draftInput}`}
+              aria-label={`第 ${e.n} 頁英文`}
+              placeholder="英文"
+              maxLength={MAX_CAPTION_EN}
+              value={vals.en}
+              disabled={saving}
+              onChange={(ev) => setVals({ ...vals, en: ev.target.value })}
+            />
+            <div className={`${styles.editActions} ${styles.fullRow}`}>
+              <Button disabled={saving} onClick={() => void save()}>
+                儲存
+              </Button>
+              <Button disabled={saving} onClick={() => setEditing(false)}>
+                取消
+              </Button>
+            </div>
+          </div>
         ) : (
           <span className={styles.rowText}>
             {scene}・{action}
           </span>
         )}
-        {(e.captionZh || e.captionEn || e.materials.hasPose || (e.materials.hasBackground && !uploadOn)) && (
+        {(e.materials.redrawBackground || e.materials.redrawPose || e.captionZh || e.captionEn || e.materials.hasPose || (e.materials.hasBackground && !uploadOn)) && (
           <span className={styles.chips}>
+            {(e.materials.redrawBackground || e.materials.redrawPose) && <span className={styles.chip}>要重畫</span>}
             {e.captionZh && <span className={styles.chip}>中文：{e.captionZh}</span>}
             {e.captionEn && <span className={styles.chip}>英文：{e.captionEn}</span>}
             {e.materials.hasBackground && !uploadOn && <span className={styles.chipDone}>已有背景</span>}
@@ -251,6 +338,11 @@ function StoryPreviewRow({
             }}
           />
         </div>
+        {existingPage && !editing && (
+          <Button disabled={disabled} onClick={startEdit}>
+            編輯
+          </Button>
+        )}
         {draft && (
           <button type="button" className={styles.remove} aria-label={`刪掉第 ${e.n} 頁`} disabled={disabled} onClick={onDraftRemove}>
             ✕

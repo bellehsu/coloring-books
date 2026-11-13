@@ -425,6 +425,13 @@
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   gap: 8px;
 }
+.fullRow {
+  grid-column: 1 / -1;
+}
+.editActions {
+  display: flex;
+  gap: 8px;
+}
 .draftInput {
   min-height: 44px;
   padding: 8px 12px;
