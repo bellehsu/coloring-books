@@ -9,7 +9,7 @@ import { usePageText } from "@/features/editing/usePageText";
 import { ACTION_HINT, EXPRESSIONS, FACING_HINT, FACINGS } from "@/lib/actions";
 import { MAX_ACTION } from "@/lib/limits";
 import { useRegenerate } from "../fixApi";
-import { lastSeenPose, markSeenPose } from "../seenPoses";
+import { isFreshPose, markSeenPose, readSeenPose } from "../seenPoses";
 import { quiet } from "@/lib/quiet";
 import styles from "../FixPage.module.css";
 import { Row, useSavePage } from "./Row";
@@ -34,7 +34,8 @@ function posesOf(gens: readonly Generation[], pageId: number) {
 
 /**
  * 角色動作列（spec §4.4 #4B、mockups/2026-11-13/B_redraw_panel.png）：這頁畫過的角色動作排成一列，點一下就換上
- * （先存復原快照，↶ 復原回到上一張）；上次打開之後才畫好的標「新」（這個瀏覽器的 localStorage）。
+ * （先存復原快照，↶ 復原回到上一張）；上次打開之後才畫好的標「新」（這個瀏覽器的 localStorage；
+ * 第一次打開時比使用中的那張新的也算，例如批次重畫的候選）。
  * 下面一直看得到動作描述、表情、面向，「一次畫 1–3 張」與「重畫主角」：第 1 張好了換上去，其餘是候選。
  */
 export function PoseRow({
@@ -74,10 +75,12 @@ export function PoseRow({
 
   const poses = posesOf(gens, page.id);
   const maxId = poses[0]?.g.id ?? null;
-  // 打開這頁時讀一次「上次看過的」，之後記下最新的一張；畫面上的「新」留到下次打開
-  const [seen, setSeen] = useState(() => ({ pageId: page.id, id: lastSeenPose(page.id) }));
-  if (seen.pageId !== page.id) setSeen({ pageId: page.id, id: lastSeenPose(page.id) });
-  const lastSeen = seen.pageId === page.id ? seen.id : null;
+  // 打開這頁時讀一次「上次看過的」與使用中的那張，之後記下最新的一張；畫面上的「新」留到下次打開
+  const openSeen = () => ({ pageId: page.id, mark: readSeenPose(page.id), baseline: page.pose_generation_id });
+  const [seen, setSeen] = useState(openSeen);
+  if (seen.pageId !== page.id) setSeen(openSeen());
+  const isFresh = (gid: number) =>
+    seen.pageId === page.id && isFreshPose(gid, seen.mark, seen.baseline, page.pose_generation_id);
   useEffect(() => {
     if (maxId !== null) markSeenPose(page.id, maxId);
   }, [page.id, maxId]);
@@ -102,7 +105,7 @@ export function PoseRow({
         <ul className={styles.poses} aria-label="畫過的角色動作">
           {poses.map(({ g, src }, i) => {
             const on = g.id === page.pose_generation_id;
-            const fresh = lastSeen !== null && g.id > lastSeen;
+            const fresh = isFresh(g.id);
             return (
               <li key={g.id}>
                 <button
