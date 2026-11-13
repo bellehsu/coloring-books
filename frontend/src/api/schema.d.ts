@@ -36,7 +36,12 @@ export interface paths {
         get: operations["get_book_api_books__book_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Book
+         * @description 刪除整本書（資料列與物件）。排隊中的工作取消並退額度；執行中的不擋，worker 收尾時發現列不見了會清掉自己寫的物件。
+         *     admin 只能刪自己的書（別人的書一律 404）。物件在交易提交後才刪（盡力而為）：失敗只記 log，之後 storage_gc 會清。
+         */
+        delete: operations["delete_book_api_books__book_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -1131,6 +1136,11 @@ export interface components {
             /** Shared At */
             shared_at?: string | null;
             /**
+             * Mine
+             * @default true
+             */
+            mine: boolean;
+            /**
              * Created At
              * Format: date-time
              */
@@ -1936,6 +1946,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BookOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_book_api_books__book_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

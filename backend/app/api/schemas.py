@@ -123,12 +123,13 @@ class BookOut(BaseModel):
     stats: BookStats
     cover_url: str | None  # position 最小且有選圖的頁的 lineart_url
     shared_at: datetime | None = None  # null＝沒有分享
+    mine: bool = True  # false＝別人的書（admin 看得到全部，只能刪自己的）
     created_at: datetime
     updated_at: datetime
 
     @classmethod
     def from_book(
-        cls, book: Book, stats: BookStats | None = None, cover_url: str | None = None
+        cls, book: Book, stats: BookStats | None = None, cover_url: str | None = None, mine: bool = True
     ) -> "BookOut":
         lay = compute_layout(book.paper_size, book.print_mode)
         return cls(
@@ -145,6 +146,7 @@ class BookOut(BaseModel):
             stats=stats or BookStats(),
             cover_url=cover_url,
             shared_at=book.shared_at,
+            mine=mine,
             created_at=book.created_at,
             updated_at=book.updated_at,
         )

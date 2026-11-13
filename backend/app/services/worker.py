@@ -329,6 +329,8 @@ class GenerationWorker:
             def write_success() -> None:
                 if self._finish(gen_id, **values):
                     self._after_success(gen_id)
+                else:
+                    self._drop_if_gone(gen_id, [rel, mask_rel])
 
             await self._write_retrying(gen_id, write_success)
             self.last_error = None
@@ -430,6 +432,18 @@ class GenerationWorker:
                     pipeline.on_generation_failed(s, gen_id)
             except Exception:  # noqa: BLE001  只記 log：生成已標成失敗
                 log.exception("記下頁面需要注意失敗（generation %s）", gen_id)
+
+    def _drop_if_gone(self, gen_id: int, keys: list[str | None]) -> None:
+        """生成途中整本書被刪了（列不見）：刪掉剛寫的物件，免得留下沒有列指到的孤兒。盡力而為。"""
+        try:
+            with self.sessions() as s:
+                gone = s.get(Generation, gen_id) is None
+            if gone:
+                for key in keys:
+                    if key:
+                        self.storage.delete(key)
+        except Exception:  # noqa: BLE001
+            log.warning("generation %s：書已刪除，清掉剛寫的物件失敗（storage_gc 會清）", gen_id, exc_info=True)
 
     def _after_success(self, gen_id: int) -> None:
         """頁面的背景／角色動作：自動選用並排頁面流程；任何失敗只記 log（生成已經成功）。"""

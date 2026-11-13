@@ -111,6 +111,40 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Delete Book",
+        "description": "刪除整本書（資料列與物件）。排隊中的工作取消並退額度；執行中的不擋，worker 收尾時發現列不見了會清掉自己寫的物件。\nadmin 只能刪自己的書（別人的書一律 404）。物件在交易提交後才刪（盡力而為）：失敗只記 log，之後 storage_gc 會清。",
+        "operationId": "delete_book_api_books__book_id__delete",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "books"
@@ -3188,6 +3222,11 @@
               }
             ],
             "title": "Shared At"
+          },
+          "mine": {
+            "type": "boolean",
+            "title": "Mine",
+            "default": true
           },
           "created_at": {
             "type": "string",

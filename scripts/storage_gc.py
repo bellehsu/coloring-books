@@ -215,7 +215,7 @@ def _load_state(s: Session, now: datetime, days: int) -> _State:
     composites = _old_composites(s, now, char_refs)
     return _State(
         seq=seq,
-        max_book=s.exec(select(func.max(Book.id))).one() or 0,
+        max_book=_seq(s, Book),
         page_seq=_seq(s, Page),
         gens={g.id: (g.status, g.image_path, g.book_id, g.discarded) for g in gens},
         pages={pid: bid for pid, bid in s.exec(select(Page.id, Page.book_id)).all()},

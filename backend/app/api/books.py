@@ -14,7 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Re
 from sqlalchemy import true
 from sqlmodel import Session, col, select, update
 
-from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
+from app.api.deps import BOOK_NOT_FOUND, current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
 from app.api.pages import page_outs
 from app.api.schemas import (
     BookCreate,
@@ -30,6 +30,7 @@ from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, PageSt
 from app.services.layout import PaperSize, ratio_group
 from app.services.page_compose import store_outside_tx
 from app.services.page_lineart import ensure_page_lineart, on_pipeline
+from app.services.book_delete import delete_books_rows
 from app.services.pipeline import enqueue_page_task
 from app.services import usage
 from app.services.gen_request import encode_request
@@ -48,7 +49,7 @@ CHARACTER_SIZE = QWEN_CHARACTER_SIZE
 
 
 
-def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
+def book_outs(session: Session, books: list[Book], viewer: Owner | None = None) -> list[BookOut]:
     """附上統計與封面；所有繪本的頁面一次查完，封面頁再交給 page_outs 算 lineart_url。"""
     ids = [b.id for b in books]
     by_book: dict[int, list[Page]] = {i: [] for i in ids}
@@ -78,12 +79,12 @@ def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
             working=states.count("working"),
             todo=states.count("todo"),
         )
-        out.append(BookOut.from_book(b, stats, cover_urls.get(b.id)))
+        out.append(BookOut.from_book(b, stats, cover_urls.get(b.id), mine=viewer is None or b.owner_id == viewer.id))
     return out
 
 
-def book_out(session: Session, book: Book) -> BookOut:
-    return book_outs(session, [book])[0]
+def book_out(session: Session, book: Book, viewer: Owner | None = None) -> BookOut:
+    return book_outs(session, [book], viewer)[0]
 
 
 @router.post("", status_code=201, response_model=BookOut)
@@ -107,7 +108,7 @@ def list_books(
     if not owner.is_admin:
         stmt = stmt.where(col(Book.owner_id) == owner.id)
     books = session.exec(stmt.order_by(col(Book.id).desc())).all()
-    return book_outs(session, list(books))
+    return book_outs(session, list(books), owner)
 
 
 @router.get("/{book_id}", response_model=BookOut)
@@ -116,7 +117,27 @@ def get_book(
     session: Session = Depends(get_session),
     owner: Owner = Depends(current_owner),
 ) -> BookOut:
-    return book_out(session, owned_book(session, owner, book_id))
+    return book_out(session, owned_book(session, owner, book_id), owner)
+
+
+@router.delete("/{book_id}", status_code=204)
+def delete_book(
+    book_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+    storage: Storage = Depends(get_storage),
+) -> None:
+    """刪除整本書（資料列與物件）。排隊中的工作取消並退額度；執行中的不擋，worker 收尾時發現列不見了會清掉自己寫的物件。
+    admin 只能刪自己的書（別人的書一律 404）。物件在交易提交後才刪（盡力而為）：失敗只記 log，之後 storage_gc 會清。"""
+    book = owned_book(session, owner, book_id)
+    if book.owner_id != owner.id:
+        raise HTTPException(404, BOOK_NOT_FOUND)
+    delete_books_rows(session, [book_id])
+    session.commit()
+    try:
+        storage.delete_prefix(f"books/{book_id}/")  # 結尾的 / 不可省：books/1 會連 books/10 一起刪
+    except Exception:  # noqa: BLE001
+        log.warning("刪除 books/%s/ 的物件失敗；storage_gc 會清掉", book_id, exc_info=True)
 
 
 def _recompute_book_lineart(sessions, storage, book_id: int, skip: frozenset[int] = frozenset()) -> None:
@@ -192,7 +213,7 @@ def update_book(
             _recompute_book_lineart, request.app.state.sessions, request.app.state.storage, book_id,
             frozenset(rerun),
         )
-    return book_out(session, book)
+    return book_out(session, book, owner)
 
 
 NEED_PASSED_PAGE = "至少完成一頁才能分享"
@@ -219,7 +240,7 @@ def set_share(
         book.shared_at = None
     session.add(book)
     session.commit()
-    return book_out(session, book)
+    return book_out(session, book, owner)
 
 
 def _last_character_variation(session: Session, book_id: int) -> str | None:
@@ -367,7 +388,7 @@ def set_character(
         raise HTTPException(409, "這張候選圖已被清理")
     _select_character(session, book_id, gen.id, gen.user_text, body.confirm_change)
     session.refresh(book)
-    return book_out(session, book)
+    return book_out(session, book, owner)
 
 
 @router.post("/{book_id}/character/upload", status_code=201, response_model=BookOut)
@@ -418,4 +439,4 @@ def upload_character(
     # 主角已經是一筆有圖的成功紀錄：之後設定失敗（例如同時被設定了別的角色）也不刪它的物件
     _select_character(session, book_id, gen_id, None, confirm_change)
     session.refresh(book)
-    return book_out(session, book)
+    return book_out(session, book, owner)

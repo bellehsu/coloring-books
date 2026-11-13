@@ -1266,6 +1266,26 @@ def test_gc_deletes_only_expired_discarded_and_orphans(storage_gc, settings_file
     assert (rep.expired_generations, rep.expired_objects, rep.orphan_objects, rep.orphan_previews) == (0, 0, 0, 0)
 
 
+def test_gc_collects_objects_of_deleted_highest_book(storage_gc, settings_file):
+    from sqlmodel import delete
+
+    from app.models import Book, Generation
+
+    _, sessions, storage = _env(settings_file)
+    oid, _ = _owner(sessions, "管理員", is_admin=True)
+    _book(sessions, oid)
+    top = _book(sessions, oid)
+    gid = _gen(sessions, storage, top)  # 寫入 books/{top}/generations/{gid}.png
+    key = storage.generation_image(top, gid)
+    with sessions() as s:
+        s.exec(delete(Generation).where(Generation.id == gid))
+        s.exec(delete(Book).where(Book.id == top))
+        s.commit()
+    rep = storage_gc.run_gc(sessions, storage, days=30, dry_run=False)
+    assert rep.skipped_mismatched == 0 and rep.orphan_objects == 1
+    assert key not in _keys(storage)
+
+
 def _gc_ref_world(settings_file):
     from app.models import Page
 
