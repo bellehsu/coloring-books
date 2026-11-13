@@ -118,6 +118,8 @@ test("換背景 → 復原 → 重做 → 畫線再還原 → 這頁可以印了
   await pen.click();
   const paper = page.locator('[data-part="paper"]');
   await expect(paper.getByRole("img")).toBeVisible();
+  // 角色動作列一直展開：按畫筆時頁面捲到線條列，畫布可能不在畫面裡（滑鼠座標要在畫面內）
+  await paper.scrollIntoViewIfNeeded();
   const box = (await paper.boundingBox())!;
   const drawn = page.waitForResponse((r) => /\/lineart\/edits\?oneclick=true$/.test(r.url()) && r.request().method() === "PUT");
   await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
@@ -136,6 +138,7 @@ test("換背景 → 復原 → 重做 → 畫線再還原 → 這頁可以印了
   await page.getByRole("radio", { name: "彩色原圖" }).click();
   const character = page.getByRole("group", { name: "角色位置" });
   await expect(character).toHaveAttribute("data-ready", "true");
+  await character.scrollIntoViewIfNeeded();
   const cb = (await character.boundingBox())!;
   const ov = (await page.getByTestId("compose-overlay").boundingBox())!;
   const placed = page.waitForResponse((r) => /\/placement\?oneclick=true$/.test(r.url()) && r.request().method() === "PUT");
@@ -188,9 +191,10 @@ test.describe("390 px", () => {
     await expectNoHorizontalScroll(page);
     expect(await smallControls(page)).toEqual([]);
 
-    // 展開改動作（表情、面向晶片）與改字，彩色原圖，畫筆：都不超出、都夠大
-    await items.getByRole("listitem", { name: "角色動作" }).getByRole("button", { name: "改動作" }).click();
+    // 角色動作的表情、面向晶片與「一次畫幾張」不用展開就看得到；展開改字，彩色原圖，畫筆：都不超出、都夠大
     await expect(page.getByRole("group", { name: "表情" })).toBeVisible();
+    await expect(page.getByRole("group", { name: "面向" })).toBeVisible();
+    await expect(page.getByRole("radiogroup", { name: "一次畫幾張" })).toBeVisible();
     await items.getByRole("listitem", { name: "圖下方的字" }).getByRole("button", { name: "改字" }).click();
     await expectNoHorizontalScroll(page);
     expect(await smallControls(page)).toEqual([]);

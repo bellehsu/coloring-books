@@ -151,6 +151,8 @@ afterEach(() => {
   realStage.on = false;
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 function setup(filter: FixFilter = null) {
@@ -367,22 +369,24 @@ describe("C 處理一頁：這頁可以印了", () => {
 });
 
 describe("C 處理一頁：換一張（新圖好了就換上去）", () => {
-  it("角色動作「換一張」 and 背景「AI 再畫一張」 use oneclick so the new image is taken", async () => {
+  it("角色動作「重畫主角」 and 背景「AI 再畫一張」 use oneclick so the new image is taken", async () => {
     const user = userEvent.setup();
     setup();
-    await user.click(within(await findRow("角色動作")).getByRole("button", { name: "換一張" }));
+    await user.click(within(await findRow("角色動作")).getByRole("button", { name: "重畫主角" }));
     await waitFor(() => expect(posted(/\/api\/pages\/5\/poses/)).toHaveLength(1));
     expect(posted(/\/poses/)[0].url).toBe("/api/pages/5/poses?oneclick=true");
-    expect(posted(/\/poses/)[0].body).toEqual({ action: "開著消防車揮手" });
+    expect(posted(/\/poses/)[0].body).toEqual({ action: "開著消防車揮手", count: 1 });
     await user.click(within(row("背景")).getByRole("button", { name: "AI 再畫一張" }));
     await waitFor(() => expect(posted(/\/api\/pages\/5\/backgrounds/)).toHaveLength(1));
     expect(posted(/\/backgrounds/)[0].url).toBe("/api/pages/5/backgrounds?oneclick=true");
   });
 
-  it("改動作 shows the 表情 and 面向 chips; a chip saves the action with oneclick", async () => {
+  it("the 表情 and 面向 chips are always visible; a chip saves the action with oneclick", async () => {
     const user = userEvent.setup();
     setup();
-    await user.click(within(await findRow("角色動作")).getByRole("button", { name: "改動作" }));
+    await findRow("角色動作");
+    expect(within(row("角色動作")).queryByRole("button", { name: "改動作" })).toBeNull();
+    expect(within(row("角色動作")).queryByRole("button", { name: "換一張" })).toBeNull();
     const expr = screen.getByRole("group", { name: "表情" });
     expect(screen.getByRole("group", { name: "面向" })).toBeInTheDocument();
     await user.click(within(expr).getByRole("button", { name: "開心" }));
@@ -390,6 +394,116 @@ describe("C 處理一頁：換一張（新圖好了就換上去）", () => {
     expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")[0].body).toEqual({
       action_prompt: "開著消防車揮手, with a happy smiling expression",
     });
+  });
+});
+
+describe("C 處理一頁：畫過的角色動作與重畫主角（#4B）", () => {
+  /** 這頁畫過的角色動作：20（使用中）、21 失敗、22、23、24 已捨棄；背景與合成圖。 */
+  function withPoses() {
+    gens = [
+      gen(10, "background"),
+      gen(20, "pose"),
+      gen(21, "pose", { status: "failed", image_url: null, cutout_url: null, error: "boom" }),
+      gen(22, "pose"),
+      gen(23, "pose"),
+      gen(24, "pose", { discarded: true }),
+      gen(30, "composite"),
+    ];
+  }
+  const history = () => screen.findByRole("list", { name: "畫過的角色動作" });
+
+  it("lists every pose newest first, current tagged 使用中", async () => {
+    withPoses();
+    setup();
+    const list = await history();
+    const items = within(list).getAllByRole("button");
+    expect(items.map((b) => b.querySelector("img")?.getAttribute("src"))).toEqual([
+      "/api/generations/23/cutout",
+      "/api/generations/22/cutout",
+      "/api/generations/20/cutout",
+    ]);
+    expect(items[2]).toHaveAttribute("aria-pressed", "true");
+    expect(items[2]).toHaveTextContent("使用中");
+    expect(items[0]).toHaveAttribute("aria-pressed", "false");
+    expect(items[0]).not.toHaveTextContent("使用中");
+    expect(within(row("角色動作")).getByText("這頁畫過 3 張・點一下就換")).toBeInTheDocument();
+    // 第一次打開這頁：沒有「新」
+    expect(within(list).queryByText("新")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("cb:seenPose:5")).toBe("23"));
+  });
+
+  it("poses newer than the last visit are tagged 新", async () => {
+    withPoses();
+    localStorage.setItem("cb:seenPose:5", "20");
+    setup();
+    const list = await history();
+    const items = within(list).getAllByRole("button");
+    expect(items[0]).toHaveTextContent("新");
+    expect(items[1]).toHaveTextContent("新");
+    expect(items[2]).not.toHaveTextContent("新");
+    // 看過了：記下最新的一張，畫面上的「新」留到下次打開
+    await waitFor(() => expect(localStorage.getItem("cb:seenPose:5")).toBe("23"));
+    expect(within(list).getAllByText("新")).toHaveLength(2);
+  });
+
+  it("clicking a pose posts /pose?oneclick=true with its id", async () => {
+    withPoses();
+    respond["POST /api/pages/5/pose?oneclick=true"] = () => {
+      page = { ...page, pose_generation_id: (calls[calls.length - 1].body as { generation_id: number }).generation_id, can_undo: true };
+      return json(page);
+    };
+    const user = userEvent.setup();
+    setup();
+    const list = await history();
+    // 使用中的那張點了不會送
+    await user.click(within(list).getAllByRole("button")[2]);
+    expect(posted(/\/api\/pages\/5\/pose\?/)).toHaveLength(0);
+    await user.click(within(list).getAllByRole("button")[0]);
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/pose\?/)).toHaveLength(1));
+    expect(posted(/\/pose\?/)[0]).toMatchObject({ url: "/api/pages/5/pose?oneclick=true", body: { generation_id: 23 } });
+    await waitFor(() => expect(within(list).getAllByRole("button")[0]).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("button", { name: "復原" })).toBeEnabled();
+  });
+
+  it("重畫主角 with 一次畫 2 張 posts count 2 after saving the action", async () => {
+    const user = userEvent.setup();
+    setup();
+    await findRow("角色動作");
+    const counts = screen.getByRole("radiogroup", { name: "一次畫幾張" });
+    expect(within(counts).getByRole("radio", { name: "1" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.change(screen.getByRole("textbox", { name: "動作描述" }), { target: { value: "開著消防車去郵局" } });
+    await user.click(within(counts).getByRole("radio", { name: "2" }));
+    await user.click(within(row("角色動作")).getByRole("button", { name: "重畫主角" }));
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/poses/)).toHaveLength(1));
+    expect(posted(/\/poses/)[0]).toMatchObject({
+      url: "/api/pages/5/poses?oneclick=true",
+      body: { action: "開著消防車去郵局", count: 2 },
+    });
+    const patch = calls.findIndex((c) => c.method === "PATCH" && c.url === "/api/pages/5?oneclick=true");
+    const pose = calls.findIndex((c) => c.method === "POST" && c.url.startsWith("/api/pages/5/poses"));
+    expect(patch).toBeGreaterThanOrEqual(0);
+    expect(calls[patch].body).toEqual({ action_prompt: "開著消防車去郵局" });
+    expect(patch).toBeLessThan(pose);
+  });
+
+  it("重畫主角 is disabled while a pose is being drawn, and the row says so", async () => {
+    gens = [...gens, gen(25, "pose", { status: "running" })];
+    setup();
+    await findRow("角色動作");
+    expect(await within(row("角色動作")).findByText("正在畫新的一張…")).toBeInTheDocument();
+    expect(within(row("角色動作")).getByRole("button", { name: "重畫主角" })).toBeDisabled();
+  });
+
+  it("renders without 新 badges when localStorage throws", async () => {
+    withPoses();
+    vi.spyOn(window, "localStorage", "get").mockImplementation(() => {
+      throw new DOMException("denied", "SecurityError");
+    });
+    setup();
+    const list = await history();
+    expect(within(list).getAllByRole("button")).toHaveLength(3);
+    expect(within(list).queryByText("新")).toBeNull();
+    expect(within(list).getAllByRole("button")[2]).toHaveTextContent("使用中");
   });
 });
 
@@ -673,25 +787,24 @@ describe("C 處理一頁：復原／重做／還原之後文字欄位跟著伺�
     };
   }
 
-  it("改動作 → 復原：欄位顯示復原後的動作，換一張用它畫", async () => {
+  it("改動作 → 復原：欄位顯示復原後的動作，重畫主角用它畫", async () => {
     serverWithUndo({ action_prompt: "開著消防車揮手" });
     const user = userEvent.setup();
     setup();
-    await user.click(within(await findRow("角色動作")).getByRole("button", { name: "改動作" }));
+    await findRow("角色動作");
     const box = screen.getByRole("textbox", { name: "動作描述" });
     fireEvent.change(box, { target: { value: "開著消防車去郵局" } });
     fireEvent.blur(box);
     await waitFor(() => expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")).toHaveLength(1));
-    await waitFor(() => expect(row("角色動作")).toHaveTextContent("動作：開著消防車去郵局"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "復原" })).toBeEnabled());
 
     await user.click(screen.getByRole("button", { name: "復原" }));
     await waitFor(() => expect(posted(/\/api\/pages\/5\/undo$/)).toHaveLength(1));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "動作描述" })).toHaveValue("開著消防車揮手"));
-    expect(row("角色動作")).toHaveTextContent("動作：開著消防車揮手");
 
-    await user.click(within(row("角色動作")).getByRole("button", { name: "換一張" }));
+    await user.click(within(row("角色動作")).getByRole("button", { name: "重畫主角" }));
     await waitFor(() => expect(posted(/\/api\/pages\/5\/poses/)).toHaveLength(1));
-    expect(posted(/\/poses/)[0].body).toEqual({ action: "開著消防車揮手" });
+    expect(posted(/\/poses/)[0].body).toEqual({ action: "開著消防車揮手", count: 1 });
     // 復原的文字沒有被重新存回去
     expect(posted(/\/api\/pages\/5\?oneclick=true$/, "PATCH")).toHaveLength(1);
   });
@@ -700,7 +813,7 @@ describe("C 處理一頁：復原／重做／還原之後文字欄位跟著伺�
     serverWithUndo({ action_prompt: "開著消防車揮手" });
     const user = userEvent.setup();
     setup();
-    await user.click(within(await findRow("角色動作")).getByRole("button", { name: "改動作" }));
+    await findRow("角色動作");
     const box = screen.getByRole("textbox", { name: "動作描述" });
     fireEvent.change(box, { target: { value: "開著消防車去郵局" } });
     fireEvent.blur(box);

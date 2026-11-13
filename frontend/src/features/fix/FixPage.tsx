@@ -153,6 +153,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
             <PoseRow
               bookId={bookId}
               page={page}
+              gens={gens}
               hasCharacter={book.character_generation_id != null}
               active={poseActive}
               flushEdits={fix.flushEdits}

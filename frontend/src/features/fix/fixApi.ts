@@ -9,7 +9,7 @@ import type { RestoreItem } from "./fixState";
 type S = components["schemas"];
 
 /**
- * C 處理一頁的請求：既有端點帶 `?oneclick=true`（後端先存復原快照、排頁面流程；「換一張／AI 再畫一張」的新圖
+ * C 處理一頁的請求：既有端點帶 `?oneclick=true`（後端先存復原快照、排頁面流程；「重畫主角／AI 再畫一張」的新圖
  * 好了一定換上去），以及 C 專用的 undo／redo／restore／accept。
  */
 const C = "?oneclick=true";
@@ -115,17 +115,23 @@ export function useCaptionDisplay(bookId: number, pageId: number) {
 export const useUploadBackgroundC = (bookId: number, pageId: number) =>
   usePageMutation<File>(bookId, pageId, (file) => api.upload<Page>(`/pages/${pageId}/backgrounds/upload${C}`, file));
 
+/** 點「畫過的角色動作」裡的一張：先存復原快照、換上去、重新合成（也清掉「請看一下：換了新的主角動作」）。 */
+export const useSelectPoseC = (bookId: number, pageId: number) =>
+  usePageMutation<number>(bookId, pageId, (generationId) =>
+    api.post<Page>(`/pages/${pageId}/pose${C}`, { generation_id: generationId } satisfies S["SelectGeneration"]),
+  );
+
 /**
- * 「換一張」（角色動作，用目前的動作文字）／「AI 再畫一張」（背景）：排一張新的；帶 oneclick，
- * 後端在 request 記下 take，好了就換上去（並存復原快照）。
+ * 「重畫主角」（角色動作，用目前的動作文字，一次 1–3 張）／「AI 再畫一張」（背景）：排新的；帶 oneclick，
+ * 後端在 request 記下 take（第 1 張），好了就換上去（並存復原快照）；其餘幾張是候選，只出現在畫過的列裡。
  */
 export function useRegenerate(bookId: number, pageId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { kind: "background" } | { kind: "pose"; action: string }) =>
+    mutationFn: (v: { kind: "background" } | { kind: "pose"; action: string; count?: 1 | 2 | 3 }) =>
       v.kind === "background"
         ? api.post<Generation>(`/pages/${pageId}/backgrounds${C}`, {} satisfies S["BackgroundCreate"])
-        : api.post<Generation>(`/pages/${pageId}/poses${C}`, { action: v.action } satisfies Omit<S["PoseCreate"], "count">),
+        : api.post<Generation>(`/pages/${pageId}/poses${C}`, { action: v.action, count: v.count ?? 1 } satisfies S["PoseCreate"]),
     onSuccess: () => refreshFix(qc, bookId, pageId),
   });
 }
