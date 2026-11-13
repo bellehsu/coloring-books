@@ -65,6 +65,14 @@ describe("neighbours（上一頁／下一頁）", () => {
     expect(neighbours(pages, 4, "attention")).toMatchObject({ prev: { id: 1 }, next: null });
   });
 
+  it("neighbours with filter attention steps through review pages", () => {
+    const review = { ...ovPage(3, 2, "ready"), review: true };
+    const withReview = [pages[0], pages[1], review, pages[3]];
+    expect(neighbours(withReview, 1, "attention")).toMatchObject({ prev: null, next: { id: 3 } });
+    expect(neighbours(withReview, 3, "attention")).toMatchObject({ prev: { id: 1 }, next: { id: 4 } });
+    expect(neighbours(withReview, 4, "attention")).toMatchObject({ prev: { id: 3 }, next: null });
+  });
+
   it("orders by position, not by list order", () => {
     const shuffled = [pages[3], pages[0], pages[2], pages[1]];
     expect(neighbours(shuffled, 3, null)).toMatchObject({ prev: { id: 2 }, next: { id: 4 } });
@@ -106,6 +114,10 @@ describe("small helpers", () => {
     expect(pageState(mkPage(), undefined)).toBe("ready");
     expect(pageState(mkPage({ attention: "failed" }), undefined)).toBe("attention");
     expect(pageState(mkPage({ status: "draft" }), undefined)).toBe("todo");
+  });
+
+  it("pageState: review_pose page is ready", () => {
+    expect(pageState(mkPage({ attention: "review_pose", attention_detail: "請看一下：換了新的主角動作" }), undefined)).toBe("ready");
   });
 
   it("printUrl changes with the line-art key and the captions", () => {

@@ -299,6 +299,16 @@ describe("C 處理一頁：請看一下", () => {
     expect(await screen.findByText("今天的生成次數已用完，明天再來")).toBeInTheDocument();
   });
 
+  it("review_pose shows the detail note and still offers 這頁可以印了 ✓", async () => {
+    page = mkPage({ attention: "review_pose", attention_detail: "請看一下：換了新的主角動作" });
+    const user = userEvent.setup();
+    setup();
+    expect(await screen.findByText("請看一下：換了新的主角動作")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "為什麼請你看" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "這頁可以印了 ✓" }));
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/accept$/)).toHaveLength(1));
+  });
+
   it("no reason card when the page is fine", async () => {
     setup();
     await screen.findByRole("heading", { level: 1 });

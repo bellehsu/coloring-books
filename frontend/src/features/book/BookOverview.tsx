@@ -26,7 +26,8 @@ import {
   countPages,
   countsLine,
   filterPages,
-  progressOf,
+  inAttention,
+  progressPages,
   softNote,
   type Filter,
 } from "./overviewState";
@@ -202,19 +203,21 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
   const headingId = useId();
   const mode = cardMode(o);
   const todo = todoCount(o);
-  const firstAttention = o.pages.find((p) => p.state === "attention");
+  const firstAttention = o.pages.find(inAttention);
   const canStart = book.character_generation_id != null && o.pages.length > 0;
 
   const heading =
     mode === "running"
       ? "正在做這本書…"
-      : mode === "notStarted"
-        ? "還沒開始做"
-        : mode === "deferred"
-          ? `還有 ${o.deferred_count} 頁明天繼續`
-          : mode === "unfinished"
-            ? `還有 ${todo} 頁還沒做完`
-            : "整本做好了！";
+      : mode === "redraw"
+        ? `還有 ${o.redraw_count} 頁要重畫`
+        : mode === "notStarted"
+          ? "還沒開始做"
+          : mode === "deferred"
+            ? `還有 ${o.deferred_count} 頁明天繼續`
+            : mode === "unfinished"
+              ? `還有 ${todo} 頁還沒做完`
+              : "整本做好了！";
 
   const produceButton = (label: string) => (
     <Button variant="primary" size="lg" disabled={busy || noQuota} onClick={onProduce} className={styles.action}>
@@ -231,7 +234,7 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
         開始做這本書
       </Link>
     );
-  } else if (mode === "deferred" || mode === "unfinished") {
+  } else if (mode === "redraw" || mode === "deferred" || mode === "unfinished") {
     action = produceButton("繼續做");
   }
   const lookLink =
@@ -241,8 +244,10 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
       </Link>
     ) : null;
 
-  const { done, total } = progressOf(o);
-  const showQuotaNote = noQuota && (mode === "deferred" || mode === "unfinished" || (mode === "notStarted" && canStart));
+  const { ready, total } = progressPages(o);
+  const pagesLine = `做好 ${ready} / ${total} 頁`;
+  const showQuotaNote =
+    noQuota && (mode === "redraw" || mode === "deferred" || mode === "unfinished" || (mode === "notStarted" && canStart));
 
   return (
     <section aria-labelledby={headingId} className={styles.status}>
@@ -261,13 +266,13 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
               aria-label="整本的進度"
               aria-valuemin={0}
               aria-valuemax={total}
-              aria-valuenow={done}
+              aria-valuenow={ready}
               className={styles.progress}
             >
-              <div className={styles.progressFill} style={{ width: `${total ? (done / total) * 100 : 0}%` }} />
+              <div className={styles.progressFill} style={{ width: `${total ? (ready / total) * 100 : 0}%` }} />
             </div>
             <p className={styles.counts}>
-              做好 {done} / {total} 張
+              {pagesLine}
               {o.estimate_s > 0 && `・${formatRemaining(o.estimate_s)}`}
             </p>
             <p className={styles.counts}>可以先去忙，好了會通知你</p>
@@ -285,7 +290,8 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
                 ))}
               </ul>
             )}
-            <p className={styles.counts}>{countsLine(o.pages)}</p>
+            <p className={styles.counts}>{pagesLine}</p>
+            {ready !== total && <p className={styles.counts}>{countsLine(o.pages)}</p>}
             {mode === "notStarted" && !canStart && (
               <p className={styles.counts}>先設定主角、寫好故事，就可以開始做。</p>
             )}
@@ -320,6 +326,8 @@ function PageCard({
   const n = p.position + 1;
   const src = p.lineart_url ?? p.thumb_url;
   const note = softNote(p);
+  // 批次重畫後換了新動作（review）：狀態還是可以印，但卡片顯示軟性的「請看一下」
+  const pillState = p.review ? "attention" : p.state;
   const [cw, ch] = aspect;
   // 卡片下方的字＝這頁真的會印的字（中文優先）；兩個都不印時說圖下方留白
   const printed = printedCaptions(p);
@@ -345,7 +353,7 @@ function PageCard({
             (printed.zh || printed.en) && <b className={styles.caption}>{printed.zh || printed.en}</b>
           )}
         </div>
-        <span className={`${styles.pill} ${styles[`pill_${p.state}`]}`}>{STATE_LABEL[p.state]}</span>
+        <span className={`${styles.pill} ${styles[`pill_${pillState}`]}`}>{STATE_LABEL[pillState]}</span>
         {note && <span className={p.state === "attention" ? styles.noteWarn : styles.note}>{note}</span>}
       </Link>
     </li>

@@ -176,19 +176,70 @@ describe("B 整本書：狀態卡", () => {
     overview = ov([pg(1, "ready"), pg(2, "ready")]);
     setup();
     const card = await screen.findByRole("region", { name: "整本做好了！" });
-    expect(card).toHaveTextContent("2 頁可以印");
+    expect(card).toHaveTextContent("做好 2 / 2 頁");
     expect(within(card).queryByRole("link", { name: "去看那一頁 →" })).not.toBeInTheDocument();
   });
 
-  it("running: progress and 可以先去忙，好了會通知你", async () => {
-    overview = ov([pg(1, "working"), pg(2, "ready")], { progress: { queued: 2, running: 1, done: 3 }, estimate_s: 66 });
+  it("running: 做好 1 / 3 頁・剩約 2 分鐘", async () => {
+    overview = ov([pg(1, "working"), pg(2, "ready"), pg(3, "todo")], {
+      progress: { queued: 2, running: 1, done: 3 },
+      estimate_s: 90,
+    });
     setup();
     const card = await screen.findByRole("region", { name: "正在做這本書…" });
+    expect(card).toHaveTextContent("做好 1 / 3 頁・剩約 2 分鐘");
     expect(card).toHaveTextContent("可以先去忙，好了會通知你");
-    expect(card).toHaveTextContent("剩約 2 分鐘");
+    expect(card).not.toHaveTextContent("張");
     const bar = within(card).getByRole("progressbar");
-    expect(bar).toHaveAttribute("aria-valuenow", "3");
-    expect(bar).toHaveAttribute("aria-valuemax", "6");
+    expect(bar).toHaveAttribute("aria-valuenow", "1");
+    expect(bar).toHaveAttribute("aria-valuemax", "3");
+  });
+
+  it("done: 做好 3 / 3 頁", async () => {
+    overview = ov([pg(1, "ready"), pg(2, "ready"), pg(3, "ready")]);
+    setup();
+    const card = await screen.findByRole("region", { name: "整本做好了！" });
+    expect(card).toHaveTextContent("做好 3 / 3 頁");
+    // 全部做好時不再重複列「3 頁可以印」
+    expect(card).not.toHaveTextContent("頁可以印");
+  });
+
+  it("not all ready: 做好 N / M 頁 comes first, then the counts", async () => {
+    setup();
+    const card = await screen.findByRole("region", { name: "整本做好了！" });
+    expect(card).toHaveTextContent(/做好 2 \/ 3 頁.*2 頁可以印・1 頁請你看一下/);
+  });
+
+  it("review page card shows 請看一下 and 請看一下：換了新的主角動作", async () => {
+    overview = ov([
+      pg(1, "ready", { review: true, attention_detail: "請看一下：換了新的主角動作" }),
+      pg(2, "ready"),
+    ]);
+    setup();
+    const list = await screen.findByRole("list", { name: "頁面" });
+    const cards = within(list).getAllByRole("link");
+    expect(cards[0]).toHaveTextContent("請看一下");
+    expect(cards[0]).not.toHaveTextContent("可以印 ✓");
+    expect(cards[0]).toHaveTextContent("請看一下：換了新的主角動作");
+    const filters = screen.getByRole("group", { name: "篩選頁面" });
+    within(filters).getByRole("button", { name: "可以印 2" });
+    await userEvent.click(within(filters).getByRole("button", { name: "請看一下 1" }));
+    const shown = within(screen.getByRole("list", { name: "頁面" })).getAllByRole("link");
+    expect(shown.map((a) => a.getAttribute("href"))).toEqual(["/books/1/page/1?filter=attention"]);
+    // 狀態卡的「去看那一頁 →」也找得到它
+    const card = screen.getByRole("region", { name: "整本做好了！" });
+    expect(within(card).getByRole("link", { name: "去看那一頁 →" })).toHaveAttribute("href", "/books/1/page/1?filter=attention");
+  });
+
+  it("redraw mode: 還有 1 頁要重畫 and 繼續做 posts /produce", async () => {
+    overview = ov([pg(1, "ready"), pg(2, "ready")], { redraw_count: 1 });
+    setup();
+    const card = await screen.findByRole("region", { name: "還有 1 頁要重畫" });
+    expect(card).toHaveTextContent("做好 2 / 2 頁");
+    const go = within(card).getByRole("button", { name: "繼續做" });
+    await waitFor(() => expect(go).toBeEnabled());
+    await userEvent.click(go);
+    await waitFor(() => expect(produced()).toBe(1));
   });
 
   it("before any run: 還沒開始做 and 開始做這本書 calls produce, never 明天繼續", async () => {

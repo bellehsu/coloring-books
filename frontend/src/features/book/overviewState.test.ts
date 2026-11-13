@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BookOverview, OverviewPage } from "@/api/client";
-import { cardMode, countPages, filterPages, progressOf, softNote } from "./overviewState";
+import { cardMode, countPages, filterPages, inAttention, progressPages, softNote } from "./overviewState";
 
 const pg = (id: number, state: OverviewPage["state"], extra: Partial<OverviewPage> = {}): OverviewPage => ({
   id,
@@ -77,8 +77,34 @@ describe("softNote", () => {
   });
 });
 
-describe("progressOf", () => {
-  it("done over done + queued + running", () => {
-    expect(progressOf(ov([], { progress: { queued: 3, running: 1, done: 4 } }))).toEqual({ done: 4, total: 8 });
+describe("progressPages", () => {
+  it("progressPages reads progress_pages", () => {
+    const o = ov([pg(1, "ready"), pg(2, "working")], {
+      progress: { queued: 3, running: 1, done: 4 },
+      progress_pages: { ready: 1, total: 2 },
+    });
+    expect(progressPages(o)).toEqual({ ready: 1, total: 2 });
+  });
+});
+
+describe("review pages (soft 請看一下)", () => {
+  it("inAttention: review pages are in both 請看一下 and 可以印", () => {
+    const review = pg(2, "ready", { review: true, attention_detail: "請看一下：換了新的主角動作" });
+    const pages = [pg(1, "attention"), review, pg(3, "ready")];
+    expect(inAttention(pages[0])).toBe(true);
+    expect(inAttention(review)).toBe(true);
+    expect(inAttention(pages[2])).toBe(false);
+    expect(filterPages(pages, "attention").map((p) => p.id)).toEqual([1, 2]);
+    expect(filterPages(pages, "ready").map((p) => p.id)).toEqual([2, 3]);
+    expect(countPages(pages)).toEqual({ all: 3, attention: 2, ready: 2, unfinished: 0 });
+    expect(softNote(review)).toBe("請看一下：換了新的主角動作");
+  });
+});
+
+describe("cardMode redraw", () => {
+  it("cardMode redraw when redraw_count > 0 and nothing is running", () => {
+    expect(cardMode(ov([pg(1, "ready"), pg(2, "ready")], { redraw_count: 1 }))).toBe("redraw");
+    expect(cardMode(ov([pg(1, "ready"), pg(2, "todo")], { redraw_count: 1, deferred_count: 1 }))).toBe("redraw");
+    expect(cardMode(ov([pg(1, "working")], { redraw_count: 1 }))).toBe("running");
   });
 });

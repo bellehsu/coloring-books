@@ -19,10 +19,17 @@ export const STATE_LABEL: Record<PageState, string> = {
   todo: "還沒做完",
 };
 
-const inFilter = (f: Filter, s: PageState) =>
-  f === "all" || (f === "unfinished" ? s === "working" || s === "todo" : s === f);
+/**
+ * 要請你看一下的頁：真的有問題（attention），或是批次重畫後換了新的主角動作（review，軟性的：
+ * 狀態還是 ready，同時算在「可以印」）。
+ */
+export const inAttention = (p: OverviewPage): boolean => p.state === "attention" || p.review;
 
-export const filterPages = (pages: OverviewPage[], f: Filter) => pages.filter((p) => inFilter(f, p.state));
+const inFilter = (f: Filter, p: OverviewPage) =>
+  f === "all" ||
+  (f === "unfinished" ? p.state === "working" || p.state === "todo" : f === "attention" ? inAttention(p) : p.state === f);
+
+export const filterPages = (pages: OverviewPage[], f: Filter) => pages.filter((p) => inFilter(f, p));
 
 export function countPages(pages: OverviewPage[]): Record<Filter, number> {
   const out: Record<Filter, number> = { all: 0, attention: 0, ready: 0, unfinished: 0 };
@@ -33,32 +40,34 @@ export function countPages(pages: OverviewPage[]): Record<Filter, number> {
 /**
  * 狀態卡顯示哪一種：
  * - running：有排隊中／執行中的工作；
+ * - redraw：主角與故事改過、還有頁面要重畫（按「繼續做」重畫）；
  * - notStarted：還沒按過「開始做這本書」，又有頁面缺素材（或還沒有頁面）；
  * - deferred：按過，還有缺素材的頁（今天的次數不夠）→「還有 N 頁明天繼續」；
  * - unfinished：沒有缺素材，但還有頁面沒做完（例如流程還沒跑、故事沒寫）；
  * - done：每頁不是可以印就是請看一下。
  */
-export type CardMode = "running" | "notStarted" | "deferred" | "unfinished" | "done";
+export type CardMode = "running" | "redraw" | "notStarted" | "deferred" | "unfinished" | "done";
 
 export function cardMode(o: BookOverview): CardMode {
   if (overviewActive(o)) return "running";
+  if (o.redraw_count > 0) return "redraw";
   if (o.pages.length === 0) return "notStarted";
   if (o.deferred_count > 0) return o.run_started_at == null ? "notStarted" : "deferred";
   if (o.pages.some((p) => p.state === "todo")) return "unfinished";
   return "done";
 }
 
-/** 卡片下方的小字：失敗原因，或「N 處線沒接起來（可以不管）」。 */
+/** 卡片下方的小字：失敗原因、「請看一下：換了新的主角動作」，或「N 處線沒接起來（可以不管）」。 */
 export function softNote(p: OverviewPage): string | null {
   if (p.state === "attention") return p.attention_detail || "這一頁沒做好，點進去看看";
+  if (p.review && p.attention_detail) return p.attention_detail;
   if (p.gap_count) return `${p.gap_count} 處線沒接起來（可以不管）`;
   return null;
 }
 
-/** 本輪進度：做完的／全部（做完＋排隊＋執行中）。 */
-export function progressOf(o: BookOverview): { done: number; total: number } {
-  const { queued, running, done } = o.progress;
-  return { done, total: done + queued + running };
+/** 整本的進度（頁）：可以印的頁／全部的頁（後端算好的 progress_pages）。 */
+export function progressPages(o: BookOverview): { ready: number; total: number } {
+  return o.progress_pages;
 }
 
 /** 「2 頁可以印・1 頁請你看一下・1 頁還沒做完」（0 的不寫）。 */
