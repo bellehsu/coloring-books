@@ -562,3 +562,7 @@
     width: 100%;
   }
 }
+.promptArea {
+  width: 100%;
+  resize: vertical;
+}

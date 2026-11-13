@@ -123,6 +123,7 @@ describe("InviteAdmin", () => {
     mock([row(2, "小美")]);
     setup();
     const user = userEvent.setup();
+    Object.defineProperty(window, "isSecureContext", { value: true, configurable: true });
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: "複製 小美 的連結" }));
@@ -131,6 +132,24 @@ describe("InviteAdmin", () => {
     // 2 秒後恢復（真的等：fake timers 與 user-event／testing-library 的輪詢會互相干擾）
     await waitFor(() => expect(screen.queryByText("已複製")).not.toBeInTheDocument(), { timeout: 4000 });
     expect(screen.getByRole("button", { name: "複製 小美 的連結" })).toHaveTextContent(/^複製$/);
+    Reflect.deleteProperty(window, "isSecureContext");
+  });
+
+  it("copy failure keeps the link visible and shows no 已複製", async () => {
+    mock([row(2, "小美")]);
+    setup();
+    const user = userEvent.setup();
+    Object.defineProperty(window, "isSecureContext", { value: false, configurable: true });
+    (document as unknown as { execCommand: unknown }).execCommand = vi.fn(() => false);
+    try {
+      await screen.findByRole("table");
+      await user.click(screen.getByRole("button", { name: "複製 小美 的連結" }));
+      expect(screen.getByText("https://books.example/i/tok2")).toBeInTheDocument();
+      expect(screen.queryByText("已複製")).not.toBeInTheDocument();
+    } finally {
+      Reflect.deleteProperty(window, "isSecureContext");
+      Reflect.deleteProperty(document, "execCommand");
+    }
   });
 
   it("沒有連結時顯示「這個連結無法再顯示，請用指令換發」，沒有複製鈕", async () => {

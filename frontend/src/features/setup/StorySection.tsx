@@ -3,10 +3,12 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
+import { copyText } from "@/lib/copyText";
 import { MAX_ACTION, MAX_SCENE } from "@/lib/limits";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import { AI_PROMPT } from "./aiPrompt";
 import type { DraftPage, PreviewEntry, StoryPreview } from "./storyPreview";
+import { CopyPromptDialog } from "./CopyPromptDialog";
 import { ThemePackDialog } from "./ThemePackDialog";
 import styles from "./SetupPage.module.css";
 
@@ -46,13 +48,11 @@ export function StorySection({
   const [packOpen, setPackOpen] = useState(false);
   const { entries, problems, pasted } = preview;
 
+  const [promptOpen, setPromptOpen] = useState(false);
+  const prompt = AI_PROMPT(pasted || existing || 10);
   const copyPrompt = async () => {
-    try {
-      await navigator.clipboard.writeText(AI_PROMPT(pasted || existing || 10));
-      toast.show("已複製，貼到 ChatGPT 或 Claude，再接上你的故事", "success");
-    } catch {
-      toast.show("無法複製，請手動選取", "error");
-    }
+    if (await copyText(prompt)) toast.show("已複製，貼到 ChatGPT 或 Claude，再接上你的故事", "success");
+    else setPromptOpen(true); // 自動複製不行：開出全選好的指令，讓人自己複製
   };
 
   const count =
@@ -139,6 +139,7 @@ export function StorySection({
           onText(pack.text);
         }}
       />
+      <CopyPromptDialog open={promptOpen} text={prompt} onClose={() => setPromptOpen(false)} />
     </section>
   );
 }
