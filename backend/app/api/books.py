@@ -10,9 +10,10 @@ import logging
 import random
 import time
 
+from fastapi.responses import Response
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile
-from sqlalchemy import true
-from sqlmodel import Session, col, select, update
+from sqlalchemy import literal, true
+from sqlmodel import Session, col, func, select, update
 
 from app.api.deps import BOOK_NOT_FOUND, current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
 from app.api.pages import page_outs
@@ -389,6 +390,43 @@ def set_character(
     _select_character(session, book_id, gen.id, gen.user_text, body.confirm_change)
     session.refresh(book)
     return book_out(session, book, owner)
+
+
+@router.delete("/{book_id}/character/candidates/{gen_id}", status_code=204)
+def delete_character_candidate(
+    book_id: int,
+    gen_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> Response:
+    """刪掉不要的角色候選圖＝捨棄（discarded）；復原走 PATCH /generations/{id} {"discarded": false}。"""
+    book = owned_book(session, owner, book_id)
+    # 與 PATCH /generations/{id} 同樣用條件式 UPDATE：判斷與寫入之間不能被別的請求（選角色、開始生成）插隊
+    discarded_at_type = Generation.__table__.c.discarded_at.type
+    res = session.exec(
+        update(Generation)
+        .where(
+            (col(Generation.id) == gen_id)
+            & (col(Generation.book_id) == book_id)
+            & (col(Generation.kind) == GenKind.CHARACTER)
+            & ~select(Book.id).where(col(Book.character_generation_id) == gen_id).exists()
+            & col(Generation.status).not_in([GenStatus.QUEUED, GenStatus.RUNNING])
+        )
+        .values(
+            discarded=True,
+            discarded_at=func.coalesce(col(Generation.discarded_at), literal(utcnow(), discarded_at_type)),
+        )
+    )
+    session.commit()
+    if res.rowcount == 0:
+        gen = session.exec(select(Generation).where(col(Generation.id) == gen_id)).first()
+        if gen is None or gen.book_id != book_id or gen.kind != GenKind.CHARACTER:
+            raise HTTPException(404, "找不到這張候選圖")
+        session.refresh(book)
+        if book.character_generation_id == gen_id:
+            raise HTTPException(409, "選好的主角不能刪")
+        raise HTTPException(409, "這張候選還在畫，請先取消")
+    return Response(status_code=204)
 
 
 @router.post("/{book_id}/character/upload", status_code=201, response_model=BookOut)

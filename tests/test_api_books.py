@@ -440,3 +440,66 @@ def test_set_character_blocked_by_racing_gc_clear(client, app, monkeypatch):
     assert r.status_code == 409
     monkeypatch.undo()
     assert client.get(f"/api/books/{b['id']}").json()["character_generation_id"] is None
+
+
+def _two_done_candidates(client, app, b):
+    ids = candidate_ids(client, b["id"], 2, seed=1)
+    run_jobs(client, app, 2)
+    return ids
+
+
+def test_delete_candidate_discards_it(client, app):
+    b = new_book(client)
+    g1, g2 = _two_done_candidates(client, app, b)
+    assert client.post(f"/api/books/{b['id']}/character", json={"generation_id": g1}).status_code == 200
+    r = client.delete(f"/api/books/{b['id']}/character/candidates/{g2}")
+    assert r.status_code == 204
+    row = _row(app, g2)
+    assert row.discarded is True and row.discarded_at is not None
+    first_at = row.discarded_at
+    listed = [g["id"] for g in client.get(f"/api/books/{b['id']}/generations?kind=character").json()]
+    assert g2 not in listed and g1 in listed
+    # 重複刪除：冪等，discarded_at 不往後延
+    assert client.delete(f"/api/books/{b['id']}/character/candidates/{g2}").status_code == 204
+    assert _row(app, g2).discarded_at == first_at
+    # 復原
+    back = client.patch(f"/api/generations/{g2}", json={"discarded": False})
+    assert back.status_code == 200 and back.json()["discarded"] is False
+    listed = [g["id"] for g in client.get(f"/api/books/{b['id']}/generations?kind=character").json()]
+    assert g2 in listed
+
+
+def test_delete_chosen_candidate_is_409(client, app):
+    b = new_book(client)
+    g1, _g2 = _two_done_candidates(client, app, b)
+    client.post(f"/api/books/{b['id']}/character", json={"generation_id": g1})
+    r = client.delete(f"/api/books/{b['id']}/character/candidates/{g1}")
+    assert r.status_code == 409 and r.json()["detail"] == "選好的主角不能刪"
+    assert _row(app, g1).discarded is False
+
+
+def test_delete_active_candidate_is_409(client, app):
+    b = new_book(client)
+    (g1,) = candidate_ids(client, b["id"], 1, seed=1)  # QUEUED
+    r = client.delete(f"/api/books/{b['id']}/character/candidates/{g1}")
+    assert r.status_code == 409 and r.json()["detail"] == "這張候選還在畫，請先取消"
+    assert _row(app, g1).discarded is False
+
+
+def test_delete_candidate_wrong_kind_or_book_is_404(client, app):
+    b = new_book(client)
+    other = new_book(client)
+    (g1,) = candidate_ids(client, b["id"], 1, seed=1)
+    (o1,) = candidate_ids(client, other["id"], 1, seed=1)
+    run_jobs(client, app, 2)
+    with app.state.sessions() as s:
+        gen = s.get(Generation, g1)
+        pose = Generation(**{**gen.model_dump(exclude={"id"}), "kind": GenKind.POSE})
+        s.add(pose)
+        s.commit()
+        pose_id = pose.id
+    assert client.delete(f"/api/books/{b['id']}/character/candidates/987654").status_code == 404
+    for gid in (pose_id, o1):
+        r = client.delete(f"/api/books/{b['id']}/character/candidates/{gid}")
+        assert r.status_code == 404 and r.json()["detail"] == "找不到這張候選圖", gid
+    assert _row(app, o1).discarded is False and _row(app, pose_id).discarded is False

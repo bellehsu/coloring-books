@@ -91,7 +91,10 @@ PHASE13_ROUTES = {
 
 
 # Fix round 2026-11-13：新增的擁有者路由（Task 5、7 之後也加在這裡）
-FIX_ROUND_ROUTES = {("DELETE", "/api/books/{book_id}")}
+FIX_ROUND_ROUTES = {
+    ("DELETE", "/api/books/{book_id}"),
+    ("DELETE", "/api/books/{book_id}/character/candidates/{gen_id}"),
+}
 
 
 # admin 也只能操作自己的資源的路由（別人的一律 404，不像其他路由 admin 看得到全部）

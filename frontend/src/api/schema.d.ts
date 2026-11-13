@@ -112,6 +112,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/books/{book_id}/character/candidates/{gen_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Character Candidate
+         * @description 刪掉不要的角色候選圖＝捨棄（discarded）；復原走 PATCH /generations/{id} {"discarded": false}。
+         */
+        delete: operations["delete_character_candidate_api_books__book_id__character_candidates__gen_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/books/{book_id}/character/upload": {
         parameters: {
             query?: never;
@@ -2115,6 +2135,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BookOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_character_candidate_api_books__book_id__character_candidates__gen_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+                gen_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -360,6 +360,51 @@
         }
       }
     },
+    "/api/books/{book_id}/character/candidates/{gen_id}": {
+      "delete": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Delete Character Candidate",
+        "description": "刪掉不要的角色候選圖＝捨棄（discarded）；復原走 PATCH /generations/{id} {\"discarded\": false}。",
+        "operationId": "delete_character_candidate_api_books__book_id__character_candidates__gen_id__delete",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          },
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/books/{book_id}/character/upload": {
       "post": {
         "tags": [
