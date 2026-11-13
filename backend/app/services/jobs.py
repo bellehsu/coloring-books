@@ -11,7 +11,7 @@ import random
 import threading
 from collections.abc import Callable, Sequence
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, select, update
 
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page
 from app.services import usage
@@ -207,11 +207,30 @@ def has_character(session: Session, book: Book) -> bool:
     return char is not None and bool(char.image_path)
 
 
-def build_job(session: Session, book: Book, page: Page, kind: GenKind) -> Job:
-    """批次與「開始做這本書」共用：這頁這種素材的排隊任務（呼叫端確認不用略過）。"""
+def build_job(session: Session, book: Book, page: Page, kind: GenKind, *, redraw: bool = False) -> Job:
+    """批次與「開始做這本書」共用：這頁這種素材的排隊任務（呼叫端確認不用略過）。
+    redraw（「繼續做」）且這頁這種素材標了「要重畫」：take（好了換上去、有復原快照）；角色動作另帶 REVIEW
+    （換上去時標成 review_pose），背景不帶。"""
     if kind == GenKind.BACKGROUND:
-        return background_job(session, book, page)
-    return pose_job(session, book, page, page.action_prompt)
+        job = background_job(session, book, page)
+    else:
+        job = pose_job(session, book, page, page.action_prompt)
+    if redraw and redraw_flag(page, kind):
+        take(job, True)
+        if kind == GenKind.POSE:
+            job.extra[REVIEW] = True
+    return job
+
+
+def redraw_flag(page: Page, kind: GenKind) -> bool:
+    """設定頁改了場景／動作，這頁這種素材等「繼續做」重畫（「要重畫」）。"""
+    return page.redraw_background if kind == GenKind.BACKGROUND else page.redraw_pose
+
+
+def clear_redraw_flag(session: Session, page_id: int, kind: GenKind) -> None:
+    """「繼續做」排到這頁這種素材時清掉「要重畫」（UPDATE，不 commit：與排隊同一個交易）。"""
+    column = Page.redraw_background if kind == GenKind.BACKGROUND else Page.redraw_pose
+    session.exec(update(Page).where(col(Page.id) == page_id).values({column: False}))
 
 
 class BookState:
@@ -243,12 +262,16 @@ class BookState:
             ).all()
         ) if selected_ids else set()
 
-    def skip_reason(self, page: Page, kind: GenKind) -> str | None:
-        """該頁的這種素材為什麼不用排；要排回 None。"""
+    def skip_reason(self, page: Page, kind: GenKind, *, redraw: bool = False) -> str | None:
+        """該頁的這種素材為什麼不用排；要排回 None。
+        redraw（「繼續做」）：標了「要重畫」的照排，除非同種素材還在排隊／執行（旗標留著等下一次）。"""
         bg = kind == GenKind.BACKGROUND
         if not (page.scene_prompt if bg else page.action_prompt).strip():
             return "沒有場景描述" if bg else "沒有動作描述"
         gens = self.gens[kind].get(page.id, [])
+        active = any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens)
+        if redraw and redraw_flag(page, kind):
+            return ("背景產生中" if bg else "角色動作產生中") if active else None
         slot = page.background_generation_id if bg else page.pose_generation_id
         if (
             slot is not None
@@ -256,20 +279,21 @@ class BookState:
             or any(g.status == GenStatus.SUCCEEDED and not g.discarded and not is_candidate(g) for g in gens)
         ):
             return "已有背景" if bg else "已有角色動作"
-        if any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):
+        if active:
             return "背景產生中" if bg else "角色動作產生中"
         return None
 
     def plan(
-        self, has_character: bool, upload_pages: set[int] = frozenset()
+        self, has_character: bool, upload_pages: set[int] = frozenset(), *, redraw: bool = False
     ) -> list[tuple[Page, GenKind, str | None]]:
         """依頁面順序、每頁先背景再角色動作：(頁面, 種類, 略過原因；要排為 None)。
-        upload_pages 的頁面改用上傳圖片，背景略過；沒有角色時角色動作略過。"""
+        upload_pages 的頁面改用上傳圖片，背景略過；沒有角色時角色動作略過。redraw 見 skip_reason。"""
         out: list[tuple[Page, GenKind, str | None]] = []
         for page in self.pages:
-            reason = "改用上傳圖片" if page.id in upload_pages else self.skip_reason(page, GenKind.BACKGROUND)
+            reason = ("改用上傳圖片" if page.id in upload_pages
+                      else self.skip_reason(page, GenKind.BACKGROUND, redraw=redraw))
             out.append((page, GenKind.BACKGROUND, reason))
-            reason = self.skip_reason(page, GenKind.POSE)
+            reason = self.skip_reason(page, GenKind.POSE, redraw=redraw)
             if reason is None and not has_character:
                 reason = "請先設定角色"
             out.append((page, GenKind.POSE, reason))

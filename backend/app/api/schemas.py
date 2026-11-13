@@ -329,6 +329,9 @@ class PageOut(BaseModel):
     recompose_pending: bool
     can_undo: bool  # C 的「↶ 復原」／「↷ 重做」
     can_redo: bool
+    # 設定頁改了場景／動作、等「繼續做」重畫背景／角色動作（「要重畫」）
+    redraw_background: bool
+    redraw_pose: bool
     created_at: datetime
     updated_at: datetime
 
@@ -384,6 +387,8 @@ class PageOut(BaseModel):
             recompose_pending=page.pending_user_strokes is not None and history.has_both_slots(page),
             can_undo=can_undo,
             can_redo=can_redo,
+            redraw_background=page.redraw_background,
+            redraw_pose=page.redraw_pose,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )
@@ -559,6 +564,7 @@ class BookOverviewOut(BaseModel):
     estimate_s: int  # 排隊中與執行中的生成 × 每張約 22 秒（頁面流程很快，不算）
     # 還有素材沒排（也沒有排隊中的那種）的頁數：上一輪放不下的（「還有 N 頁明天繼續」），沒按過時是全部缺的頁
     deferred_count: int
+    redraw_count: int  # 設定頁改了、等「繼續做」重畫的頁數（背景或角色動作標了「要重畫」）；不算進 deferred_count
     run_started_at: datetime | None  # 最近一輪的開始時間；null＝還沒按過「開始做這本書」
 
 

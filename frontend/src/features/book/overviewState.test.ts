@@ -24,6 +24,7 @@ const ov = (pages: OverviewPage[], extra: Partial<BookOverview> = {}): BookOverv
   progress_pages: { ready: pages.filter((p) => p.state === "ready").length, total: pages.length },
   estimate_s: 0,
   deferred_count: 0,
+  redraw_count: 0,
   run_started_at: "2026-11-12T01:00:00Z",
   ...extra,
 });

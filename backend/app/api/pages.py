@@ -21,6 +21,7 @@ from app.services.compose import page_placement
 from app.services.layout import compute_layout
 from app.services.page_compose import composite_matches
 from app.services.page_lineart import lineart_key, on_pipeline, strokes_json_by_generation
+from app.services.slots import UPLOAD_ENGINE
 from app.services.usage import refund_generations
 from app.services.worker import GenerationWorker
 from app.storage import Storage
@@ -167,14 +168,26 @@ def update_page(
     page_id: int,
     body: PageUpdate,
     oneclick: bool = Query(False, description="C 處理一頁：先存復原快照、排頁面流程"),
+    from_setup: bool = Query(False, description="設定頁改既有頁面：場景／動作變了就標「要重畫」"),
     session: Session = Depends(get_session),
     worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> PageOut:
     """oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；
-    線條設定變了，流程做的頁排流程重跑（不退回草稿）。"""
+    線條設定變了，流程做的頁排流程重跑（不退回草稿）。
+    from_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而
+    頁面有角色動作 → redraw_pose，等「繼續做」重畫。圖下方的字不標；沒帶 from_setup 時不標。"""
     page = owned_page(session, owner, page_id)
     fields = body.model_fields_set
+    if from_setup:
+        if (body.scene_prompt is not None and body.scene_prompt != page.scene_prompt
+                and page.background_generation_id is not None):
+            bg = session.get(Generation, page.background_generation_id)
+            if bg is not None and bg.engine != UPLOAD_ENGINE:
+                page.redraw_background = True
+        if (body.action_prompt is not None and body.action_prompt != page.action_prompt
+                and page.pose_generation_id is not None):
+            page.redraw_pose = True
     if oneclick and (
         (body.action_prompt is not None and body.action_prompt != page.action_prompt)
         or ("caption_zh" in fields and body.caption_zh != page.caption_zh)

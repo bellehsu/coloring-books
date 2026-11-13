@@ -673,7 +673,7 @@
           "pages"
         ],
         "summary": "Update Page",
-        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。",
+        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。\nfrom_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而\n頁面有角色動作 → redraw_pose，等「繼續做」重畫。圖下方的字不標；沒帶 from_setup 時不標。",
         "operationId": "update_page_api_pages__page_id__patch",
         "parameters": [
           {
@@ -696,6 +696,18 @@
               "title": "Oneclick"
             },
             "description": "C 處理一頁：先存復原快照、排頁面流程"
+          },
+          {
+            "name": "from_setup",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "設定頁改既有頁面：場景／動作變了就標「要重畫」",
+              "default": false,
+              "title": "From Setup"
+            },
+            "description": "設定頁改既有頁面：場景／動作變了就標「要重畫」"
           }
         ],
         "requestBody": {
@@ -3380,6 +3392,10 @@
             "type": "integer",
             "title": "Deferred Count"
           },
+          "redraw_count": {
+            "type": "integer",
+            "title": "Redraw Count"
+          },
           "run_started_at": {
             "anyOf": [
               {
@@ -3401,6 +3417,7 @@
           "progress_pages",
           "estimate_s",
           "deferred_count",
+          "redraw_count",
           "run_started_at"
         ],
         "title": "BookOverviewOut"
@@ -4380,6 +4397,14 @@
             "type": "boolean",
             "title": "Can Redo"
           },
+          "redraw_background": {
+            "type": "boolean",
+            "title": "Redraw Background"
+          },
+          "redraw_pose": {
+            "type": "boolean",
+            "title": "Redraw Pose"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -4422,6 +4447,8 @@
           "recompose_pending",
           "can_undo",
           "can_redo",
+          "redraw_background",
+          "redraw_pose",
           "created_at",
           "updated_at"
         ],
@@ -5171,6 +5198,14 @@
             "type": "boolean",
             "title": "Can Redo"
           },
+          "redraw_background": {
+            "type": "boolean",
+            "title": "Redraw Background"
+          },
+          "redraw_pose": {
+            "type": "boolean",
+            "title": "Redraw Pose"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -5228,6 +5263,8 @@
           "recompose_pending",
           "can_undo",
           "can_redo",
+          "redraw_background",
+          "redraw_pose",
           "created_at",
           "updated_at",
           "requeued",

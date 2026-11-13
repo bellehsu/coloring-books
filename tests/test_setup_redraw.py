@@ -1,0 +1,233 @@
+"""設定頁改既有頁面（fix round 2026-11-13 #7）：改場景／動作標「要重畫」，「繼續做」（/produce）重畫它們。
+
+- `PATCH /api/pages/{id}?from_setup=true`：場景變了、頁面有 AI 背景 → redraw_background；動作變了、
+  頁面有角色動作 → redraw_pose。上傳的背景只存文字；圖下方的字不標；C 的 oneclick 與一般 PATCH 不標。
+- /produce 把標了的頁面照空格一樣排（額度內），排到時清掉旗標；角色動作是 take＋review（review_pose），
+  背景是 take、沒有 review。放不下（429）的旗標留著。
+- overview：redraw_count 是標了的頁數，不算進 deferred_count（「明天繼續」）。
+"""
+
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import load_settings
+from app.main import create_app
+from app.models import Generation, GenKind, GenStatus
+from app.services import usage
+from app.services.page_state import ATTENTION_REVIEW_POSE
+from tests.fake_engine import FakeEngine
+from tests.test_api_compose import upload_bg
+from tests.test_api_lineart import color_png, get_page
+from tests.test_api_produce import THREE, book_with_pages, overview, plan, produce, run_all
+from tests.test_usage import NOW, login, set_cap, used
+
+CAP_MSG = "今天的生成次數已用完，明天再來"
+
+
+@pytest.fixture
+def dev_owner():
+    return None  # 用真正的邀請連結：額度算在這個 owner 身上
+
+
+@pytest.fixture(autouse=True)
+def fixed_clock(monkeypatch):
+    monkeypatch.setattr(usage, "clock", lambda: NOW)
+
+
+@pytest.fixture
+def app(settings_file):
+    return create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False)
+
+
+@pytest.fixture
+def client(app):
+    with TestClient(app) as c:
+        yield c
+
+
+# ---- 小工具 ------------------------------------------------------------------------
+
+
+def ready_book(client, app, pages=THREE, cap=60):
+    """建書＋角色＋頁面，全部做好（背景、角色動作、頁面流程）。回傳 (owner, book, [page])。"""
+    owner = login(client, app, cap=cap)
+    b, ps = book_with_pages(client, app, pages)
+    produce(client, b["id"])
+    run_all(client, app)
+    for p in ps:
+        page = get_page(app, p["id"])
+        assert page.background_generation_id is not None and page.pose_generation_id is not None
+    return owner, b, ps
+
+
+def patch(client, page_id, body, **params):
+    r = client.patch(f"/api/pages/{page_id}", params=params, json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def setup_edit(client, page_id, **body):
+    return patch(client, page_id, body, from_setup="true")
+
+
+def flags(app, page_id) -> tuple[bool, bool]:
+    page = get_page(app, page_id)
+    return page.redraw_background, page.redraw_pose
+
+
+def slots(app, page_id) -> tuple[int | None, int | None, int | None]:
+    page = get_page(app, page_id)
+    return page.background_generation_id, page.pose_generation_id, page.selected_generation_id
+
+
+def rj(app, gen_id) -> dict:
+    with app.state.sessions() as s:
+        return json.loads(s.get(Generation, gen_id).request_json)
+
+
+# ---- 設定頁的 PATCH -------------------------------------------------------------------
+
+
+def test_setup_scene_edit_flags_background(client, app):
+    _, _, (p1, p2, _) = ready_book(client, app)
+    out = setup_edit(client, p1["id"], scene_prompt="雪地")
+    assert out["scene_prompt"] == "雪地"
+    assert out["redraw_background"] is True and out["redraw_pose"] is False
+    assert flags(app, p1["id"]) == (True, False)
+    assert flags(app, p2["id"]) == (False, False)
+    # 同樣的場景再存一次：沒變，不另外標（旗標也不會被清掉）
+    setup_edit(client, p2["id"], scene_prompt="海邊")
+    assert flags(app, p2["id"]) == (False, False)
+
+
+def test_setup_action_edit_flags_pose(client, app):
+    _, _, (p1, _, _) = ready_book(client, app)
+    out = setup_edit(client, p1["id"], action_prompt="坐著")
+    assert out["action_prompt"] == "坐著"
+    assert out["redraw_background"] is False and out["redraw_pose"] is True
+    assert flags(app, p1["id"]) == (False, True)
+
+
+def test_setup_edit_on_page_without_art_sets_no_flag(client, app):
+    login(client, app)
+    _, (p1,) = book_with_pages(client, app, [("公園", "揮手")])
+    out = setup_edit(client, p1["id"], scene_prompt="雪地", action_prompt="坐著")
+    assert out["scene_prompt"] == "雪地" and out["action_prompt"] == "坐著"
+    assert flags(app, p1["id"]) == (False, False)
+
+
+def test_setup_scene_edit_on_uploaded_background_saves_text_only(client, app):
+    login(client, app)
+    _, (p1,) = book_with_pages(client, app, [("公園", "揮手")])
+    assert upload_bg(client, p1["id"], color_png()).status_code == 201
+    assert get_page(app, p1["id"]).background_generation_id is not None
+    out = setup_edit(client, p1["id"], scene_prompt="雪地")
+    assert out["scene_prompt"] == "雪地"
+    assert flags(app, p1["id"]) == (False, False)
+
+
+def test_setup_caption_edit_sets_no_flag(client, app):
+    _, _, (p1, _, _) = ready_book(client, app)
+    out = setup_edit(client, p1["id"], caption_zh="新的字", caption_en="New words")
+    assert out["caption_zh"] == "新的字" and out["caption_en"] == "New words"
+    assert flags(app, p1["id"]) == (False, False)
+
+
+def test_c_and_plain_patch_never_flag(client, app):
+    _, _, (p1, p2, _) = ready_book(client, app)
+    patch(client, p1["id"], {"action_prompt": "坐著", "scene_prompt": "雪地"}, oneclick="true")
+    patch(client, p2["id"], {"action_prompt": "坐著", "scene_prompt": "雪地"})
+    assert flags(app, p1["id"]) == (False, False)
+    assert flags(app, p2["id"]) == (False, False)
+
+
+# ---- /produce 重畫標了的頁 -------------------------------------------------------------
+
+
+def test_produce_redraws_only_flagged_pages(client, app):
+    _, b, (p1, p2, p3) = ready_book(client, app)
+    before = {p["id"]: slots(app, p["id"]) for p in (p1, p2, p3)}
+    setup_edit(client, p2["id"], action_prompt="坐著")
+    got = plan(client, b["id"])
+    assert got["poses"] == 1 and got["backgrounds"] == 0 and got["total"] == 1
+
+    out = produce(client, b["id"])
+    assert len(out["queued"]) == 1 and out["deferred_pages"] == [] and out["pipeline_pages"] == []
+    gid = out["queued"][0]
+    with app.state.sessions() as s:
+        g = s.get(Generation, gid)
+        assert (g.page_id, g.kind, g.status, g.user_text) == (p2["id"], GenKind.POSE, GenStatus.QUEUED, "坐著")
+    d = rj(app, gid)
+    assert d["take"] is True and d["review"] is True
+    assert flags(app, p2["id"]) == (False, False)  # 排到了：旗標清掉
+    assert produce(client, b["id"])["queued"] == []  # 再按一次不重複
+
+    run_all(client, app)
+    page2 = get_page(app, p2["id"])
+    assert page2.pose_generation_id == gid != before[p2["id"]][1]
+    assert page2.background_generation_id == before[p2["id"]][0]
+    assert page2.attention == ATTENTION_REVIEW_POSE
+    assert slots(app, p1["id"]) == before[p1["id"]]
+    assert slots(app, p3["id"]) == before[p3["id"]]
+
+
+def test_produce_flagged_background_is_take_without_review(client, app):
+    _, b, (p1, _) = ready_book(client, app, pages=[("公園", "揮手"), ("海邊", "跳")])
+    old_bg, old_pose, _ = slots(app, p1["id"])
+    setup_edit(client, p1["id"], scene_prompt="雪地")
+    got = plan(client, b["id"])
+    assert got["backgrounds"] == 1 and got["poses"] == 0
+
+    out = produce(client, b["id"])
+    assert len(out["queued"]) == 1
+    gid = out["queued"][0]
+    with app.state.sessions() as s:
+        g = s.get(Generation, gid)
+        assert (g.page_id, g.kind, g.user_text) == (p1["id"], GenKind.BACKGROUND, "雪地")
+    d = rj(app, gid)
+    assert d["take"] is True and "review" not in d
+    assert flags(app, p1["id"]) == (False, False)
+
+    run_all(client, app)
+    page = get_page(app, p1["id"])
+    assert page.background_generation_id == gid != old_bg
+    assert page.pose_generation_id == old_pose
+    assert page.attention is None
+
+
+def test_overview_redraw_count_not_deferred(client, app):
+    _, b, (p1, _, _) = ready_book(client, app)
+    ov = overview(client, b["id"])
+    assert ov["redraw_count"] == 0 and ov["deferred_count"] == 0
+    setup_edit(client, p1["id"], scene_prompt="雪地", action_prompt="坐著")  # 一頁兩種都標：仍算 1 頁
+    ov = overview(client, b["id"])
+    assert ov["redraw_count"] == 1 and ov["deferred_count"] == 0
+    pages = client.get(f"/api/books/{b['id']}/pages").json()
+    assert [(p["redraw_background"], p["redraw_pose"]) for p in pages] == [
+        (True, True), (False, False), (False, False)]
+    produce(client, b["id"])
+    assert overview(client, b["id"])["redraw_count"] == 0
+
+
+def test_flag_kept_when_cap_exhausted(client, app):
+    owner, b, (p1, _, _) = ready_book(client, app)
+    set_cap(app, owner, used(app, owner))  # 今天剩 0 次
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    assert plan(client, b["id"])["remaining"] == 0
+    r = client.post(f"/api/books/{b['id']}/produce")
+    assert r.status_code == 429 and r.json()["detail"] == CAP_MSG
+    assert flags(app, p1["id"]) == (False, True)
+
+
+def test_flag_kept_while_same_kind_is_in_progress(client, app):
+    """這頁同種素材還在排隊／執行：不另外排，旗標留著等下一次。"""
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    assert len(produce(client, b["id"])["queued"]) == 1  # 重畫的角色動作在排隊
+    setup_edit(client, p1["id"], action_prompt="跑")  # 又改了一次
+    assert flags(app, p1["id"]) == (False, True)
+    assert plan(client, b["id"])["total"] == 0
+    assert produce(client, b["id"])["queued"] == []
+    assert flags(app, p1["id"]) == (False, True)

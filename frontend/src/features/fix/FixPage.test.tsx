@@ -109,6 +109,7 @@ beforeEach(() => {
     progress_pages: { ready: 2, total: 4 },
     estimate_s: 0,
     deferred_count: 0,
+    redraw_count: 0,
     run_started_at: "2026-11-12T01:00:00Z",
   };
   gens = [gen(10, "background"), gen(20, "pose"), gen(30, "composite")];
