@@ -321,7 +321,7 @@ def test_lineart_key_unchanged_since_before_structure_cleanup():
     from types import SimpleNamespace as N
 
     gen = N(id=7, image_path="books/1/generations/7.png")
-    page = N(line_detail="standard", line_width_px=11)
+    page = N(line_detail="standard", line_width_px=11, outline_fill=False)
     assert page_lineart.lineart_key(gen, page, (2244, 3272), "[]") == "33f670f493f81344"
     page_on = N(line_detail="standard", line_width_px=11, outline_fill=True)
     assert page_lineart.lineart_key(gen, N(line_detail="standard", line_width_px=11, outline_fill=False),

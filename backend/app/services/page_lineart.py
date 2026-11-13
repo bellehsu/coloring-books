@@ -147,7 +147,7 @@ def _digest(*parts) -> str:
 def lineart_key(gen: Generation, page: Page, content_px, strokes_json: str) -> str:
     parts = [RENDER_VERSION, qa_mod.QA_VERSION, gen.id, gen.image_path, str(getattr(page.line_detail, "value", page.line_detail)),
              page.line_width_px, list(content_px), strokes_json]
-    if getattr(page, "outline_fill", False):  # 舊頁面（False）的 key 維持原樣
+    if page.outline_fill:  # 舊頁面（False）的 key 維持原樣
         parts += ["outline_fill", OUTLINE_FILL_VERSION]
     return _digest(*parts)
 

@@ -10,8 +10,8 @@ import logging
 import random
 import time
 
-from fastapi.responses import Response
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import literal, true
 from sqlmodel import Session, col, func, select, update
 
@@ -31,11 +31,11 @@ from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, PageSt
 from app.services.layout import PaperSize, ratio_group
 from app.services.page_compose import store_outside_tx
 from app.services.page_lineart import ensure_page_lineart, on_pipeline
-from app.services.book_delete import delete_books_rows
 from app.services.pipeline import enqueue_page_task
 from app.services import usage
+from app.services.book_delete import delete_books_rows
 from app.services.gen_request import encode_request
-from app.services.jobs import MAX_SEED, last_variations
+from app.services.jobs import BATCH_LOCK, MAX_SEED, last_variations
 from app.services.page_state import busy_page_ids, page_state
 from app.services.slots import UPLOAD_ENGINE
 from app.services.uploads import letterbox, mark_stored, read_upload
@@ -133,8 +133,9 @@ def delete_book(
     book = owned_book(session, owner, book_id)
     if book.owner_id != owner.id:
         raise HTTPException(404, BOOK_NOT_FOUND)
-    delete_books_rows(session, [book_id])
-    session.commit()
+    with BATCH_LOCK:  # 與「繼續做」／批次排隊互斥：不會排到一半的書被刪掉
+        delete_books_rows(session, [book_id])
+        session.commit()
     try:
         storage.delete_prefix(f"books/{book_id}/")  # 結尾的 / 不可省：books/1 會連 books/10 一起刪
     except Exception:  # noqa: BLE001

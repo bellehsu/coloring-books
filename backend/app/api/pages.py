@@ -176,13 +176,17 @@ def update_page(
     """oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；
     線條設定變了，流程做的頁排流程重跑（不退回草稿）。
     from_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而
-    頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標；沒帶 from_setup 時不標；
-    與 oneclick 一起帶是 400。"""
+    頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標（改成空白也清掉那一格的旗標：
+    沒有東西可以畫）；沒帶 from_setup 時不標；與 oneclick 一起帶是 400。"""
     if from_setup and oneclick:
         raise HTTPException(400, "參數衝突")
     page = owned_page(session, owner, page_id)
     fields = body.model_fields_set
-    if from_setup:  # 改成空白不標：沒有東西可以畫
+    if from_setup:  # 改成空白不標、標了的清掉：沒有東西可以畫
+        if body.scene_prompt is not None and not body.scene_prompt.strip():
+            page.redraw_background = False
+        if body.action_prompt is not None and not body.action_prompt.strip():
+            page.redraw_pose = False
         if (body.scene_prompt and body.scene_prompt != page.scene_prompt
                 and page.background_generation_id is not None):
             bg = session.get(Generation, page.background_generation_id)

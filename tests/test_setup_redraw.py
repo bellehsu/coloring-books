@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.config import load_settings
 from app.main import create_app
-from app.models import Generation, GenKind, GenStatus
+from app.models import Book, Generation, GenKind, GenStatus
 from app.services import usage
 from app.services.page_state import ATTENTION_REVIEW_POSE
 from tests.fake_engine import FakeEngine
@@ -331,3 +331,113 @@ def test_materials_batch_leaves_flagged_page_alone(client, app):
     assert r.json()["queued"] == []
     assert flags(app, p1["id"]) == (True, True)
     assert slots(app, p1["id"]) == before
+
+
+# ---- 最終審查修正：舊的 take 不清新的旗標、卡住的旗標、復原清掉 review_pose ----------------------
+
+
+def test_older_take_landing_keeps_newer_setup_flag(client, app):
+    """「繼續做」排了「坐著」，之後設定頁又改成「跑」：舊的 take 換上去不能清掉新的「要重畫」。"""
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    first = produce(client, b["id"])["queued"]
+    assert len(first) == 1 and flags(app, p1["id"]) == (False, False)
+    setup_edit(client, p1["id"], action_prompt="跑")  # 排隊中又改了
+    assert flags(app, p1["id"]) == (False, True)
+    run_all(client, app)  # 「坐著」的 take 換上去
+    assert get_page(app, p1["id"]).pose_generation_id == first[0]
+    assert flags(app, p1["id"]) == (False, True)  # 還是要重畫成「跑」
+    again = produce(client, b["id"])["queued"]
+    assert len(again) == 1
+    with app.state.sessions() as s:
+        assert s.get(Generation, again[0]).user_text == "跑"
+    assert flags(app, p1["id"]) == (False, False)
+
+
+def test_take_with_current_text_clears_flag(client, app):
+    """take 的文字等於目前的動作：使用者要的就是它，旗標清掉。"""
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    assert len(produce(client, b["id"])["queued"]) == 1
+    setup_edit(client, p1["id"], action_prompt="跑")
+    setup_edit(client, p1["id"], action_prompt="坐著")  # 又改回來
+    assert flags(app, p1["id"]) == (False, True)
+    run_all(client, app)
+    assert flags(app, p1["id"]) == (False, False)
+
+
+def test_older_auto_selected_pose_keeps_newer_flag(client, app):
+    """自動選上去的新角色動作文字跟目前的動作不同：旗標留著。"""
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    new = gen_pose(client, app, p1["id"], action="waving hand")
+    assert get_page(app, p1["id"]).pose_generation_id == new
+    assert flags(app, p1["id"]) == (False, True)
+
+
+def test_setup_edit_emptying_text_clears_flag(client, app):
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], scene_prompt="雪地", action_prompt="坐著")
+    assert flags(app, p1["id"]) == (True, True)
+    setup_edit(client, p1["id"], action_prompt="")
+    assert flags(app, p1["id"]) == (True, False)
+    setup_edit(client, p1["id"], scene_prompt="  ")
+    assert flags(app, p1["id"]) == (False, False)
+    assert overview(client, b["id"])["redraw_count"] == 0
+
+
+def test_redraw_count_skips_blank_text(client, app):
+    """C 把動作清空（oneclick 的 PATCH 不動旗標）：沒有東西可以畫，不算「要重畫」。"""
+    _, b, (p1, p2, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    setup_edit(client, p2["id"], scene_prompt="雪地")
+    assert overview(client, b["id"])["redraw_count"] == 2
+    patch(client, p1["id"], {"action_prompt": ""}, oneclick="true")
+    assert flags(app, p1["id"]) == (False, True)
+    patch(client, p2["id"], {"scene_prompt": ""})
+    assert flags(app, p2["id"]) == (True, False)
+    ov = overview(client, b["id"])
+    assert ov["redraw_count"] == 0
+    assert plan(client, b["id"])["total"] == 0
+
+
+def test_redraw_count_pose_needs_character(client, app):
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    assert overview(client, b["id"])["redraw_count"] == 1
+    with app.state.sessions() as s:
+        book = s.get(Book, b["id"])
+        book.character_generation_id = None
+        s.add(book)
+        s.commit()
+    assert overview(client, b["id"])["redraw_count"] == 0
+
+
+def test_undo_of_review_take_clears_review_pose(client, app):
+    """批次重畫的 take 換上去標了 review_pose；復原選回舊的動作就不用再看了，重做也一樣不再標。"""
+    _, b, (p1, _, _) = ready_book(client, app)
+    old_pose = get_page(app, p1["id"]).pose_generation_id
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    produce(client, b["id"])
+    run_all(client, app)
+    assert get_page(app, p1["id"]).attention == ATTENTION_REVIEW_POSE
+    r = client.post(f"/api/pages/{p1['id']}/undo")
+    assert r.status_code == 200, r.text
+    page = get_page(app, p1["id"])
+    assert page.pose_generation_id == old_pose
+    assert (page.attention, page.attention_detail) == (None, None)
+    r = client.post(f"/api/pages/{p1['id']}/redo")
+    assert r.status_code == 200, r.text
+    assert get_page(app, p1["id"]).attention is None
+
+
+def test_undo_without_pose_change_keeps_review_pose(client, app):
+    """復原只改了文字（動作沒換）：review_pose 留著。"""
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    produce(client, b["id"])
+    run_all(client, app)
+    patch(client, p1["id"], {"caption_zh": "改字"}, oneclick="true")
+    r = client.post(f"/api/pages/{p1['id']}/undo")
+    assert r.status_code == 200, r.text
+    assert get_page(app, p1["id"]).attention == ATTENTION_REVIEW_POSE

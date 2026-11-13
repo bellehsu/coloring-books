@@ -298,7 +298,8 @@ def auto_select(session: Session, page_id: int, *, fill_only: bool = False, snap
                    col(getattr(Page, field)).is_not_distinct_from(current),
                    col(getattr(Page, auto_field)).is_not_distinct_from(auto),
                    still_valid)
-            .values(**slot_change_values(field, newest), **{auto_field: newest})
+            .values(**slot_change_values(field, newest, landed_text=session.get(Generation, newest).user_text),
+                    **{auto_field: newest})
         )
         changed |= res.rowcount == 1
     if snapshotted and not changed:

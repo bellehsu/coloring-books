@@ -63,16 +63,20 @@ def reset_review_when(cond) -> dict:
     }
 
 
-# 背景／角色動作那一格 → 設定頁的「要重畫」旗標
+# 背景／角色動作那一格 → 設定頁的「要重畫」旗標，與畫那一格用的頁面文字
 REDRAW_FLAG = {"background_generation_id": "redraw_background", "pose_generation_id": "redraw_pose"}
+SLOT_TEXT = {"background_generation_id": "scene_prompt", "pose_generation_id": "action_prompt"}
 
 
-def slot_change_values(field: str, gen_id: int, *, new_selection: bool = True) -> dict:
+def slot_change_values(field: str, gen_id: int, *, new_selection: bool = True,
+                       landed_text: str | None = None) -> dict:
     """條件式 UPDATE 用的 SET 片段：把頁面的 field（background_generation_id／pose_generation_id）設成 gen_id。
     換了不同的圖（以寫入當下的舊值判斷）而且選定圖是合成圖：清掉選定圖並退回草稿；
     舊流程的 page 圖不動，直到新的合成圖取代它。
     new_selection（選圖、上傳、take、自動選圖）：同時清掉這一格的「要重畫」（使用者已經有新的圖）；
-    復原／重做選回舊的圖不算新的選擇，傳 False、旗標留著。"""
+    復原／重做選回舊的圖不算新的選擇，傳 False、旗標留著。
+    landed_text（worker 換上去的生成，gen.user_text）：只有寫入當下頁面的場景／動作還是這段文字才清旗標；
+    排隊後設定頁又改了文字（較新的「要重畫」）就留著。使用者自己選的（選圖、上傳）不帶，一律清掉。"""
     selected_is_composite = (
         select(Generation.id)
         .where(col(Generation.id) == col(Page.selected_generation_id),
@@ -88,7 +92,12 @@ def slot_change_values(field: str, gen_id: int, *, new_selection: bool = True) -
         **reset_review_when(clear),
     }
     if new_selection:
-        values[REDRAW_FLAG[field]] = False
+        flag = REDRAW_FLAG[field]
+        if landed_text is None:
+            values[flag] = False
+        else:
+            same = col(getattr(Page, SLOT_TEXT[field])) == landed_text
+            values[flag] = case((same, False), else_=col(getattr(Page, flag)))
     return values
 
 

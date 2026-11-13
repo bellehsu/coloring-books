@@ -207,3 +207,23 @@ def test_delete_book_while_page_task_running(client, app, monkeypatch):
     assert called
     c = _counts(app, b["id"], page_ids, gen_ids)
     assert set(c.values()) == {0}, c  # 沒有重新長出列
+
+
+def test_delete_book_rows_under_batch_lock(client, app, monkeypatch):
+    """刪列時拿著 BATCH_LOCK：不會和「繼續做」／批次排隊交錯（排到一半的書被刪掉）。"""
+    from app.api import books as books_api
+    from app.services.jobs import BATCH_LOCK
+
+    b, _ = book_page(client, app)
+    drain(client, app)
+    seen = []
+    real = books_api.delete_books_rows
+
+    def spy(session, ids):
+        seen.append(BATCH_LOCK.locked())
+        return real(session, ids)
+
+    monkeypatch.setattr(books_api, "delete_books_rows", spy)
+    assert client.delete(f"/api/books/{b['id']}").status_code == 204
+    assert seen == [True]
+    assert not BATCH_LOCK.locked()

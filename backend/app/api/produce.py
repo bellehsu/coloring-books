@@ -64,6 +64,15 @@ def _tasks(session: Session, page_ids: list[int], started: datetime | None) -> l
     return list(session.exec(select(PageTask).where(col(PageTask.page_id).in_(page_ids), recent)).all())
 
 
+def _redraw_count(pages, has_char: bool) -> int:
+    """標了「要重畫」而且畫得出來的頁：場景／動作不是空白（角色動作還要有角色）；同 BookState.skip_reason。"""
+    return sum(
+        (p.redraw_background and bool(p.scene_prompt.strip()))
+        or (p.redraw_pose and bool(p.action_prompt.strip()) and has_char)
+        for p in pages
+    )
+
+
 @router.get("/books/{book_id}/produce/plan", response_model=ProducePlanOut)
 def produce_plan(
     book_id: int,
@@ -207,6 +216,6 @@ def book_overview(
         progress_pages=ProgressPages(ready=sum(p.state == "ready" for p in out), total=len(pages)),
         estimate_s=active_gens * SECONDS_PER_IMAGE,
         deferred_count=len(needs),
-        redraw_count=sum(p.redraw_background or p.redraw_pose for p in pages),
+        redraw_count=_redraw_count(pages, has_character(session, book)),
         run_started_at=started,
     )
