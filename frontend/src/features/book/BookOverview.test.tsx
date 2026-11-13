@@ -235,6 +235,14 @@ describe("B 整本書：狀態卡", () => {
     expect(within(card).getByRole("link", { name: "去看那一頁 →" })).toHaveAttribute("href", "/books/1/page/1?filter=attention");
   });
 
+  it("a book with no pages shows 還沒有頁面, not 做好 0 / 0 頁", async () => {
+    overview = ov([], { run_started_at: null, progress: { queued: 0, running: 0, done: 0 } });
+    setup();
+    const card = await screen.findByRole("region", { name: "還沒開始做" });
+    expect(card).toHaveTextContent("還沒有頁面");
+    expect(card).not.toHaveTextContent("做好");
+  });
+
   it("redraw mode: 還有 1 頁要重畫 and 繼續做 posts /produce", async () => {
     overview = ov([pg(1, "ready"), pg(2, "ready")], { redraw_count: 1 });
     setup();
@@ -434,6 +442,20 @@ describe("B 整本書：輪詢", () => {
     expect(document.title).toContain("✓ 做好了");
   });
 
+  it("a run that ends while pages still need redraw toasts 還有 N 頁要重畫 and keeps the title", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    overview = ov([pg(1, "working"), pg(2, "ready")], { progress: { queued: 0, running: 1, done: 1 } });
+    setup();
+    await screen.findByRole("region", { name: "正在做這本書…" });
+    document.title = "小兔子的交通工具書";
+    overview = ov([pg(1, "ready"), pg(2, "ready")], { redraw_count: 1 });
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    await screen.findByRole("region", { name: "還有 1 頁要重畫" });
+    await waitFor(() => expect(politeToasts()).toHaveTextContent("還有 1 頁要重畫"));
+    expect(politeToasts()).not.toHaveTextContent("整本做好了！");
+    expect(document.title).not.toContain("✓ 做好了");
+  });
+
   it("does not toast when the book was already done on load", async () => {
     setup();
     await screen.findByRole("region", { name: "整本做好了！" });
@@ -586,6 +608,17 @@ describe("B 整本書：選取多頁、重畫主角", () => {
     // 再打開時沒有勾選
     await userEvent.click(screen.getByRole("button", { name: "選取多頁" }));
     expect(bar()).toHaveTextContent("已選 0 頁");
+  });
+
+  it("page_ids follow position, not id or list order", async () => {
+    // 清單順序＝id 順序，但頁序是 2→3→1
+    overview = ov([pg(1, "ready", { position: 2 }), pg(2, "ready", { position: 0 }), pg(3, "ready", { position: 1 })]);
+    await enterSelect();
+    await userEvent.click(screen.getByRole("checkbox", { name: "選第 3 頁" })); // id 1
+    await userEvent.click(screen.getByRole("checkbox", { name: "選第 1 頁" })); // id 2
+    await userEvent.click(within(bar()).getByRole("button", { name: "重畫 2 頁的主角" }));
+    await waitFor(() => expect(redraws()).toHaveLength(1));
+    expect(redraws()[0].body).toEqual({ page_ids: [2, 1], count: 1 });
   });
 
   it("取消 clears the selection", async () => {

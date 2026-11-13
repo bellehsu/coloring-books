@@ -70,9 +70,16 @@ export function progressPages(o: BookOverview): { ready: number; total: number }
   return o.progress_pages;
 }
 
-/** 「2 頁可以印・1 頁請你看一下・1 頁還沒做完」（0 的不寫）。 */
+/**
+ * 「2 頁可以印・1 頁請你看一下・1 頁還沒做完」（0 的不寫）。每頁只算一次：換了新動作的 review 頁算可以印
+ * （篩選的「請看一下」仍然包含它），所以加起來等於頁數。
+ */
 export function countsLine(pages: OverviewPage[]): string {
-  const c = countPages(pages);
+  const c = {
+    ready: pages.filter((p) => p.state === "ready").length,
+    attention: pages.filter((p) => p.state === "attention").length,
+    unfinished: filterPages(pages, "unfinished").length,
+  };
   const parts = [
     c.ready > 0 && `${c.ready} 頁可以印`,
     c.attention > 0 && `${c.attention} 頁請你看一下`,

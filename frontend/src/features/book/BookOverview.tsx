@@ -39,9 +39,10 @@ const DONE_TITLE = "✓ 做好了";
 
 const todoCount = (o: Overview) => o.pages.filter((p) => p.state === "todo").length;
 
-/** 這一輪做完時的 toast：整本都好了，或還有幾頁明天繼續／還沒做完。 */
+/** 這一輪做完時的 toast：整本都好了，或還有幾頁要重畫／明天繼續／還沒做完。 */
 function finishedMessage(o: Overview): string {
   const mode = cardMode(o);
+  if (mode === "redraw") return `還有 ${o.redraw_count} 頁要重畫`;
   if (mode === "deferred") return `今天的做好了，還有 ${o.deferred_count} 頁明天繼續`;
   if (mode === "unfinished") return `做好了，還有 ${todoCount(o)} 頁還沒做完`;
   return "整本做好了！";
@@ -95,7 +96,8 @@ export function BookOverview({ bookId }: { bookId: number }) {
     if (!wasActive.current) return;
     wasActive.current = false;
     toast.show(finishedMessage(o), "success");
-    document.title = title ? `${DONE_TITLE}｜${title}` : DONE_TITLE;
+    // 還有頁面要重畫（主角與故事改過）：還不算做好，分頁標題不加「✓ 做好了」
+    if (cardMode(o) !== "redraw") document.title = title ? `${DONE_TITLE}｜${title}` : DONE_TITLE;
     void qc.invalidateQueries({ queryKey: qk.producePlan(bookId) });
     void qc.invalidateQueries({ queryKey: qk.pages(bookId) });
     void qc.invalidateQueries({ queryKey: qk.book(bookId) });
@@ -350,8 +352,9 @@ function StatusCard({ book, overview: o, noQuota, busy, onProduce }: StatusCardP
                 ))}
               </ul>
             )}
-            <p className={styles.counts}>{pagesLine}</p>
-            {ready !== total && <p className={styles.counts}>{countsLine(o.pages)}</p>}
+            {/* 沒有頁面：不說「做好 0 / 0 頁」，只說「還沒有頁面」 */}
+            {o.pages.length > 0 && <p className={styles.counts}>{pagesLine}</p>}
+            {ready !== total || o.pages.length === 0 ? <p className={styles.counts}>{countsLine(o.pages)}</p> : null}
             {mode === "notStarted" && !canStart && (
               <p className={styles.counts}>先設定主角、寫好故事，就可以開始做。</p>
             )}

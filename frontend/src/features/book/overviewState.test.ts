@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BookOverview, OverviewPage } from "@/api/client";
-import { cardMode, countPages, filterPages, inAttention, progressPages, softNote } from "./overviewState";
+import { cardMode, countPages, countsLine, filterPages, inAttention, progressPages, softNote } from "./overviewState";
 
 const pg = (id: number, state: OverviewPage["state"], extra: Partial<OverviewPage> = {}): OverviewPage => ({
   id,
@@ -98,6 +98,16 @@ describe("review pages (soft 請看一下)", () => {
     expect(filterPages(pages, "ready").map((p) => p.id)).toEqual([2, 3]);
     expect(countPages(pages)).toEqual({ all: 3, attention: 2, ready: 2, unfinished: 0 });
     expect(softNote(review)).toBe("請看一下：換了新的主角動作");
+  });
+});
+
+describe("countsLine", () => {
+  it("a review page counts once, as 可以印, so the parts add up to the page count", () => {
+    const pages = [pg(1, "ready", { review: true }), pg(2, "ready"), pg(3, "attention"), pg(4, "todo")];
+    expect(countsLine(pages)).toBe("2 頁可以印・1 頁請你看一下・1 頁還沒做完");
+    expect(countsLine([pg(1, "ready", { review: true })])).toBe("1 頁可以印");
+    // 篩選的「請看一下」仍然包含它
+    expect(countPages(pages).attention).toBe(2);
   });
 });
 
