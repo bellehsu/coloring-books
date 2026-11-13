@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import styles from "./Button.module.css";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "sky" | "ghost" | "danger-outline";
+  variant?: "primary" | "secondary" | "sky" | "ghost" | "danger-outline" | "danger";
   size?: "md" | "lg";
   icon?: ReactNode;
 }

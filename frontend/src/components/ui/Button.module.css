@@ -66,3 +66,11 @@
 .danger-outline:hover:not(:disabled) {
   background: var(--warn-soft);
 }
+.danger {
+  background: var(--danger);
+  color: var(--on-danger);
+  border-color: var(--danger);
+}
+.danger:hover:not(:disabled) {
+  filter: brightness(0.92);
+}

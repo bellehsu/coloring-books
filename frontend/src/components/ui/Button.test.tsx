@@ -20,6 +20,12 @@ describe("ui basics", () => {
     const css = readFileSync(path.join(__dirname, "Button.module.css"), "utf8");
     expect(css).toMatch(/min-height:\s*44px/);
   });
+  it("Button 有實心的 danger 變體，用 --danger 色票", () => {
+    render(<Button variant="danger">刪除</Button>);
+    expect(screen.getByRole("button", { name: "刪除" }).className).toMatch(/danger/);
+    const css = readFileSync(path.join(__dirname, "Button.module.css"), "utf8");
+    expect(css).toMatch(/\.danger \{[^}]*background:\s*var\(--danger\)/);
+  });
   it("IconButton 以 label 作為 aria-label", () => {
     render(<IconButton label="關閉"><Icons.close /></IconButton>);
     expect(screen.getByRole("button", { name: "關閉" })).toBeInTheDocument();

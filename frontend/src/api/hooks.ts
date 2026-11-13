@@ -69,6 +69,20 @@ export const useBook = (id: number, enabled = true) =>
   useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`), enabled });
 
 /** 目前的使用者（名字與是否為管理者）；首頁用它決定要不要顯示「邀請管理」。 */
+/** 刪書：把書從書架快取拿掉，清掉這本書的 book／overview 查詢，分享清單重抓。 */
+export function useDeleteBook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (book: Book) => api.del(`/books/${book.id}`),
+    onSuccess: (_d, book) => {
+      qc.setQueryData<Book[]>(qk.books(), (old) => old?.filter((b) => b.id !== book.id));
+      qc.removeQueries({ queryKey: qk.book(book.id) });
+      qc.removeQueries({ queryKey: qk.overview(book.id) });
+      void qc.invalidateQueries({ queryKey: qk.sharedBooks() });
+    },
+  });
+}
+
 export const useMe = () => useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me"), retry: false });
 
 /** 管理者的邀請列表；非管理者後端回 404（頁面顯示一般的 404）。 */

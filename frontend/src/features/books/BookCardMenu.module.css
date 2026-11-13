@@ -1,0 +1,60 @@
+.root {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+}
+.trigger {
+  width: 44px;
+  height: 44px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+.trigger:hover {
+  background: var(--accent-softer);
+}
+.menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 160px;
+  padding: 4px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+}
+.item {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--danger);
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.item:hover,
+.item:focus-visible {
+  background: var(--danger-soft);
+}
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
