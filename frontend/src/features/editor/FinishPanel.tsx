@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useAcceptPage } from "@/features/fix/fixApi";
 import { flushAllEditsFor, peekEditsQueue } from "@/features/editing/editsQueue";
 import { errMsg } from "@/features/editing/errMsg";
+import { hardAttention } from "@/lib/pageState";
 import styles from "./FinishPanel.module.css";
 
 type Detail = Page["line_detail"];
@@ -43,7 +44,8 @@ export interface FinishPanelProps {
 /**
  * 「② 補線」右欄（§4.5）：缺口檢查＋自動補線、線條多寡（進階：線寬）、角色看起來對嗎、完成這一頁。
  * 有缺口也能完成：先問一次。「完成這一頁」和 C 的「這頁可以印了 ✓」同一個端點（POST /accept：清掉請看一下、
- * 等著重新合成時拒絕）；通過但 C 說請看一下的頁不算完成。
+ * 等著重新合成時拒絕）；通過但真的有問題（hardAttention，例如合成失敗）的頁不算完成。軟標記 review_pose（換了新的
+ * 主角動作）不擋：算已完成，附上說明與「看過了 ✓」（同一個 /accept，清掉請看一下）。
  */
 export function FinishPanel(props: FinishPanelProps) {
   // key：角色檢查是「每張圖」的；換頁或換選圖時，本機狀態（線條設定、確認框）重來
@@ -60,7 +62,8 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
   const unpass = useUnpass(book.id);
 
   const genId = page.selected_generation_id;
-  const passed = page.status === "passed" && !page.attention;
+  const passed = page.status === "passed" && !hardAttention(page);
+  const review = passed && page.attention != null;
   const saved = page.character_check;
   const result = check.isPending ? check.variables.result : saved;
   const consistent = result === "consistent";
@@ -298,6 +301,14 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
             <Icons.check size={18} />
             已完成
           </p>
+          {review && (
+            <>
+              <p className={styles.note}>{page.attention_detail || "請看一下"}</p>
+              <Button disabled={busy} onClick={() => void doAccept()}>
+                看過了 ✓
+              </Button>
+            </>
+          )}
           <Button disabled={busy} onClick={doUnpass}>
             取消完成
           </Button>

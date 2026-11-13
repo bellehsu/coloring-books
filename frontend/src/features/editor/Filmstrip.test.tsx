@@ -174,4 +174,20 @@ describe("Filmstrip", () => {
     expect(within(pageButton(4)).getByText("請看一下")).toBeInTheDocument();
     expect(within(pageButton(3)).getByText("完成")).toBeInTheDocument();
   });
+
+  it("軟標記 review_pose：通過的頁和 B 一樣標「請看一下」；還沒通過的頁照一般狀態（不是問題）", () => {
+    setup({
+      pages: [
+        page(1, { status: "passed", selected_generation_id: 3, attention: "review_pose" }),
+        page(2, { status: "draft", selected_generation_id: 4, attention: "review_pose", needs_fix: true }),
+        page(3, { status: "draft", selected_generation_id: 5, attention: "review_pose" }),
+      ],
+      busyPageIds: new Set(),
+    });
+    expect(within(pageButton(1)).getByText("請看一下")).toBeInTheDocument();
+    expect(within(pageButton(2)).getByText("需要修線")).toBeInTheDocument();
+    expect(within(pageButton(3)).getByText("草稿")).toBeInTheDocument();
+    // 整本進度：review_pose 的通過頁算完成
+    expect(screen.getByRole("progressbar", { name: "整本進度" })).toHaveAttribute("aria-valuenow", "1");
+  });
 });

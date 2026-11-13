@@ -169,4 +169,19 @@ describe("checklist", () => {
     );
     expect(failed.passed).toMatchObject({ state: "warn", note: "請看一下" });
   });
+
+  it("軟標記 review_pose（換了新的主角動作）：通過的頁還是完成（done），只附上「請看一下」", () => {
+    const review = byKey(
+      checklist(
+        page({ selected_generation_id: 7, status: "passed", attention: "review_pose" }),
+        qa({ status: "passed" }),
+      ),
+    );
+    expect(review.passed).toMatchObject({ state: "done", note: "完成・請看一下" });
+    // 還沒通過：照一般的待辦，不是 warn
+    const draft = byKey(
+      checklist(page({ selected_generation_id: 7, status: "draft", attention: "review_pose" }), qa({ status: "draft" })),
+    );
+    expect(draft.passed).toMatchObject({ state: "todo", note: "" });
+  });
 });
