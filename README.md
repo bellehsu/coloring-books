@@ -2,6 +2,27 @@
 
 規格與工作規則見 [CLAUDE.md](CLAUDE.md)；manifest 格式見 [comfy_workflows/README.md](comfy_workflows/README.md)。
 
+## 畫面
+
+示範書「小狐狸的一天」（20 頁，真的 GPU 產生；PDF：[docs/screenshots/demo-book.pdf](docs/screenshots/demo-book.pdf)）。
+
+| | |
+|---|---|
+| ![我的書櫃](docs/screenshots/12-bookshelf.png) 我的書櫃 | ![做一本新的著色書](docs/screenshots/02-new-book.png) 做一本新的著色書 |
+| ![主角](docs/screenshots/03-character.png) 產生主角、選一隻 | ![貼上故事](docs/screenshots/04-story-paste.png) 貼上整本故事 |
+| ![每一頁](docs/screenshots/05-story-pages.png) 每一頁的場景與動作 | ![製作中](docs/screenshots/06-producing.png) 開始做這本書 |
+| ![整本做好了](docs/screenshots/07-book-done.png) 整本書 | ![處理一頁](docs/screenshots/08-page-lineart.png) 處理一頁（要印的線稿） |
+| ![彩色原圖](docs/screenshots/09-page-color.png) 彩色原圖 | ![進階編輯](docs/screenshots/10-advanced-editor.png) 進階編輯 |
+| ![印出這本書](docs/screenshots/11-print.png) 印出這本書 | ![手機](docs/screenshots/13-phone.png) 手機 |
+
+2026-11-13 新增：
+
+| | |
+|---|---|
+| ![選取多頁](docs/screenshots/14-select-many.png) 選取多頁，一次重畫好幾頁的主角 | ![請看一下](docs/screenshots/15-redrawn-review.png) 重畫後換上新動作、標「請看一下」，仍算可以印 |
+| ![畫過的角色動作](docs/screenshots/16-pose-history.png) 這頁畫過的動作都留著，點一下就換、可以復原 | ![主角與故事編輯](docs/screenshots/17-setup-edit.png) 在主角與故事改頁，改了場景或動作標「要重畫」 |
+| ![刪除繪本](docs/screenshots/18-delete-book.png) 書櫃「⋯」刪除這本書 | ![全部 20 頁](docs/screenshots/00-all-20-pages.png) 全部 20 頁 |
+
 ## 目錄
 
 ```
@@ -333,6 +354,20 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
    失敗的頁面標「請看一下」並寫出原因；「再試一次」只重做這一頁，「這頁可以印了 ✓」由使用者自己確認。
 5. **進階編輯**：C 與 B 都有連結，開啟舊的編輯器（① 構圖、② 補線；下一節）。舊編輯器行為不變，也可以對同一本書照常使用。
 
+2026-11-13 修正與新增（設計：`docs/superpowers/specs/2026-11-13-fixes-round-design.md`）：
+
+- **刪除繪本**：書櫃卡片右上「⋯」→「刪除這本書」→ 確認框。頁、所有圖、修過的線和分享連結一起刪掉，救不回來；只能刪自己的書。
+- **刪掉不要的主角候選**：主角與故事裡，沒選上的候選圖右上有「×」，提示裡可以「復原」。選定的主角沒有「×」。
+- **進度用頁數**：B 顯示「做好 {可以印的頁} / {總頁數} 頁」，不會超過總頁數。
+- **選取多頁重畫主角**（B）：按「選取多頁」勾好幾頁，下方選「每頁畫 1／2／3 張」→「重畫 N 頁的主角」。每頁自動換上第 1 張，
+  其餘是候選；頁面標「請看一下：換了新的主角動作」，但仍算可以印、預設會印出來。主角動作只用這頁現有的動作描述，背景和字不動。
+- **這頁畫過的角色動作**（C）：角色動作列列出這頁所有畫過的動作（「使用中」、新畫的標「新」），點一下就換（可以復原）；
+  下面可以改動作、表情、面向，「一次畫 1／2／3 張」後按「重畫主角」。
+- **主角與故事可以改已經做好的頁**：每頁「編輯」可改場景、動作、中文、英文。改了場景或動作的頁標「要重畫」，
+  按「繼續做」才重畫（不會自動用 GPU）；只改字的立刻生效。背景是自己上傳的圖時，改場景只存文字、不重畫背景。
+- **複製給 AI 的指令**：在 http 內網網址（例如用電腦名稱開）時改用備用的複製方式；還是不行就跳出對話框，指令已全選，按 Ctrl＋C 複製。
+- **線稿的粗外框只畫一條線**：見「線稿與 QA」。只套用在新做或重畫的頁，已經做好的頁不變。
+
 新增的 endpoints（皆需擁有者，別人的 id 一律 404）：
 
 | Method | Path | 說明 |
@@ -345,6 +380,16 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 | POST | `/pages/{id}/accept` | 「這頁可以印了 ✓」：清掉「請看一下」、標成可以印；還在重新合成時 409 |
 | POST | `/pages/{id}/retry` | 「再試一次」，只處理這一頁：最新一張背景／角色動作失敗就重排那一種（算 1 次，用完 429），否則重跑這頁的頁面流程（不計次數）；同時按兩次只排一次 |
 | POST | `/books/{id}/character/upload` | 上傳自己的角色圖當主角 |
+| DELETE | `/books/{id}` | 刪除繪本（204）：取消排隊中的工作並退還次數、刪掉所有資料列，提交後刪掉 `books/{id}/` 底下的檔案；別人的書（含管理者）404 |
+| DELETE | `/books/{id}/character/candidates/{gen_id}` | 捨棄一張主角候選（204）；選定的主角 409「選好的主角不能刪」，還在畫 409；復原用 `PATCH /generations/{id} {"discarded": false}` |
+| POST | `/books/{id}/poses/redraw` | 選取多頁重畫主角（202）：`{page_ids, count: 1–3}`，每頁第 1 張是 take（換上去、存快照、標 `review_pose`），其餘是候選（不會自動選用）；沒有動作描述的頁列在 `skipped`；次數不夠整批 429、什麼都不排 |
+
+`POST /pages/{id}/poses` 另收 `count`（1–3，預設 1）：第 1 張照舊，其餘是候選。`PATCH /pages/{id}?from_setup=true`（主角與故事的「編輯」）：
+改了非空白的場景（而且背景不是上傳的）標 `redraw_background`，改了動作標 `redraw_pose`；`/produce` 會把這些頁重畫（換上去、可復原，動作另標 `review_pose`）並清掉標記；
+之後換上任何新背景／新動作也會清掉標記（復原不會）。`PageOut` 有 `redraw_background`、`redraw_pose`。
+
+overview 另有 `progress_pages {ready, total}`（「做好 N / M 頁」）、`redraw_count`（標了要重畫、而且畫得出來的頁數）、每頁 `review`（`attention == "review_pose"`）。
+`attention` 的值：`failed`（請看一下，不算可以印、繼續做會重跑）與 `review_pose`（軟標記：仍算可以印、預設會印、繼續做不重跑；這頁再換動作、復原、還原或「這頁可以印了」就清掉）。
 
 下列既有端點加上 `?oneclick=true` 就是 C 用的版本（改動前先存快照、結果進頁面流程）；不帶的就是進階編輯：
 `POST /pages/{id}/backgrounds`、`/poses`（換一張）、`POST /pages/{id}/background`、`/pose`（選用）、`POST /pages/{id}/backgrounds/upload`、
@@ -438,12 +483,17 @@ PYTHON=$VENV_ROOT/coloring-books/bin/python npm run e2e
 
 ## 線稿與 QA
 
+- **粗外框只畫一條線**（`outline_fill`，2026-11-13）：xdog 會把角色的粗黑外框兩邊各描一次，變成兩條線加一串小珠子。新做或重畫的頁（`Page.outline_fill = true`）
+  在 xdog 之後先把「細長的深色筆畫」填實（亮度 < 70、比半徑 10 px 的圓細，以 832 px 寬為準依圖寬縮放），再做後處理，粗外框就只剩中間一條線；
+  眼睛、鼻子、夜空這類實心深色形狀（最大內半徑 ≥ 13 px）保留外框。已經做好的頁 `outline_fill = false`，線稿和快取都不變。
+  實驗：`experiments/results/phase14_single_outline_20261113_1009/`。生成提示詞的線條描述也從 `thick clean black outlines` 改成
+  `clean medium-weight black outlines`（`prompts.OUTLINE_PHRASE`；校正：`experiments/results/phase14_outline_prompt_20261113_1458/`）。
 - **細緻度與線寬**：每頁有 `line_detail`（`simple`／`standard`／`detailed`，對應 xdog sigma 1.5／1.2／0.8）與 `line_width_px`（300 DPI 像素，8–16，預設 11）。
 - **修改圖層**：存在選定生成圖上，格式為筆畫陣列 `{op, width_px, points}`。`op` 為 `draw`（畫黑線）或 `erase`（擦除）；`points` 用相對座標（0–1，相對於線稿內容大小）；`width_px` 以 300 DPI 像素計。換選別張圖就是另一份修改圖層。
 - **自動補線**：`POST /pages/{id}/lineart/autofix` 對每個缺口補一筆 `draw`，重算 QA，最多 3 輪；某輪缺口數沒有減少就停止並捨棄該輪。
 - **通過（完成）規則**：必須已選圖、角色確認為「一致」（畫面上的「對」）。QA 有錯誤（缺口）也能完成，不必填原因：前端先問一次「還有 N 個缺口…確定完成嗎？」，後端把 `forced_pass_reason` 記成「使用者確認完成（N 個缺口）」（帶了 `force_reason` 就用它）。已通過的頁面在下列情況會無條件退回草稿（值真的有變才算）：修改 `line_detail` 或 `line_width_px`、儲存修改圖層、自動補線、改選另一張圖（同時清除角色確認）；角色標記為不一致也會退回。改紙張尺寸或列印方式則不同：背景重算線稿後，只有新的 QA 有錯誤的頁面才會退回草稿，沒有錯誤的頁面維持已通過。
 - **PDF 版面**：頁面依 `position` 排序，預設只匯出已通過的頁（`include=all` 為所有已選圖的頁）。家用（`home`）每頁就是紙張大小，四周留 10 mm 白邊；印刷廠（`print_shop`）每頁為紙張加每邊 3 mm 出血。PDF 本身沒有 CropBox，也沒有裁切標記；裁切框與 5 mm 安全區只出現在 QA 疊圖（`GET /pages/{id}/qa/overlay.png`，前端已不使用）與 BookOut 的版面欄位中。輸出為 1-bit、300 DPI。
-- **改尺寸規則**：`PATCH /books/{id}` 只能改成同比例群組的紙張（A4／A5／B5 同組；Letter 與 SQUARE_21 各自獨立），否則 422。改紙張或列印方式後，背景會重算所有已選圖頁面的線稿，修改圖層（相對座標）沿用；已通過的頁面只有在新 QA 有錯誤時才退回草稿。缺口偵測以像素計算，換尺寸後可能出現新的缺口（實測 A4→A5 多出 19 個），因此改尺寸後請重新檢查 QA 並再跑自動補線。
+- **改尺寸規則**：`PATCH /books/{id}` 只能改成同比例群組的紙張（A4／A5／B5 同組；Letter 與 SQUARE_21 各自獨立），否則 422。改紙張或列印方式後，背景會重算所有已選圖頁面的線稿；手畫的修改圖層會依圖在新內容框裡的位置換算座標，仍對在原本的線上；已通過的頁面只有在新 QA 有錯誤時才退回草稿。缺口偵測以像素計算，換尺寸後可能出現新的缺口（實測 A4→A5 多出 19 個），因此改尺寸後請重新檢查 QA 並再跑自動補線。
 
 ## 常用指令
 
