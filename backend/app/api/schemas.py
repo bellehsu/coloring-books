@@ -272,6 +272,7 @@ class SelectGeneration(BaseModel):
 
 class PoseCreate(BaseModel):
     action: ActionStr  # 動作文字（不帶場景描述）
+    count: int = Field(1, ge=1, le=3)  # C 的「一次畫 N 張」：第 1 張照 oneclick 換上去，其餘是候選
 
 
 class BackgroundCreate(BaseModel):
@@ -490,6 +491,18 @@ class BatchMaterialsIn(BaseModel):
 
 
 class BatchMaterialsOut(BaseModel):
+    queued: list[GenerationOut]
+    skipped: list[BatchSkip]
+
+
+class PoseRedrawIn(BaseModel):
+    """B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 count 張（第 1 張換上去並標 review_pose，其餘是候選）。"""
+
+    page_ids: list[DbId] = Field(min_length=1, max_length=500)
+    count: int = Field(1, ge=1, le=3)
+
+
+class PoseRedrawOut(BaseModel):
     queued: list[GenerationOut]
     skipped: list[BatchSkip]
 

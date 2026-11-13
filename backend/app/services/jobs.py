@@ -1,4 +1,4 @@
-"""生成任務的組裝與排隊：單張、批次（產生全部素材）、「開始做這本書」、再試一次共用。
+"""生成任務的組裝與排隊：單張、批次（產生全部素材、重畫主角）、「開始做這本書」、再試一次共用。
 
 路由模組（api/compose、produce、history、books）只負責 HTTP；任務怎麼組、整批怎麼預留額度與
 排進佇列、批次怎麼判斷要略過哪些頁，都在這裡。
@@ -9,15 +9,16 @@ from __future__ import annotations
 import json
 import random
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from sqlmodel import Session, col, select
 
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page
 from app.services import usage
-from app.services.gen_request import TAKE, encode_request
+from app.services.gen_request import CANDIDATE, REVIEW, TAKE, encode_request
 from app.services.layout import compute_layout
 from app.services.page_compose import is_usable
+from app.services.pipeline import is_candidate
 from app.services.prompts import (
     POSE_SIZE,
     has_facing,
@@ -144,14 +145,15 @@ def background_job(session: Session, book: Book, page: Page) -> Job:
     return Job(gen, variation=variation, extra={"background_style": "simple"})
 
 
-def pose_job(session: Session, book: Book, page: Page, action: str) -> Job:
-    """角色動作（Qwen）：以角色參考圖編輯出新動作；呼叫端負責確認有角色（has_character）。"""
+def pose_job(session: Session, book: Book, page: Page, action: str, *, picked: Sequence[str | None] = ()) -> Job:
+    """角色動作（Qwen）：以角色參考圖編輯出新動作；呼叫端負責確認有角色（has_character）。
+    picked：同一次呼叫裡已經排好（還沒寫進資料庫）的變化語，由舊到新；跟這頁最近的一起排除。"""
     char = session.get(Generation, book.character_generation_id)
     variation = pick_pose_variation(
         random.Random(),
-        exclude=last_variations(
+        exclude=[*reversed(picked), *last_variations(
             session, col(Generation.page_id) == page.id, col(Generation.kind) == GenKind.POSE, n=2
-        ),
+        )],
         facing=has_facing(action),
     )
     width, height = POSE_SIZE
@@ -175,6 +177,24 @@ def take(job: Job, oneclick: bool) -> Job:
     if oneclick:
         job.extra[TAKE] = True
     return job
+
+
+def redraw_jobs(
+    session: Session, book: Book, page: Page, action: str, count: int, *, take_first: bool, review: bool
+) -> list[Job]:
+    """重畫主角：這頁 count 張角色動作。第 1 張 take_first 時帶 TAKE（好了自動換上去）、review 時帶 REVIEW
+    （換上去時標成 review_pose）；第 2 張起帶 CANDIDATE（只當候選）。同一次的變化語彼此不同（每張都加進排除清單）。"""
+    jobs: list[Job] = []
+    for i in range(count):
+        job = pose_job(session, book, page, action, picked=[j.variation for j in jobs])
+        if i == 0:
+            take(job, take_first)
+            if review:
+                job.extra[REVIEW] = True
+        else:
+            job.extra[CANDIDATE] = True
+        jobs.append(job)
+    return jobs
 
 
 def has_character(session: Session, book: Book) -> bool:
@@ -256,12 +276,14 @@ class BookState:
         return out
 
     def has_both_images(self, page: Page) -> bool:
-        """背景與角色動作都有（已選，或有可用的成功生成讓頁面流程自動選）；舊流程整頁圖的頁面不算。"""
+        """背景與角色動作都有（已選，或有可用的成功生成讓頁面流程自動選）；舊流程整頁圖的頁面不算。
+        上傳的與重畫主角的候選不是自動選圖的候選，不算。"""
         if page.selected_generation_id in self.legacy_selected:
             return False
         for kind, slot in ((GenKind.BACKGROUND, page.background_generation_id),
                            (GenKind.POSE, page.pose_generation_id)):
             if slot is None and not any(is_usable(g, kind, page.id) and g.engine != UPLOAD_ENGINE
+                                        and not is_candidate(g)
                                         for g in self.gens[kind].get(page.id, [])):  # 同自動選圖的候選
                 return False
         return True

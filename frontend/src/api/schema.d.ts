@@ -289,8 +289,31 @@ export interface paths {
          * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
          *     新動作，prompt 只有動作。不先檢查 preflight，缺東西時由生成失敗回報。
          *     oneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。
+         *     body.count（C 的「一次畫 N 張」）：多的幾張是候選（不自動選用）；整批一次預留額度。回傳第 1 張。
          */
         post: operations["create_pose_api_pages__page_id__poses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/{book_id}/poses/redraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redraw Poses
+         * @description B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 body.count 張。第 1 張好了自動換上去（有復原快照）
+         *     並標成 review_pose（請看一下：換了新的主角動作），其餘是候選。沒有動作描述的頁略過。
+         *     page_ids 去掉重複（保留順序），都要是這本書的頁。整批一次預留額度：不夠就 429，一筆都不排。
+         */
+        post: operations["redraw_poses_api_books__book_id__poses_redraw_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1608,6 +1631,31 @@ export interface components {
         PoseCreate: {
             /** Action */
             action: string;
+            /**
+             * Count
+             * @default 1
+             */
+            count: number;
+        };
+        /**
+         * PoseRedrawIn
+         * @description B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 count 張（第 1 張換上去並標 review_pose，其餘是候選）。
+         */
+        PoseRedrawIn: {
+            /** Page Ids */
+            page_ids: number[];
+            /**
+             * Count
+             * @default 1
+             */
+            count: number;
+        };
+        /** PoseRedrawOut */
+        PoseRedrawOut: {
+            /** Queued */
+            queued: components["schemas"]["GenerationOut"][];
+            /** Skipped */
+            skipped: components["schemas"]["BatchSkip"][];
         };
         /**
          * PrintMode
@@ -2523,6 +2571,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenerationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    redraw_poses_api_books__book_id__poses_redraw_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoseRedrawIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoseRedrawOut"];
                 };
             };
             /** @description Validation Error */

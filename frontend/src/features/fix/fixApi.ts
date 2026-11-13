@@ -125,7 +125,7 @@ export function useRegenerate(bookId: number, pageId: number) {
     mutationFn: (v: { kind: "background" } | { kind: "pose"; action: string }) =>
       v.kind === "background"
         ? api.post<Generation>(`/pages/${pageId}/backgrounds${C}`, {} satisfies S["BackgroundCreate"])
-        : api.post<Generation>(`/pages/${pageId}/poses${C}`, { action: v.action } satisfies S["PoseCreate"]),
+        : api.post<Generation>(`/pages/${pageId}/poses${C}`, { action: v.action } satisfies Omit<S["PoseCreate"], "count">),
     onSuccess: () => refreshFix(qc, bookId, pageId),
   });
 }

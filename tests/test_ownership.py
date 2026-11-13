@@ -94,6 +94,7 @@ PHASE13_ROUTES = {
 FIX_ROUND_ROUTES = {
     ("DELETE", "/api/books/{book_id}"),
     ("DELETE", "/api/books/{book_id}/character/candidates/{gen_id}"),
+    ("POST", "/api/books/{book_id}/poses/redraw"),
 }
 
 

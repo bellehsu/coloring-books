@@ -903,7 +903,7 @@
           "compose"
         ],
         "summary": "Create Pose",
-        "description": "產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出\n新動作，prompt 只有動作。不先檢查 preflight，缺東西時由生成失敗回報。\noneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。",
+        "description": "產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出\n新動作，prompt 只有動作。不先檢查 preflight，缺東西時由生成失敗回報。\noneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。\nbody.count（C 的「一次畫 N 張」）：多的幾張是候選（不自動選用）；整批一次預留額度。回傳第 1 張。",
         "operationId": "create_pose_api_pages__page_id__poses_post",
         "parameters": [
           {
@@ -945,6 +945,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/poses/redraw": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Redraw Poses",
+        "description": "B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 body.count 張。第 1 張好了自動換上去（有復原快照）\n並標成 review_pose（請看一下：換了新的主角動作），其餘是候選。沒有動作描述的頁略過。\npage_ids 去掉重複（保留順序），都要是這本書的頁。整批一次預留額度：不夠就 429，一筆都不排。",
+        "operationId": "redraw_poses_api_books__book_id__poses_redraw_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoseRedrawIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoseRedrawOut"
                 }
               }
             }
@@ -4554,6 +4607,13 @@
             "maxLength": 300,
             "minLength": 1,
             "title": "Action"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 1
           }
         },
         "type": "object",
@@ -4561,6 +4621,58 @@
           "action"
         ],
         "title": "PoseCreate"
+      },
+      "PoseRedrawIn": {
+        "properties": {
+          "page_ids": {
+            "items": {
+              "type": "integer",
+              "maximum": 9.223372036854776e+18,
+              "minimum": -9.223372036854776e+18
+            },
+            "type": "array",
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Page Ids"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_ids"
+        ],
+        "title": "PoseRedrawIn",
+        "description": "B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 count 張（第 1 張換上去並標 review_pose，其餘是候選）。"
+      },
+      "PoseRedrawOut": {
+        "properties": {
+          "queued": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationOut"
+            },
+            "type": "array",
+            "title": "Queued"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/BatchSkip"
+            },
+            "type": "array",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "skipped"
+        ],
+        "title": "PoseRedrawOut"
       },
       "PrintMode": {
         "type": "string",

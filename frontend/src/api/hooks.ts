@@ -489,7 +489,7 @@ export function useGeneratePose(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ pageId, action }: { pageId: number; action: string }) =>
-      api.post<Generation>(`/pages/${pageId}/poses`, { action } satisfies S["PoseCreate"]),
+      api.post<Generation>(`/pages/${pageId}/poses`, { action } satisfies Omit<S["PoseCreate"], "count">),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
 }
