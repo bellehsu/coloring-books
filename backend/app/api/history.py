@@ -22,6 +22,7 @@ from app.models import Generation, GenKind, GenStatus, Owner, Page, PageStatus, 
 from app.services import history
 from app.services.jobs import BATCH_LOCK, background_job, enqueue_jobs, has_character, pose_job, take
 from app.services.pipeline import enqueue_page_task
+from app.services.slots import not_candidate
 from app.services.worker import GenerationWorker
 
 router = APIRouter(prefix="/api", tags=["history"])
@@ -122,14 +123,20 @@ def accept(
     return page_out(session, page)
 
 
+def _newest(session: Session, page_id: int, kind: GenKind) -> Generation | None:
+    """這頁這種素材最新一張不是候選的生成（不論狀態）。"""
+    return session.exec(
+        select(Generation).where(Generation.page_id == page_id, Generation.kind == kind, not_candidate())
+        .order_by(col(Generation.id).desc())
+    ).first()
+
+
 def _failed_kinds(session: Session, page_id: int) -> list[GenKind]:
-    """這頁最新一張（依 id）是失敗的背景／角色動作種類（之後有成功的、或還在排隊／執行中就不算）。"""
+    """這頁最新一張（依 id）是失敗的背景／角色動作種類（之後有成功的、或還在排隊／執行中就不算）。
+    重畫主角的候選不算：它失敗不用重畫，它成功也不代表失敗的 take 補好了。"""
     out = []
     for kind in (GenKind.BACKGROUND, GenKind.POSE):
-        newest = session.exec(
-            select(Generation).where(Generation.page_id == page_id, Generation.kind == kind)
-            .order_by(col(Generation.id).desc())
-        ).first()
+        newest = _newest(session, page_id, kind)
         if newest is not None and newest.status == GenStatus.FAILED:
             out.append(kind)
     return out
@@ -159,10 +166,7 @@ def retry(
                 if kind == GenKind.BACKGROUND:
                     jobs.append(take(background_job(session, book, page), True))
                 else:
-                    failed = session.exec(
-                        select(Generation).where(Generation.page_id == page_id, Generation.kind == kind)
-                        .order_by(col(Generation.id).desc())
-                    ).first()
+                    failed = _newest(session, page_id, kind)
                     action = (failed.user_text if failed else "") or page.action_prompt
                     jobs.append(take(pose_job(session, book, page, action), True))
             enqueue_jobs(session, worker, owner, jobs)  # 預留額度＋排隊＋commit；不夠 429

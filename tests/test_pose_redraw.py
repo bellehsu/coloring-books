@@ -14,8 +14,10 @@ from app.config import load_settings
 from app.main import create_app
 from app.models import Generation, GenKind, GenStatus, Owner, PageStatus, PageTask, PageTaskStatus, Usage
 from app.services import auth, pipeline, usage
+from app.services.engine import EngineError
 from app.services.jobs import BookState
 from app.services.page_state import ATTENTION_REVIEW_POSE, REVIEW_POSE_DETAIL
+from app.services.prompts import QWEN_POSE_VARIATIONS
 from app.services.slots import newest_usable_ai
 from tests.fake_engine import FakeEngine
 from tests.test_api_books import new_book, run_jobs
@@ -324,3 +326,84 @@ def test_not_candidate_tolerates_malformed_request_json(client, app):
         s.commit()
         assert newest_usable_ai(s, pid, GenKind.POSE) == poses[pid]
         assert pipeline.is_candidate(s.get(Generation, poses[pid])) is False
+
+
+# ---- fix round 1：候選失敗不影響頁面、候選成功不遮住失敗的 take、面向語、inline take 清掉 review_pose ----
+
+
+def test_failed_candidate_keeps_page_ready(client, app):
+    """候選（第 2 張）失敗：頁面照樣是 review_pose、可以印；「再試一次」不會排新的角色動作（不會換掉好的那張）。"""
+    b, pages, _ = composed_pages(client, app, n=1)
+    pid = pages[0]["id"]
+    take_id, cand_id = [g["id"] for g in redraw(client, b["id"], [pid], count=2).json()["queued"]]
+    run_jobs(client, app)  # take：換上去、頁面流程跑完
+    drain(client, app)
+    app.state.engine.outcomes.append(EngineError("ComfyUI 執行失敗：記憶體不足"))
+    run_jobs(client, app)  # 候選失敗（頁面已經做好）
+    drain(client, app)
+    assert gen(app, take_id).status == GenStatus.SUCCEEDED
+    assert gen(app, cand_id).status == GenStatus.FAILED
+    page = get_page(app, pid)
+    assert page.pose_generation_id == take_id
+    assert page.attention == ATTENTION_REVIEW_POSE and page.attention_detail == REVIEW_POSE_DETAIL
+    ov = {p["id"]: p for p in client.get(f"/api/books/{b['id']}/overview").json()["pages"]}
+    assert ov[pid]["state"] == "ready" and ov[pid]["review"] is True
+
+    n_before = len(all_gens(app))
+    r = client.post(f"/api/pages/{pid}/retry")
+    assert r.status_code == 200, r.text
+    assert r.json()["requeued"] == [] and r.json()["pipeline"] is True
+    assert len(all_gens(app)) == n_before  # 沒有排新的（要算額度的）角色動作
+
+
+def test_candidate_success_does_not_hide_failed_take(client, app):
+    """take 失敗、候選成功（這頁還沒有角色動作）：候選不算「已有角色動作」，繼續做與再試一次都還會排角色動作。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    drain(client, app)
+    app.state.engine.outcomes.extend([EngineError("ComfyUI 執行失敗：記憶體不足"), None])
+    r = client.post(f"/api/pages/{pid}/poses", params={"oneclick": "true"}, json={"action": "揮手", "count": 2})
+    assert r.status_code == 202, r.text
+    run_jobs(client, app, 2)
+    drain(client, app)
+    page = get_page(app, pid)
+    assert page.pose_generation_id is None and page.attention == "failed"
+
+    plan = client.get(f"/api/books/{b['id']}/produce/plan").json()
+    assert plan["poses"] == 1
+    r = client.post(f"/api/pages/{pid}/retry")
+    assert r.status_code == 200, r.text
+    assert r.json()["requeued"] == ["pose"]
+    retried = all_gens(app, status=GenStatus.QUEUED)
+    assert len(retried) == 1 and rj(app, retried[0].id).get("take") is True
+
+
+def test_facing_action_consecutive_variations_differ(client, app):
+    """有面向語時只有 2 個變化語：一次畫 3 張時第 3 張會跟第 1 張一樣，但相鄰的兩張一定不同。"""
+    _b, pages, _ = composed_pages(client, app, n=1)
+    pid = pages[0]["id"]
+    for _ in range(5):
+        before = {g.id for g in all_gens(app)}
+        r = client.post(f"/api/pages/{pid}/poses", json={"action": "揮手, facing the viewer", "count": 3})
+        assert r.status_code == 202, r.text
+        vs = [rj(app, g.id)["variation"] for g in all_gens(app) if g.id not in before]
+        assert len(vs) == 3 and all(v in QWEN_POSE_VARIATIONS[2:] for v in vs)
+        assert vs[0] != vs[1] and vs[1] != vs[2], vs
+
+
+def test_inline_take_clears_review_pose(client, app):
+    """批次重畫後在 C 自己按「重畫主角」（take，沒有 review）：使用者刻意選的，換上去時清掉 review_pose。"""
+    b, pages, _ = composed_pages(client, app, n=1)
+    pid = pages[0]["id"]
+    redraw(client, b["id"], [pid])
+    run_all(client, app)
+    assert get_page(app, pid).attention == ATTENTION_REVIEW_POSE
+
+    r = client.post(f"/api/pages/{pid}/poses", params={"oneclick": "true"}, json={"action": "跳舞", "count": 2})
+    assert r.status_code == 202, r.text
+    run_all(client, app)
+    page = get_page(app, pid)
+    assert page.pose_generation_id == r.json()["id"]
+    assert page.attention is None and page.attention_detail is None
+    assert page.status == PageStatus.PASSED

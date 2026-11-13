@@ -15,10 +15,9 @@ from sqlmodel import Session, col, select
 
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page
 from app.services import usage
-from app.services.gen_request import CANDIDATE, REVIEW, TAKE, encode_request
+from app.services.gen_request import CANDIDATE, REVIEW, TAKE, encode_request, is_candidate
 from app.services.layout import compute_layout
 from app.services.page_compose import is_usable
-from app.services.pipeline import is_candidate
 from app.services.prompts import (
     POSE_SIZE,
     has_facing,
@@ -183,7 +182,8 @@ def redraw_jobs(
     session: Session, book: Book, page: Page, action: str, count: int, *, take_first: bool, review: bool
 ) -> list[Job]:
     """重畫主角：這頁 count 張角色動作。第 1 張 take_first 時帶 TAKE（好了自動換上去）、review 時帶 REVIEW
-    （換上去時標成 review_pose）；第 2 張起帶 CANDIDATE（只當候選）。同一次的變化語彼此不同（每張都加進排除清單）。"""
+    （換上去時標成 review_pose）；第 2 張起帶 CANDIDATE（只當候選）。每張都加進排除清單：沒有面向語時有 4 個
+    變化語、排除最近兩個，3 張彼此不同；動作有面向語時只有 2 個、只排除上一個，相鄰兩張不同，第 3 張會跟第 1 張一樣。"""
     jobs: list[Job] = []
     for i in range(count):
         job = pose_job(session, book, page, action, picked=[j.variation for j in jobs])
@@ -253,7 +253,7 @@ class BookState:
         if (
             slot is not None
             or page.selected_generation_id in self.legacy_selected  # 舊流程整頁候選圖
-            or any(g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens)
+            or any(g.status == GenStatus.SUCCEEDED and not g.discarded and not is_candidate(g) for g in gens)
         ):
             return "已有背景" if bg else "已有角色動作"
         if any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):

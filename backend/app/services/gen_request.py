@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 
-from app.models import GenKind
+from app.models import Generation, GenKind
 from app.services.engine import RETIRED, GenerationRequest
 from app.storage import Storage
 
@@ -67,6 +67,27 @@ def encode_request(
             raise ValueError(f"extra 不能覆寫核心欄位：{', '.join(sorted(clash))}")
         d.update(extra)
     return json.dumps(d, ensure_ascii=False, sort_keys=True)
+
+
+def _flag(gen: Generation, key: str) -> bool:
+    """request_json 的控制旗標是不是 true（壞掉的 JSON 當成沒有）。"""
+    try:
+        d = json.loads(gen.request_json or "{}")
+    except (TypeError, ValueError):
+        return False
+    return isinstance(d, dict) and d.get(key) is True
+
+
+def wants_take(gen: Generation) -> bool:
+    return _flag(gen, TAKE)
+
+
+def is_candidate(gen: Generation) -> bool:
+    return _flag(gen, CANDIDATE)
+
+
+def wants_review(gen: Generation) -> bool:
+    return _flag(gen, REVIEW)
 
 
 def is_retired(d: dict) -> bool:
