@@ -63,10 +63,16 @@ def reset_review_when(cond) -> dict:
     }
 
 
-def slot_change_values(field: str, gen_id: int) -> dict:
+# 背景／角色動作那一格 → 設定頁的「要重畫」旗標
+REDRAW_FLAG = {"background_generation_id": "redraw_background", "pose_generation_id": "redraw_pose"}
+
+
+def slot_change_values(field: str, gen_id: int, *, new_selection: bool = True) -> dict:
     """條件式 UPDATE 用的 SET 片段：把頁面的 field（background_generation_id／pose_generation_id）設成 gen_id。
     換了不同的圖（以寫入當下的舊值判斷）而且選定圖是合成圖：清掉選定圖並退回草稿；
-    舊流程的 page 圖不動，直到新的合成圖取代它。"""
+    舊流程的 page 圖不動，直到新的合成圖取代它。
+    new_selection（選圖、上傳、take、自動選圖）：同時清掉這一格的「要重畫」（使用者已經有新的圖）；
+    復原／重做選回舊的圖不算新的選擇，傳 False、旗標留著。"""
     selected_is_composite = (
         select(Generation.id)
         .where(col(Generation.id) == col(Page.selected_generation_id),
@@ -75,12 +81,15 @@ def slot_change_values(field: str, gen_id: int) -> dict:
         .exists()
     )
     clear = and_(getattr(Page, field).is_distinct_from(gen_id), selected_is_composite)
-    return {
+    values = {
         field: gen_id,
         "updated_at": utcnow(),
         "selected_generation_id": case((clear, null()), else_=col(Page.selected_generation_id)),
         **reset_review_when(clear),
     }
+    if new_selection:
+        values[REDRAW_FLAG[field]] = False
+    return values
 
 
 def usable_conditions(kind: GenKind) -> list:

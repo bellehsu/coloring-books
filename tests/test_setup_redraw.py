@@ -18,7 +18,7 @@ from app.models import Generation, GenKind, GenStatus
 from app.services import usage
 from app.services.page_state import ATTENTION_REVIEW_POSE
 from tests.fake_engine import FakeEngine
-from tests.test_api_compose import upload_bg
+from tests.test_api_compose import gen_pose, picked, upload_bg
 from tests.test_api_lineart import color_png, get_page
 from tests.test_api_produce import THREE, book_with_pages, overview, plan, produce, run_all
 from tests.test_usage import NOW, login, set_cap, used
@@ -82,6 +82,10 @@ def slots(app, page_id) -> tuple[int | None, int | None, int | None]:
     return page.background_generation_id, page.pose_generation_id, page.selected_generation_id
 
 
+def page_json(client, book_id, page_id) -> dict:
+    return next(p for p in client.get(f"/api/books/{book_id}/pages").json() if p["id"] == page_id)
+
+
 def rj(app, gen_id) -> dict:
     with app.state.sessions() as s:
         return json.loads(s.get(Generation, gen_id).request_json)
@@ -135,6 +139,25 @@ def test_setup_caption_edit_sets_no_flag(client, app):
     assert flags(app, p1["id"]) == (False, False)
 
 
+def test_setup_blank_edit_sets_no_flag(client, app):
+    """場景／動作改成空白：沒有東西可以畫，不標（文字照存）。"""
+    _, _, (p1, p2, _) = ready_book(client, app)
+    out = setup_edit(client, p1["id"], scene_prompt="   ", action_prompt="")
+    assert out["scene_prompt"] == "" and out["action_prompt"] == ""
+    setup_edit(client, p2["id"], action_prompt="  ")
+    assert flags(app, p1["id"]) == (False, False)
+    assert flags(app, p2["id"]) == (False, False)
+
+
+def test_setup_with_oneclick_is_400(client, app):
+    _, _, (p1, _, _) = ready_book(client, app)
+    r = client.patch(f"/api/pages/{p1['id']}", params={"from_setup": "true", "oneclick": "true"},
+                     json={"action_prompt": "坐著"})
+    assert r.status_code == 400 and r.json()["detail"] == "參數衝突"
+    page = get_page(app, p1["id"])
+    assert page.action_prompt == "揮手" and (page.redraw_background, page.redraw_pose) == (False, False)
+
+
 def test_c_and_plain_patch_never_flag(client, app):
     _, _, (p1, p2, _) = ready_book(client, app)
     patch(client, p1["id"], {"action_prompt": "坐著", "scene_prompt": "雪地"}, oneclick="true")
@@ -166,6 +189,8 @@ def test_produce_redraws_only_flagged_pages(client, app):
 
     run_all(client, app)
     page2 = get_page(app, p2["id"])
+    assert flags(app, p2["id"]) == (False, False)  # 換上去之後也是
+    assert page_json(client, b["id"], p2["id"])["can_undo"] is True  # take 存了復原快照
     assert page2.pose_generation_id == gid != before[p2["id"]][1]
     assert page2.background_generation_id == before[p2["id"]][0]
     assert page2.attention == ATTENTION_REVIEW_POSE
@@ -192,6 +217,8 @@ def test_produce_flagged_background_is_take_without_review(client, app):
 
     run_all(client, app)
     page = get_page(app, p1["id"])
+    assert flags(app, p1["id"]) == (False, False)
+    assert page_json(client, b["id"], p1["id"])["can_undo"] is True
     assert page.background_generation_id == gid != old_bg
     assert page.pose_generation_id == old_pose
     assert page.attention is None
@@ -231,3 +258,76 @@ def test_flag_kept_while_same_kind_is_in_progress(client, app):
     assert plan(client, b["id"])["total"] == 0
     assert produce(client, b["id"])["queued"] == []
     assert flags(app, p1["id"]) == (False, True)
+
+
+# ---- 新的選擇清掉旗標（復原不算） --------------------------------------------------------
+
+
+def test_upload_after_flag_clears_background_flag(client, app):
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], scene_prompt="雪地")
+    r = upload_bg(client, p1["id"], color_png())
+    assert r.status_code == 201, r.text
+    uploaded = get_page(app, p1["id"]).background_generation_id
+    assert flags(app, p1["id"]) == (False, False)
+    assert plan(client, b["id"])["backgrounds"] == 0
+    assert produce(client, b["id"])["queued"] == []
+    assert get_page(app, p1["id"]).background_generation_id == uploaded  # 上傳的留著
+
+
+def test_pick_after_flag_clears_pose_flag(client, app):
+    _, b, (p1, _, _) = ready_book(client, app)
+    first = get_page(app, p1["id"]).pose_generation_id
+    second = gen_pose(client, app, p1["id"])
+    assert get_page(app, p1["id"]).pose_generation_id == second
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    assert flags(app, p1["id"]) == (False, True)
+    picked(client, p1["id"], "pose", first)  # 自己選回第一張
+    assert flags(app, p1["id"]) == (False, False)
+    assert plan(client, b["id"])["poses"] == 0
+
+
+def test_new_auto_selected_pose_clears_flag(client, app):
+    """新的 AI 角色動作好了、自動選上去：也是新的選擇。"""
+    _, b, (p1, _, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    new = gen_pose(client, app, p1["id"], action="坐著")
+    assert get_page(app, p1["id"]).pose_generation_id == new
+    assert flags(app, p1["id"]) == (False, False)
+    assert plan(client, b["id"])["poses"] == 0
+
+
+def test_undo_restoring_an_older_pose_keeps_flag(client, app):
+    _, _, (p1, _, _) = ready_book(client, app)
+    first = get_page(app, p1["id"]).pose_generation_id
+    second = gen_pose(client, app, p1["id"])  # 自動換上去（存了復原快照）
+    assert get_page(app, p1["id"]).pose_generation_id == second
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    r = client.post(f"/api/pages/{p1['id']}/undo")
+    assert r.status_code == 200, r.text
+    assert get_page(app, p1["id"]).pose_generation_id == first
+    assert flags(app, p1["id"]) == (False, True)  # 復原不是新的選擇
+
+
+def test_partial_grant_clears_only_queued_flags(client, app):
+    owner, b, (p1, p2, _) = ready_book(client, app)
+    setup_edit(client, p1["id"], action_prompt="坐著")
+    setup_edit(client, p2["id"], action_prompt="坐著")
+    set_cap(app, owner, used(app, owner) + 1)  # 今天剩 1 次
+    out = produce(client, b["id"])
+    assert len(out["queued"]) == 1 and out["deferred_pages"] == [p2["id"]]
+    with app.state.sessions() as s:
+        assert s.get(Generation, out["queued"][0]).page_id == p1["id"]
+    assert flags(app, p1["id"]) == (False, False)
+    assert flags(app, p2["id"]) == (False, True)
+
+
+def test_materials_batch_leaves_flagged_page_alone(client, app):
+    _, b, (p1, _, _) = ready_book(client, app)
+    before = slots(app, p1["id"])
+    setup_edit(client, p1["id"], scene_prompt="雪地", action_prompt="坐著")
+    r = client.post(f"/api/books/{b['id']}/materials/batch")
+    assert r.status_code == 202, r.text
+    assert r.json()["queued"] == []
+    assert flags(app, p1["id"]) == (True, True)
+    assert slots(app, p1["id"]) == before

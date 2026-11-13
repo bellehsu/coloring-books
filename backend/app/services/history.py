@@ -207,8 +207,10 @@ def redo(session: Session, page: Page) -> bool:
 # ---- 套用 ------------------------------------------------------------------------------
 
 
-def set_slot(session: Session, page_id: int, kind: GenKind, gen_id: int, *, auto: bool = False) -> bool:
+def set_slot(session: Session, page_id: int, kind: GenKind, gen_id: int, *, auto: bool = False,
+             new_selection: bool = True) -> bool:
     """把背景／角色動作換成 gen_id（同 _pick：選定圖是合成圖就清掉、退回草稿），auto=True 時也記成 auto_*。
+    new_selection 見 slot_change_values（復原／重做傳 False：「要重畫」留著）。
     條件式 UPDATE 再確認圖仍可用；回傳有沒有寫入。"""
     field, auto_field = SLOTS[kind]
     still_valid = (
@@ -216,7 +218,7 @@ def set_slot(session: Session, page_id: int, kind: GenKind, gen_id: int, *, auto
         .where(col(Generation.id) == gen_id, col(Generation.page_id) == page_id, *usable_conditions(kind))
         .exists()
     )
-    values = slot_change_values(field, gen_id)
+    values = slot_change_values(field, gen_id, new_selection=new_selection)
     if auto:
         values[auto_field] = gen_id
     res = session.exec(update(Page).where(col(Page.id) == page_id, still_valid).values(**values))
@@ -239,7 +241,7 @@ def apply_snapshot(session: Session, page: Page, snap: dict) -> bool:
             continue
         if not is_usable(session.get(Generation, want), kind, pid):
             continue  # 圖已不能用（捨棄、清掉）：保留目前的
-        if set_slot(session, pid, kind, want):
+        if set_slot(session, pid, kind, want, new_selection=False):  # 選回舊的圖：「要重畫」留著
             recompose = True
     placement = snap.get("placement")
     if placement != _placement(page):

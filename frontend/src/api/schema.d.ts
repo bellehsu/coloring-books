@@ -229,7 +229,8 @@ export interface paths {
          * @description oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；
          *     線條設定變了，流程做的頁排流程重跑（不退回草稿）。
          *     from_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而
-         *     頁面有角色動作 → redraw_pose，等「繼續做」重畫。圖下方的字不標；沒帶 from_setup 時不標。
+         *     頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標；沒帶 from_setup 時不標；
+         *     與 oneclick 一起帶是 400。
          */
         patch: operations["update_page_api_pages__page_id__patch"];
         trace?: never;
