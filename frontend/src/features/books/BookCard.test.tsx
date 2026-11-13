@@ -22,7 +22,7 @@ const book = {
 
 function Shelf() {
   const q = useQuery({ queryKey: qk.books(), queryFn: async () => [book], initialData: [book], staleTime: Infinity });
-  return <>{q.data?.map((b) => <BookCard key={b.id} book={b} />)}</>;
+  return <><h1 tabIndex={-1}>我的繪本</h1>{q.data?.map((b) => <BookCard key={b.id} book={b} />)}</>;
 }
 
 function setup(b: Book = book, status = 204) {
@@ -66,6 +66,34 @@ describe("BookCard menu", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("click outside closes the menu", async () => {
+    setup();
+    await userEvent.click(screen.getByRole("button", { name: "「小狐狸的一天」的選單" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await userEvent.click(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("the dialog is not inside the menu's z-indexed wrapper (two books)", async () => {
+    const b2 = { ...book, id: 2, title: "小熊" } as Book;
+    const qc = new QueryClient();
+    qc.setQueryData(qk.books(), [book, b2]);
+    vi.stubGlobal("fetch", vi.fn());
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <BookCard book={book} />
+          <BookCard book={b2} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    const trigger = screen.getByRole("button", { name: "「小狐狸的一天」的選單" });
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole("menuitem", { name: "刪除這本書" }));
+    const dialog = screen.getByRole("dialog");
+    expect(trigger.parentElement!.contains(dialog)).toBe(false);
+  });
+
   it("confirm dialog has the exact copy", async () => {
     setup();
     await openConfirm();
@@ -92,6 +120,7 @@ describe("BookCard menu", () => {
     expect(url).toBe("/api/books/1");
     expect(init.method).toBe("DELETE");
     expect(politeToasts()).toHaveTextContent("已刪除「小狐狸的一天」");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
   });
 
   it("a failed delete keeps the card and shows the error toast", async () => {

@@ -15,3 +15,16 @@ test("書架：⋯ → 刪除這本書 → 確認後卡片消失，重新整理�
   await page.reload();
   await expect(page.getByRole("button", { name: `「${title}」的選單` })).toHaveCount(0);
 });
+
+test("確認視窗開著時，別張卡的 ⋯ 被背景擋住，不能點", async ({ page, request }) => {
+  const a = `甲書 ${Date.now()}`;
+  const b = `乙書 ${Date.now()}`;
+  await createBook(request, a);
+  await createBook(request, b);
+  await page.goto("/");
+  await page.getByRole("button", { name: `「${a}」的選單` }).click();
+  await page.getByRole("menuitem", { name: "刪除這本書" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  // 點別張卡的 ⋯ 位置：實際點到的是背景（Playwright 會因被擋住而逾時）
+  await expect(page.getByRole("button", { name: `「${b}」的選單` }).click({ timeout: 1500 })).rejects.toThrow();
+});

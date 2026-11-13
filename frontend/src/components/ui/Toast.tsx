@@ -56,43 +56,36 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div className={styles.stack}>
         <div aria-live="polite" aria-relevant="additions text" data-testid="toast-polite" className={styles.region}>
           {items.filter((t) => t.tone !== "error").map((t) => (
-            <div key={t.id} className={`${styles.toast} ${styles[t.tone]}`}>
-              {t.message}
-              {t.action && (
-                <button
-                  type="button"
-                  className={styles.action}
-                  onClick={() => {
-                    t.action!.onClick();
-                    dismiss(t.id);
-                  }}
-                >
-                  {t.action.label}
-                </button>
-              )}
-            </div>
+            <ToastItem key={t.id} item={t} onDismiss={dismiss} />
           ))}
         </div>
         <div aria-live="assertive" aria-relevant="additions text" data-testid="toast-assertive" className={styles.region}>
           {items.filter((t) => t.tone === "error").map((t) => (
-            <div key={t.id} className={`${styles.toast} ${styles[t.tone]}`}>
-              {t.message}
-              {t.action && (
-                <button
-                  type="button"
-                  className={styles.action}
-                  onClick={() => {
-                    t.action!.onClick();
-                    dismiss(t.id);
-                  }}
-                >
-                  {t.action.label}
-                </button>
-              )}
-            </div>
+            <ToastItem key={t.id} item={t} onDismiss={dismiss} />
           ))}
         </div>
       </div>
     </Ctx.Provider>
+  );
+}
+
+function ToastItem({ item, onDismiss }: { item: Item; onDismiss: (id: number) => void }) {
+  const { action } = item;
+  return (
+    <div className={`${styles.toast} ${styles[item.tone]}`}>
+      {item.message}
+      {action && (
+        <button
+          type="button"
+          className={styles.action}
+          onClick={() => {
+            action.onClick();
+            onDismiss(item.id);
+          }}
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
   );
 }

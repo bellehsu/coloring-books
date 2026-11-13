@@ -23,7 +23,7 @@ export default function Home() {
       <main className={styles.main}>
         <div className={styles.head}>
           <div className={styles.titles}>
-            <h1 className={styles.h1}>我的繪本</h1>
+            <h1 className={styles.h1} tabIndex={-1}>我的繪本</h1>
             {list && <span className={styles.sub}>{list.length} 本</span>}
           </div>
           {me.data?.is_admin && !me.data.via_dev_owner && (

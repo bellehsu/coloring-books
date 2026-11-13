@@ -43,6 +43,7 @@ export function BookCardMenu({ book }: { book: Book }) {
     try {
       await del.mutateAsync(book);
       toast.show(`已刪除「${book.title}」`, "success");
+      document.querySelector<HTMLElement>("h1")?.focus(); // 卡片沒了，焦點不要掉到 body
     } catch (e) {
       toast.show(errMsg(e, "沒辦法刪除這本書，請稍後再試"), "error");
     } finally {
@@ -51,47 +52,62 @@ export function BookCardMenu({ book }: { book: Book }) {
   }
 
   return (
-    <div ref={root} className={styles.root}>
-      <button
-        ref={trigger}
-        type="button"
-        className={styles.trigger}
-        aria-label={`「${book.title}」的選單`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+    <>
+      <div ref={root} className={styles.root}>
+        <button
+          ref={trigger}
+          type="button"
+          className={styles.trigger}
+          aria-label={`「${book.title}」的選單`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          ⋯
+        </button>
+        {open && (
+          <div role="menu" className={styles.menu}>
+            <button
+              type="button"
+              role="menuitem"
+              className={styles.item}
+              autoFocus
+              onClick={() => {
+                setOpen(false);
+                setConfirm(true);
+              }}
+            >
+              刪除這本書
+            </button>
+          </div>
+        )}
+      </div>
+      {/* Dialog 放在 .root 外面：.root 有 z-index 會形成堆疊環境，別張卡的 ⋯ 會蓋在背景上面 */}
+      <Dialog
+        open={confirm}
+        onClose={() => setConfirm(false)}
+        title={`確定要刪除「${book.title}」嗎？`}
+        closeDisabled={del.isPending}
       >
-        ⋯
-      </button>
-      {open && (
-        <div role="menu" className={styles.menu}>
-          <button
-            type="button"
-            role="menuitem"
-            className={styles.item}
-            autoFocus
-            onClick={() => {
-              setOpen(false);
-              setConfirm(true);
-            }}
-          >
-            刪除這本書
-          </button>
-        </div>
-      )}
-      <Dialog open={confirm} onClose={() => setConfirm(false)} title={`確定要刪除「${book.title}」嗎？`} closeDisabled={del.isPending}>
         <div className={styles.confirm}>
-          <p>{book.stats.pages} 頁、所有圖和修過的線都會刪掉，刪了就救不回來。分享出去的連結也會失效。</p>
+          <p>
+            {book.stats.pages}{" "}
+            頁、所有圖和修過的線都會刪掉，刪了就救不回來。分享出去的連結也會失效。
+          </p>
           <div className={styles.actions}>
             <Button onClick={() => setConfirm(false)} disabled={del.isPending}>
               取消
             </Button>
-            <Button variant="danger" onClick={() => void remove()} disabled={del.isPending}>
+            <Button
+              variant="danger"
+              onClick={() => void remove()}
+              disabled={del.isPending}
+            >
               刪除
             </Button>
           </div>
         </div>
       </Dialog>
-    </div>
+    </>
   );
 }
