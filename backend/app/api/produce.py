@@ -8,7 +8,8 @@
   排頁面流程（CPU，不計次數）。
   有素材要排卻一次都不剩 → 429「今天的生成次數已用完，明天再來」（同時有頁面流程可排時照排、回 202）。
   與「產生全部素材」共用 BATCH_LOCK、略過規則與任務組法（services/jobs.py）。
-- `GET /books/{id}/overview`：每頁狀態（working＞attention＞ready＞todo）、本輪進度、還有幾頁沒排。
+- `GET /books/{id}/overview`：每頁狀態（working＞attention＞ready＞todo）、做好幾頁（progress_pages）、本輪進度、
+  還有幾頁沒排。review_pose（換了新的主角動作）是軟標記：算做好、繼續做不因它重排。
 
 本輪進度：queued／running 是「現在」這本書排隊中／執行中的生成（任何種類）與頁面流程；done 是
 book.produce_started_at 之後建立、已結束的生成與頁面流程。produce 有排到東西、而且當時這本書沒有進行中的
@@ -28,13 +29,14 @@ from app.api.schemas import (
     OverviewPageOut,
     ProduceOut,
     ProducePlanOut,
+    ProgressPages,
     RunProgress,
 )
 from app.api.urls import generation_image_url, lineart_url_is_current
 from app.models import Generation, GenKind, GenStatus, Owner, PageStatus, PageTask, PageTaskStatus, utcnow
 from app.services import usage
 from app.services.jobs import BATCH_LOCK, BookState, add_queued, build_job, has_character
-from app.services.page_state import GEN_ACTIVE, TASK_ACTIVE, page_state
+from app.services.page_state import ATTENTION_REVIEW_POSE, GEN_ACTIVE, TASK_ACTIVE, hard_attention, page_state
 from app.services.pipeline import enqueue_page_task
 from app.services.slots import not_upload
 from app.services.worker import GenerationWorker
@@ -97,8 +99,8 @@ def produce(
         busy_pages = {t.page_id for t in tasks if t.status in TASK_ACTIVE}
         pipeline_pages = [
             p.id for p in state.pages
-            # 筆畫還沒寫回、或「請看一下」（C 的「再試一次」）：再跑一次
-            if (p.status != PageStatus.PASSED or p.pending_user_strokes is not None or p.attention is not None)
+            # 筆畫還沒寫回、或「請看一下」（C 的「再試一次」）：再跑一次；軟標記 review_pose 不算
+            if (p.status != PageStatus.PASSED or p.pending_user_strokes is not None or hard_attention(p.attention))
             and p.id not in busy_pages and state.has_both_images(p)
         ]
         if not needed and not pipeline_pages:
@@ -190,11 +192,13 @@ def book_overview(
             thumb_url=generation_image_url(sel) if sel is not None else None,
             lineart_url=po.lineart_url,
             attention_detail=page.attention_detail if page.attention else None,
+            review=page.attention == ATTENTION_REVIEW_POSE,
         ))
     return BookOverviewOut(
         book_id=book_id,
         pages=out,
         progress=RunProgress(queued=queued, running=running, done=done),
+        progress_pages=ProgressPages(ready=sum(p.state == "ready" for p in out), total=len(pages)),
         estimate_s=active_gens * SECONDS_PER_IMAGE,
         deferred_count=len(needs),
         run_started_at=started,

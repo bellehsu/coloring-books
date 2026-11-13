@@ -4,7 +4,7 @@
   2. 合成：用頁面存的位置，沒有就用預設位置（services/page_compose.compose_page，與確認合成共用）；
   3. 線稿；
   4. 自動補線：重算整層 auto 修線（覆寫，不附加；services/autofix.plan_autofix，與自動補線端點共用）；
-  5. 可以印：PASSED、passed_at，清掉 attention（不需要角色檢查「對」）。
+  5. 可以印：PASSED、passed_at，清掉 attention（不需要角色檢查「對」）；軟標記 review_pose 保留。
 
 失敗時頁面 attention="failed"、attention_detail 是中文說明，工作標成 FAILED。
 
@@ -45,6 +45,7 @@ from app.services.page_lineart import (
     LineartUnavailable, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes, save_strokes,
     strokes_from_json, strokes_to_json,
 )
+from app.services.page_state import ATTENTION_REVIEW_POSE
 from app.services.qa import evaluate
 from app.storage import Storage
 
@@ -408,9 +409,10 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
         except IntegrityError as e:  # 同時有請求建立同一層（例如舊編輯器的自動補線）
             raise _Stale() from e
     lin = ensure_page_lineart(session, storage, page_id, from_pipeline=True)
-    # 5. 可以印（已經是 PASSED 的保留原本的通過時間）
+    # 5. 可以印（已經是 PASSED 的保留原本的通過時間）；清掉 failed 等，保留軟標記 review_pose
     now = utcnow()
     already = col(Page.status) == PageStatus.PASSED
+    review = col(Page.attention) == ATTENTION_REVIEW_POSE
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid,
@@ -418,7 +420,10 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
         .values(status=PageStatus.PASSED,
                 passed_at=func.coalesce(case((already, col(Page.passed_at))),
                                         literal(now, Page.__table__.c.passed_at.type)),
-                forced_pass_reason=None, attention=None, attention_detail=None, updated_at=now)
+                forced_pass_reason=None,
+                attention=case((review, ATTENTION_REVIEW_POSE), else_=None),
+                attention_detail=case((review, col(Page.attention_detail)), else_=None),
+                updated_at=now)
     )
     session.commit()
     if res.rowcount == 0:

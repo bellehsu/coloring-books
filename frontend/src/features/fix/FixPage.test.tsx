@@ -106,6 +106,7 @@ beforeEach(() => {
     book_id: 1,
     pages: [ovPage(4, 0, "attention"), ovPage(5, 1, "ready"), ovPage(6, 2, "ready"), ovPage(7, 3, "attention")],
     progress: { queued: 0, running: 0, done: 4 },
+    progress_pages: { ready: 2, total: 4 },
     estimate_s: 0,
     deferred_count: 0,
     run_started_at: "2026-11-12T01:00:00Z",

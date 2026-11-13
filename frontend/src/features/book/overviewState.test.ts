@@ -14,12 +14,14 @@ const pg = (id: number, state: OverviewPage["state"], extra: Partial<OverviewPag
   thumb_url: null,
   lineart_url: null,
   attention_detail: null,
+  review: false,
   ...extra,
 });
 const ov = (pages: OverviewPage[], extra: Partial<BookOverview> = {}): BookOverview => ({
   book_id: 1,
   pages,
   progress: { queued: 0, running: 0, done: 0 },
+  progress_pages: { ready: pages.filter((p) => p.state === "ready").length, total: pages.length },
   estimate_s: 0,
   deferred_count: 0,
   run_started_at: "2026-11-12T01:00:00Z",

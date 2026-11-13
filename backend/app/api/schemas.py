@@ -523,7 +523,8 @@ class OverviewPageOut(BaseModel):
     caption_show_en: bool
     thumb_url: str | None  # 選定圖（合成圖；舊書是整頁圖）
     lineart_url: str | None  # 目前線稿（?v= 為目前的 key）；沒選定圖為 None
-    attention_detail: str | None
+    attention_detail: str | None  # 有 attention 時的中文說明（review_pose 也有）
+    review: bool  # attention == "review_pose"：換了新的主角動作（軟標記，state 照樣是 ready）
 
 
 class RunProgress(BaseModel):
@@ -532,10 +533,16 @@ class RunProgress(BaseModel):
     done: int  # 本輪（produce_started_at 之後建立）已結束的生成（不含合成圖、上傳）＋頁面流程
 
 
+class ProgressPages(BaseModel):
+    ready: int  # state == "ready" 的頁（PASSED、不在製作中、沒有請看一下；review_pose 也算）
+    total: int  # 頁數
+
+
 class BookOverviewOut(BaseModel):
     book_id: int
     pages: list[OverviewPageOut]
-    progress: RunProgress
+    progress: RunProgress  # 工作計數：ETA 與「製作中」用（不再當作「做好 N / M」）
+    progress_pages: ProgressPages  # B 的「做好 N / M 頁」
     estimate_s: int  # 排隊中與執行中的生成 × 每張約 22 秒（頁面流程很快，不算）
     # 還有素材沒排（也沒有排隊中的那種）的頁數：上一輪放不下的（「還有 N 頁明天繼續」），沒按過時是全部缺的頁
     deferred_count: int

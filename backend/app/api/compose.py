@@ -14,6 +14,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from sqlalchemy import case
 from sqlmodel import Session, col, select, update
 
 from app.api.deps import (
@@ -60,6 +61,7 @@ from app.services.page_compose import (
     store_outside_tx,
     usable_conditions,
 )
+from app.services.page_state import ATTENTION_REVIEW_POSE
 from app.services.pipeline import enqueue_page_task
 from app.services.slots import UPLOAD_ENGINE
 from app.services.uploads import cover_crop, mark_stored, read_upload
@@ -146,7 +148,8 @@ def create_pose(
 
 def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKind,
           oneclick: bool = False, worker: GenerationWorker | None = None) -> PageOut:
-    """選用背景／角色動作。oneclick：先存快照、筆畫清掉（重新合成）、排頁面流程；選的就是目前那張則什麼都不做。"""
+    """選用背景／角色動作。oneclick：先存快照、筆畫清掉（重新合成）、排頁面流程；選的就是目前那張則什麼都不做。
+    C 選另一個角色動作（oneclick）也清掉軟標記 review_pose（使用者看過、自己選了）；換背景不動它。"""
     label = _LABEL[kind]
     page = owned_page(session, owner, page_id)
     gen = owned_generation(session, owner, gen_id)  # 別人的與不存在一樣 404
@@ -173,10 +176,15 @@ def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKi
                *usable_conditions(kind))
         .exists()
     )
+    values = slot_change_values(field, gen.id)
+    if oneclick and kind == GenKind.POSE:
+        review = col(Page.attention) == ATTENTION_REVIEW_POSE
+        values["attention"] = case((review, None), else_=col(Page.attention))
+        values["attention_detail"] = case((review, None), else_=col(Page.attention_detail))
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, still_valid)
-        .values(**slot_change_values(field, gen.id))
+        .values(**values)
     )
     if res.rowcount == 0:
         session.rollback()

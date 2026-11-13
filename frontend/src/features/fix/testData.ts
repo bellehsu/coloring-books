@@ -51,5 +51,6 @@ export function ovPage(id: number, position: number, state: OverviewPage["state"
     thumb_url: null,
     lineart_url: null,
     attention_detail: null,
+    review: false,
   };
 }

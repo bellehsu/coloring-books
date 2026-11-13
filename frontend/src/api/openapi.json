@@ -3316,6 +3316,9 @@
           "progress": {
             "$ref": "#/components/schemas/RunProgress"
           },
+          "progress_pages": {
+            "$ref": "#/components/schemas/ProgressPages"
+          },
           "estimate_s": {
             "type": "integer",
             "title": "Estimate S"
@@ -3342,6 +3345,7 @@
           "book_id",
           "pages",
           "progress",
+          "progress_pages",
           "estimate_s",
           "deferred_count",
           "run_started_at"
@@ -4059,6 +4063,10 @@
               }
             ],
             "title": "Attention Detail"
+          },
+          "review": {
+            "type": "boolean",
+            "title": "Review"
           }
         },
         "type": "object",
@@ -4073,7 +4081,8 @@
           "caption_show_en",
           "thumb_url",
           "lineart_url",
-          "attention_detail"
+          "attention_detail",
+          "review"
         ],
         "title": "OverviewPageOut"
       },
@@ -4637,6 +4646,24 @@
           "fits"
         ],
         "title": "ProducePlanOut"
+      },
+      "ProgressPages": {
+        "properties": {
+          "ready": {
+            "type": "integer",
+            "title": "Ready"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ready",
+          "total"
+        ],
+        "title": "ProgressPages"
       },
       "QAMessage": {
         "properties": {

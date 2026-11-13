@@ -158,3 +158,19 @@ def test_include_ready_leaves_out_attention_pages_and_summary_lists_them(client,
     for p in ps:
         set_page(app, p["id"], attention="failed")
     assert client.get(f"/api/books/{b['id']}/export.pdf?include=ready").status_code == 409
+
+
+def test_review_pose_page_in_default_export(client, app):
+    """換了新的主角動作（review_pose）是軟標記：照樣算可以印，B 的「印出這本書」（include=ready）會印它。"""
+    b, ps = book_pages(client, app)
+    for p in ps:
+        make_passed(app, p["id"])
+    set_page(app, ps[1]["id"], attention="review_pose", attention_detail="請看一下：換了新的主角動作")
+    set_page(app, ps[2]["id"], attention="failed", attention_detail="圖片產生失敗")
+    d = client.get(f"/api/books/{b['id']}/export/summary").json()
+    assert d["ready_ids"] == [ps[0]["id"], ps[1]["id"]]
+    r = client.get(f"/api/books/{b['id']}/export.pdf?include=ready")
+    assert r.status_code == 200 and npages(r.content) == 2
+    set_page(app, ps[0]["id"], attention="failed")
+    r = client.get(f"/api/books/{b['id']}/export.pdf?include=ready")
+    assert r.status_code == 200 and npages(r.content) == 1  # 只剩 review_pose 那頁

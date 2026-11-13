@@ -617,3 +617,15 @@ def test_reused_composite_keeps_outline_fill_and_key(client, app):
     assert after.selected_generation_id == before.selected_generation_id
     assert after.outline_fill is False
     assert after.lineart_key == before.lineart_key
+
+
+def test_pipeline_keeps_review_pose(client, app):
+    """頁面流程做完會清掉 failed，但保留軟標記 review_pose（批次重畫主角後換上的新動作要使用者看一下）。"""
+    b, p, bg, pose = produced(client, app)
+    pid = p["id"]
+    set_page(app, pid, attention="review_pose", attention_detail="請看一下：換了新的主角動作")
+    assert enqueue(app, pid)
+    assert drain(client, app) == 1
+    pg = get_page(app, pid)
+    assert pg.status == PageStatus.PASSED
+    assert pg.attention == "review_pose" and pg.attention_detail == "請看一下：換了新的主角動作"

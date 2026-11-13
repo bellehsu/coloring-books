@@ -503,3 +503,19 @@ def test_delete_candidate_wrong_kind_or_book_is_404(client, app):
         r = client.delete(f"/api/books/{b['id']}/character/candidates/{gid}")
         assert r.status_code == 404 and r.json()["detail"] == "找不到這張候選圖", gid
     assert _row(app, o1).discarded is False and _row(app, pose_id).discarded is False
+
+
+def test_book_stats_count_review_pose_as_ready(client, app):
+    """首頁書卡的「N / M 頁可以印」：review_pose 是軟標記，算可以印、不算請看一下。"""
+    from tests.test_api_lineart import make_passed, selected_page, set_page
+    from tests.test_api_pages import new_page
+
+    b, p1, _ = selected_page(client, app, gap=0)
+    p2 = new_page(client, b["id"])
+    make_passed(app, p1["id"], attention="review_pose", attention_detail="請看一下：換了新的主角動作")
+    make_passed(app, p2["id"], attention="failed", attention_detail="圖片產生失敗")
+    stats = client.get(f"/api/books/{b['id']}").json()["stats"]
+    assert {k: stats[k] for k in ("pages", "passed", "ready", "attention")} == \
+        {"pages": 2, "passed": 2, "ready": 1, "attention": 1}
+    listed = {x["id"]: x for x in client.get("/api/books").json()}
+    assert listed[b["id"]]["stats"] == stats

@@ -1178,6 +1178,7 @@ export interface components {
             /** Pages */
             pages: components["schemas"]["OverviewPageOut"][];
             progress: components["schemas"]["RunProgress"];
+            progress_pages: components["schemas"]["ProgressPages"];
             /** Estimate S */
             estimate_s: number;
             /** Deferred Count */
@@ -1457,6 +1458,8 @@ export interface components {
             lineart_url: string | null;
             /** Attention Detail */
             attention_detail: string | null;
+            /** Review */
+            review: boolean;
         };
         /** PageCreate */
         PageCreate: {
@@ -1634,6 +1637,13 @@ export interface components {
             remaining: number | null;
             /** Fits */
             fits: number;
+        };
+        /** ProgressPages */
+        ProgressPages: {
+            /** Ready */
+            ready: number;
+            /** Total */
+            total: number;
         };
         /** QAMessage */
         QAMessage: {
