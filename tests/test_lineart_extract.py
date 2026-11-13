@@ -167,3 +167,76 @@ def test_product_extract_xdog_matches_the_experiment_xdog_method():
     assert lineart_extract.extract_xdog(gray, 1.2).shape == gray.shape
     rgba = np.dstack([img, np.full(img.shape[:2], 255, np.uint8)])
     assert np.array_equal(lineart_extract.extract_xdog(rgba, 1.2), lineart_extract.extract_xdog(img, 1.2))
+
+
+# ---- stroke_fill（單線輪廓）---------------------------------------------------------------
+
+
+def _band_rgb():
+    rgb = np.full((600, 832, 3), 255, np.uint8)
+    rgb[292:308] = 0  # 16 px 厚的橫帶
+    return rgb
+
+
+CONTENT = (2244, 3272)  # 實際的 A4 家用內容區；縮到 832 寬時兩條邊緣會被線寬統一合併成一條
+
+
+def _runs(ink_img: np.ndarray) -> int:
+    col_ = ink_img[:, ink_img.shape[1] // 2].astype(int)
+    return int((np.diff(col_) == 1).sum() + col_[0])
+
+
+def test_stroke_fill_params_scale_with_width():
+    assert lineart_extract.stroke_fill_params(832) == (10, 13.0)
+    assert lineart_extract.stroke_fill_params(1664) == (20, 26.0)
+    assert lineart_extract.stroke_fill_params(416) == (5, 6.5)
+
+
+def test_stroke_fill_thick_band_gives_one_line():
+    from app.services import lineart_post
+
+    rgb = _band_rgb()
+    gray = lineart_extract.extract_xdog(rgb, 1.2)
+    assert _runs(lineart_post.render_ink(gray, CONTENT, 11)) == 2
+    assert _runs(lineart_post.render_ink(lineart_extract.fill_outlines(rgb, gray), CONTENT, 11)) == 1
+
+
+def _disk(radius):
+    rgb = np.full((300, 832, 3), 255, np.uint8)
+    cv2.circle(rgb, (416, 150), radius, (0, 0, 0), -1)
+    mask = np.zeros((300, 832), np.uint8)
+    cv2.circle(mask, (416, 150), radius - 4, 1, -1)  # 內部（避開邊緣的抗鋸齒）
+    return rgb, mask.astype(bool)
+
+
+def test_stroke_fill_keeps_solid_disk_outline():
+    rgb, inner = _disk(40)
+    gray = lineart_extract.extract_xdog(rgb, 1.2)
+    out = lineart_extract.fill_outlines(rgb, gray)
+    assert np.array_equal(out[inner], gray[inner])
+
+
+def test_stroke_fill_fills_junction_blob():
+    rgb, inner = _disk(12)
+    gray = lineart_extract.extract_xdog(rgb, 1.2)
+    assert (lineart_extract.fill_outlines(rgb, gray)[inner] == 0).all()
+
+
+def test_stroke_fill_matches_experiment():
+    from pathlib import Path
+
+    from PIL import Image
+
+    from experiments import single_outline
+
+    rgb = np.asarray(Image.open(Path(__file__).parent.parent / "experiments/samples/character_ref.png").convert("RGB"))
+    gray = lineart_extract.extract_xdog(rgb, 1.2)
+    assert np.array_equal(lineart_extract.stroke_fill(rgb, gray, 70, 10, 13),
+                          single_outline.stroke_fill(rgb, gray, 70, 10, 13))
+
+
+def test_stroke_fill_constants_snapshot():
+    msg = "stroke_fill 參數改了：請把 OUTLINE_FILL_VERSION 加 1，再更新這個快照"
+    le_ = lineart_extract
+    assert (le_.STROKE_FILL_LUMA, le_.STROKE_FILL_RADIUS, le_.STROKE_FILL_KEEP, le_.STROKE_FILL_REF_WIDTH,
+            le_.OUTLINE_FILL_VERSION) == (70, 10, 13.0, 832, 1), msg

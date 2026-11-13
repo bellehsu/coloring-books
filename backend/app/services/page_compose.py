@@ -285,6 +285,7 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
                 target_valid,
             )
             .values(selected_generation_id=target_id, updated_at=utcnow(),
+                    **({"outline_fill": True} if written is not None else {}),  # 新合成圖用單線輪廓；重用舊的不動
                     **reset_review_when(changed))
         )
         if res.rowcount == 0:

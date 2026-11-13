@@ -12,7 +12,7 @@ import numpy as np
 
 from app.services import lineart_params, lineart_post
 from app.services.imageio import ink_to_png  # noqa: F401  (re-export：實驗腳本沿用舊匯入路徑)
-from app.services.lineart_extract import extract_xdog
+from app.services.lineart_extract import extract_xdog, fill_outlines
 
 RENDER_VERSION = 1  # 演算法改變時 +1，讓快取失效
 LINE_WIDTH_MIN, LINE_WIDTH_MAX, LINE_WIDTH_DEFAULT = 8, 16, 11
@@ -44,9 +44,12 @@ def _xdog_gray(color: np.ndarray, detail: LineDetail) -> np.ndarray:
 
 
 def render_lineart(color: np.ndarray, content_px: tuple[int, int], detail: LineDetail,
-                   line_width_px: int) -> np.ndarray:
-    """產品的底稿：彩色圖 → xdog → 後處理，回傳 ink（True＝黑）。不算指標。"""
-    return lineart_post.render_ink(_xdog_gray(color, detail), content_px, line_width_px)
+                   line_width_px: int, *, outline_fill: bool = False) -> np.ndarray:
+    """產品的底稿：彩色圖 → xdog →（outline_fill：粗筆畫填實成單線）→ 後處理，回傳 ink（True＝黑）。不算指標。"""
+    gray = _xdog_gray(color, detail)
+    if outline_fill:
+        gray = fill_outlines(color, gray)
+    return lineart_post.render_ink(gray, content_px, line_width_px)
 
 
 def render_base(color: np.ndarray, content_px: tuple[int, int], detail: LineDetail,
