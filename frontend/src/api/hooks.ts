@@ -20,6 +20,7 @@ import type {
   InviteCreate,
   Me,
   Page,
+  PoseRedrawOut,
   ProducePlan,
   ProduceResult,
   QA,
@@ -565,6 +566,23 @@ export function useCompose(bookId: number) {
       Promise.all([
         invalidatePage(qc, bookId, v.pageId),
         qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
+      ]),
+  });
+}
+
+/** B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 count 張（第 1 張換上去並標 review_pose，其餘是候選）。 */
+export function useRedrawPoses(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation<PoseRedrawOut, unknown, { pageIds: number[]; count: 1 | 2 | 3 }>({
+    mutationFn: ({ pageIds, count }) =>
+      api.post<PoseRedrawOut>(`/books/${bookId}/poses/redraw`, { page_ids: pageIds, count }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.overview(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.pages(bookId) }),
+        invalidateJobs(qc, bookId),
+        qc.invalidateQueries({ queryKey: qk.books() }),
+        qc.invalidateQueries({ queryKey: qk.producePlan(bookId) }),
       ]),
   });
 }

@@ -11,6 +11,7 @@ import {
   useBookOverview,
   useProduce,
   useProducePlan,
+  useRedrawPoses,
 } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
@@ -19,6 +20,7 @@ import { fixHref, printedCaptions } from "@/features/fix/fixState";
 import { formatRemaining } from "@/lib/eta";
 import { NO_QUOTA } from "@/lib/limits";
 import { ExportSheet } from "./ExportSheet";
+import { RedrawBar, type RedrawCount } from "./RedrawBar";
 import {
   FILTERS,
   STATE_LABEL,
@@ -55,6 +57,11 @@ export function BookOverview({ bookId }: { bookId: number }) {
   const produceM = useProduce(bookId);
   const [filter, setFilter] = useState<Filter>("all");
   const [exporting, setExporting] = useState(false);
+  // 選取多頁：勾要重畫主角的頁，底部的重畫列一次排
+  const redrawM = useRedrawPoses(bookId);
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<ReadonlySet<number>>(new Set());
+  const [redrawCount, setRedrawCount] = useState<RedrawCount>(1);
 
   const o = overview.data;
   const active = o ? overviewActive(o) : false;
@@ -106,6 +113,31 @@ export function BookOverview({ bookId }: { bookId: number }) {
     }
   }
 
+  function leaveSelect() {
+    setSelecting(false);
+    setPicked(new Set());
+    setRedrawCount(1);
+  }
+
+  function togglePick(id: number) {
+    setPicked((cur) => {
+      const nextSet = new Set(cur);
+      if (!nextSet.delete(id)) nextSet.add(id);
+      return nextSet;
+    });
+  }
+
+  async function redraw(pages: OverviewPage[]) {
+    const pageIds = [...pages].sort((x, y) => x.position - y.position).filter((p) => picked.has(p.id)).map((p) => p.id);
+    try {
+      const r = await redrawM.mutateAsync({ pageIds, count: redrawCount });
+      leaveSelect();
+      if (r.skipped.length > 0) toast.show(`${r.skipped.length} 頁沒有動作描述，沒有重畫`, "info");
+    } catch (e) {
+      toast.show(errMsg(e, "沒辦法重畫，請稍後再試"), "error");
+    }
+  }
+
   const b = book.data;
   if (!b || !o) {
     const err = book.error ?? overview.error;
@@ -128,9 +160,10 @@ export function BookOverview({ bookId }: { bookId: number }) {
   const counts = countPages(o.pages);
   const shown = filterPages(o.pages, filter);
   const noQuota = plan.data?.remaining === 0;
+  const pickedCount = o.pages.filter((p) => picked.has(p.id)).length;
 
   return (
-    <main className={styles.main}>
+    <main className={`${styles.main} ${selecting ? styles.mainSelecting : ""}`}>
       <header className={styles.head}>
         <Link href="/" className={styles.back} aria-label="我的書櫃">
           <span aria-hidden="true">←</span>
@@ -147,6 +180,14 @@ export function BookOverview({ bookId }: { bookId: number }) {
             進階編輯
           </Link>
         </nav>
+        <button
+          type="button"
+          aria-pressed={selecting}
+          className={styles.selectToggle}
+          onClick={() => (selecting ? leaveSelect() : setSelecting(true))}
+        >
+          {selecting ? "✓ 選取多頁" : "選取多頁"}
+        </button>
         <div className={styles.printBar}>
           <Button variant="primary" size="lg" className={styles.print} onClick={() => setExporting(true)}>
             印出這本書
@@ -174,6 +215,7 @@ export function BookOverview({ bookId }: { bookId: number }) {
             {f.label} {counts[f.value]}
           </button>
         ))}
+        {selecting && <span className={styles.selectHint}>點卡片勾選要重畫主角的頁</span>}
       </div>
 
       {shown.length === 0 ? (
@@ -181,9 +223,27 @@ export function BookOverview({ bookId }: { bookId: number }) {
       ) : (
         <ul aria-label="頁面" className={styles.grid}>
           {shown.map((p) => (
-            <PageCard key={p.id} bookId={bookId} page={p} aspect={b.layout.content_px} attention={filter === "attention"} />
+            <PageCard
+              key={p.id}
+              bookId={bookId}
+              page={p}
+              aspect={b.layout.content_px}
+              attention={filter === "attention"}
+              pick={selecting ? { on: picked.has(p.id), toggle: () => togglePick(p.id) } : null}
+            />
           ))}
         </ul>
+      )}
+
+      {selecting && (
+        <RedrawBar
+          selected={pickedCount}
+          count={redrawCount}
+          onCount={setRedrawCount}
+          onSubmit={() => void redraw(o.pages)}
+          onCancel={leaveSelect}
+          busy={redrawM.isPending}
+        />
       )}
 
       {exporting && <ExportSheet book={b} pages={o.pages} onClose={() => setExporting(false)} />}
@@ -316,12 +376,15 @@ function PageCard({
   page: p,
   aspect,
   attention,
+  pick,
 }: {
   bookId: number;
   page: OverviewPage;
   aspect: number[];
   /** 從「請看一下」篩選打開：C 的上一頁／下一頁只在要看的頁之間跳。 */
   attention: boolean;
+  /** 選取多頁：卡片右上角的勾選框，點卡片是勾／取消勾（不打開 C）。 */
+  pick: { on: boolean; toggle: () => void } | null;
 }) {
   const n = p.position + 1;
   const src = p.lineart_url ?? p.thumb_url;
@@ -331,31 +394,48 @@ function PageCard({
   const [cw, ch] = aspect;
   // 卡片下方的字＝這頁真的會印的字（中文優先）；兩個都不印時說圖下方留白
   const printed = printedCaptions(p);
-  return (
-    <li className={styles.cell}>
-      <Link
-        href={fixHref(bookId, p.id, attention ? "attention" : null)}
-        className={`${styles.card} ${p.state === "attention" ? styles.cardAttention : ""}`}
-      >
-        <div className={styles.frame}>
-          <span className={`${styles.no} ${styles[TINTS[p.position % TINTS.length]]}`}>{n}</span>
-          <div className={styles.art} style={{ aspectRatio: `${cw} / ${ch}` }}>
-            {src ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={src} alt={`第 ${n} 頁`} loading="lazy" className={styles.img} />
-            ) : (
-              <span className={styles.noArt}>{p.state === "working" ? "製作中…" : "還沒有圖"}</span>
-            )}
-          </div>
-          {printed === "blank" ? (
-            <span className={styles.captionBlank}>圖下方留白</span>
+  const cardClass = `${styles.card} ${p.state === "attention" ? styles.cardAttention : ""}`;
+  const content = (
+    <>
+      <div className={styles.frame}>
+        <span className={`${styles.no} ${styles[TINTS[p.position % TINTS.length]]}`}>{n}</span>
+        {pick && (
+          <input
+            type="checkbox"
+            aria-label={`選第 ${n} 頁`}
+            checked={pick.on}
+            onChange={pick.toggle}
+            className={styles.pick}
+          />
+        )}
+        <div className={styles.art} style={{ aspectRatio: `${cw} / ${ch}` }}>
+          {src ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={src} alt={`第 ${n} 頁`} loading="lazy" className={styles.img} />
           ) : (
-            (printed.zh || printed.en) && <b className={styles.caption}>{printed.zh || printed.en}</b>
+            <span className={styles.noArt}>{p.state === "working" ? "製作中…" : "還沒有圖"}</span>
           )}
         </div>
-        <span className={`${styles.pill} ${styles[`pill_${pillState}`]}`}>{STATE_LABEL[pillState]}</span>
-        {note && <span className={p.state === "attention" ? styles.noteWarn : styles.note}>{note}</span>}
-      </Link>
+        {printed === "blank" ? (
+          <span className={styles.captionBlank}>圖下方留白</span>
+        ) : (
+          (printed.zh || printed.en) && <b className={styles.caption}>{printed.zh || printed.en}</b>
+        )}
+      </div>
+      <span className={`${styles.pill} ${styles[`pill_${pillState}`]}`}>{STATE_LABEL[pillState]}</span>
+      {note && <span className={p.state === "attention" ? styles.noteWarn : styles.note}>{note}</span>}
+    </>
+  );
+  return (
+    <li className={styles.cell}>
+      {pick ? (
+        // 整張卡是勾選框的 label：點哪裡都是勾／取消勾
+        <label className={`${cardClass} ${styles.cardPick} ${pick.on ? styles.cardPicked : ""}`}>{content}</label>
+      ) : (
+        <Link href={fixHref(bookId, p.id, attention ? "attention" : null)} className={cardClass}>
+          {content}
+        </Link>
+      )}
     </li>
   );
 }

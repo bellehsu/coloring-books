@@ -50,7 +50,8 @@ let overview: Overview;
 let plan: ProducePlan;
 let produceRes: () => Response;
 let summary: unknown;
-let calls: { url: string; method: string }[];
+let redrawRes: () => Response;
+let calls: { url: string; method: string; body?: unknown }[];
 
 function json(b: unknown, status = 200) {
   return new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
@@ -65,6 +66,7 @@ beforeEach(() => {
   ]);
   plan = { backgrounds: 0, poses: 0, total: 0, estimate_s: 0, remaining: 5, fits: 0 };
   produceRes = () => json({ queued: [11], deferred_pages: [], pipeline_pages: [] }, 202);
+  redrawRes = () => json({ queued: [], skipped: [] }, 202);
   summary = {
     total: 3,
     passed: 2,
@@ -76,11 +78,13 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
-      calls.push({ url, method });
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      calls.push({ url, method, body });
       if (url === "/api/books/1") return json(book);
       if (url === "/api/books/1/overview") return json(overview);
       if (url === "/api/books/1/produce/plan") return json(plan);
       if (url === "/api/books/1/produce" && method === "POST") return produceRes();
+      if (url === "/api/books/1/poses/redraw" && method === "POST") return redrawRes();
       if (url === "/api/books/1/export/summary") return json(summary);
       if (url.startsWith("/api/books/1/export.pdf"))
         return new Response(new Blob(["%PDF"]), {
@@ -514,5 +518,96 @@ describe("B 整本書：印出這本書", () => {
     expect(sheet).toHaveTextContent("加上請看一下的頁，一共印 2 頁。");
     await userEvent.click(within(sheet).getByRole("button", { name: "看好了，下一步 →" }));
     expect(await within(sheet).findByRole("button", { name: "下載 PDF（2 頁）" })).toBeInTheDocument();
+  });
+});
+
+describe("B 整本書：選取多頁、重畫主角", () => {
+  const redraws = () => calls.filter((c) => c.url === "/api/books/1/poses/redraw" && c.method === "POST");
+  async function enterSelect() {
+    setup();
+    await screen.findByRole("list", { name: "頁面" });
+    const toggle = screen.getByRole("button", { name: "選取多頁" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "✓ 選取多頁" })).toHaveAttribute("aria-pressed", "true");
+  }
+  const bar = () => screen.getByRole("region", { name: "重畫選取的頁" });
+
+  it("選取多頁 shows checkboxes; card click toggles instead of navigating", async () => {
+    await enterSelect();
+    expect(screen.getByText("點卡片勾選要重畫主角的頁")).toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "頁面" });
+    expect(within(list).queryAllByRole("link")).toHaveLength(0);
+    const boxes = within(list).getAllByRole("checkbox");
+    expect(boxes.map((b) => b.getAttribute("aria-label"))).toEqual(["選第 1 頁", "選第 2 頁", "選第 3 頁"]);
+    await userEvent.click(within(list).getByRole("img", { name: "第 2 頁" }));
+    expect(within(list).getByRole("checkbox", { name: "選第 2 頁" })).toBeChecked();
+    expect(bar()).toHaveTextContent("已選 1 頁");
+    await userEvent.click(within(list).getByText("第2張"));
+    expect(within(list).getByRole("checkbox", { name: "選第 2 頁" })).not.toBeChecked();
+    expect(bar()).toHaveTextContent("已選 0 頁");
+    expect(within(bar()).getByRole("button", { name: "重畫 0 頁的主角" })).toBeDisabled();
+  });
+
+  it("bar: 已選 2 頁, default 1, 會畫 2 張; choosing 3 -> 會畫 6 張, button 重畫 2 頁的主角", async () => {
+    await enterSelect();
+    await userEvent.click(screen.getByRole("checkbox", { name: "選第 1 頁" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "選第 3 頁" }));
+    const b = bar();
+    expect(b).toHaveTextContent("已選 2 頁");
+    expect(b).toHaveTextContent("每頁重畫主角動作，背景和字不動");
+    expect(b).toHaveTextContent("每頁畫123張讓我挑");
+    const counts = within(b).getByRole("radiogroup", { name: "每頁畫幾張" });
+    expect(within(counts).getByRole("radio", { name: "1" })).toHaveAttribute("aria-checked", "true");
+    expect(b).toHaveTextContent("會畫 2 張");
+    await userEvent.click(within(counts).getByRole("radio", { name: "3" }));
+    expect(within(counts).getByRole("radio", { name: "3" })).toHaveAttribute("aria-checked", "true");
+    expect(b).toHaveTextContent("會畫 6 張");
+    expect(within(b).getByRole("button", { name: "重畫 2 頁的主角" })).toBeEnabled();
+  });
+
+  it("submit posts {page_ids in page order, count} and leaves select mode", async () => {
+    redrawRes = () => json({ queued: [], skipped: [{ kind: "pose", page_id: 1, position: 0, reason: "no_action" }] }, 202);
+    await enterSelect();
+    await userEvent.click(screen.getByRole("checkbox", { name: "選第 3 頁" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "選第 1 頁" }));
+    await userEvent.click(within(bar()).getByRole("radio", { name: "2" }));
+    const overviews = () => calls.filter((c) => c.url === "/api/books/1/overview").length;
+    const before = overviews();
+    await userEvent.click(within(bar()).getByRole("button", { name: "重畫 2 頁的主角" }));
+    await waitFor(() => expect(redraws()).toHaveLength(1));
+    expect(redraws()[0].body).toEqual({ page_ids: [1, 3], count: 2 });
+    // 排好之後重抓總覽（狀態卡變成正在做）
+    await waitFor(() => expect(overviews()).toBeGreaterThan(before));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "重畫選取的頁" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "選取多頁" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(screen.getByRole("list", { name: "頁面" })).queryAllByRole("checkbox")).toHaveLength(0);
+    await waitFor(() => expect(politeToasts()).toHaveTextContent("1 頁沒有動作描述，沒有重畫"));
+    // 再打開時沒有勾選
+    await userEvent.click(screen.getByRole("button", { name: "選取多頁" }));
+    expect(bar()).toHaveTextContent("已選 0 頁");
+  });
+
+  it("取消 clears the selection", async () => {
+    await enterSelect();
+    await userEvent.click(screen.getByRole("checkbox", { name: "選第 1 頁" }));
+    expect(bar()).toHaveTextContent("已選 1 頁");
+    await userEvent.click(within(bar()).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("region", { name: "重畫選取的頁" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "頁面" })).getAllByRole("link")).toHaveLength(3);
+    await userEvent.click(screen.getByRole("button", { name: "選取多頁" }));
+    expect(bar()).toHaveTextContent("已選 0 頁");
+    expect(screen.getByRole("checkbox", { name: "選第 1 頁" })).not.toBeChecked();
+    expect(redraws()).toHaveLength(0);
+  });
+
+  it("429 shows the backend message as an error toast", async () => {
+    redrawRes = () => json({ detail: "今天的生成次數不夠：要 6 張，只剩 2 張" }, 429);
+    await enterSelect();
+    await userEvent.click(screen.getByRole("checkbox", { name: "選第 2 頁" }));
+    await userEvent.click(within(bar()).getByRole("button", { name: "重畫 1 頁的主角" }));
+    await waitFor(() => expect(alertToasts()).toHaveTextContent("今天的生成次數不夠：要 6 張，只剩 2 張"));
+    // 失敗時留在選取模式，勾選還在
+    expect(screen.getByRole("checkbox", { name: "選第 2 頁" })).toBeChecked();
   });
 });
