@@ -555,10 +555,16 @@ def test_change_size_recomputes_and_demotes(client, app, monkeypatch):
     assert list(new_px) != b["layout"]["content_px"]
     real = page_lineart.evaluate
 
+    # 改尺寸時修線換算到新的內容框（stroke_remap，review C1）：在換算後的位置找那筆修線
+    from app.services.stroke_remap import remap_point
+
+    old_px = compute_layout(PaperSize.A5, PrintMode.HOME).content_px
+    _x, mark_y = remap_point((0.5, 0.05), (832, 1216), old_px, new_px)
+
     def fake_evaluate(ink, line_width_px, *a, **kw):
         report = real(ink, line_width_px, *a, **kw)
         h, w = ink.shape
-        if (w, h) == tuple(new_px) and ink[round(0.05 * (h - 1)), w // 2]:
+        if (w, h) == tuple(new_px) and ink[round(mark_y * (h - 1)), w // 2]:
             report.errors = ["gap"]  # 只有帶著修線的頁在新尺寸下出現缺口
         return report
 
@@ -570,11 +576,13 @@ def test_change_size_recomputes_and_demotes(client, app, monkeypatch):
     assert get_page(app, p2["id"]).status == PageStatus.PASSED
     for pid in (p1["id"], p2["id"]):
         assert list(png(client.get(f"/api/pages/{pid}/lineart")).size) == list(new_px)
-    # 修線以相對座標保存，不變；且落在新圖縮放後的位置
-    assert client.get(f"/api/pages/{p1['id']}/lineart/edits").json()["strokes"] == [mark]
+    # 修線換算成新內容框的相對座標（同一個來源圖位置），落在新圖縮放後的位置
+    (got,) = client.get(f"/api/pages/{p1['id']}/lineart/edits").json()["strokes"]
+    want = [remap_point(tuple(pt), (832, 1216), old_px, new_px) for pt in mark["points"]]
+    assert got["points"] == [pytest.approx(list(pt)) for pt in want]
     im = png(client.get(f"/api/pages/{p1['id']}/lineart"))
     w, h = im.size
-    assert im.getpixel((w // 2, round(0.05 * (h - 1)))) == 0
+    assert im.getpixel((w // 2, round(mark_y * (h - 1)))) == 0
     assert im.getpixel((w // 2, round(0.12 * (h - 1)))) == 255
 
 

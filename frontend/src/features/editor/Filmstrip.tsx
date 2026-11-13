@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
-import { recomposeRunning } from "@/lib/pageState";
+import { hardAttention, recomposeRunning } from "@/lib/pageState";
 import { STATE_LABEL } from "@/features/book/overviewState";
 import styles from "./Filmstrip.module.css";
 
@@ -32,13 +32,14 @@ type Tone = "ok" | "warn" | "draft" | "busy";
 
 /**
  * 頁面的狀態標籤；C 的狀態（製作中、請看一下）用 B 的字，優先順序也和 B 一樣（製作中＞請看一下＞完成）。
- * 重新合成失敗（還等著＋attention）流程不會再跑，是請看一下。
+ * 重新合成失敗（還等著＋attention）流程不會再跑，是請看一下。軟標記 review_pose（換了新的主角動作）不是問題：
+ * 通過的頁和 B 的卡片一樣標「請看一下」（同一個淡橘底），還沒通過的頁照一般狀態。
  */
 export function pageStatus(p: Page, busy: boolean): { tone: Tone; label: string } {
   if (busy) return { tone: "busy", label: "生成中" };
   if (recomposeRunning(p)) return { tone: "busy", label: STATE_LABEL.working };
-  if (p.attention) return { tone: "warn", label: STATE_LABEL.attention };
-  if (p.status === "passed") return { tone: "ok", label: "完成" };
+  if (hardAttention(p)) return { tone: "warn", label: STATE_LABEL.attention };
+  if (p.status === "passed") return p.attention ? { tone: "warn", label: STATE_LABEL.attention } : { tone: "ok", label: "完成" };
   if (p.needs_fix) return { tone: "warn", label: "需要修線" };
   return { tone: "draft", label: "草稿" };
 }

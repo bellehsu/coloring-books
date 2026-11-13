@@ -207,6 +207,24 @@ describe("FinishPanel", () => {
     await waitFor(() => expect(posts("/api/pages/7/accept")).toHaveLength(1));
   });
 
+  it("通過＋軟標記 review_pose：算已完成（不擋），附上請看一下的說明；「看過了 ✓」清掉（POST /accept）", async () => {
+    setup(
+      mkPage({ status: "passed", attention: "review_pose", attention_detail: "請看一下：換了新的主角動作" }),
+      mkQA({ status: "passed" }),
+    );
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "完成這一頁 ✓" })).not.toBeInTheDocument();
+    expect(screen.getByText("請看一下：換了新的主角動作")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消完成" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "看過了 ✓" }));
+    await waitFor(() => expect(posts("/api/pages/7/accept")).toHaveLength(1));
+  });
+
+  it("通過、沒有請看一下：沒有「看過了」", () => {
+    setup(mkPage({ status: "passed", character_check: "consistent" }), mkQA({ status: "passed" }));
+    expect(screen.queryByRole("button", { name: "看過了 ✓" })).not.toBeInTheDocument();
+  });
+
   it("完成前等兩邊（進階編輯與 C）同一張圖的修線都寫完", async () => {
     let release!: () => void;
     responses["PUT /api/pages/7/lineart/edits?oneclick=true"] = () => j(mkQA());

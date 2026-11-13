@@ -457,9 +457,31 @@ describe("C 處理一頁：畫過的角色動作與重畫主角（#4B）", () =>
     expect(items[0]).toHaveAttribute("aria-pressed", "false");
     expect(items[0]).not.toHaveTextContent("使用中");
     expect(within(row("角色動作")).getByText("這頁畫過 3 張・點一下就換")).toBeInTheDocument();
-    // 第一次打開這頁：沒有「新」
-    expect(within(list).queryByText("新")).toBeNull();
+    // 第一次打開這頁：比使用中（20）新的標「新」
+    expect(within(list).getAllByText("新")).toHaveLength(2);
+    expect(items[2]).not.toHaveTextContent("新");
     await waitFor(() => expect(localStorage.getItem("cb:seenPose:5")).toBe("23"));
+  });
+
+  it("first visit after a batch redraw: the candidate newer than the taken pose is 新; the next visit has none", async () => {
+    // 批次重畫：22 換上去（使用中），23 是候選；這頁從沒在 C 打開過
+    withPoses();
+    page = mkPage({ pose_generation_id: 22 });
+    const { unmount } = setup();
+    let list = await history();
+    let items = within(list).getAllByRole("button");
+    expect(items[0]).toHaveTextContent("新"); // 23 候選
+    expect(items[1]).toHaveTextContent("使用中"); // 22
+    expect(items[1]).not.toHaveTextContent("新");
+    expect(items[2]).not.toHaveTextContent("新"); // 20 舊的
+    await waitFor(() => expect(localStorage.getItem("cb:seenPose:5")).toBe("23"));
+    unmount();
+    // 第二次打開：看過了，沒有「新」
+    setup();
+    list = await history();
+    items = within(list).getAllByRole("button");
+    expect(items).toHaveLength(3);
+    expect(within(list).queryByText("新")).toBeNull();
   });
 
   it("poses newer than the last visit are tagged 新", async () => {

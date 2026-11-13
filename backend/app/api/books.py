@@ -28,10 +28,11 @@ from app.api.schemas import (
     ShareIn,
 )
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
-from app.services.layout import PaperSize, ratio_group
+from app.services.layout import PaperSize, compute_layout, ratio_group
 from app.services.page_compose import store_outside_tx
 from app.services.page_lineart import ensure_page_lineart, on_pipeline
 from app.services.pipeline import enqueue_page_task
+from app.services.stroke_remap import remap_book_strokes
 from app.services import usage
 from app.services.book_delete import delete_books_rows
 from app.services.gen_request import encode_request
@@ -180,7 +181,8 @@ def update_book(
     worker: GenerationWorker = Depends(get_worker),
     owner: Owner = Depends(current_owner),
 ) -> BookOut:
-    """改尺寸／列印方式：頁面流程做的可以印的頁排流程重跑（跑完仍可以印，不悄悄退回「還沒做完」），
+    """改尺寸／列印方式：同一個交易把所有修線筆畫換算到新的內容框（stroke_remap，review C1），
+    頁面流程做的可以印的頁排流程重跑（跑完仍可以印，不悄悄退回「還沒做完」），
     其他有選圖的頁在背景重算線稿（舊編輯器的規則：可以印的頁有缺口就退回草稿）。"""
     book = owned_book(session, owner, book_id)
     if body.paper_size is not None and ratio_group(body.paper_size) != ratio_group(book.paper_size):
@@ -190,6 +192,7 @@ def update_book(
             if ratio_group(s) == ratio_group(book.paper_size)
         )
         raise HTTPException(422, f"只能改成同比例的紙張尺寸（{same}）")
+    old_content = compute_layout(book.paper_size, book.print_mode).content_px
     changed = False
     if body.title is not None:
         book.title = body.title
@@ -204,6 +207,8 @@ def update_book(
         book.updated_at = utcnow()
         session.add(book)
         if changed:
+            remap_book_strokes(session, book_id, old_content,
+                               compute_layout(book.paper_size, book.print_mode).content_px)
             rerun = _pipeline_pages(session, book_id)
             for page_id in rerun:
                 enqueue_page_task(session, page_id)

@@ -123,6 +123,15 @@ def to_gray(img: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img[..., :3], cv2.COLOR_RGB2GRAY)
 
 
+def contain_box(src_wh: tuple[int, int], target_wh: tuple[int, int]) -> tuple[int, int, int, int]:
+    """fit=contain：來源圖（w×h）等比縮放後放在 target（tw×th）的哪裡，回傳 (x0, y0, nw, nh)（像素）。
+    resize_to_target 與修線筆畫的換算（stroke_remap）共用這個公式。"""
+    (w, h), (tw, th) = src_wh, target_wh
+    scale = min(tw / w, th / h)
+    nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+    return (tw - nw) // 2, (th - nh) // 2, nw, nh
+
+
 def resize_to_target(img: np.ndarray, p: LineartParams) -> np.ndarray:
     h, w = img.shape[:2]
     tw, th = p.target_width, p.target_height
@@ -130,15 +139,16 @@ def resize_to_target(img: np.ndarray, p: LineartParams) -> np.ndarray:
         scale_x, scale_y = tw / w, th / h
         interp = _INTERP["area"] if scale_x * scale_y < 1 else _INTERP[p.interpolation]
         return cv2.resize(img, (tw, th), interpolation=interp)
-    scale = min(tw / w, th / h) if p.fit == "contain" else max(tw / w, th / h)
+    if p.fit == "contain":
+        x0, y0, nw, nh = contain_box((w, h), (tw, th))
+        interp = _INTERP["area"] if min(tw / w, th / h) < 1 else _INTERP[p.interpolation]
+        canvas = np.full((th, tw) + img.shape[2:], 255, dtype=img.dtype)
+        canvas[y0:y0 + nh, x0:x0 + nw] = cv2.resize(img, (nw, nh), interpolation=interp)
+        return canvas
+    scale = max(tw / w, th / h)
     nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
     interp = _INTERP["area"] if scale < 1 else _INTERP[p.interpolation]
     resized = cv2.resize(img, (nw, nh), interpolation=interp)
-    if p.fit == "contain":
-        canvas = np.full((th, tw) + img.shape[2:], 255, dtype=img.dtype)
-        y0, x0 = (th - nh) // 2, (tw - nw) // 2
-        canvas[y0:y0 + nh, x0:x0 + nw] = resized
-        return canvas
     y0, x0 = (nh - th) // 2, (nw - tw) // 2
     return resized[y0:y0 + th, x0:x0 + tw]
 

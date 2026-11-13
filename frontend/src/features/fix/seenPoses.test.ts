@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { lastSeenPose, markSeenPose } from "./seenPoses";
+import { isFreshPose, lastSeenPose, markSeenPose, readSeenPose } from "./seenPoses";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -43,5 +43,39 @@ describe("seenPoses：每頁看過的最新角色動作（瀏覽器的 localStor
     });
     expect(lastSeenPose(5)).toBeNull();
     expect(() => markSeenPose(5, 21)).not.toThrow();
+  });
+});
+
+describe("isFreshPose：哪張標「新」", () => {
+  it("with a mark: newer than the mark (today's rule, the current one included)", () => {
+    const seen = { ok: true as const, id: 20 };
+    expect(isFreshPose(22, seen, 20, 22)).toBe(true);
+    expect(isFreshPose(20, seen, 20, 22)).toBe(false);
+    expect(isFreshPose(18, seen, 20, 22)).toBe(false);
+  });
+
+  it("first visit (no mark): newer than the pose in use at open, and not the current one", () => {
+    const seen = { ok: true as const, id: null };
+    expect(isFreshPose(23, seen, 22, 22)).toBe(true);
+    expect(isFreshPose(22, seen, 22, 22)).toBe(false);
+    expect(isFreshPose(20, seen, 22, 22)).toBe(false);
+    // 打開之後換成 23：23 是使用中，不標
+    expect(isFreshPose(23, seen, 22, 23)).toBe(false);
+    // 沒有使用中的：不標
+    expect(isFreshPose(23, seen, null, null)).toBe(false);
+  });
+
+  it("localStorage unreadable: never fresh", () => {
+    expect(isFreshPose(23, { ok: false }, 20, 20)).toBe(false);
+  });
+
+  it("readSeenPose tells no-mark from unreadable", () => {
+    expect(readSeenPose(5)).toEqual({ ok: true, id: null });
+    markSeenPose(5, 21);
+    expect(readSeenPose(5)).toEqual({ ok: true, id: 21 });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("denied", "SecurityError");
+    });
+    expect(readSeenPose(5)).toEqual({ ok: false });
   });
 });
