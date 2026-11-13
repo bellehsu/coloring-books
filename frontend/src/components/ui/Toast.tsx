@@ -8,9 +8,15 @@ interface Item {
   id: number;
   message: string;
   tone: ToastTone;
+  action?: ToastAction;
+}
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
 }
 interface ToastApi {
-  show: (message: string, tone?: ToastTone) => void;
+  /** action：訊息旁的按鈕（例如「復原」）；按下去執行 onClick 並關掉這則。 */
+  show: (message: string, tone?: ToastTone, action?: ToastAction) => void;
 }
 
 const DURATION_MS = 5000;
@@ -28,15 +34,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     return () => t.forEach(clearTimeout);
   }, []);
 
-  const show = useCallback((message: string, tone: ToastTone = "info") => {
+  const dismiss = useCallback((id: number) => setItems((xs) => xs.filter((x) => x.id !== id)), []);
+
+  const show = useCallback((message: string, tone: ToastTone = "info", action?: ToastAction) => {
     const id = nextId.current++;
-    setItems((xs) => [...xs, { id, message, tone }]);
+    setItems((xs) => [...xs, { id, message, tone, action }]);
     const h = setTimeout(() => {
       timers.current.delete(h);
-      setItems((xs) => xs.filter((x) => x.id !== id));
+      dismiss(id);
     }, DURATION_MS);
     timers.current.add(h);
-  }, []);
+  }, [dismiss]);
 
   const api = useMemo(() => ({ show }), [show]);
 
@@ -50,6 +58,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {items.filter((t) => t.tone !== "error").map((t) => (
             <div key={t.id} className={`${styles.toast} ${styles[t.tone]}`}>
               {t.message}
+              {t.action && (
+                <button
+                  type="button"
+                  className={styles.action}
+                  onClick={() => {
+                    t.action!.onClick();
+                    dismiss(t.id);
+                  }}
+                >
+                  {t.action.label}
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -57,6 +77,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {items.filter((t) => t.tone === "error").map((t) => (
             <div key={t.id} className={`${styles.toast} ${styles[t.tone]}`}>
               {t.message}
+              {t.action && (
+                <button
+                  type="button"
+                  className={styles.action}
+                  onClick={() => {
+                    t.action!.onClick();
+                    dismiss(t.id);
+                  }}
+                >
+                  {t.action.label}
+                </button>
+              )}
             </div>
           ))}
         </div>

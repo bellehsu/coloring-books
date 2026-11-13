@@ -354,6 +354,15 @@ export function useSetupCharacter() {
   return { generate, choose, upload };
 }
 
+/** 刪掉一張主角候選（discard）；成功後重抓該書的生成紀錄。復原用 useUpdateGeneration。 */
+export function useDeleteCandidate(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (generationId: number) => api.del(`/books/${bookId}/character/candidates/${generationId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
+  });
+}
+
 /** invalidate: pages, book, books */
 export function useCreatePage(bookId: number) {
   const qc = useQueryClient();
