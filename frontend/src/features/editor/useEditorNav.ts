@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Page } from "@/api/client";
+import { hardAttention } from "@/lib/pageState";
 import { allowedMode, DEFAULT_MODE, normalizeMode, type EditorMode, type ModeGate } from "./StageHeader";
 
 interface Nav {
@@ -21,7 +22,7 @@ function parseNav(sp: URLSearchParams): Nav {
 export const gateOf = (p: Page | null | undefined): ModeGate => ({
   selectedId: p?.selected_generation_id ?? null,
   recomposing: !!p?.recompose_pending,
-  recomposeFailed: !!p?.recompose_pending && !!p.attention,
+  recomposeFailed: !!p?.recompose_pending && hardAttention(p),
 });
 
 /**

@@ -36,17 +36,16 @@ from app.models import (  # noqa: E402
     Book,
     Generation,
     GenStatus,
-    LineartEdit,
     Owner,
     OwnerSession,
     Page,
-    PageHistory,
     PageTask,
     PageTaskStatus,
     Usage,
     utcnow,
 )
 from app.services import auth, instance  # noqa: E402
+from app.services.book_delete import delete_books_rows  # noqa: E402
 from app.services.usage import clock, taipei_day  # noqa: E402
 from app.storage import make_storage  # noqa: E402
 
@@ -241,15 +240,7 @@ def cmd_delete_data(args: argparse.Namespace, settings: Settings, sessions) -> i
         book_ids = list(s.exec(owned).all())
         gen_ids = set(s.exec(select(Generation.id).where(col(Generation.book_id).in_(book_ids))).all())
         n_pages = s.exec(select(func.count()).select_from(Page).where(col(Page.book_id).in_(book_ids))).one()
-        page_ids = select(Page.id).where(col(Page.book_id).in_(book_ids))
-        s.exec(delete(LineartEdit).where(
-            col(LineartEdit.page_id).in_(page_ids) | col(LineartEdit.generation_id).in_(list(gen_ids))
-        ))
-        s.exec(delete(PageTask).where(col(PageTask.page_id).in_(page_ids)))
-        s.exec(delete(PageHistory).where(col(PageHistory.page_id).in_(page_ids)))
-        s.exec(delete(Generation).where(col(Generation.book_id).in_(book_ids)))
-        s.exec(delete(Page).where(col(Page.book_id).in_(book_ids)))
-        s.exec(delete(Book).where(col(Book.id).in_(book_ids)))
+        delete_books_rows(s, book_ids)
         n_sessions = auth.delete_sessions(s, args.id)
         s.exec(delete(Usage).where(col(Usage.owner_id) == args.id))
         s.exec(delete(Owner).where(col(Owner.id) == args.id))

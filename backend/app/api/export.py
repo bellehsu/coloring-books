@@ -15,6 +15,7 @@ from app.services.export import build_pdf, layout_print_page, png_bytes
 from app.services.imageio import png_to_ink
 from app.services.layout import compute_layout
 from app.services.page_lineart import LineartUnavailable, ensure_page_lineart, read_page_lineart
+from app.services.page_state import hard_attention
 from app.storage import Storage
 
 router = APIRouter(prefix="/api", tags=["export"])
@@ -47,12 +48,13 @@ Include = Literal["passed", "ready", "all"]
 
 
 def _included(p: Page, include: Include) -> bool:
-    """passed：通過的頁；ready：通過而且沒有「請看一下」（B 的可以印，spec §4.3）；all：有選定圖的頁。"""
+    """passed：通過的頁；ready：通過而且沒有「請看一下」（B 的可以印，spec §4.3；軟標記 review_pose 照樣印）；
+    all：有選定圖的頁。"""
     if p.selected_generation_id is None:
         return False
     if include == "all":
         return True
-    return p.status == PageStatus.PASSED and (include == "passed" or p.attention is None)
+    return p.status == PageStatus.PASSED and (include == "passed" or not hard_attention(p.attention))
 
 
 def book_pdf(session: Session, storage: Storage, book: Book, include: Include,
@@ -108,9 +110,9 @@ def export_summary(
             skipped.append({"page_id": p.id, "position": p.position, "reason": "not_passed"})
         else:
             exportable.append(p.id)
-            if p.attention is None:
+            if not hard_attention(p.attention):
                 ready.append(p.id)
-    # ready_ids：include=ready 會印的頁（通過、沒有「請看一下」），B 的「先看一眼」用
+    # ready_ids：include=ready 會印的頁（通過、沒有「請看一下」；review_pose 算），B 的「先看一眼」用
     return {"total": len(pages), "passed": len(exportable),
             "exportable_ids": exportable, "ready_ids": ready, "skipped": skipped}
 

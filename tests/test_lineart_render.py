@@ -117,3 +117,26 @@ def test_algorithm_parameters_snapshot():
         "max_gap_px": 40, "border_px": 12, "gap_error_min": 1, "black_fill_warn": 0.005,
         "tiny_region_warn": 150, "fragment_warn": 80, "min_region_area": 3000,
     }, msg
+
+
+def _band_img():
+    img = np.full((600, 832, 3), 255, np.uint8)
+    img[292:308] = 0
+    return img
+
+
+def test_render_lineart_outline_fill_off_is_default():
+    img = _band_img()
+    assert np.array_equal(lr.render_lineart(img, (2244, 3272), LineDetail.STANDARD, 11, outline_fill=False),
+                          lr.render_lineart(img, (2244, 3272), LineDetail.STANDARD, 11))
+
+
+def test_render_lineart_outline_fill_on():
+    from app.services import lineart_post
+    from app.services.lineart_extract import extract_xdog, fill_outlines
+
+    img = _band_img()
+    on = lr.render_lineart(img, (2244, 3272), LineDetail.STANDARD, 11, outline_fill=True)
+    xd = extract_xdog(img, lr.DETAIL_SIGMA[LineDetail.STANDARD])
+    assert np.array_equal(on, lineart_post.render_ink(fill_outlines(img, xd), (2244, 3272), 11))
+    assert not np.array_equal(on, lr.render_lineart(img, (2244, 3272), LineDetail.STANDARD, 11))

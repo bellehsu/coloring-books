@@ -1,0 +1,128 @@
+[
+ {
+  "file": "p01.png",
+  "d_thin70_r4": {
+   "gap_count": 57,
+   "tiny_regions": null,
+   "black_fill": 0.0911,
+   "ms": 318
+  },
+  "d_thin70_r6": {
+   "gap_count": 52,
+   "tiny_regions": null,
+   "black_fill": 0.0911,
+   "ms": 317
+  },
+  "d_thin70_r8": {
+   "gap_count": 49,
+   "tiny_regions": null,
+   "black_fill": 0.0847,
+   "ms": 330
+  }
+ },
+ {
+  "file": "p03.png",
+  "d_thin70_r4": {
+   "gap_count": 37,
+   "tiny_regions": null,
+   "black_fill": 0.0933,
+   "ms": 305
+  },
+  "d_thin70_r6": {
+   "gap_count": 35,
+   "tiny_regions": null,
+   "black_fill": 0.093,
+   "ms": 345
+  },
+  "d_thin70_r8": {
+   "gap_count": 29,
+   "tiny_regions": null,
+   "black_fill": 0.0861,
+   "ms": 371
+  }
+ },
+ {
+  "file": "p04.png",
+  "d_thin70_r4": {
+   "gap_count": 27,
+   "tiny_regions": null,
+   "black_fill": 0.0767,
+   "ms": 286
+  },
+  "d_thin70_r6": {
+   "gap_count": 26,
+   "tiny_regions": null,
+   "black_fill": 0.0764,
+   "ms": 347
+  },
+  "d_thin70_r8": {
+   "gap_count": 27,
+   "tiny_regions": null,
+   "black_fill": 0.0729,
+   "ms": 347
+  }
+ },
+ {
+  "file": "p11.png",
+  "d_thin70_r4": {
+   "gap_count": 29,
+   "tiny_regions": null,
+   "black_fill": 0.0964,
+   "ms": 360
+  },
+  "d_thin70_r6": {
+   "gap_count": 26,
+   "tiny_regions": null,
+   "black_fill": 0.0967,
+   "ms": 377
+  },
+  "d_thin70_r8": {
+   "gap_count": 25,
+   "tiny_regions": null,
+   "black_fill": 0.0919,
+   "ms": 376
+  }
+ },
+ {
+  "file": "p17.png",
+  "d_thin70_r4": {
+   "gap_count": 30,
+   "tiny_regions": null,
+   "black_fill": 0.1093,
+   "ms": 304
+  },
+  "d_thin70_r6": {
+   "gap_count": 29,
+   "tiny_regions": null,
+   "black_fill": 0.1084,
+   "ms": 391
+  },
+  "d_thin70_r8": {
+   "gap_count": 22,
+   "tiny_regions": null,
+   "black_fill": 0.1041,
+   "ms": 376
+  }
+ },
+ {
+  "file": "p20.png",
+  "d_thin70_r4": {
+   "gap_count": 35,
+   "tiny_regions": null,
+   "black_fill": 0.0941,
+   "ms": 402
+  },
+  "d_thin70_r6": {
+   "gap_count": 31,
+   "tiny_regions": null,
+   "black_fill": 0.0946,
+   "ms": 410
+  },
+  "d_thin70_r8": {
+   "gap_count": 27,
+   "tiny_regions": null,
+   "black_fill": 0.0906,
+   "ms": 413
+  }
+ }
+]

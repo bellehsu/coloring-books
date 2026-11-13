@@ -111,6 +111,40 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Delete Book",
+        "description": "刪除整本書（資料列與物件）。排隊中的工作取消並退額度；執行中的不擋，worker 收尾時發現列不見了會清掉自己寫的物件。\nadmin 只能刪自己的書（別人的書一律 404）。物件在交易提交後才刪（盡力而為）：失敗只記 log，之後 storage_gc 會清。",
+        "operationId": "delete_book_api_books__book_id__delete",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "books"
@@ -312,6 +346,51 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/character/candidates/{gen_id}": {
+      "delete": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Delete Character Candidate",
+        "description": "刪掉不要的角色候選圖＝捨棄（discarded）；復原走 PATCH /generations/{id} {\"discarded\": false}。",
+        "operationId": "delete_character_candidate_api_books__book_id__character_candidates__gen_id__delete",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          },
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -594,7 +673,7 @@
           "pages"
         ],
         "summary": "Update Page",
-        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。",
+        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。\nfrom_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而\n頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標；沒帶 from_setup 時不標；\n與 oneclick 一起帶是 400。",
         "operationId": "update_page_api_pages__page_id__patch",
         "parameters": [
           {
@@ -617,6 +696,18 @@
               "title": "Oneclick"
             },
             "description": "C 處理一頁：先存復原快照、排頁面流程"
+          },
+          {
+            "name": "from_setup",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "設定頁改既有頁面：場景／動作變了就標「要重畫」",
+              "default": false,
+              "title": "From Setup"
+            },
+            "description": "設定頁改既有頁面：場景／動作變了就標「要重畫」"
           }
         ],
         "requestBody": {
@@ -824,7 +915,7 @@
           "compose"
         ],
         "summary": "Create Pose",
-        "description": "產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出\n新動作，prompt 只有動作。不先檢查 preflight，缺東西時由生成失敗回報。\noneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。",
+        "description": "產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出\n新動作，prompt 只有動作。不先檢查 preflight，缺東西時由生成失敗回報。\noneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。\nbody.count（C 的「一次畫 N 張」）：多的幾張是候選（不自動選用）；整批一次預留額度。回傳第 1 張。",
         "operationId": "create_pose_api_pages__page_id__poses_post",
         "parameters": [
           {
@@ -866,6 +957,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/books/{book_id}/poses/redraw": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Redraw Poses",
+        "description": "B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 body.count 張。第 1 張好了自動換上去（有復原快照）\n並標成 review_pose（請看一下：換了新的主角動作），其餘是候選。沒有動作描述的頁略過。\npage_ids 去掉重複（保留順序），都要是這本書的頁。整批一次預留額度：不夠就 429，一筆都不排。",
+        "operationId": "redraw_poses_api_books__book_id__poses_redraw_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoseRedrawIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoseRedrawOut"
                 }
               }
             }
@@ -3189,6 +3333,11 @@
             ],
             "title": "Shared At"
           },
+          "mine": {
+            "type": "boolean",
+            "title": "Mine",
+            "default": true
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -3232,6 +3381,9 @@
           "progress": {
             "$ref": "#/components/schemas/RunProgress"
           },
+          "progress_pages": {
+            "$ref": "#/components/schemas/ProgressPages"
+          },
           "estimate_s": {
             "type": "integer",
             "title": "Estimate S"
@@ -3239,6 +3391,10 @@
           "deferred_count": {
             "type": "integer",
             "title": "Deferred Count"
+          },
+          "redraw_count": {
+            "type": "integer",
+            "title": "Redraw Count"
           },
           "run_started_at": {
             "anyOf": [
@@ -3258,8 +3414,10 @@
           "book_id",
           "pages",
           "progress",
+          "progress_pages",
           "estimate_s",
           "deferred_count",
+          "redraw_count",
           "run_started_at"
         ],
         "title": "BookOverviewOut"
@@ -3975,6 +4133,10 @@
               }
             ],
             "title": "Attention Detail"
+          },
+          "review": {
+            "type": "boolean",
+            "title": "Review"
           }
         },
         "type": "object",
@@ -3989,7 +4151,8 @@
           "caption_show_en",
           "thumb_url",
           "lineart_url",
-          "attention_detail"
+          "attention_detail",
+          "review"
         ],
         "title": "OverviewPageOut"
       },
@@ -4234,6 +4397,14 @@
             "type": "boolean",
             "title": "Can Redo"
           },
+          "redraw_background": {
+            "type": "boolean",
+            "title": "Redraw Background"
+          },
+          "redraw_pose": {
+            "type": "boolean",
+            "title": "Redraw Pose"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -4276,6 +4447,8 @@
           "recompose_pending",
           "can_undo",
           "can_redo",
+          "redraw_background",
+          "redraw_pose",
           "created_at",
           "updated_at"
         ],
@@ -4461,6 +4634,13 @@
             "maxLength": 300,
             "minLength": 1,
             "title": "Action"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 1
           }
         },
         "type": "object",
@@ -4468,6 +4648,58 @@
           "action"
         ],
         "title": "PoseCreate"
+      },
+      "PoseRedrawIn": {
+        "properties": {
+          "page_ids": {
+            "items": {
+              "type": "integer",
+              "maximum": 9.223372036854776e+18,
+              "minimum": -9.223372036854776e+18
+            },
+            "type": "array",
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Page Ids"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_ids"
+        ],
+        "title": "PoseRedrawIn",
+        "description": "B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 count 張（第 1 張換上去並標 review_pose，其餘是候選）。"
+      },
+      "PoseRedrawOut": {
+        "properties": {
+          "queued": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationOut"
+            },
+            "type": "array",
+            "title": "Queued"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/BatchSkip"
+            },
+            "type": "array",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "skipped"
+        ],
+        "title": "PoseRedrawOut"
       },
       "PrintMode": {
         "type": "string",
@@ -4553,6 +4785,24 @@
           "fits"
         ],
         "title": "ProducePlanOut"
+      },
+      "ProgressPages": {
+        "properties": {
+          "ready": {
+            "type": "integer",
+            "title": "Ready"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ready",
+          "total"
+        ],
+        "title": "ProgressPages"
       },
       "QAMessage": {
         "properties": {
@@ -4948,6 +5198,14 @@
             "type": "boolean",
             "title": "Can Redo"
           },
+          "redraw_background": {
+            "type": "boolean",
+            "title": "Redraw Background"
+          },
+          "redraw_pose": {
+            "type": "boolean",
+            "title": "Redraw Pose"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -5005,6 +5263,8 @@
           "recompose_pending",
           "can_undo",
           "can_redo",
+          "redraw_background",
+          "redraw_pose",
           "created_at",
           "updated_at",
           "requeued",

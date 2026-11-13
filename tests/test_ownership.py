@@ -90,6 +90,18 @@ PHASE13_ROUTES = {
 }
 
 
+# Fix round 2026-11-13：新增的擁有者路由（Task 5、7 之後也加在這裡）
+FIX_ROUND_ROUTES = {
+    ("DELETE", "/api/books/{book_id}"),
+    ("DELETE", "/api/books/{book_id}/character/candidates/{gen_id}"),
+    ("POST", "/api/books/{book_id}/poses/redraw"),
+}
+
+
+# admin 也只能操作自己的資源的路由（別人的一律 404，不像其他路由 admin 看得到全部）
+ADMIN_OWN_ONLY = {("DELETE", "/api/books/{book_id}")}
+
+
 def test_route_inventory_is_explicit():
     """不帶 id 的路由必須剛好是 allow-list；帶參數的路由只能用 book_id／page_id／gen_id。"""
     no_id = {(m, p) for m, p, params in ROUTES if not params & OWNED_PARAMS}
@@ -100,6 +112,7 @@ def test_route_inventory_is_explicit():
     assert SHARED <= {(m, p) for m, p, _ in ROUTES}  # 清單裡的路由都真的存在
     assert len(ID_ROUTES) >= 35  # 防呆：路由表讀錯會變成空的參數化
     assert PHASE13_ROUTES <= set(ID_ROUTES)
+    assert FIX_ROUND_ROUTES <= set(ID_ROUTES)
 
 
 @pytest.fixture
@@ -191,7 +204,9 @@ def test_ownership_404_on_every_route(world, method, path):
         as_(client, sids[who])
         r = _call(client, method, url)
         assert r.status_code not in (401, 403), (who, url, r.text)
-        if r.status_code == 404:
+        if (method, path) in ADMIN_OWN_ONLY:  # admin 也只能刪自己的書：別人的書一律 404
+            assert r.status_code == 404 and r.json()["detail"] == "找不到這本繪本"
+        elif r.status_code == 404:
             assert r.json()["detail"] not in NOT_FOUND, (who, url, r.text)
 
 

@@ -14,6 +14,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from sqlalchemy import case
 from sqlmodel import Session, col, select, update
 
 from app.api.deps import (
@@ -35,6 +36,8 @@ from app.api.schemas import (
     PageOut,
     PagePlacement,
     PoseCreate,
+    PoseRedrawIn,
+    PoseRedrawOut,
     SelectGeneration,
 )
 from app.models import Generation, GenKind, GenStatus, Owner, Page, utcnow
@@ -49,7 +52,7 @@ from app.services.jobs import (
     build_job,
     enqueue_jobs,
     has_character,
-    pose_job,
+    redraw_jobs,
     take,
 )
 from app.services.layout import compute_layout
@@ -60,6 +63,7 @@ from app.services.page_compose import (
     store_outside_tx,
     usable_conditions,
 )
+from app.services.page_state import ATTENTION_REVIEW_POSE
 from app.services.pipeline import enqueue_page_task
 from app.services.slots import UPLOAD_ENGINE
 from app.services.uploads import cover_crop, mark_stored, read_upload
@@ -135,18 +139,55 @@ def create_pose(
 ) -> GenerationOut:
     """產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
     新動作，prompt 只有動作。不先檢查 preflight，缺東西時由生成失敗回報。
-    oneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。"""
+    oneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。
+    body.count（C 的「一次畫 N 張」）：多的幾張是候選（不自動選用）；整批一次預留額度。回傳第 1 張。"""
     page = owned_page(session, owner, page_id)
     book = owned_book(session, owner, page.book_id)
     if not has_character(session, book):
         raise HTTPException(409, "請先設定角色")
-    gens = enqueue_jobs(session, worker, owner, [take(pose_job(session, book, page, body.action), oneclick)])
+    jobs = redraw_jobs(session, book, page, body.action, body.count, take_first=oneclick, review=False)
+    gens = enqueue_jobs(session, worker, owner, jobs)
     return GenerationOut.for_worker(gens[0], worker)
+
+
+@router.post("/books/{book_id}/poses/redraw", status_code=202, response_model=PoseRedrawOut)
+def redraw_poses(
+    book_id: int,
+    body: PoseRedrawIn,
+    session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
+) -> PoseRedrawOut:
+    """B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 body.count 張。第 1 張好了自動換上去（有復原快照）
+    並標成 review_pose（請看一下：換了新的主角動作），其餘是候選。沒有動作描述的頁略過。
+    page_ids 去掉重複（保留順序），都要是這本書的頁。整批一次預留額度：不夠就 429，一筆都不排。"""
+    with BATCH_LOCK:
+        book = owned_book(session, owner, book_id)
+        if not has_character(session, book):
+            raise HTTPException(409, "請先設定角色")
+        ids = list(dict.fromkeys(body.page_ids))
+        pages = {p.id: p for p in session.exec(
+            select(Page).where(col(Page.book_id) == book_id, col(Page.id).in_(ids))
+        ).all()}
+        if len(pages) != len(ids):
+            raise HTTPException(400, "page_ids 必須是這本繪本的頁面")
+        jobs: list[Job] = []
+        skipped: list[BatchSkip] = []
+        for pid in ids:
+            page = pages[pid]
+            if not page.action_prompt.strip():
+                skipped.append(BatchSkip(kind="pose", page_id=page.id, position=page.position, reason="沒有動作描述"))
+                continue
+            jobs.extend(redraw_jobs(session, book, page, page.action_prompt, body.count,
+                                    take_first=True, review=True))
+        gens = enqueue_jobs(session, worker, owner, jobs)  # 整批一次預留，不夠就整批 429
+        return PoseRedrawOut(queued=GenerationOut.for_worker_many(list(gens), worker), skipped=skipped)
 
 
 def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKind,
           oneclick: bool = False, worker: GenerationWorker | None = None) -> PageOut:
-    """選用背景／角色動作。oneclick：先存快照、筆畫清掉（重新合成）、排頁面流程；選的就是目前那張則什麼都不做。"""
+    """選用背景／角色動作。oneclick：先存快照、筆畫清掉（重新合成）、排頁面流程；選的就是目前那張則什麼都不做。
+    C 選另一個角色動作（oneclick）也清掉軟標記 review_pose（使用者看過、自己選了）；換背景不動它。"""
     label = _LABEL[kind]
     page = owned_page(session, owner, page_id)
     gen = owned_generation(session, owner, gen_id)  # 別人的與不存在一樣 404
@@ -173,10 +214,15 @@ def _pick(session: Session, owner: Owner, page_id: int, gen_id: int, kind: GenKi
                *usable_conditions(kind))
         .exists()
     )
+    values = slot_change_values(field, gen.id)
+    if oneclick and kind == GenKind.POSE:
+        review = col(Page.attention) == ATTENTION_REVIEW_POSE
+        values["attention"] = case((review, None), else_=col(Page.attention))
+        values["attention_detail"] = case((review, None), else_=col(Page.attention_detail))
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, still_valid)
-        .values(**slot_change_values(field, gen.id))
+        .values(**values)
     )
     if res.rowcount == 0:
         session.rollback()

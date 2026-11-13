@@ -20,6 +20,7 @@ import type {
   InviteCreate,
   Me,
   Page,
+  PoseRedrawOut,
   ProducePlan,
   ProduceResult,
   QA,
@@ -67,6 +68,21 @@ export const useBooks = () => useQuery({ queryKey: qk.books(), queryFn: () => ap
 /** enabled＝false：還沒有書（A 的 /books/new 在書建立前）。 */
 export const useBook = (id: number, enabled = true) =>
   useQuery({ queryKey: qk.book(id), queryFn: () => api.get<Book>(`/books/${id}`), enabled });
+
+/** 刪書：把書從書架快取拿掉，清掉這本書的 book／overview 查詢，分享清單與佇列狀態重抓（排隊中的工作被取消了）。 */
+export function useDeleteBook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (book: Book) => api.del(`/books/${book.id}`),
+    onSuccess: (_d, book) => {
+      qc.setQueryData<Book[]>(qk.books(), (old) => old?.filter((b) => b.id !== book.id));
+      qc.removeQueries({ queryKey: qk.book(book.id) });
+      qc.removeQueries({ queryKey: qk.overview(book.id) });
+      void qc.invalidateQueries({ queryKey: qk.sharedBooks() });
+      void qc.invalidateQueries({ queryKey: qk.queue() });
+    },
+  });
+}
 
 /** 目前的使用者（名字與是否為管理者）；首頁用它決定要不要顯示「邀請管理」。 */
 export const useMe = () => useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me"), retry: false });
@@ -340,6 +356,15 @@ export function useSetupCharacter() {
   return { generate, choose, upload };
 }
 
+/** 刪掉一張主角候選（discard）；成功後重抓該書的生成紀錄。復原用 useUpdateGeneration。 */
+export function useDeleteCandidate(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (generationId: number) => api.del(`/books/${bookId}/character/candidates/${generationId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
+  });
+}
+
 /** invalidate: pages, book, books */
 export function useCreatePage(bookId: number) {
   const qc = useQueryClient();
@@ -489,7 +514,7 @@ export function useGeneratePose(bookId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ pageId, action }: { pageId: number; action: string }) =>
-      api.post<Generation>(`/pages/${pageId}/poses`, { action } satisfies S["PoseCreate"]),
+      api.post<Generation>(`/pages/${pageId}/poses`, { action } satisfies Omit<S["PoseCreate"], "count">),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
 }
@@ -542,6 +567,23 @@ export function useCompose(bookId: number) {
       Promise.all([
         invalidatePage(qc, bookId, v.pageId),
         qc.invalidateQueries({ queryKey: qk.generationsOf(bookId) }),
+      ]),
+  });
+}
+
+/** B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 count 張（第 1 張換上去並標 review_pose，其餘是候選）。 */
+export function useRedrawPoses(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation<PoseRedrawOut, unknown, { pageIds: number[]; count: 1 | 2 | 3 }>({
+    mutationFn: ({ pageIds, count }) =>
+      api.post<PoseRedrawOut>(`/books/${bookId}/poses/redraw`, { page_ids: pageIds, count }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.overview(bookId) }),
+        qc.invalidateQueries({ queryKey: qk.pages(bookId) }),
+        invalidateJobs(qc, bookId),
+        qc.invalidateQueries({ queryKey: qk.books() }),
+        qc.invalidateQueries({ queryKey: qk.producePlan(bookId) }),
       ]),
   });
 }

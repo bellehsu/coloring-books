@@ -588,3 +588,44 @@ def test_kept_changing_does_not_set_attention_when_another_task_is_queued(client
         run_pipeline(app, pid)
     pg = get_page(app, pid)
     assert pg.attention == "failed" and pg.attention_detail == pipeline.KEPT_CHANGING
+
+
+def test_new_composite_sets_outline_fill(client, app):
+    b, p, bg, pose = produced(client, app)
+    pid = p["id"]
+    set_page(app, pid, outline_fill=False)
+    old = get_page(app, pid).selected_generation_id
+    r = client.post(f"/api/pages/{pid}/poses", params={"oneclick": "true"}, json={"action": "jumping"})
+    assert r.status_code == 202, r.text
+    run_jobs(client, app)
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.selected_generation_id != old
+    assert pg.outline_fill is True
+
+
+def test_reused_composite_keeps_outline_fill_and_key(client, app):
+    b, p, bg, pose = produced(client, app)
+    pid = p["id"]
+    set_page(app, pid, outline_fill=False)
+    assert run_pipeline(app, pid) == pipeline.PASSED  # 舊頁面（False）先用舊算法補一次線稿，記下它的 key
+    before = get_page(app, pid)
+    assert before.outline_fill is False
+    assert enqueue(app, pid)
+    drain(client, app)
+    after = get_page(app, pid)
+    assert after.selected_generation_id == before.selected_generation_id
+    assert after.outline_fill is False
+    assert after.lineart_key == before.lineart_key
+
+
+def test_pipeline_keeps_review_pose(client, app):
+    """頁面流程做完會清掉 failed，但保留軟標記 review_pose（批次重畫主角後換上的新動作要使用者看一下）。"""
+    b, p, bg, pose = produced(client, app)
+    pid = p["id"]
+    set_page(app, pid, attention="review_pose", attention_detail="請看一下：換了新的主角動作")
+    assert enqueue(app, pid)
+    assert drain(client, app) == 1
+    pg = get_page(app, pid)
+    assert pg.status == PageStatus.PASSED
+    assert pg.attention == "review_pose" and pg.attention_detail == "請看一下：換了新的主角動作"

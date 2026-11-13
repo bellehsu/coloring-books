@@ -3,6 +3,7 @@ import type { Book } from "@/api/client";
 import { Chip } from "@/components/ui/Chip";
 import { nextStep } from "@/lib/nextStep";
 import { PAPER_LABELS, PRINT_MODE_LABELS } from "@/lib/layout";
+import { BookCardMenu } from "./BookCardMenu";
 import styles from "./BookCard.module.css";
 
 export function BookCard({ book }: { book: Book }) {
@@ -14,7 +15,9 @@ export function BookCard({ book }: { book: Book }) {
   const [cw, ch] = book.layout.content_px;
   const pct = pages ? Math.round((ready / pages) * 100) : 0;
   return (
-    <Link href={href} className={styles.card}>
+    <div className={styles.card}>
+      <BookCardMenu book={book} />
+      <Link href={href} className={styles.link}>
       <div className={styles.stage}>
         <div className={styles.paper} style={{ aspectRatio: `${cw} / ${ch}` }}>
           {book.cover_url && (
@@ -41,6 +44,7 @@ export function BookCard({ book }: { book: Book }) {
         </div>
         <Chip tone={step.tone}>{step.text}</Chip>
       </div>
-    </Link>
+      </Link>
+    </div>
   );
 }

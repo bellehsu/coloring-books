@@ -5,6 +5,10 @@ qwen_edit_pose_cutout）。Qwen 的 cfg 為 1 → 負向提示詞無效，排除
 import random
 from collections.abc import Sequence
 
+# 線條描述（三個樣板共用）。2026-11-13 GPU 校正後使用者選 medium（experiments/results/phase14_outline_prompt_20261113_1458）；不可含大括號（樣板用 .format）。
+OUTLINE_PHRASE = "clean medium-weight black outlines"
+
+
 def pick_variation(options: Sequence[str], rng: random.Random, exclude: str | None = None) -> str | None:
     """從 options 隨機挑一個變化語；exclude（上一張用的）不挑，避免「再產生一張」時重複。
     排除後沒得挑（清單只有一個）就從整份清單挑；exclude 不在清單裡照常挑；清單是空的回 None。"""
@@ -19,7 +23,7 @@ def pick_variation(options: Sequence[str], rng: random.Random, exclude: str | No
 # {variation} 為「<變化語>. 」或空字串。
 QWEN_CHARACTER_TEMPLATE = (
     "Single full body front view of {description}, standing. {variation}Children's picture book illustration, "
-    "flat colors, thick clean black outlines, simple shapes. Plain pure white background, no ground, no shadow, "
+    "flat colors, " + OUTLINE_PHRASE + ", simple shapes. Plain pure white background, no ground, no shadow, "
     "centered, whole body visible from head to feet. Only one character, no other characters, no character sheet, "
     "no multiple views, no text."
 )
@@ -50,7 +54,7 @@ QWEN_POSE_TEMPLATE = (
     "draw that one thing, completely visible; if it names none, add nothing else; no ground, no floor, no road, no "
     "scenery, no room, no other background objects, no text, no letters. Keep the same character design, "
     "proportions, colors, clothing and accessories unchanged. Full body, centered, plain pure white background, no "
-    "shadow, no cast shadow, children's picture book illustration, flat colors, thick clean black outlines."
+    "shadow, no cast shadow, children's picture book illustration, flat colors, " + OUTLINE_PHRASE + "."
 )
 # 再產生的變化語（spec §3.2）：每次隨機一個，排除這頁上一張動作用的；前兩個是轉向，後兩個是動作幅度。
 QWEN_POSE_VARIATIONS: tuple[str, ...] = (
@@ -97,7 +101,7 @@ def pick_pose_variation(
 # cfg 1 → 負向提示詞無效，排除條件寫在正向；生成紀錄的 negative_prompt 存空字串。
 QWEN_BACKGROUND_TEMPLATE = (
     "{scene}. {variation}Simple coloring book background, a few large simple objects, lots of empty space, "
-    "children's picture book illustration, flat colors, thick clean black outlines, simple shapes. "
+    "children's picture book illustration, flat colors, " + OUTLINE_PHRASE + ", simple shapes. "
     "Empty scene, no people, no animals, no characters, no text."
 )
 # 構圖變化語（「再產生一張」用，每張隨機一個）：experiments/results/phase8_qwen_background_variation_20261110

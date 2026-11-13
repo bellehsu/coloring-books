@@ -4,11 +4,15 @@
 - `POST /books/{id}/produce`：依頁面順序、每頁先背景再角色動作，補排缺的素材。只預留今天放得下的
   （使用者決定：放得下多少做多少，一頁的兩張放不下也先排放得下的那張），其餘頁面回 deferred_pages
   （「還有 N 頁明天繼續」）。已有排隊中／執行中的同種素材就略過，所以按兩次不會重複。
+  設定頁改了場景／動作而標了「要重畫」的頁，也照缺的素材排：take（好了換上去，角色動作另標 review_pose），
+  排到時清掉旗標，放不下的旗標留著。
   已經有背景與角色動作、還沒可以印（或「請看一下」：C 的「再試一次」）、也沒有排隊中／執行中流程的頁面
   排頁面流程（CPU，不計次數）。
   有素材要排卻一次都不剩 → 429「今天的生成次數已用完，明天再來」（同時有頁面流程可排時照排、回 202）。
   與「產生全部素材」共用 BATCH_LOCK、略過規則與任務組法（services/jobs.py）。
-- `GET /books/{id}/overview`：每頁狀態（working＞attention＞ready＞todo）、本輪進度、還有幾頁沒排。
+- `GET /books/{id}/overview`：每頁狀態（working＞attention＞ready＞todo）、做好幾頁（progress_pages）、本輪進度、
+  還有幾頁沒排（不含「要重畫」的，它們另算 redraw_count）。review_pose（換了新的主角動作）是軟標記：
+  算做好、繼續做不因它重排。
 
 本輪進度：queued／running 是「現在」這本書排隊中／執行中的生成（任何種類）與頁面流程；done 是
 book.produce_started_at 之後建立、已結束的生成與頁面流程。produce 有排到東西、而且當時這本書沒有進行中的
@@ -28,13 +32,14 @@ from app.api.schemas import (
     OverviewPageOut,
     ProduceOut,
     ProducePlanOut,
+    ProgressPages,
     RunProgress,
 )
 from app.api.urls import generation_image_url, lineart_url_is_current
 from app.models import Generation, GenKind, GenStatus, Owner, PageStatus, PageTask, PageTaskStatus, utcnow
 from app.services import usage
-from app.services.jobs import BATCH_LOCK, BookState, add_queued, build_job, has_character
-from app.services.page_state import GEN_ACTIVE, TASK_ACTIVE, page_state
+from app.services.jobs import BATCH_LOCK, BookState, add_queued, build_job, clear_redraw_flag, has_character
+from app.services.page_state import ATTENTION_REVIEW_POSE, GEN_ACTIVE, TASK_ACTIVE, hard_attention, page_state
 from app.services.pipeline import enqueue_page_task
 from app.services.slots import not_upload
 from app.services.worker import GenerationWorker
@@ -44,9 +49,9 @@ router = APIRouter(prefix="/api", tags=["produce"])
 SECONDS_PER_IMAGE = 22  # Qwen 4 步：每張約 22 秒（spec §4.1）
 
 
-def _needed(session: Session, book, state: BookState):
-    """要排的 (頁面, 種類)，依頁面順序、每頁先背景再角色動作。"""
-    return [(p, k) for p, k, reason in state.plan(has_character(session, book)) if reason is None]
+def _needed(session: Session, book, state: BookState, *, redraw: bool):
+    """要排的 (頁面, 種類)，依頁面順序、每頁先背景再角色動作。redraw：連標了「要重畫」的也算（繼續做）。"""
+    return [(p, k) for p, k, reason in state.plan(has_character(session, book), redraw=redraw) if reason is None]
 
 
 def _tasks(session: Session, page_ids: list[int], started: datetime | None) -> list[PageTask]:
@@ -59,6 +64,15 @@ def _tasks(session: Session, page_ids: list[int], started: datetime | None) -> l
     return list(session.exec(select(PageTask).where(col(PageTask.page_id).in_(page_ids), recent)).all())
 
 
+def _redraw_count(pages, has_char: bool) -> int:
+    """標了「要重畫」而且畫得出來的頁：場景／動作不是空白（角色動作還要有角色）；同 BookState.skip_reason。"""
+    return sum(
+        (p.redraw_background and bool(p.scene_prompt.strip()))
+        or (p.redraw_pose and bool(p.action_prompt.strip()) and has_char)
+        for p in pages
+    )
+
+
 @router.get("/books/{book_id}/produce/plan", response_model=ProducePlanOut)
 def produce_plan(
     book_id: int,
@@ -66,7 +80,7 @@ def produce_plan(
     owner: Owner = Depends(current_owner),
 ) -> ProducePlanOut:
     book = owned_book(session, owner, book_id)
-    needed = _needed(session, book, BookState(session, book_id))
+    needed = _needed(session, book, BookState(session, book_id), redraw=True)
     backgrounds = sum(k == GenKind.BACKGROUND for _, k in needed)
     total = len(needed)
     remaining = usage.remaining(session, owner, usage.clock())
@@ -91,14 +105,14 @@ def produce(
     with BATCH_LOCK:  # 與「產生全部素材」互斥：同時按也不會重複排
         book = owned_book(session, owner, book_id)
         state = BookState(session, book_id)
-        needed = _needed(session, book, state)
+        needed = _needed(session, book, state, redraw=True)
         page_ids = [p.id for p in state.pages]
         tasks = _tasks(session, page_ids, None)  # 只需要進行中的
         busy_pages = {t.page_id for t in tasks if t.status in TASK_ACTIVE}
         pipeline_pages = [
             p.id for p in state.pages
-            # 筆畫還沒寫回、或「請看一下」（C 的「再試一次」）：再跑一次
-            if (p.status != PageStatus.PASSED or p.pending_user_strokes is not None or p.attention is not None)
+            # 筆畫還沒寫回、或「請看一下」（C 的「再試一次」）：再跑一次；軟標記 review_pose 不算
+            if (p.status != PageStatus.PASSED or p.pending_user_strokes is not None or hard_attention(p.attention))
             and p.id not in busy_pages and state.has_both_images(p)
         ]
         if not needed and not pipeline_pages:
@@ -116,7 +130,10 @@ def produce(
                 except HTTPException:
                     if not pipeline_pages:  # 什麼都做不了：429
                         raise
-            gens = [add_queued(session, build_job(session, book, p, k), extra) for p, k in needed[:granted]]
+            gens = []
+            for p, k in needed[:granted]:
+                gens.append(add_queued(session, build_job(session, book, p, k, redraw=True), extra))
+                clear_redraw_flag(session, p.id, k)  # 排到了：「要重畫」清掉（放不下的留著）
             for pid in pipeline_pages:
                 enqueue_page_task(session, pid)
             if book.produce_started_at is None or not in_progress:
@@ -169,7 +186,7 @@ def book_overview(
         elif started is not None and t.created_at >= started:
             done += 1
 
-    needs = {p.id for p, _ in _needed(session, book, state)}
+    needs = {p.id for p, _ in _needed(session, book, state, redraw=False)}  # 「要重畫」的另外算（redraw_count）
     out = []
     for page, po in zip(pages, page_outs(session, pages)):
         st = page_state(page, busy)
@@ -190,12 +207,15 @@ def book_overview(
             thumb_url=generation_image_url(sel) if sel is not None else None,
             lineart_url=po.lineart_url,
             attention_detail=page.attention_detail if page.attention else None,
+            review=page.attention == ATTENTION_REVIEW_POSE,
         ))
     return BookOverviewOut(
         book_id=book_id,
         pages=out,
         progress=RunProgress(queued=queued, running=running, done=done),
+        progress_pages=ProgressPages(ready=sum(p.state == "ready" for p in out), total=len(pages)),
         estimate_s=active_gens * SECONDS_PER_IMAGE,
         deferred_count=len(needs),
+        redraw_count=_redraw_count(pages, has_character(session, book)),
         run_started_at=started,
     )

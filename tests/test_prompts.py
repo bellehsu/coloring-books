@@ -30,7 +30,7 @@ QWEN_POSE_T4 = (
     "draw that one thing, completely visible; if it names none, add nothing else; no ground, no floor, no road, no "
     "scenery, no room, no other background objects, no text, no letters. Keep the same character design, "
     "proportions, colors, clothing and accessories unchanged. Full body, centered, plain pure white background, no "
-    "shadow, no cast shadow, children's picture book illustration, flat colors, thick clean black outlines."
+    "shadow, no cast shadow, children's picture book illustration, flat colors, clean medium-weight black outlines."
 )
 POSE_VARIATIONS = (
     "seen in a three-quarter view turned slightly to the left",
@@ -97,7 +97,7 @@ def test_has_facing_false_cases():
 
 
 QA1_TAIL = ("Simple coloring book background, a few large simple objects, lots of empty space, children's "
-            "picture book illustration, flat colors, thick clean black outlines, simple shapes. Empty scene, "
+            "picture book illustration, flat colors, clean medium-weight black outlines, simple shapes. Empty scene, "
             "no people, no animals, no characters, no text.")
 
 
@@ -160,7 +160,7 @@ def test_pick_background_variation_exclude_everything_falls_back(monkeypatch):
 # ---- 角色參考圖（qwen_character；phase9 Task 1 校正）----
 QCHAR_T1 = (
     "Single full body front view of {description}, standing. {variation}Children's picture book illustration, "
-    "flat colors, thick clean black outlines, simple shapes. Plain pure white background, no ground, no shadow, "
+    "flat colors, clean medium-weight black outlines, simple shapes. Plain pure white background, no ground, no shadow, "
     "centered, whole body visible from head to feet. Only one character, no other characters, no character sheet, "
     "no multiple views, no text."
 )
@@ -224,3 +224,16 @@ def test_pick_variation_shared_helper(options):
         assert pick_variation(options, random.Random(s), exclude="b") in ("a", "c")
     assert {pick_variation(options, random.Random(s), exclude="zzz") for s in range(50)} == set(options)
     assert {pick_variation(options, random.Random(s)) for s in range(50)} == set(options)
+
+
+def test_outline_phrase_is_the_only_outline_wording():
+    from app.services.prompts import (
+        OUTLINE_PHRASE,
+        QWEN_BACKGROUND_TEMPLATE,
+        QWEN_CHARACTER_TEMPLATE,
+        QWEN_POSE_TEMPLATE,
+    )
+
+    assert OUTLINE_PHRASE == "clean medium-weight black outlines"
+    for t in (QWEN_CHARACTER_TEMPLATE, QWEN_POSE_TEMPLATE, QWEN_BACKGROUND_TEMPLATE):
+        assert t.count(OUTLINE_PHRASE) == 1 and "thick" not in t

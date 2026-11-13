@@ -14,6 +14,7 @@ from app.models import Book, Generation, GenKind, LineartEdit, Page, PageStatus,
 from app.services import lineart_post
 from app.services.imageio import ink_to_png
 from app.services.layout import compute_layout
+from app.services.lineart_extract import OUTLINE_FILL_VERSION
 from app.services.lineart_render import (
     RENDER_VERSION, Stroke, apply_strokes, render_lineart,
 )
@@ -144,8 +145,11 @@ def _digest(*parts) -> str:
 
 
 def lineart_key(gen: Generation, page: Page, content_px, strokes_json: str) -> str:
-    return _digest(RENDER_VERSION, qa_mod.QA_VERSION, gen.id, gen.image_path, str(getattr(page.line_detail, "value", page.line_detail)),
-                   page.line_width_px, list(content_px), strokes_json)
+    parts = [RENDER_VERSION, qa_mod.QA_VERSION, gen.id, gen.image_path, str(getattr(page.line_detail, "value", page.line_detail)),
+             page.line_width_px, list(content_px), strokes_json]
+    if page.outline_fill:  # 舊頁面（False）的 key 維持原樣
+        parts += ["outline_fill", OUTLINE_FILL_VERSION]
+    return _digest(*parts)
 
 
 def _load(storage: Storage, gen: Generation):
@@ -188,7 +192,8 @@ def ensure_page_lineart(
             return PageLineart(rel, key, QAReport.from_dict(json.loads(page.qa_json)))
 
         color = _load(storage, gen)
-        ink = render_lineart(color, content_px, page.line_detail, page.line_width_px)
+        ink = render_lineart(color, content_px, page.line_detail, page.line_width_px,
+                             outline_fill=page.outline_fill)
         strokes = strokes_from_json(sj)
         if strokes:
             ink = apply_strokes(ink, strokes)
@@ -240,7 +245,8 @@ def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_
         raise LineartUnavailable("這一頁還沒有選定圖片")
     book = session.get(Book, page.book_id)
     content_px = compute_layout(book.paper_size, book.print_mode).content_px
-    ink = render_lineart(_load(storage, gen), content_px, page.line_detail, page.line_width_px)
+    ink = render_lineart(_load(storage, gen), content_px, page.line_detail, page.line_width_px,
+                         outline_fill=page.outline_fill)
     auto = load_strokes(session, gen_id, layer=StrokeLayer.AUTO) if with_auto else []
     return apply_strokes(ink, auto) if auto else ink
 

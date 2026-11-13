@@ -4,7 +4,7 @@
   2. 合成：用頁面存的位置，沒有就用預設位置（services/page_compose.compose_page，與確認合成共用）；
   3. 線稿；
   4. 自動補線：重算整層 auto 修線（覆寫，不附加；services/autofix.plan_autofix，與自動補線端點共用）；
-  5. 可以印：PASSED、passed_at，清掉 attention（不需要角色檢查「對」）。
+  5. 可以印：PASSED、passed_at，清掉 attention（不需要角色檢查「對」）；軟標記 review_pose 保留。
 
 失敗時頁面 attention="failed"、attention_detail 是中文說明，工作標成 FAILED。
 
@@ -16,12 +16,15 @@
 
 C 處理一頁的「換一張／AI 再畫一張」（request_json 的 take=true）：好了就換上去並記成 auto_*，連使用者之前選的
 也換掉（使用者要的就是這張新圖），換之前存一份復原快照（services/history.take_generation）。
+B 的批次重畫主角的 take 另帶 review=true：換上去的同一個交易把頁面標成 review_pose（第 5 步會保留它）；
+C 自己按的角色動作 take（沒有 review）換上去時清掉 review_pose（使用者刻意選的，同 C 點選另一個動作）。
+重畫主角一次畫多張的第 2、3 張帶 candidate=true：只當候選，好了不選用、不排流程；失敗也不動頁面
+（不設 failed，「再試一次」也不看它）。
 重新合成後，page.pending_user_strokes（C 的修改與復原／重做留下的使用者筆畫）寫進新合成圖的 user 層。
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Callable
 
@@ -34,7 +37,7 @@ from app.models import (
 )
 from app.services import history
 from app.services.engine import public_engine_error
-from app.services.gen_request import TAKE
+from app.services.gen_request import is_candidate, wants_review, wants_take
 from app.services.slots import SLOTS, newest_usable_ai
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix
 from app.services.lineart_render import apply_strokes
@@ -45,6 +48,7 @@ from app.services.page_lineart import (
     LineartUnavailable, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes, save_strokes,
     strokes_from_json, strokes_to_json,
 )
+from app.services.page_state import ATTENTION_REVIEW_POSE, REVIEW_POSE_DETAIL
 from app.services.qa import evaluate
 from app.storage import Storage
 
@@ -207,24 +211,29 @@ def requeue_page_tasks(session: Session) -> int:
 # ---- worker 的生成結果 -------------------------------------------------------------------
 
 
-def wants_take(gen: Generation) -> bool:
-    try:
-        d = json.loads(gen.request_json or "{}")
-    except (TypeError, ValueError):
-        return False
-    return isinstance(d, dict) and d.get(TAKE) is True
-
-
 def on_generation_succeeded(session: Session, gen_id: int) -> bool:
     """頁面的背景／角色動作生成成功：馬上自動選用（舊編輯器不用等流程就看得到），並排這頁的流程。
-    C 的「換一張」（take）直接換上這張（先存復原快照）。回傳有沒有排（其他種類的生成不排）。"""
+    C 的「換一張」（take）直接換上這張（先存復原快照）；帶 review 的（批次重畫主角）換上去時同一個交易
+    標成 review_pose，沒有 review 的角色動作 take 換上去時清掉 review_pose。重畫主角的候選（candidate）
+    什麼都不選、不排。回傳有沒有排（其他種類的生成不排）。"""
     gen = session.get(Generation, gen_id)
-    if gen is None or gen.page_id is None or gen.kind not in SLOTS:
+    if gen is None or gen.page_id is None or gen.kind not in SLOTS or is_candidate(gen):
         return False
     page_id = gen.page_id
     if wants_take(gen) and is_usable(gen, gen.kind, page_id):
         try:
-            history.take_generation(session, gen)
+            if history.take_generation(session, gen):
+                if wants_review(gen):
+                    session.exec(
+                        update(Page).where(col(Page.id) == page_id)
+                        .values(attention=ATTENTION_REVIEW_POSE, attention_detail=REVIEW_POSE_DETAIL,
+                                updated_at=utcnow())
+                    )
+                elif gen.kind == GenKind.POSE:  # C 自己要的新動作：不用再「請看一下」
+                    session.exec(
+                        update(Page).where(col(Page.id) == page_id, col(Page.attention) == ATTENTION_REVIEW_POSE)
+                        .values(attention=None, attention_detail=None, updated_at=utcnow())
+                    )
             session.commit()
         except Exception:  # noqa: BLE001  換不上去（例如同時被改）：退回一般的自動選圖
             session.rollback()
@@ -238,9 +247,11 @@ def on_generation_succeeded(session: Session, gen_id: int) -> bool:
 
 
 def on_generation_failed(session: Session, gen_id: int) -> None:
-    """頁面的背景／角色動作生成失敗：頁面 attention="failed"，說明是生成的中文錯誤訊息。"""
+    """頁面的背景／角色動作生成失敗：頁面 attention="failed"，說明是生成的中文錯誤訊息。
+    重畫主角的候選失敗不動頁面（頁面用的是 take 或原本的動作，好好的；候選本身照樣 FAILED、退回額度）。"""
     gen = session.get(Generation, gen_id)
-    if gen is None or gen.page_id is None or gen.kind not in SLOTS or gen.status != GenStatus.FAILED:
+    if (gen is None or gen.page_id is None or gen.kind not in SLOTS or gen.status != GenStatus.FAILED
+            or is_candidate(gen)):
         return
     session.exec(
         update(Page).where(col(Page.id) == gen.page_id)
@@ -251,6 +262,11 @@ def on_generation_failed(session: Session, gen_id: int) -> None:
 
 # ---- 選圖 -----------------------------------------------------------------------------
 
+
+def _landed_text(session: Session, gen_id: int) -> str | None:
+    """被自動選上那張的 user_text（重畫旗標的文字保護用）；那筆剛好被刪掉時回 None（照舊無條件清旗標）。"""
+    g = session.get(Generation, gen_id)
+    return g.user_text if g is not None else None
 
 def auto_select(session: Session, page_id: int, *, fill_only: bool = False, snapshot: bool = False) -> bool:
     """背景與角色動作：使用者選的不動；否則換成最新一張可用的生成（不含上傳的），並記到 auto_*。
@@ -287,7 +303,8 @@ def auto_select(session: Session, page_id: int, *, fill_only: bool = False, snap
                    col(getattr(Page, field)).is_not_distinct_from(current),
                    col(getattr(Page, auto_field)).is_not_distinct_from(auto),
                    still_valid)
-            .values(**slot_change_values(field, newest), **{auto_field: newest})
+            .values(**slot_change_values(field, newest, landed_text=_landed_text(session, newest)),
+                    **{auto_field: newest})
         )
         changed |= res.rowcount == 1
     if snapshotted and not changed:
@@ -408,9 +425,10 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
         except IntegrityError as e:  # 同時有請求建立同一層（例如舊編輯器的自動補線）
             raise _Stale() from e
     lin = ensure_page_lineart(session, storage, page_id, from_pipeline=True)
-    # 5. 可以印（已經是 PASSED 的保留原本的通過時間）
+    # 5. 可以印（已經是 PASSED 的保留原本的通過時間）；清掉 failed 等，保留軟標記 review_pose
     now = utcnow()
     already = col(Page.status) == PageStatus.PASSED
+    review = col(Page.attention) == ATTENTION_REVIEW_POSE
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid,
@@ -418,7 +436,10 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
         .values(status=PageStatus.PASSED,
                 passed_at=func.coalesce(case((already, col(Page.passed_at))),
                                         literal(now, Page.__table__.c.passed_at.type)),
-                forced_pass_reason=None, attention=None, attention_detail=None, updated_at=now)
+                forced_pass_reason=None,
+                attention=case((review, ATTENTION_REVIEW_POSE), else_=None),
+                attention_detail=case((review, col(Page.attention_detail)), else_=None),
+                updated_at=now)
     )
     session.commit()
     if res.rowcount == 0:

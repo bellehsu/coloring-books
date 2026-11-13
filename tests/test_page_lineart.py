@@ -321,5 +321,34 @@ def test_lineart_key_unchanged_since_before_structure_cleanup():
     from types import SimpleNamespace as N
 
     gen = N(id=7, image_path="books/1/generations/7.png")
-    page = N(line_detail="standard", line_width_px=11)
+    page = N(line_detail="standard", line_width_px=11, outline_fill=False)
     assert page_lineart.lineart_key(gen, page, (2244, 3272), "[]") == "33f670f493f81344"
+    page_on = N(line_detail="standard", line_width_px=11, outline_fill=True)
+    assert page_lineart.lineart_key(gen, N(line_detail="standard", line_width_px=11, outline_fill=False),
+                                    (2244, 3272), "[]") == "33f670f493f81344"
+    assert page_lineart.lineart_key(gen, page_on, (2244, 3272), "[]") == "8751300a9f5d2604"
+
+
+def test_outline_fill_page_renders_with_fill(env, monkeypatch):
+    make, storage, pid, gid = env
+    seen = []
+    orig = page_lineart.render_lineart
+
+    def spy(*a, **k):
+        seen.append(k.get("outline_fill"))
+        return orig(*a, **k)
+
+    monkeypatch.setattr(page_lineart, "render_lineart", spy)
+    with make() as s:
+        page = s.get(Page, pid)
+        page.outline_fill = False
+        s.add(page)
+        s.commit()
+        off = page_lineart.ensure_page_lineart(s, storage, pid)
+        page = s.get(Page, pid)
+        page.outline_fill = True
+        s.add(page)
+        s.commit()
+        on = page_lineart.ensure_page_lineart(s, storage, pid)
+    assert seen == [False, True]
+    assert on.key != off.key

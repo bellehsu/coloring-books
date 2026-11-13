@@ -70,6 +70,30 @@
 .printBar {
   display: flex;
 }
+/* 「選取多頁」開關：按下時是深色（mockups/2026-11-13/A_overview_select.png） */
+.selectToggle {
+  min-height: 44px;
+  padding: 0 18px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.selectToggle:hover:not([aria-pressed="true"]) {
+  background: var(--accent-softer);
+}
+.selectToggle[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--surface);
+  font-weight: 900;
+}
+/* 選取多頁時底部有重畫列：留空間給最後一排卡片 */
+.mainSelecting {
+  padding-bottom: 160px;
+}
 
 /* ---------- 狀態卡 ---------- */
 .status {
@@ -222,6 +246,13 @@
   color: var(--surface);
   font-weight: 900;
 }
+.selectHint {
+  align-self: center;
+  margin-left: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted-2);
+}
 .empty {
   margin: 24px 0;
   text-align: center;
@@ -261,6 +292,25 @@
 }
 .cardAttention {
   box-shadow: 0 5px 0 var(--warn-strong);
+}
+/* 選取多頁：整張卡是勾選框的 label */
+.cardPick {
+  cursor: pointer;
+}
+.cardPicked {
+  outline: 4px solid var(--accent);
+  outline-offset: 3px;
+}
+.pick {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 .frame {
   position: relative;
@@ -389,6 +439,13 @@
   .link {
     flex: 1;
     justify-content: center;
+  }
+  .mainSelecting {
+    padding-bottom: 260px;
+  }
+  .selectHint {
+    flex-basis: 100%;
+    margin-left: 0;
   }
   .printBar {
     position: fixed;

@@ -1,4 +1,4 @@
-"""生成任務的組裝與排隊：單張、批次（產生全部素材）、「開始做這本書」、再試一次共用。
+"""生成任務的組裝與排隊：單張、批次（產生全部素材、重畫主角）、「開始做這本書」、再試一次共用。
 
 路由模組（api/compose、produce、history、books）只負責 HTTP；任務怎麼組、整批怎麼預留額度與
 排進佇列、批次怎麼判斷要略過哪些頁，都在這裡。
@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import random
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, select, update
 
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page
 from app.services import usage
-from app.services.gen_request import TAKE, encode_request
+from app.services.gen_request import CANDIDATE, REVIEW, TAKE, encode_request, is_candidate
 from app.services.layout import compute_layout
 from app.services.page_compose import is_usable
 from app.services.prompts import (
@@ -144,14 +144,15 @@ def background_job(session: Session, book: Book, page: Page) -> Job:
     return Job(gen, variation=variation, extra={"background_style": "simple"})
 
 
-def pose_job(session: Session, book: Book, page: Page, action: str) -> Job:
-    """角色動作（Qwen）：以角色參考圖編輯出新動作；呼叫端負責確認有角色（has_character）。"""
+def pose_job(session: Session, book: Book, page: Page, action: str, *, picked: Sequence[str | None] = ()) -> Job:
+    """角色動作（Qwen）：以角色參考圖編輯出新動作；呼叫端負責確認有角色（has_character）。
+    picked：同一次呼叫裡已經排好（還沒寫進資料庫）的變化語，由舊到新；跟這頁最近的一起排除。"""
     char = session.get(Generation, book.character_generation_id)
     variation = pick_pose_variation(
         random.Random(),
-        exclude=last_variations(
+        exclude=[*reversed(picked), *last_variations(
             session, col(Generation.page_id) == page.id, col(Generation.kind) == GenKind.POSE, n=2
-        ),
+        )],
         facing=has_facing(action),
     )
     width, height = POSE_SIZE
@@ -177,6 +178,25 @@ def take(job: Job, oneclick: bool) -> Job:
     return job
 
 
+def redraw_jobs(
+    session: Session, book: Book, page: Page, action: str, count: int, *, take_first: bool, review: bool
+) -> list[Job]:
+    """重畫主角：這頁 count 張角色動作。第 1 張 take_first 時帶 TAKE（好了自動換上去）、review 時帶 REVIEW
+    （換上去時標成 review_pose）；第 2 張起帶 CANDIDATE（只當候選）。每張都加進排除清單：沒有面向語時有 4 個
+    變化語、排除最近兩個，3 張彼此不同；動作有面向語時只有 2 個、只排除上一個，相鄰兩張不同，第 3 張會跟第 1 張一樣。"""
+    jobs: list[Job] = []
+    for i in range(count):
+        job = pose_job(session, book, page, action, picked=[j.variation for j in jobs])
+        if i == 0:
+            take(job, take_first)
+            if review:
+                job.extra[REVIEW] = True
+        else:
+            job.extra[CANDIDATE] = True
+        jobs.append(job)
+    return jobs
+
+
 def has_character(session: Session, book: Book) -> bool:
     """繪本已設定角色且角色圖還在（角色動作要用它當參考圖）。"""
     char = (
@@ -187,11 +207,30 @@ def has_character(session: Session, book: Book) -> bool:
     return char is not None and bool(char.image_path)
 
 
-def build_job(session: Session, book: Book, page: Page, kind: GenKind) -> Job:
-    """批次與「開始做這本書」共用：這頁這種素材的排隊任務（呼叫端確認不用略過）。"""
+def build_job(session: Session, book: Book, page: Page, kind: GenKind, *, redraw: bool = False) -> Job:
+    """批次與「開始做這本書」共用：這頁這種素材的排隊任務（呼叫端確認不用略過）。
+    redraw（「繼續做」）且這頁這種素材標了「要重畫」：take（好了換上去、有復原快照）；角色動作另帶 REVIEW
+    （換上去時標成 review_pose），背景不帶。"""
     if kind == GenKind.BACKGROUND:
-        return background_job(session, book, page)
-    return pose_job(session, book, page, page.action_prompt)
+        job = background_job(session, book, page)
+    else:
+        job = pose_job(session, book, page, page.action_prompt)
+    if redraw and redraw_flag(page, kind):
+        take(job, True)
+        if kind == GenKind.POSE:
+            job.extra[REVIEW] = True
+    return job
+
+
+def redraw_flag(page: Page, kind: GenKind) -> bool:
+    """設定頁改了場景／動作，這頁這種素材等「繼續做」重畫（「要重畫」）。"""
+    return page.redraw_background if kind == GenKind.BACKGROUND else page.redraw_pose
+
+
+def clear_redraw_flag(session: Session, page_id: int, kind: GenKind) -> None:
+    """「繼續做」排到這頁這種素材時清掉「要重畫」（UPDATE，不 commit：與排隊同一個交易）。"""
+    column = Page.redraw_background if kind == GenKind.BACKGROUND else Page.redraw_pose
+    session.exec(update(Page).where(col(Page.id) == page_id).values({column: False}))
 
 
 class BookState:
@@ -223,45 +262,52 @@ class BookState:
             ).all()
         ) if selected_ids else set()
 
-    def skip_reason(self, page: Page, kind: GenKind) -> str | None:
-        """該頁的這種素材為什麼不用排；要排回 None。"""
+    def skip_reason(self, page: Page, kind: GenKind, *, redraw: bool = False) -> str | None:
+        """該頁的這種素材為什麼不用排；要排回 None。
+        redraw（「繼續做」）：標了「要重畫」的照排，除非同種素材還在排隊／執行（旗標留著等下一次）。"""
         bg = kind == GenKind.BACKGROUND
         if not (page.scene_prompt if bg else page.action_prompt).strip():
             return "沒有場景描述" if bg else "沒有動作描述"
         gens = self.gens[kind].get(page.id, [])
+        active = any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens)
+        if redraw and redraw_flag(page, kind):
+            return ("背景產生中" if bg else "角色動作產生中") if active else None
         slot = page.background_generation_id if bg else page.pose_generation_id
         if (
             slot is not None
             or page.selected_generation_id in self.legacy_selected  # 舊流程整頁候選圖
-            or any(g.status == GenStatus.SUCCEEDED and not g.discarded for g in gens)
+            or any(g.status == GenStatus.SUCCEEDED and not g.discarded and not is_candidate(g) for g in gens)
         ):
             return "已有背景" if bg else "已有角色動作"
-        if any(g.status in (GenStatus.QUEUED, GenStatus.RUNNING) for g in gens):
+        if active:
             return "背景產生中" if bg else "角色動作產生中"
         return None
 
     def plan(
-        self, has_character: bool, upload_pages: set[int] = frozenset()
+        self, has_character: bool, upload_pages: set[int] = frozenset(), *, redraw: bool = False
     ) -> list[tuple[Page, GenKind, str | None]]:
         """依頁面順序、每頁先背景再角色動作：(頁面, 種類, 略過原因；要排為 None)。
-        upload_pages 的頁面改用上傳圖片，背景略過；沒有角色時角色動作略過。"""
+        upload_pages 的頁面改用上傳圖片，背景略過；沒有角色時角色動作略過。redraw 見 skip_reason。"""
         out: list[tuple[Page, GenKind, str | None]] = []
         for page in self.pages:
-            reason = "改用上傳圖片" if page.id in upload_pages else self.skip_reason(page, GenKind.BACKGROUND)
+            reason = ("改用上傳圖片" if page.id in upload_pages
+                      else self.skip_reason(page, GenKind.BACKGROUND, redraw=redraw))
             out.append((page, GenKind.BACKGROUND, reason))
-            reason = self.skip_reason(page, GenKind.POSE)
+            reason = self.skip_reason(page, GenKind.POSE, redraw=redraw)
             if reason is None and not has_character:
                 reason = "請先設定角色"
             out.append((page, GenKind.POSE, reason))
         return out
 
     def has_both_images(self, page: Page) -> bool:
-        """背景與角色動作都有（已選，或有可用的成功生成讓頁面流程自動選）；舊流程整頁圖的頁面不算。"""
+        """背景與角色動作都有（已選，或有可用的成功生成讓頁面流程自動選）；舊流程整頁圖的頁面不算。
+        上傳的與重畫主角的候選不是自動選圖的候選，不算。"""
         if page.selected_generation_id in self.legacy_selected:
             return False
         for kind, slot in ((GenKind.BACKGROUND, page.background_generation_id),
                            (GenKind.POSE, page.pose_generation_id)):
             if slot is None and not any(is_usable(g, kind, page.id) and g.engine != UPLOAD_ENGINE
+                                        and not is_candidate(g)
                                         for g in self.gens[kind].get(page.id, [])):  # 同自動選圖的候選
                 return False
         return True

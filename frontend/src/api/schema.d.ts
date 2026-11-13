@@ -36,7 +36,12 @@ export interface paths {
         get: operations["get_book_api_books__book_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Book
+         * @description 刪除整本書（資料列與物件）。排隊中的工作取消並退額度；執行中的不擋，worker 收尾時發現列不見了會清掉自己寫的物件。
+         *     admin 只能刪自己的書（別人的書一律 404）。物件在交易提交後才刪（盡力而為）：失敗只記 log，之後 storage_gc 會清。
+         */
+        delete: operations["delete_book_api_books__book_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -102,6 +107,26 @@ export interface paths {
          */
         post: operations["set_character_api_books__book_id__character_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/{book_id}/character/candidates/{gen_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Character Candidate
+         * @description 刪掉不要的角色候選圖＝捨棄（discarded）；復原走 PATCH /generations/{id} {"discarded": false}。
+         */
+        delete: operations["delete_character_candidate_api_books__book_id__character_candidates__gen_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -203,6 +228,9 @@ export interface paths {
          * Update Page
          * @description oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；
          *     線條設定變了，流程做的頁排流程重跑（不退回草稿）。
+         *     from_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而
+         *     頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標；沒帶 from_setup 時不標；
+         *     與 oneclick 一起帶是 400。
          */
         patch: operations["update_page_api_pages__page_id__patch"];
         trace?: never;
@@ -264,8 +292,31 @@ export interface paths {
          * @description 產生一個角色動作（白底、自動去背），尺寸固定 POSE_SIZE，不帶場景描述：以角色參考圖編輯出
          *     新動作，prompt 只有動作。不先檢查 preflight，缺東西時由生成失敗回報。
          *     oneclick（C 的「換一張」）：好了一定換上去，連使用者之前選的也換掉。
+         *     body.count（C 的「一次畫 N 張」）：多的幾張是候選（不自動選用）；整批一次預留額度。回傳第 1 張。
          */
         post: operations["create_pose_api_pages__page_id__poses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/{book_id}/poses/redraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redraw Poses
+         * @description B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 body.count 張。第 1 張好了自動換上去（有復原快照）
+         *     並標成 review_pose（請看一下：換了新的主角動作），其餘是候選。沒有動作描述的頁略過。
+         *     page_ids 去掉重複（保留順序），都要是這本書的頁。整批一次預留額度：不夠就 429，一筆都不排。
+         */
+        post: operations["redraw_poses_api_books__book_id__poses_redraw_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1131,6 +1182,11 @@ export interface components {
             /** Shared At */
             shared_at?: string | null;
             /**
+             * Mine
+             * @default true
+             */
+            mine: boolean;
+            /**
              * Created At
              * Format: date-time
              */
@@ -1148,10 +1204,13 @@ export interface components {
             /** Pages */
             pages: components["schemas"]["OverviewPageOut"][];
             progress: components["schemas"]["RunProgress"];
+            progress_pages: components["schemas"]["ProgressPages"];
             /** Estimate S */
             estimate_s: number;
             /** Deferred Count */
             deferred_count: number;
+            /** Redraw Count */
+            redraw_count: number;
             /** Run Started At */
             run_started_at: string | null;
         };
@@ -1427,6 +1486,8 @@ export interface components {
             lineart_url: string | null;
             /** Attention Detail */
             attention_detail: string | null;
+            /** Review */
+            review: boolean;
         };
         /** PageCreate */
         PageCreate: {
@@ -1502,6 +1563,10 @@ export interface components {
             can_undo: boolean;
             /** Can Redo */
             can_redo: boolean;
+            /** Redraw Background */
+            redraw_background: boolean;
+            /** Redraw Pose */
+            redraw_pose: boolean;
             /**
              * Created At
              * Format: date-time
@@ -1575,6 +1640,31 @@ export interface components {
         PoseCreate: {
             /** Action */
             action: string;
+            /**
+             * Count
+             * @default 1
+             */
+            count: number;
+        };
+        /**
+         * PoseRedrawIn
+         * @description B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 count 張（第 1 張換上去並標 review_pose，其餘是候選）。
+         */
+        PoseRedrawIn: {
+            /** Page Ids */
+            page_ids: number[];
+            /**
+             * Count
+             * @default 1
+             */
+            count: number;
+        };
+        /** PoseRedrawOut */
+        PoseRedrawOut: {
+            /** Queued */
+            queued: components["schemas"]["GenerationOut"][];
+            /** Skipped */
+            skipped: components["schemas"]["BatchSkip"][];
         };
         /**
          * PrintMode
@@ -1604,6 +1694,13 @@ export interface components {
             remaining: number | null;
             /** Fits */
             fits: number;
+        };
+        /** ProgressPages */
+        ProgressPages: {
+            /** Ready */
+            ready: number;
+            /** Total */
+            total: number;
         };
         /** QAMessage */
         QAMessage: {
@@ -1726,6 +1823,10 @@ export interface components {
             can_undo: boolean;
             /** Can Redo */
             can_redo: boolean;
+            /** Redraw Background */
+            redraw_background: boolean;
+            /** Redraw Pose */
+            redraw_pose: boolean;
             /**
              * Created At
              * Format: date-time
@@ -1948,6 +2049,35 @@ export interface operations {
             };
         };
     };
+    delete_book_api_books__book_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_book_api_books__book_id__patch: {
         parameters: {
             query?: never;
@@ -2076,6 +2206,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BookOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_character_candidate_api_books__book_id__character_candidates__gen_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+                gen_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -2293,6 +2453,8 @@ export interface operations {
             query?: {
                 /** @description C 處理一頁：先存復原快照、排頁面流程 */
                 oneclick?: boolean;
+                /** @description 設定頁改既有頁面：場景／動作變了就標「要重畫」 */
+                from_setup?: boolean;
             };
             header?: never;
             path: {
@@ -2424,6 +2586,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenerationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    redraw_poses_api_books__book_id__poses_redraw_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoseRedrawIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoseRedrawOut"];
                 };
             };
             /** @description Validation Error */

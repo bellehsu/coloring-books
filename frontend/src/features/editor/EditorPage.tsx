@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
+import { hardAttention } from "@/lib/pageState";
 import { PHONE_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
 import { fixHref } from "@/features/fix/fixState";
 import { errMsg } from "@/features/editing/errMsg";
@@ -262,7 +263,7 @@ export function EditorPage({ bookId }: { bookId: number }) {
           blockers={blockers}
           gapCount={qa?.gap_count ?? 0}
           notice={
-            !current.recompose_pending ? undefined : current.attention ? (
+            !current.recompose_pending ? undefined : hardAttention(current) ? (
               <>
                 重新合成沒成功，請到<Link href={`/books/${bookId}/page/${current.id}`}>處理頁面</Link>按「再試一次」
               </>

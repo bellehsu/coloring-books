@@ -290,7 +290,8 @@ def test_overview_new_book_through_a_full_run(client, app):
     assert first == {"id": p1["id"], "position": p1["position"], "state": "todo", "gap_count": None,
                      "caption_zh": "公園", "caption_en": "park", "caption_show_zh": True, "caption_show_en": True,
                      "thumb_url": None,
-                     "lineart_url": None, "attention_detail": None}
+                     "lineart_url": None, "attention_detail": None, "review": False}
+    assert ov["progress_pages"] == {"ready": 0, "total": 2}
 
     produce(client, b["id"])
     ov = overview(client, b["id"])
@@ -306,6 +307,7 @@ def test_overview_new_book_through_a_full_run(client, app):
     ov = overview(client, b["id"])
     assert ov["progress"] == {"queued": 0, "running": 0, "done": 6}  # 4 張生成＋2 個頁面流程
     assert [p["state"] for p in ov["pages"]] == ["ready", "ready"]
+    assert ov["progress_pages"] == {"ready": 2, "total": 2}
     pg = get_page(app, p1["id"])
     first = ov["pages"][0]
     assert first["thumb_url"] == f"/api/generations/{pg.selected_generation_id}/image"
@@ -462,3 +464,79 @@ def test_page_retry_counts_against_the_cap(client, app):
     r = client.post(f"/api/pages/{pid}/retry")
     assert r.status_code == 200 and r.json()["requeued"] == ["pose"]
     assert used(app, owner) == 4
+
+
+# ---- 做好 N / M 頁（progress_pages）與「請看一下：換了新的主角動作」（review_pose） ----------------
+
+
+REVIEW_DETAIL = "請看一下：換了新的主角動作"
+
+
+def test_progress_pages_counts_ready_pages_only(client, app):
+    """做好的頁＝可以印（PASSED、不在製作中、沒有請看一下；review_pose 是軟標記，照樣算做好）。"""
+    login(client, app, cap=60)
+    b, ps = book_with_pages(client, app, THREE + [("城堡", "坐"), ("山上", "爬")])
+    make_passed(app, ps[0]["id"])
+    make_passed(app, ps[1]["id"], attention="review_pose", attention_detail=REVIEW_DETAIL)
+    make_passed(app, ps[2]["id"], attention="failed", attention_detail="圖片產生失敗，請重新產生")
+    # ps[3]：DRAFT（還沒做完）
+    make_passed(app, ps[4]["id"])
+    r = client.post(f"/api/pages/{ps[4]['id']}/poses", json={"action": "跳"})  # 排隊中的角色動作：製作中
+    assert r.status_code == 202, r.text
+    ov = overview(client, b["id"])
+    assert [p["state"] for p in ov["pages"]] == ["ready", "ready", "attention", "todo", "working"]
+    assert ov["progress_pages"] == {"ready": 2, "total": 5}
+
+
+def test_progress_pages_never_exceeds_total(client, app):
+    """做完一輪後在 C 改好幾次（每次都排頁面流程）：做好的頁數不會超過頁數（舊的工作計數會）。"""
+    login(client, app, cap=60)
+    b, ps = book_with_pages(client, app, [("公園", "揮手"), ("海邊", "跳")])
+    produce(client, b["id"])
+    run_all(client, app)
+    pp = overview(client, b["id"])["progress_pages"]
+    assert pp == {"ready": 2, "total": 2}
+    pid = ps[0]["id"]
+    for i in range(4):
+        placement = {"cx": 0.3 + 0.1 * i, "cy": 0.6, "height": 0.5, "flip": bool(i % 2)}
+        r = client.put(f"/api/pages/{pid}/placement", params={"oneclick": "true"}, json=placement)
+        assert r.status_code == 200, r.text
+        pp = overview(client, b["id"])["progress_pages"]
+        assert pp["ready"] <= pp["total"] == 2
+        drain(client, app)
+        ov = overview(client, b["id"])
+        pp = ov["progress_pages"]
+        assert pp["ready"] <= pp["total"] == len(ov["pages"])
+    assert pp == {"ready": 2, "total": 2}
+
+
+def test_review_pose_page_is_ready_and_flagged(client, app):
+    from app.services.page_state import ATTENTION_REVIEW_POSE, REVIEW_POSE_DETAIL, hard_attention
+
+    assert ATTENTION_REVIEW_POSE == "review_pose" and REVIEW_POSE_DETAIL == REVIEW_DETAIL
+    assert hard_attention(None) is False and hard_attention("review_pose") is False
+    assert hard_attention("failed") is True
+    login(client, app, cap=60)
+    b, (p1, p2) = book_with_pages(client, app, [("公園", "揮手"), ("海邊", "跳")])
+    make_passed(app, p1["id"], attention="review_pose", attention_detail=REVIEW_DETAIL)
+    make_passed(app, p2["id"])
+    ov = overview(client, b["id"])
+    first, second = ov["pages"]
+    assert first["state"] == "ready" and first["review"] is True
+    assert first["attention_detail"] == REVIEW_DETAIL
+    assert second["state"] == "ready" and second["review"] is False and second["attention_detail"] is None
+
+
+def test_produce_does_not_requeue_review_pose_page(client, app):
+    """繼續做不會只因為 review_pose 就重排頁面流程（失敗的「請看一下」才會）。"""
+    login(client, app, cap=60)
+    b, (p1,) = book_with_pages(client, app, [("公園", "揮手")])
+    produce(client, b["id"])
+    run_all(client, app)
+    assert get_page(app, p1["id"]).status == PageStatus.PASSED
+    set_page(app, p1["id"], attention="review_pose", attention_detail=REVIEW_DETAIL)
+    out = produce(client, b["id"])
+    assert out["pipeline_pages"] == [] and out["queued"] == []
+    assert all(t.status != PageTaskStatus.QUEUED.value for t in page_tasks(app, p1["id"]))
+    set_page(app, p1["id"], attention="failed", attention_detail="圖片產生失敗，請重新產生")
+    assert produce(client, b["id"])["pipeline_pages"] == [p1["id"]]  # 對照：硬的請看一下照排

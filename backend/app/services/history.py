@@ -27,11 +27,12 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import func, insert, literal
+from sqlalchemy import case, func, insert, literal
 from sqlmodel import Session, col, delete, select, update
 
 from app.models import Generation, GenKind, Page, PageHistory, PageStatus, StrokeLayer, utcnow
 from app.services.page_compose import is_usable, slot_change_values, usable_conditions
+from app.services.page_state import ATTENTION_REVIEW_POSE
 from app.services.slots import SLOTS, newest_usable_ai
 from app.services.page_lineart import load_strokes, on_pipeline, save_strokes, strokes_from_json, strokes_to_json
 
@@ -207,8 +208,11 @@ def redo(session: Session, page: Page) -> bool:
 # ---- 套用 ------------------------------------------------------------------------------
 
 
-def set_slot(session: Session, page_id: int, kind: GenKind, gen_id: int, *, auto: bool = False) -> bool:
+def set_slot(session: Session, page_id: int, kind: GenKind, gen_id: int, *, auto: bool = False,
+             new_selection: bool = True, landed_text: str | None = None) -> bool:
     """把背景／角色動作換成 gen_id（同 _pick：選定圖是合成圖就清掉、退回草稿），auto=True 時也記成 auto_*。
+    new_selection、landed_text 見 slot_change_values（復原／重做傳 False：「要重畫」留著；
+    worker 換上去的 take 帶 gen.user_text：文字還一樣才清「要重畫」）。
     條件式 UPDATE 再確認圖仍可用；回傳有沒有寫入。"""
     field, auto_field = SLOTS[kind]
     still_valid = (
@@ -216,7 +220,7 @@ def set_slot(session: Session, page_id: int, kind: GenKind, gen_id: int, *, auto
         .where(col(Generation.id) == gen_id, col(Generation.page_id) == page_id, *usable_conditions(kind))
         .exists()
     )
-    values = slot_change_values(field, gen_id)
+    values = slot_change_values(field, gen_id, new_selection=new_selection, landed_text=landed_text)
     if auto:
         values[auto_field] = gen_id
     res = session.exec(update(Page).where(col(Page.id) == page_id, still_valid).values(**values))
@@ -226,6 +230,16 @@ def set_slot(session: Session, page_id: int, kind: GenKind, gen_id: int, *, auto
 def set_pending_strokes(session: Session, page_id: int, strokes_json: str | None) -> None:
     session.exec(update(Page).where(col(Page.id) == page_id)
                  .values(pending_user_strokes=strokes_json, updated_at=utcnow()))
+
+
+def clear_review_pose(session: Session, page_id: int) -> None:
+    """角色動作換了（復原／重做、還原成自動畫的那張）：批次重畫的「請看一下」（軟標記 review_pose）不用再看
+    （同 _pick）；其他 attention 不動。"""
+    review = col(Page.attention) == ATTENTION_REVIEW_POSE
+    session.exec(update(Page).where(col(Page.id) == page_id).values(
+        attention=case((review, None), else_=col(Page.attention)),
+        attention_detail=case((review, None), else_=col(Page.attention_detail)),
+    ))
 
 
 def apply_snapshot(session: Session, page: Page, snap: dict) -> bool:
@@ -239,8 +253,10 @@ def apply_snapshot(session: Session, page: Page, snap: dict) -> bool:
             continue
         if not is_usable(session.get(Generation, want), kind, pid):
             continue  # 圖已不能用（捨棄、清掉）：保留目前的
-        if set_slot(session, pid, kind, want):
+        if set_slot(session, pid, kind, want, new_selection=False):  # 選回舊的圖：「要重畫」留著
             recompose = True
+            if kind == GenKind.POSE:
+                clear_review_pose(session, pid)
     placement = snap.get("placement")
     if placement != _placement(page):
         recompose = True
@@ -312,6 +328,8 @@ def restore(session: Session, page: Page, item: str) -> bool:
     set_pending_strokes(session, page.id, CLEARED)
     if not set_slot(session, page.id, kind, target, auto=True):
         raise HistoryError(NO_AUTO[kind])
+    if kind == GenKind.POSE:  # 使用者自己換的動作；還原背景不動軟標記
+        clear_review_pose(session, page.id)
     return True
 
 
@@ -338,6 +356,6 @@ def take_generation(session: Session, gen: Generation) -> bool:
     push_snapshot(session, page)
     if can_compose_after(page, gen.kind):  # 少了另一張就合成不了：標成等著重新合成會讓 C 一直顯示「製作中」
         set_pending_strokes(session, page.id, CLEARED)
-    if not set_slot(session, page.id, gen.kind, gen.id, auto=True):
+    if not set_slot(session, page.id, gen.kind, gen.id, auto=True, landed_text=gen.user_text):
         raise HistoryError("新的圖已不能用")  # 呼叫端 rollback（快照也不留）
     return True

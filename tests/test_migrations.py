@@ -66,7 +66,6 @@ def test_fresh_db_page_and_generation_use_autoincrement(tmp_path):
     with eng.connect() as c:
         for t in AUTOINCREMENT_TABLES:
             assert "AUTOINCREMENT" in table_sql(c, t), t
-        assert "AUTOINCREMENT" not in table_sql(c, "book")
 
 
 def _seed_0002(eng) -> None:
@@ -655,3 +654,71 @@ def test_0014_page_caption_show_roundtrip(tmp_path):
         assert "AUTOINCREMENT" in sql
         assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
     command.upgrade(alembic_config(eng), "head")
+
+
+def test_0015_fix_round_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0014")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, action_prompt, caption_zh, status, line_detail, "
+            "line_width_px, qa_note, created_at, updated_at) VALUES (1, 0, 's', 'a', '火車', 'DRAFT', 'STANDARD', 11, "
+            "'', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "0015")
+    with eng.begin() as c:
+        cols = _cols(c, "page")
+        for name in ("outline_fill", "redraw_background", "redraw_pose"):
+            assert cols[name]["nullable"] is False
+        assert tuple(c.exec_driver_sql("SELECT outline_fill, redraw_background, redraw_pose FROM page").one()) == (0, 0, 0)
+        assert "AUTOINCREMENT" in table_sql(c, "book") and "AUTOINCREMENT" in table_sql(c, "page")
+        assert c.exec_driver_sql("SELECT title FROM book").scalar() == "x"
+        c.exec_driver_sql("DELETE FROM page WHERE book_id = 1")
+        c.exec_driver_sql("DELETE FROM book WHERE id = 1")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'y', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        assert c.exec_driver_sql("SELECT id FROM book").scalar() == 2
+    command.downgrade(alembic_config(eng), "0014")
+    with eng.connect() as c:
+        cols = _cols(c, "page")
+        assert not {"outline_fill", "redraw_background", "redraw_pose"} & set(cols)
+        assert "AUTOINCREMENT" in table_sql(c, "page")
+        assert "AUTOINCREMENT" not in table_sql(c, "book")
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")
+
+
+def test_fresh_db_book_uses_autoincrement(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    init_db(eng)
+    with eng.connect() as c:
+        assert "AUTOINCREMENT" in table_sql(c, "book")
+
+
+def test_orm_new_page_defaults(tmp_path):
+    from sqlmodel import Session
+    from app.models import Page
+
+    eng = make_engine(tmp_path / "a.db")
+    init_db(eng)
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    with Session(eng) as s:
+        p = Page(book_id=1, position=0)
+        s.add(p)
+        s.commit()
+        s.refresh(p)
+        assert p.outline_fill is True and p.redraw_background is False and p.redraw_pose is False

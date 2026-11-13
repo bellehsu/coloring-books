@@ -148,13 +148,16 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
 
         <div className={styles.side}>
           {page.attention === "failed" && <ReasonCard detail={page.attention_detail} busy={busy} saving={textSaving} onRetry={() => void fix.retry()} />}
+          {page.attention === "review_pose" && !working && <p className={styles.rowWarn}>{page.attention_detail}</p>}
           <ul className={styles.items} aria-label="這一頁的東西">
             <PoseRow
               bookId={bookId}
               page={page}
+              gens={gens}
               hasCharacter={book.character_generation_id != null}
               active={poseActive}
               flushEdits={fix.flushEdits}
+              selectPose={fix.selectPose}
               restore={showRestore(page, "pose") ? () => void fix.restore("pose") : null}
               busy={busy}
               textKey={fix.historyEpoch}
@@ -236,7 +239,7 @@ function ReasonCard({
         為什麼請你看
       </h2>
       <p className={styles.reasonText}>{detail || "這一頁沒做好"}</p>
-      <p className={styles.reasonHint}>按「再試一次」重新做這一頁；也可以換一張圖或上傳背景。</p>
+      <p className={styles.reasonHint}>按「再試一次」重新做這一頁；也可以重畫主角、AI 再畫一張背景或上傳背景。</p>
       <Button variant="primary" disabled={busy} aria-busy={saving} onClick={onRetry}>
         再試一次
       </Button>

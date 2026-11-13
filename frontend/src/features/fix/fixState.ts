@@ -1,6 +1,7 @@
 import type { OverviewPage, Page } from "@/api/client";
 import { normalizeCaption } from "@/lib/limits";
-import type { PageState } from "@/features/book/overviewState";
+import { hardAttention } from "@/lib/pageState";
+import { inAttention, type PageState } from "@/features/book/overviewState";
 
 /** C 是從 B 的哪個篩選打開的：「請看一下」時上一頁／下一頁只在要看的頁之間跳。 */
 export type FixFilter = "attention" | null;
@@ -36,7 +37,8 @@ export function penBlocked(page: Page): string | null {
 }
 
 /**
- * 上一頁／下一頁（依頁序）。filter="attention"：只在「請看一下」的頁之間跳（目前這頁不論狀態都當成起點）；
+ * 上一頁／下一頁（依頁序）。filter="attention"：只在「請看一下」的頁（含換了新動作的 review 頁）之間跳
+ * （目前這頁不論狀態都當成起點）；
  * 其他：全部的頁。沒有就是 null。
  */
 export function neighbours(
@@ -47,7 +49,7 @@ export function neighbours(
   const sorted = [...pages].sort((a, b) => a.position - b.position || a.id - b.id);
   const i = sorted.findIndex((p) => p.id === pageId);
   if (i < 0) return { prev: null, next: null };
-  const ok = (p: OverviewPage) => !filter || p.state === filter;
+  const ok = (p: OverviewPage) => !filter || inAttention(p);
   const prev = sorted.slice(0, i).reverse().find(ok) ?? null;
   const next = sorted.slice(i + 1).find(ok) ?? null;
   return { prev, next };
@@ -59,10 +61,10 @@ export function pageTitle(page: Pick<Page, "position" | "caption_zh">): string {
   return zh ? `第 ${page.position + 1} 頁・${zh}` : `第 ${page.position + 1} 頁`;
 }
 
-/** 頁首的狀態：以 B 的總覽為準（含製作中）；總覽還沒載入時由頁面推。 */
+/** 頁首的狀態：以 B 的總覽為準（含製作中）；總覽還沒載入時由頁面推（review_pose 是軟性的，仍算可以印）。 */
 export function pageState(page: Page, ov: OverviewPage | undefined): PageState {
   if (ov) return ov.state;
-  if (page.attention) return "attention";
+  if (hardAttention(page)) return "attention";
   return page.status === "passed" ? "ready" : "todo";
 }
 

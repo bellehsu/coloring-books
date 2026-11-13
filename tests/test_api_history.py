@@ -858,3 +858,15 @@ def test_legacy_page_without_auto_not_swapped_no_snapshot(client, app):
     pg = get_page(app, pid)
     assert pg.pose_generation_id == pose1 != pose2
     assert history_rows(app, pid) == []
+
+
+def test_accept_clears_review_pose(client, app):
+    from tests.test_api_lineart import set_page
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    set_page(app, pid, attention="review_pose", attention_detail="請看一下：換了新的主角動作")
+    out = accept(client, pid)
+    assert out["attention"] is None and out["attention_detail"] is None and out["status"] == "passed"
+    pg = get_page(app, pid)
+    assert pg.attention is None and pg.attention_detail is None

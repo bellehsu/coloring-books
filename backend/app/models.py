@@ -7,7 +7,7 @@
 from datetime import date, datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Column, DateTime, UniqueConstraint, true
+from sqlalchemy import Column, DateTime, UniqueConstraint, false, true
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, SQLModel
 
@@ -124,6 +124,8 @@ class Usage(SQLModel, table=True):
 
 
 class Book(SQLModel, table=True):
+    __table_args__ = {"sqlite_autoincrement": True}  # 刪除書後 id 永不沿用（同 Page）
+
     id: int | None = Field(default=None, primary_key=True)
     owner_id: int = Field(foreign_key="owner.id", index=True)  # 只有書有 owner；頁面／生成紀錄經 book_id 繼承
     title: str
@@ -152,6 +154,11 @@ class Page(SQLModel, table=True):
     # 要印哪幾行（Phase 13b）：兩個都關＝圖下方留空白文字帶讓小朋友自己寫；開著但沒字的那行不印
     caption_show_zh: bool = Field(default=True, sa_column_kwargs={"server_default": true()})
     caption_show_en: bool = Field(default=True, sa_column_kwargs={"server_default": true()})
+    # 2026-11-13 修正輪：新頁面預設「線稿內填滿」（True）；遷移前就存在的頁面為 False
+    outline_fill: bool = Field(default=True, sa_column_kwargs={"server_default": false()})
+    # 「重畫背景／重畫角色動作」勾選（下次生成時才套用）
+    redraw_background: bool = Field(default=False, sa_column_kwargs={"server_default": false()})
+    redraw_pose: bool = Field(default=False, sa_column_kwargs={"server_default": false()})
     selected_generation_id: int | None = None
     background_generation_id: int | None = None
     pose_generation_id: int | None = None
@@ -166,7 +173,7 @@ class Page(SQLModel, table=True):
     lineart_key: str | None = None
     lineart_path: str | None = None
     qa_json: str | None = None
-    # Phase 13：需要使用者看一下（目前只有 "failed"）與它的中文說明；None＝不需要
+    # Phase 13：需要使用者看一下（"failed"、"review_pose"）與它的中文說明；None＝不需要
     attention: str | None = None
     attention_detail: str | None = None
     # 頁面流程自動選的背景／角色動作（「還原成自動畫的那張」用）；使用者自己選的仍在 background／pose_generation_id

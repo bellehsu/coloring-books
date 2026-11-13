@@ -11,10 +11,11 @@ import random
 import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile
-from sqlalchemy import true
-from sqlmodel import Session, col, select, update
+from fastapi.responses import Response
+from sqlalchemy import literal, true
+from sqlmodel import Session, col, func, select, update
 
-from app.api.deps import current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
+from app.api.deps import BOOK_NOT_FOUND, current_owner, get_session, get_storage, get_worker, owned_book, owned_generation
 from app.api.pages import page_outs
 from app.api.schemas import (
     BookCreate,
@@ -32,8 +33,9 @@ from app.services.page_compose import store_outside_tx
 from app.services.page_lineart import ensure_page_lineart, on_pipeline
 from app.services.pipeline import enqueue_page_task
 from app.services import usage
+from app.services.book_delete import delete_books_rows
 from app.services.gen_request import encode_request
-from app.services.jobs import MAX_SEED, last_variations
+from app.services.jobs import BATCH_LOCK, MAX_SEED, last_variations
 from app.services.page_state import busy_page_ids, page_state
 from app.services.slots import UPLOAD_ENGINE
 from app.services.uploads import letterbox, mark_stored, read_upload
@@ -48,7 +50,7 @@ CHARACTER_SIZE = QWEN_CHARACTER_SIZE
 
 
 
-def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
+def book_outs(session: Session, books: list[Book], viewer: Owner) -> list[BookOut]:
     """附上統計與封面；所有繪本的頁面一次查完，封面頁再交給 page_outs 算 lineart_url。"""
     ids = [b.id for b in books]
     by_book: dict[int, list[Page]] = {i: [] for i in ids}
@@ -78,12 +80,12 @@ def book_outs(session: Session, books: list[Book]) -> list[BookOut]:
             working=states.count("working"),
             todo=states.count("todo"),
         )
-        out.append(BookOut.from_book(b, stats, cover_urls.get(b.id)))
+        out.append(BookOut.from_book(b, stats, cover_urls.get(b.id), mine=b.owner_id == viewer.id))
     return out
 
 
-def book_out(session: Session, book: Book) -> BookOut:
-    return book_outs(session, [book])[0]
+def book_out(session: Session, book: Book, viewer: Owner) -> BookOut:
+    return book_outs(session, [book], viewer)[0]
 
 
 @router.post("", status_code=201, response_model=BookOut)
@@ -95,7 +97,7 @@ def create_book(
     book = Book(title=body.title, paper_size=body.paper_size, print_mode=body.print_mode, owner_id=owner.id)
     session.add(book)
     session.commit()
-    return book_out(session, book)
+    return book_out(session, book, owner)
 
 
 @router.get("", response_model=list[BookOut])
@@ -107,7 +109,7 @@ def list_books(
     if not owner.is_admin:
         stmt = stmt.where(col(Book.owner_id) == owner.id)
     books = session.exec(stmt.order_by(col(Book.id).desc())).all()
-    return book_outs(session, list(books))
+    return book_outs(session, list(books), owner)
 
 
 @router.get("/{book_id}", response_model=BookOut)
@@ -116,7 +118,28 @@ def get_book(
     session: Session = Depends(get_session),
     owner: Owner = Depends(current_owner),
 ) -> BookOut:
-    return book_out(session, owned_book(session, owner, book_id))
+    return book_out(session, owned_book(session, owner, book_id), owner)
+
+
+@router.delete("/{book_id}", status_code=204)
+def delete_book(
+    book_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+    storage: Storage = Depends(get_storage),
+) -> None:
+    """刪除整本書（資料列與物件）。排隊中的工作取消並退額度；執行中的不擋，worker 收尾時發現列不見了會清掉自己寫的物件。
+    admin 只能刪自己的書（別人的書一律 404）。物件在交易提交後才刪（盡力而為）：失敗只記 log，之後 storage_gc 會清。"""
+    book = owned_book(session, owner, book_id)
+    if book.owner_id != owner.id:
+        raise HTTPException(404, BOOK_NOT_FOUND)
+    with BATCH_LOCK:  # 與「繼續做」／批次排隊互斥：不會排到一半的書被刪掉
+        delete_books_rows(session, [book_id])
+        session.commit()
+    try:
+        storage.delete_prefix(f"books/{book_id}/")  # 結尾的 / 不可省：books/1 會連 books/10 一起刪
+    except Exception:  # noqa: BLE001
+        log.warning("刪除 books/%s/ 的物件失敗；storage_gc 會清掉", book_id, exc_info=True)
 
 
 def _recompute_book_lineart(sessions, storage, book_id: int, skip: frozenset[int] = frozenset()) -> None:
@@ -192,7 +215,7 @@ def update_book(
             _recompute_book_lineart, request.app.state.sessions, request.app.state.storage, book_id,
             frozenset(rerun),
         )
-    return book_out(session, book)
+    return book_out(session, book, owner)
 
 
 NEED_PASSED_PAGE = "至少完成一頁才能分享"
@@ -219,7 +242,7 @@ def set_share(
         book.shared_at = None
     session.add(book)
     session.commit()
-    return book_out(session, book)
+    return book_out(session, book, owner)
 
 
 def _last_character_variation(session: Session, book_id: int) -> str | None:
@@ -367,7 +390,44 @@ def set_character(
         raise HTTPException(409, "這張候選圖已被清理")
     _select_character(session, book_id, gen.id, gen.user_text, body.confirm_change)
     session.refresh(book)
-    return book_out(session, book)
+    return book_out(session, book, owner)
+
+
+@router.delete("/{book_id}/character/candidates/{gen_id}", status_code=204)
+def delete_character_candidate(
+    book_id: int,
+    gen_id: int,
+    session: Session = Depends(get_session),
+    owner: Owner = Depends(current_owner),
+) -> Response:
+    """刪掉不要的角色候選圖＝捨棄（discarded）；復原走 PATCH /generations/{id} {"discarded": false}。"""
+    book = owned_book(session, owner, book_id)
+    # 與 PATCH /generations/{id} 同樣用條件式 UPDATE：判斷與寫入之間不能被別的請求（選角色、開始生成）插隊
+    discarded_at_type = Generation.__table__.c.discarded_at.type
+    res = session.exec(
+        update(Generation)
+        .where(
+            (col(Generation.id) == gen_id)
+            & (col(Generation.book_id) == book_id)
+            & (col(Generation.kind) == GenKind.CHARACTER)
+            & ~select(Book.id).where(col(Book.character_generation_id) == gen_id).exists()
+            & col(Generation.status).not_in([GenStatus.QUEUED, GenStatus.RUNNING])
+        )
+        .values(
+            discarded=True,
+            discarded_at=func.coalesce(col(Generation.discarded_at), literal(utcnow(), discarded_at_type)),
+        )
+    )
+    session.commit()
+    if res.rowcount == 0:
+        gen = session.exec(select(Generation).where(col(Generation.id) == gen_id)).first()
+        if gen is None or gen.book_id != book_id or gen.kind != GenKind.CHARACTER:
+            raise HTTPException(404, "找不到這張候選圖")
+        session.refresh(book)
+        if book.character_generation_id == gen_id:
+            raise HTTPException(409, "選好的主角不能刪")
+        raise HTTPException(409, "這張候選還在畫，請先取消")
+    return Response(status_code=204)
 
 
 @router.post("/{book_id}/character/upload", status_code=201, response_model=BookOut)
@@ -418,4 +478,4 @@ def upload_character(
     # 主角已經是一筆有圖的成功紀錄：之後設定失敗（例如同時被設定了別的角色）也不刪它的物件
     _select_character(session, book_id, gen_id, None, confirm_change)
     session.refresh(book)
-    return book_out(session, book)
+    return book_out(session, book, owner)

@@ -2,7 +2,7 @@
 
 import { useState, type ChangeEvent } from "react";
 import type { Book, Generation } from "@/api/client";
-import { isActive, useGenerations, useSetupCharacter } from "@/api/hooks";
+import { isActive, useDeleteCandidate, useGenerations, useSetupCharacter, useUpdateGeneration } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
@@ -31,6 +31,8 @@ export function CharacterSection({ bookId, book, titleValid, ensureBook }: Chara
   const toast = useToast();
   const gensQ = useGenerations(bookId ?? 0, { kind: "character" }, bookId != null);
   const { generate, choose, upload } = useSetupCharacter();
+  const delCandidate = useDeleteCandidate(bookId ?? 0);
+  const restore = useUpdateGeneration(bookId ?? 0);
   const [typed, setTyped] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
 
@@ -67,6 +69,21 @@ export function CharacterSection({ bookId, book, titleValid, ensureBook }: Chara
     const onError = (e: unknown) => toast.show(errMsg(e, "沒辦法換主角，請再試一次"), "error");
     if (p.kind === "choose") choose.mutate({ bookId: id, generationId: p.generationId, confirm }, { onError });
     else upload.mutate({ bookId: id, file: p.file, confirm }, { onError: (e) => toast.show(errMsg(e, "上傳不了這張圖"), "error") });
+  }
+
+  function remove(g: Generation) {
+    delCandidate.mutate(g.id, {
+      onSuccess: () =>
+        toast.show("已刪掉這張候選", "info", {
+          label: "復原",
+          onClick: () =>
+            restore.mutate(
+              { id: g.id, discarded: false },
+              { onError: (e) => toast.show(errMsg(e, "沒辦法復原，請再試一次"), "error") },
+            ),
+        }),
+      onError: (e) => toast.show(errMsg(e, "沒辦法刪掉這張候選，請再試一次"), "error"),
+    });
   }
 
   function pick(g: Generation) {
@@ -132,6 +149,7 @@ export function CharacterSection({ bookId, book, titleValid, ensureBook }: Chara
             on={g.id === selectedId}
             busy={changing}
             onPick={() => pick(g)}
+            onRemove={() => remove(g)}
           />
         ))}
         <li className={styles.candSlot}>
@@ -178,11 +196,30 @@ export function CharacterSection({ bookId, book, titleValid, ensureBook }: Chara
   );
 }
 
-function Candidate({ g, n, on, busy, onPick }: { g: Generation; n: number; on: boolean; busy: boolean; onPick: () => void }) {
+function Candidate({
+  g,
+  n,
+  on,
+  busy,
+  onPick,
+  onRemove,
+}: {
+  g: Generation;
+  n: number;
+  on: boolean;
+  busy: boolean;
+  onPick: () => void;
+  onRemove: () => void;
+}) {
   const ok = g.status === "succeeded" && !!g.image_url;
   const running = g.status === "running" || g.queue_position === 0;
   return (
     <li className={styles.cand} data-on={on ? "true" : "false"}>
+      {!on && !isActive(g) && (
+        <button type="button" className={styles.candRemove} aria-label={`刪掉候選 ${n}`} onClick={onRemove}>
+          ×
+        </button>
+      )}
       <div className={styles.candArt}>
         {ok ? (
           // eslint-disable-next-line @next/next/no-img-element

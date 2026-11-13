@@ -123,12 +123,13 @@ class BookOut(BaseModel):
     stats: BookStats
     cover_url: str | None  # position 最小且有選圖的頁的 lineart_url
     shared_at: datetime | None = None  # null＝沒有分享
+    mine: bool = True  # false＝別人的書（admin 看得到全部，只能刪自己的）
     created_at: datetime
     updated_at: datetime
 
     @classmethod
     def from_book(
-        cls, book: Book, stats: BookStats | None = None, cover_url: str | None = None
+        cls, book: Book, stats: BookStats | None = None, cover_url: str | None = None, mine: bool = True
     ) -> "BookOut":
         lay = compute_layout(book.paper_size, book.print_mode)
         return cls(
@@ -145,6 +146,7 @@ class BookOut(BaseModel):
             stats=stats or BookStats(),
             cover_url=cover_url,
             shared_at=book.shared_at,
+            mine=mine,
             created_at=book.created_at,
             updated_at=book.updated_at,
         )
@@ -270,6 +272,7 @@ class SelectGeneration(BaseModel):
 
 class PoseCreate(BaseModel):
     action: ActionStr  # 動作文字（不帶場景描述）
+    count: int = Field(1, ge=1, le=3)  # C 的「一次畫 N 張」：第 1 張照 oneclick 換上去，其餘是候選
 
 
 class BackgroundCreate(BaseModel):
@@ -326,6 +329,9 @@ class PageOut(BaseModel):
     recompose_pending: bool
     can_undo: bool  # C 的「↶ 復原」／「↷ 重做」
     can_redo: bool
+    # 設定頁改了場景／動作、等「繼續做」重畫背景／角色動作（「要重畫」）
+    redraw_background: bool
+    redraw_pose: bool
     created_at: datetime
     updated_at: datetime
 
@@ -381,6 +387,8 @@ class PageOut(BaseModel):
             recompose_pending=page.pending_user_strokes is not None and history.has_both_slots(page),
             can_undo=can_undo,
             can_redo=can_redo,
+            redraw_background=page.redraw_background,
+            redraw_pose=page.redraw_pose,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )
@@ -492,6 +500,18 @@ class BatchMaterialsOut(BaseModel):
     skipped: list[BatchSkip]
 
 
+class PoseRedrawIn(BaseModel):
+    """B 的「重畫 N 頁的主角」：每頁用目前的動作描述畫 count 張（第 1 張換上去並標 review_pose，其餘是候選）。"""
+
+    page_ids: list[DbId] = Field(min_length=1, max_length=500)
+    count: int = Field(1, ge=1, le=3)
+
+
+class PoseRedrawOut(BaseModel):
+    queued: list[GenerationOut]
+    skipped: list[BatchSkip]
+
+
 # ---- 開始做這本書（/produce）與 B 整本書（/overview）---------------------------------
 
 
@@ -521,7 +541,8 @@ class OverviewPageOut(BaseModel):
     caption_show_en: bool
     thumb_url: str | None  # 選定圖（合成圖；舊書是整頁圖）
     lineart_url: str | None  # 目前線稿（?v= 為目前的 key）；沒選定圖為 None
-    attention_detail: str | None
+    attention_detail: str | None  # 有 attention 時的中文說明（review_pose 也有）
+    review: bool  # attention == "review_pose"：換了新的主角動作（軟標記，state 照樣是 ready）
 
 
 class RunProgress(BaseModel):
@@ -530,13 +551,20 @@ class RunProgress(BaseModel):
     done: int  # 本輪（produce_started_at 之後建立）已結束的生成（不含合成圖、上傳）＋頁面流程
 
 
+class ProgressPages(BaseModel):
+    ready: int  # state == "ready" 的頁（PASSED、不在製作中、沒有請看一下；review_pose 也算）
+    total: int  # 頁數
+
+
 class BookOverviewOut(BaseModel):
     book_id: int
     pages: list[OverviewPageOut]
-    progress: RunProgress
+    progress: RunProgress  # 工作計數：ETA 與「製作中」用（不再當作「做好 N / M」）
+    progress_pages: ProgressPages  # B 的「做好 N / M 頁」
     estimate_s: int  # 排隊中與執行中的生成 × 每張約 22 秒（頁面流程很快，不算）
     # 還有素材沒排（也沒有排隊中的那種）的頁數：上一輪放不下的（「還有 N 頁明天繼續」），沒按過時是全部缺的頁
     deferred_count: int
+    redraw_count: int  # 設定頁改了、等「繼續做」重畫的頁數（背景或角色動作標了「要重畫」）；不算進 deferred_count
     run_started_at: datetime | None  # 最近一輪的開始時間；null＝還沒按過「開始做這本書」
 
 

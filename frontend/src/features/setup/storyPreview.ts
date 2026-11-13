@@ -21,6 +21,9 @@ export interface PageMaterials {
   /** 選用的背景是使用者上傳的圖片。 */
   backgroundUploaded: boolean;
   hasPose: boolean;
+  /** 設定頁改了場景／動作：「繼續做」會重畫（後端標的旗標）。 */
+  redrawBackground: boolean;
+  redrawPose: boolean;
 }
 
 /** 「＋ 加一頁」手動加的頁（還沒建立）：接在現有頁與貼上的頁後面。 */
@@ -69,10 +72,19 @@ export type ExistingPage = Pick<
   "id" | "position" | "scene_prompt" | "action_prompt" | "caption_zh" | "caption_en"
 >;
 
-const NONE: PageMaterials = { hasBackground: false, backgroundUploaded: false, hasPose: false };
+const NONE: PageMaterials = {
+  hasBackground: false,
+  backgroundUploaded: false,
+  hasPose: false,
+  redrawBackground: false,
+  redrawPose: false,
+};
 /** 每個已有頁面的素材狀態（gens：這本書的生成紀錄，任何種類）。 */
 export function pageMaterials(
-  pages: readonly Pick<Page, "id" | "background_generation_id" | "pose_generation_id" | "selected_generation_id">[],
+  pages: readonly Pick<
+    Page,
+    "id" | "background_generation_id" | "pose_generation_id" | "selected_generation_id" | "redraw_background" | "redraw_pose"
+  >[],
   gens: readonly Generation[],
 ): Map<number, PageMaterials> {
   const legacy = new Set(gens.filter((g) => g.kind === "page").map((g) => g.id));
@@ -88,6 +100,8 @@ export function pageMaterials(
       hasBackground: has("background", p.background_generation_id),
       backgroundUploaded: selectedBg?.source === "upload",
       hasPose: has("pose", p.pose_generation_id),
+      redrawBackground: p.redraw_background,
+      redrawPose: p.redraw_pose,
     });
   }
   return out;
@@ -147,8 +161,9 @@ export function buildPreview(
 
 /** 這一頁按下開始後要不要畫背景（uploads：選了上傳圖片的頁的 key）。 */
 export const needsBackground = (e: PreviewEntry, uploads: ReadonlySet<string>) =>
-  e.scene.trim() !== "" && !e.materials.hasBackground && !uploads.has(e.key);
-export const needsPose = (e: PreviewEntry) => e.action.trim() !== "" && !e.materials.hasPose;
+  e.scene.trim() !== "" && (!e.materials.hasBackground || e.materials.redrawBackground) && !uploads.has(e.key);
+export const needsPose = (e: PreviewEntry) =>
+  e.action.trim() !== "" && (!e.materials.hasPose || e.materials.redrawPose);
 
 export interface PlanCounts {
   backgrounds: number;

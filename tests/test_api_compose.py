@@ -1417,3 +1417,47 @@ def test_materials_batch_upload_page_ids_skip_background(client, app):
     assert out["skipped"] == [
         {"kind": "background", "page_id": p1["id"], "position": p1["position"], "reason": "改用上傳圖片"}
     ]
+
+
+# ---- review_pose：C 選另一個主角動作才清掉，換背景不清 ---------------------------------------
+
+
+def _reviewed_page(client, app):
+    """可以印的頁（流程跑完）＋第二張背景與角色動作（各自自動選用、流程再跑完），標上 review_pose。"""
+    from tests.test_api_lineart import get_page, set_page
+    from tests.test_pipeline import drain, produced
+
+    b, p, bg1, pose1 = produced(client, app)
+    pid = p["id"]
+    bg2 = gen_background(client, app, pid)
+    pose2 = gen_pose(client, app, pid)
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == bg2 and pg.pose_generation_id == pose2
+    set_page(app, pid, attention="review_pose", attention_detail="請看一下：換了新的主角動作")
+    return pid, bg1, pose1
+
+
+def test_oneclick_pose_pick_clears_review_pose(client, app):
+    from tests.test_api_lineart import get_page
+
+    pid, bg1, pose1 = _reviewed_page(client, app)
+    r = client.post(f"/api/pages/{pid}/pose", params={"oneclick": "true"}, json={"generation_id": pose1})
+    assert r.status_code == 200, r.text
+    assert r.json()["attention"] is None and r.json()["attention_detail"] is None
+    pg = get_page(app, pid)
+    assert pg.pose_generation_id == pose1 and pg.attention is None and pg.attention_detail is None
+
+
+def test_oneclick_background_pick_keeps_review_pose(client, app):
+    from tests.test_api_lineart import get_page
+    from tests.test_pipeline import drain
+
+    pid, bg1, pose1 = _reviewed_page(client, app)
+    r = client.post(f"/api/pages/{pid}/background", params={"oneclick": "true"}, json={"generation_id": bg1})
+    assert r.status_code == 200, r.text
+    assert r.json()["attention"] == "review_pose"
+    drain(client, app)  # 流程做完也保留
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == bg1 and pg.status == PageStatus.PASSED
+    assert pg.attention == "review_pose" and pg.attention_detail == "請看一下：換了新的主角動作"

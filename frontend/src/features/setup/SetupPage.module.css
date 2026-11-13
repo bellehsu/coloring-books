@@ -163,6 +163,7 @@
   gap: 14px;
 }
 .cand {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -174,6 +175,26 @@
 .cand[data-on="true"] {
   background: var(--tint-yellow);
   box-shadow: var(--shadow-hard-sm);
+}
+.candRemove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  width: 44px;
+  height: 44px;
+  border: var(--border-w) solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.candRemove:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .candArt {
   aspect-ratio: 832 / 1216;
@@ -404,6 +425,13 @@
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   gap: 8px;
 }
+.fullRow {
+  grid-column: 1 / -1;
+}
+.editActions {
+  display: flex;
+  gap: 8px;
+}
 .draftInput {
   min-height: 44px;
   padding: 8px 12px;
@@ -540,4 +568,8 @@
   .start {
     width: 100%;
   }
+}
+.promptArea {
+  width: 100%;
+  resize: vertical;
 }

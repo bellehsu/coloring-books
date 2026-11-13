@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { ApiError, type Invite } from "@/api/client";
 import { useCreateInvite, useInvites } from "@/api/hooks";
 import { AppBar } from "@/components/shell/AppBar";
+import { copyText } from "@/lib/copyText";
 import { Button } from "@/components/ui/Button";
 import styles from "./InviteAdmin.module.css";
 
@@ -32,11 +33,8 @@ function CopyLink({ invite }: { invite: Invite }) {
   }
   const link = invite.link;
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(link);
-    } catch {
-      return; // 沒有剪貼簿權限：網址仍顯示在旁邊，可以手動選取
-    }
+    // 複製不成：網址仍顯示在旁邊，可以手動選取
+    if (!(await copyText(link))) return;
     setCopied(true);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), 2000);

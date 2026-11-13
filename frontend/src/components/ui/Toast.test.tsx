@@ -43,4 +43,22 @@ describe("Toast", () => {
     expect(polite).toBeEmptyDOMElement();
     expect(assertive).toBeEmptyDOMElement();
   });
+
+  it("an action toast shows the button, calls it once and dismisses", () => {
+    const onClick = vi.fn();
+    function A() {
+      const t = useToast();
+      return <button onClick={() => t.show("已刪掉", "info", { label: "復原", onClick })}>go</button>;
+    }
+    render(
+      <ToastProvider>
+        <A />
+      </ToastProvider>,
+    );
+    act(() => screen.getByRole("button", { name: "go" }).click());
+    expect(politeToasts()).toHaveTextContent("已刪掉");
+    act(() => screen.getByRole("button", { name: "復原" }).click());
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(politeToasts()).toBeEmptyDOMElement();
+  });
 });
