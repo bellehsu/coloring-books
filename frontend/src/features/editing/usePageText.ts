@@ -12,6 +12,9 @@ export function usePageText(serverValue: string, send: (v: string) => Promise<un
   if (key !== resetKey) {
     setKey(resetKey);
     setEdited(null);
+  } else if (edited !== null && edited === serverValue) {
+    // 伺服器追上了（存好後重抓）：回到顯示伺服器的值，之後別處改的文字才看得到
+    setEdited(null);
   }
   const value = key !== resetKey ? serverValue : (edited ?? serverValue);
   /** 這一輪（resetKey）送過的；復原之前送的不算，同樣的文字再打一次要重送。 */
