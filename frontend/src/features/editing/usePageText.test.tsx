@@ -29,7 +29,7 @@ describe("usePageText", () => {
 
   it("送出中改回原本的字：最後的字（原本的字）也要送出", async () => {
     const pending: (() => void)[] = [];
-    const send = vi.fn((_v: string) => new Promise<void>((r) => pending.push(r)));
+    const send = vi.fn((v: string) => new Promise<void>((r) => pending.push(r)).then(() => void v));
     const { result } = renderHook(({ server }) => usePageText(server, send), { initialProps: { server: "原本" } });
     act(() => result.current.setValue("X"));
     let first!: Promise<unknown>;
@@ -55,7 +55,7 @@ describe("usePageText", () => {
   });
 
   it("跟著伺服器變了之後，再打回之前存過的字：要重新送出", async () => {
-    const send = vi.fn(async (_v: string) => {});
+    const send = vi.fn(async (v: string) => void v);
     const { result, rerender } = renderHook(({ server }) => usePageText(server, send), {
       initialProps: { server: "原本" },
     });
