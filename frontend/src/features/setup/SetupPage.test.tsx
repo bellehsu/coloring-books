@@ -246,6 +246,7 @@ describe("① 改紙張前等修線存好", () => {
     await userEvent.selectOptions(screen.getByLabelText("紙張"), "B5・家用印表機");
     expect(await screen.findByText(/修線還沒存好/)).toBeInTheDocument();
     expect(paperPatches()).toHaveLength(0);
+    expect(screen.getByLabelText("紙張")).toHaveValue("a4:home"); // 選單回到原本的紙張
   });
 });
 
