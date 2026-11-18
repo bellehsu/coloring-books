@@ -44,7 +44,8 @@ export function LineFixStage(props: LineFixStageProps) {
   const edits = useEdits(pageId);
   const entry = editsQueueFor(qc, bookId, pageId, genId, { oneclick: props.oneclick });
 
-  const key = `${pageId}-${genId}`;
+  // 版面（content_px）也在 key 裡：改紙張／列印方式後伺服器換算了筆畫，畫布要重新載入（review 2026-11-13）
+  const key = `${pageId}-${genId}-${props.contentPx[0]}x${props.contentPx[1]}`;
   const local = entry.shouldSeedFromLocal() ? entry.latest : null;
   // 第一次 seed 時，重抓中的快取可能是舊的（例如畫布不在時 QA 面板自動補線），要等重抓完成。
   // 一旦這個（頁, 選圖）的編輯器掛上，就不再因背景重抓（自動補線、改線寬）卸載它。
@@ -117,13 +118,13 @@ function LineFixEditor({
     setStrokes(next);
     // 自動補線進行中先不寫入（補線依送出當下的線稿找缺口），結束後再送。
     if (fixing.current) changedWhileFixing.current = true;
-    else entry.push(next);
+    else entry.push(next, contentPx);
   }
 
   /** 重送畫面上的完整筆畫（＝佇列最新的筆畫）。補線中就等補線結束再一起送。 */
   function retrySave() {
     if (fixing.current) changedWhileFixing.current = true;
-    else entry.push(latest.current);
+    else entry.push(latest.current, contentPx);
   }
 
   /** 自動補線（由右欄的「自動補線」經 entry.autofix 呼叫）：回傳補了幾條；失敗提示後回傳 null。
@@ -151,7 +152,7 @@ function LineFixEditor({
       fixing.current = false;
       setFixBusy(false);
       // 補線期間有修改 → 送出畫面上的完整筆畫；沒有的話伺服器已經等於畫面
-      if (changedWhileFixing.current) entry.push(latest.current);
+      if (changedWhileFixing.current) entry.push(latest.current, contentPx);
       changedWhileFixing.current = false;
     }
   }
