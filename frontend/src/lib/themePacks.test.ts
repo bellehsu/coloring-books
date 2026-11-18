@@ -113,3 +113,15 @@ describe.each(NEW_PACKS)("theme pack %s", (id, title, captions) => {
     }
   });
 });
+
+describe("衛生習慣：主角用的東西跟主角畫在一起，背景不重複", () => {
+  const pages = parseStory(THEME_PACKS.find((p) => p.id === "hygiene")!.text).pages;
+  it("洗手：洗手台和水龍頭在動作裡，背景沒有洗手台", () => {
+    expect(pages[0].action).toContain("洗手台的水龍頭");
+    expect(pages[0].scene).toContain("沒有洗手台");
+  });
+  it("洗澡：浴缸只在動作裡，背景沒有浴缸", () => {
+    expect(pages[2].action).toContain("浴缸");
+    expect(pages[2].scene).toContain("沒有浴缸");
+  });
+});
