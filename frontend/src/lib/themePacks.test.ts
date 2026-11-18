@@ -116,12 +116,10 @@ describe.each(NEW_PACKS)("theme pack %s", (id, title, captions) => {
 
 describe("衛生習慣：主角用的東西跟主角畫在一起，背景不重複", () => {
   const pages = parseStory(THEME_PACKS.find((p) => p.id === "hygiene")!.text).pages;
-  it("洗手：洗手台和水龍頭在動作裡，背景完全不提洗手台、檯面（提了就會畫出第二個）", () => {
-    expect(pages[0].action).toContain("洗手台的水龍頭");
-    // 使用者 2026-11-19：要第一版那種有檯面的大洗手台、主角高度配合它 → 大洗手台跟主角畫在一起，高度在動作裡講
-    expect(pages[0].action).toContain("有檯面的大洗手台");
-    expect(pages[0].action).toContain("胸口的高度");
-    expect(pages[0].scene).not.toMatch(/洗手台|檯面|水龍頭/);
+  it("洗手：大洗手台畫在背景（使用者 2026-11-19 選），主角只畫搓手、不畫第二個水龍頭；位置在 C 頁自己拖", () => {
+    expect(pages[0].scene).toContain("有檯面的大洗手台");
+    expect(pages[0].action).not.toMatch(/洗手台|水龍頭/);
+    expect(pages[0].action).toContain("搓");
   });
   it("洗澡：浴缸只在動作裡，背景沒有浴缸", () => {
     expect(pages[2].action).toContain("浴缸");
