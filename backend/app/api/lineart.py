@@ -32,9 +32,12 @@ from app.services.imageio import png_to_ink
 from app.services.layout import compute_layout
 from app.services.lineart_render import Stroke
 from app.services.page_lineart import (
+    STALE_LAYOUT,
+    LayoutKey,
     LineartSourceMissing,
     LineartUnavailable,
     PageLineart,
+    book_layout_key,
     commit_layer,
     ensure_page_lineart,
     ink_before_user_layer,
@@ -103,15 +106,19 @@ def _selected_or_409(page: Page, generation_id: int | None = None) -> int:
 
 
 def _commit_strokes(
-    session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer, demote: bool = True
+    session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer, demote: bool = True,
+    layout: LayoutKey | None = None,
 ) -> None:
-    """一層修改圖層與「頁面仍選定這張圖」的條件式 UPDATE 在同一個交易；修線後 passed 退回 draft（demote）。"""
+    """一層修改圖層與「頁面仍選定這張圖（、書本版面仍是 layout）」的條件式 UPDATE 在同一個交易；
+    修線後 passed 退回 draft（demote）。"""
     try:
-        ok = commit_layer(session, page_id, gen_id, strokes, layer=layer, demote=demote)
+        ok = commit_layer(session, page_id, gen_id, strokes, layer=layer, demote=demote, layout=layout)
     except IntegrityError as e:  # 兩個請求同時建立同一張圖的修改圖層
         raise HTTPException(409, "修改圖層剛被另一個請求更新，請重試") from e
     if not ok:
-        raise HTTPException(409, STALE_GENERATION)
+        page = session.get(Page, page_id)
+        still_selected = page is not None and page.selected_generation_id == gen_id
+        raise HTTPException(409, STALE_LAYOUT if still_selected and layout is not None else STALE_GENERATION)
 
 
 @router.get("/pages/{page_id}/lineart")
@@ -244,6 +251,7 @@ def autofix(
     oneclick（C 的「自動補線」）：流程做的頁不退回草稿（之後流程重算 auto 層時仍會補上）。
     """
     gid = _selected_or_409(owned_page(session, owner, page_id), body.generation_id)
+    layout = book_layout_key(session, page_id)  # 補線算好到存檔之間版面改了：不存舊座標（409）
     lin, data = _ensure_png(session, storage, owner, page_id, image_route=False)
     if not lin.qa.bridges:
         return _qa_out(session, owner, page_id, lin, AutofixOut, autofix_added=0)
@@ -259,7 +267,7 @@ def autofix(
     user = load_strokes(session, gid, layer=StrokeLayer.USER)
     if user:
         try:
-            pre = ink_before_user_layer(session, storage, page_id, gid)
+            pre = ink_before_user_layer(session, storage, page_id, gid, layout=layout)
         except LineartUnavailable as e:
             raise HTTPException(409, e.message) from e
     else:
@@ -270,6 +278,7 @@ def autofix(
     if not added:
         return _qa_out(session, owner, page_id, lin, AutofixOut, autofix_added=0)
     keep = oneclick and on_pipeline(page, session.get(Generation, gid))
-    _commit_strokes(session, page_id, gid, existing + added, layer=StrokeLayer.AUTO, demote=not keep)
+    _commit_strokes(session, page_id, gid, existing + added, layer=StrokeLayer.AUTO, demote=not keep,
+                    layout=layout)
     return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id), AutofixOut,
                    autofix_added=len(added))

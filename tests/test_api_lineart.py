@@ -363,6 +363,27 @@ def _fake_report(n):
                     dangling_count=2 * n, gap_count=n, bridges=bridges)
 
 
+def test_autofix_with_layout_changed_mid_request_is_409(client, app, monkeypatch):
+    """自動補線算好、存檔前改了列印方式：回 409，不存舊版面座標的補線（review 2026-11-13 bug 2）。"""
+    from app.api import lineart as lineart_api
+    from app.services.page_lineart import STALE_LAYOUT, load_strokes
+
+    b, p, ids = selected_page(client, app, gap=12)
+    real = lineart_api.plan_autofix
+
+    def racing(*a, **kw):
+        out = real(*a, **kw)
+        assert client.patch(f"/api/books/{b['id']}", json={"print_mode": "print_shop"}).status_code == 200
+        return out
+
+    monkeypatch.setattr(lineart_api, "plan_autofix", racing)
+    r = client.post(f"/api/pages/{p['id']}/lineart/autofix", json={"generation_id": ids[0]})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == STALE_LAYOUT
+    with app.state.sessions() as s:
+        assert load_strokes(s, ids[0], layer=StrokeLayer.AUTO) == []
+
+
 @pytest.mark.parametrize("counts, added", [
     ([4, 3, 2, 1], 4 + 3 + 2),  # 最多 3 輪
     ([3, 2, 2], 3),  # 第二輪沒減少：那一輪的筆畫不留，停止

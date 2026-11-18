@@ -431,6 +431,64 @@ def test_retries_when_page_changes_mid_run(client, app, monkeypatch):
     assert json.loads(comp.params_json)["placement"] == moved
 
 
+def _auto(app, page_id):
+    pg = get_page(app, page_id)
+    with app.state.sessions() as s:
+        return load_strokes(s, pg.selected_generation_id, layer=StrokeLayer.AUTO)
+
+
+def test_layout_change_mid_run_recomputes_auto_with_new_layout(client, app, monkeypatch):
+    """流程算好自動補線後、存檔前改了列印方式：不能把舊版面的座標存下來（review 2026-11-13 bug 2）。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    gen_pose(client, app, pid)
+    real = pipeline.plan_autofix
+    calls = []
+
+    def racing(*a, **kw):
+        out = real(*a, **kw)
+        if not calls:  # 第一次算完補線，另一個分頁改了列印方式
+            calls.append(1)
+            assert client.patch(f"/api/books/{b['id']}", json={"print_mode": "print_shop"}).status_code == 200
+        return out
+
+    monkeypatch.setattr(pipeline, "plan_autofix", racing)
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.status == PageStatus.PASSED
+    auto = _auto(app, pid)
+    assert auto  # 有缺口：auto 層不是空的
+    # 正確的 auto 層是新版面重算的結果：用真的 plan_autofix 再跑一次流程，結果不變
+    monkeypatch.undo()
+    assert enqueue(app, pid) is True
+    drain(client, app)
+    assert _auto(app, pid) == auto
+
+
+def test_layout_changed_back_is_accepted(client, app, monkeypatch):
+    """計算中版面改了又改回來：計算時的版面＝寫入時的版面，照常存檔（不多重試一次）。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    gen_pose(client, app, pid)
+    real = pipeline.plan_autofix
+    calls = []
+
+    def flipping(*a, **kw):
+        calls.append(1)
+        out = real(*a, **kw)
+        if len(calls) == 1:
+            for mode in ("print_shop", "home"):
+                assert client.patch(f"/api/books/{b['id']}", json={"print_mode": mode}).status_code == 200
+        return out
+
+    monkeypatch.setattr(pipeline, "plan_autofix", flipping)
+    drain(client, app)
+    assert get_page(app, pid).status == PageStatus.PASSED
+    assert len(calls) == 1 and _auto(app, pid)
+
+
 # ---- 排隊與重啟 ------------------------------------------------------------------------
 
 
