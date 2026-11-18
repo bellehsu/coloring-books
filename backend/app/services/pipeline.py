@@ -46,7 +46,7 @@ from app.services.page_compose import (
 )
 from app.services.page_lineart import (
     LineartUnavailable, book_layout_key, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes,
-    save_strokes, strokes_from_json, strokes_to_json,
+    same_layout, save_strokes, strokes_from_json, strokes_to_json,
 )
 from app.services.page_state import ATTENTION_REVIEW_POSE, REVIEW_POSE_DETAIL
 from app.services.qa import evaluate
@@ -444,7 +444,7 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid,
-               col(Page.lineart_key) == lin.key)
+               col(Page.lineart_key) == lin.key, same_layout(layout))  # 補線是在這個版面算的
         .values(status=PageStatus.PASSED,
                 passed_at=func.coalesce(case((already, col(Page.passed_at))),
                                         literal(now, Page.__table__.c.passed_at.type)),

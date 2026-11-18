@@ -466,6 +466,38 @@ def test_layout_change_mid_run_recomputes_auto_with_new_layout(client, app, monk
     assert _auto(app, pid) == auto
 
 
+def test_layout_change_before_pass_reruns(client, app, monkeypatch):
+    """沒有缺口的頁（auto 層是空的、不會寫 auto 層）：算完缺口、標可以印之前改了列印方式，
+    不能用舊版面標成可以印；重試後以新版面做完。"""
+    b, p = book_page(client, app, gap=0)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    gen_pose(client, app, pid)
+    real = pipeline.evaluate
+    calls = []
+
+    def racing(*a, **kw):  # 舊版面算完缺口（沒有缺口 → 不寫 auto 層）之後才改版面
+        report = real(*a, **kw)
+        if not calls:
+            calls.append(1)
+            assert client.patch(f"/api/books/{b['id']}", json={"print_mode": "print_shop"}).status_code == 200
+        return report
+
+    monkeypatch.setattr(pipeline, "evaluate", racing)
+    real_layout = pipeline.book_layout_key
+    seen = []
+
+    def spy(session, page_id):
+        key = real_layout(session, page_id)
+        seen.append(key)
+        return key
+
+    monkeypatch.setattr(pipeline, "book_layout_key", spy)
+    drain(client, app)
+    assert get_page(app, pid).status == PageStatus.PASSED
+    assert seen[-1] == ("a5", "print_shop") and len(seen) >= 2  # 重試了一次，用的是新版面
+
+
 def test_layout_changed_back_is_accepted(client, app, monkeypatch):
     """計算中版面改了又改回來：計算時的版面＝寫入時的版面，照常存檔（不多重試一次）。"""
     b, p = book_page(client, app)
