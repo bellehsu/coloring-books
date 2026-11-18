@@ -115,10 +115,9 @@ def _commit_strokes(
         ok = commit_layer(session, page_id, gen_id, strokes, layer=layer, demote=demote, layout=layout)
     except IntegrityError as e:  # 兩個請求同時建立同一張圖的修改圖層
         raise HTTPException(409, "修改圖層剛被另一個請求更新，請重試") from e
-    if not ok:
-        page = session.get(Page, page_id)
-        still_selected = page is not None and page.selected_generation_id == gen_id
-        raise HTTPException(409, STALE_LAYOUT if still_selected and layout is not None else STALE_GENERATION)
+    if not ok:  # 呼叫端已用 owned_page 確認過擁有者；這裡只分辨是選圖換了還是版面改了
+        moved = layout is not None and book_layout_key(session, page_id) != layout
+        raise HTTPException(409, STALE_LAYOUT if moved else STALE_GENERATION)
 
 
 @router.get("/pages/{page_id}/lineart")
