@@ -1,5 +1,0 @@
-route,lineart,n,n_ok,success_rate,gray_pixel_ratio_mean,gray_pixel_ratio_std,fragment_count_mean,fragment_count_std,black_fill_ratio_mean,black_fill_ratio_std,region_count_mean,region_count_std,closed_region_count_mean,closed_region_count_std,tiny_region_count_mean,tiny_region_count_std,black_pixel_ratio_mean,black_pixel_ratio_std,elapsed_s_mean,elapsed_s_std,failures
-C,age2_6,9,9,1.0,0.0,0.0,39.6667,16.9411,0.0007,0.0003,93.2222,23.8158,92.2222,23.8158,41.0,16.4469,0.0829,0.0126,9.2744,0.1698,
-C,age2_6_bold,9,9,1.0,0.0,0.0,39.6667,17.6139,0.0003,0.0003,109.1111,46.8707,108.1111,46.8707,60.4444,40.8874,0.1195,0.0181,9.2744,0.1698,
-C,age6_12,9,9,1.0,0.0,0.0,47.6667,33.121,0.0008,0.0005,116.1111,20.4844,115.1111,20.4844,50.1111,15.7198,0.0925,0.0111,9.3067,0.2358,
-C,base,9,9,1.0,0.0,0.0,45.8889,17.9892,0.0008,0.0006,121.6667,21.1187,120.4444,20.947,55.0,14.0624,0.1032,0.0118,12.3433,9.5359,
