@@ -91,6 +91,7 @@ class GenerationWorker:
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._in_engine = False  # 引擎正在跑一筆（stop() 時才需要中斷 ComfyUI）
         self._unfinished: dict[int, Callable[[], object]] = {}  # 收尾寫入一直失敗的列：下一輪迴圈前補寫
+        self._unfinished_page_tasks: dict[int, tuple[PageTaskStatus, str | None]] = {}  # 頁面流程的結果同上
 
     # ---- 生命週期 ----
     async def start(self) -> None:
@@ -424,6 +425,12 @@ class GenerationWorker:
                 self._unfinished.pop(gen_id, None)
             except Exception:  # noqa: BLE001
                 log.exception("generation %s：補寫收尾仍失敗", gen_id)
+        for task_id, (status, error) in list(self._unfinished_page_tasks.items()):
+            try:
+                await asyncio.to_thread(self._finish_page_task, task_id, status, error)
+                self._unfinished_page_tasks.pop(task_id, None)
+            except Exception:  # noqa: BLE001
+                log.exception("page task %s：補寫結果仍失敗", task_id)
 
     def _fail(self, gen_id: int, message: str) -> None:
         if self._finish(gen_id, status=GenStatus.FAILED, error=message, finished_at=utcnow()):
@@ -446,12 +453,19 @@ class GenerationWorker:
             log.warning("generation %s：書已刪除，清掉剛寫的物件失敗（storage_gc 會清）", gen_id, exc_info=True)
 
     def _after_success(self, gen_id: int) -> None:
-        """頁面的背景／角色動作：自動選用並排頁面流程；任何失敗只記 log（生成已經成功）。"""
+        """頁面的背景／角色動作：自動選用並排頁面流程（生成已經成功，這裡不丟例外）。
+        失敗時至少把頁面排進流程（流程第一步會補選圖），頁面才不會一直停在「製作中」。"""
         try:
             with self.sessions() as s:
                 pipeline.on_generation_succeeded(s, gen_id)
+            return
         except Exception:  # noqa: BLE001
-            log.exception("自動選用／排頁面流程失敗（generation %s）", gen_id)
+            log.exception("自動選用／排頁面流程失敗（generation %s），改為只排頁面流程", gen_id)
+        try:
+            with self.sessions() as s:
+                pipeline.enqueue_after_generation(s, gen_id)
+        except Exception:  # noqa: BLE001
+            log.exception("排頁面流程也失敗（generation %s）：要等「繼續做」或重啟", gen_id)
 
     # ---- 頁面流程（CPU 工作，排在生成之間）----
     async def run_page_tasks(self) -> int:
@@ -479,13 +493,17 @@ class GenerationWorker:
             except Exception as e:  # noqa: BLE001  run_page_pipeline 自己會轉成 PipelineFailed；保險
                 log.exception("page task %s crashed", task_id)
                 status, error = PageTaskStatus.FAILED, f"{type(e).__name__}: {e}"
-        for attempt in range(2):  # 收尾失敗（例如資料庫暫時鎖住）再試一次；仍失敗就留 RUNNING，重啟時重排
+        for attempt in range(2):  # 收尾失敗（例如資料庫暫時鎖住）再試一次；仍失敗就記下來，下一輪迴圈補寫
             try:
-                with self.sessions() as s:
-                    pipeline.finish_page_task(s, task_id, status, error)
+                self._finish_page_task(task_id, status, error)
                 return
             except Exception:  # noqa: BLE001
                 log.exception("page task %s：無法記下結果（第 %d 次）", task_id, attempt + 1)
+        self._unfinished_page_tasks[task_id] = (status, error)
+
+    def _finish_page_task(self, task_id: int, status: PageTaskStatus, error: str | None) -> None:
+        with self.sessions() as s:
+            pipeline.finish_page_task(s, task_id, status, error)
 
     async def _loop(self) -> None:
         while True:

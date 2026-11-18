@@ -489,6 +489,45 @@ def test_layout_changed_back_is_accepted(client, app, monkeypatch):
     assert len(calls) == 1 and _auto(app, pid)
 
 
+def test_after_success_failure_still_enqueues_page(client, app, monkeypatch):
+    """生成成功、但自動選圖／排流程丟例外：頁面仍要排進流程，不能停在「製作中」。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+
+    def boom(session, gen_id):
+        raise RuntimeError("資料庫暫時鎖住")
+
+    monkeypatch.setattr(pipeline, "on_generation_succeeded", boom)
+    gen_background(client, app, pid)
+    gen_pose(client, app, pid)
+    assert queued(app, pid)
+    monkeypatch.undo()
+    drain(client, app)
+    assert get_page(app, pid).status == PageStatus.PASSED
+
+
+def test_page_task_finish_failure_is_retried_next_loop(client, app, monkeypatch):
+    """流程跑完但記結果一直失敗：下一輪迴圈補寫，不留 RUNNING 到重啟。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    gen_pose(client, app, pid)
+    real = pipeline.finish_page_task
+    fails = {"n": 0}
+
+    def flaky(*a, **kw):
+        if fails["n"] < 2:
+            fails["n"] += 1
+            raise RuntimeError("database is locked")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(pipeline, "finish_page_task", flaky)
+    drain(client, app)
+    assert [t.status for t in tasks(app, pid)][-1] == PageTaskStatus.RUNNING.value
+    client.portal.call(app.state.worker._retry_unfinished)
+    assert [t.status for t in tasks(app, pid)][-1] == PageTaskStatus.SUCCEEDED.value
+
+
 # ---- 排隊與重啟 ------------------------------------------------------------------------
 
 
