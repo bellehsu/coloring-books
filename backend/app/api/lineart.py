@@ -29,7 +29,7 @@ from app.services.pipeline import ATTENTION_FAILED, enqueue_page_task
 from app.services.worker import GenerationWorker
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix
 from app.services.imageio import png_to_ink
-from app.services.layout import compute_layout
+from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_render import Stroke
 from app.services.page_lineart import (
     STALE_LAYOUT,
@@ -211,6 +211,11 @@ def put_edits(
     排頁面流程重算補線（跑完仍可以印）。等著重新合成時不能畫（409）。"""
     page = owned_page(session, owner, page_id)
     gid = _selected_or_409(page, body.generation_id)
+    layout = book_layout_key(session, page_id)
+    if body.content_px is not None:
+        current = compute_layout(PaperSize(layout[0]), PrintMode(layout[1])).content_px
+        if tuple(body.content_px) != tuple(current):  # 用戶端還開著舊版面（review 2026-11-13 bug 1）
+            raise HTTPException(409, STALE_LAYOUT)
     if oneclick and page.pending_user_strokes is not None:
         failed = page.attention == ATTENTION_FAILED  # 流程失敗了：沒有東西在跑，要先「再試一次」
         raise HTTPException(409, history.RECOMPOSE_FAILED if failed else history.RECOMPOSE_PENDING)
@@ -227,7 +232,8 @@ def put_edits(
             history.set_pending_strokes(session, page_id, None)  # 舊編輯器的修線優先：不再寫回 C 的筆畫
         if rerun:
             enqueue_page_task(session, page_id)
-        _commit_strokes(session, page_id, gid, strokes, layer=StrokeLayer.USER, demote=not rerun)
+        _commit_strokes(session, page_id, gid, strokes, layer=StrokeLayer.USER, demote=not rerun,
+                        layout=layout if body.content_px is not None else None)
         if rerun:
             worker.notify()
     return _qa_out(session, owner, page_id, _ensure(session, storage, owner, page_id))

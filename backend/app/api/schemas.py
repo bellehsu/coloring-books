@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PositiveInt, StrictBool, StringConstraints, model_validator
 from pydantic_core import PydanticCustomError
 
 from app.api.urls import generation_cutout_url, generation_image_url, lineart_url
@@ -420,6 +420,8 @@ class StrokeIn(BaseModel):
 class EditsIn(BaseModel):
     generation_id: DbId
     strokes: list[StrokeIn] = Field(max_length=MAX_STROKES)
+    # 畫這些筆畫時書本的 layout.content_px；跟目前版面不同 → 409（筆畫是舊版面座標）。沒給＝不檢查（舊用戶端）
+    content_px: tuple[PositiveInt, PositiveInt] | None = None
 
     @model_validator(mode="after")
     def _total_points(self) -> "EditsIn":
