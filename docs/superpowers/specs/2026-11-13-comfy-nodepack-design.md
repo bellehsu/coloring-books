@@ -18,7 +18,9 @@
   這只在固定套件版本的測試環境保證（§7）；使用者的 ComfyUI 裝的 Pillow 等版本可能不同，README 只承諾同一套演算法。
 - 在 16 GB 顯卡（Q4_K_M GGUF）跑得動；ComfyUI-Manager 搜得到，一鍵安裝。
 - 改文字、位置、線寬、線條細節後重跑，**不重新生成**（ComfyUI 快取：生成節點的 seed 固定）。
-  改紙張種類時，背景生成尺寸可能跟著變（同網站的 `compute_layout`），這時背景會重新生成。
+  ComfyUI 的快取鍵包含所有上游節點的 widget 值（`comfy_execution/caching.py` get_node_signature），所以線寬、線條細節
+  放在 CB Line Art，不放在接到背景 latent 的 CB Paper。改紙張會重新生成背景（seed 相同就是同一張圖；
+  生成尺寸依 `compute_layout`，A4／A5／B5 相同）。
 
 ### 非目標
 - 印刷廠版（出血、裁切框、安全區）。
@@ -73,16 +75,16 @@
 | 4 | **CB Background Switch** 背景來源 | 生成的背景（IMAGE，lazy）、上傳的背景（IMAGE，選填，lazy）、紙張（CB_PAPER） | IMAGE | `uploads` 的 cover_crop；lazy 判斷是新的 |
 | 5 | **CB Clean Mask** 遮罩清理 | MASK | MASK | `compose.largest_component`（最大一塊、補洞、保留柔邊） |
 | 6 | **CB Composite** 合成 | 背景 IMAGE、角色 IMAGE、MASK、水平 0–1、垂直 0–1、大小 0.1–1、翻轉 | IMAGE | `compose.compose`、`Placement` 驗證 |
-| 7 | **CB Paper** 紙張 | 紙張（A4／A5／B5／Letter／正方形 21 cm）、線寬 8–16（預設 11）、線條細節（簡單／標準／細緻，預設標準） | CB_PAPER、背景生成寬、高（INT） | `layout.compute_layout`、`lineart_render` 常數 |
-| 8 | **CB Line Art** 線稿 | 彩色 IMAGE、CB_PAPER、自動合併外框（布林，預設開） | IMAGE（黑白，內容區尺寸） | `lineart_render.render_lineart`（xdog → `fill_outlines` → `lineart_post.render_ink`） |
-| 9 | **CB Close Gaps** 自動補線 | 線稿 IMAGE、CB_PAPER、開關（預設開） | IMAGE | `qa.evaluate`＋`autofix.plan_autofix`（沒有 user 層）＋`apply_strokes` |
+| 7 | **CB Paper** 紙張 | 紙張（A4／A5／B5／Letter／正方形 21 cm）——只有這一個 widget（它的寬高接到背景 latent，多的 widget 會讓背景重新生成，§1） | CB_PAPER、背景生成寬、高（INT） | `layout.compute_layout` |
+| 8 | **CB Line Art** 線稿 | 彩色 IMAGE、CB_PAPER、線寬 8–16（預設 11）、線條細節（簡單／標準／細緻，預設標準）、自動合併外框（布林，預設開） | IMAGE（黑白，內容區尺寸）、線寬（INT，給 CB Close Gaps） | `lineart_render.render_lineart`（xdog → `fill_outlines` → `lineart_post.render_ink`）、`lineart_render` 常數 |
+| 9 | **CB Close Gaps** 自動補線 | 線稿 IMAGE、線寬（INT，只能接線，來自 CB Line Art，兩處不會填出不同線寬）、開關（預設開） | IMAGE | `qa.evaluate`＋`autofix.plan_autofix`（沒有 user 層）＋`apply_strokes` |
 | 10 | **CB Page Layout** 文字與版面 | 線稿 IMAGE、CB_PAPER、中文、英文、印中文、印英文 | IMAGE（整頁） | `export.layout_print_page`、`captions.render_caption_page` |
 | 11 | **CB Save Print PNG** 存成列印 PNG | 整頁 IMAGE、檔名前綴 | （輸出節點，畫面上預覽） | `export.png_bytes`：1-bit、dpi 300 |
-| 12 | **CB Load Character** 載入主角 | 下拉：`output/coloring_book/character*` 產生過的主角＋`input/` 的圖，附上傳按鈕與重新整理 | IMAGE | 新的；透明部分用 `imageio.flatten_on_white` 鋪白底（ComfyUI 的 Load Image 會直接丟掉 alpha，透明處變黑） |
+| 12 | **CB Load Character** 載入主角 | 下拉：產生過的主角（值 `coloring_book/character_00001_.png [output]`）＋`input/` 的圖（裸檔名），格式同 Load Image 才有縮圖；附上傳按鈕與重新整理 | IMAGE | 新的；透明部分用 `imageio.flatten_on_white` 鋪白底（ComfyUI 的 Load Image 會直接丟掉 alpha，透明處變黑） |
 
 說明：
-- 示意圖寫「約 9 個」；多出 **CB Load Character**（使用者 2026-11-13 決定）與 **CB Paper** 是因為線稿（統一線寬要用最終尺寸）、補線、版面、背景裁切都要同一份紙張設定，
-  獨立一顆比每個節點各填一次不容易填錯。
+- 示意圖寫「約 9 個」；多出 **CB Load Character**（使用者 2026-11-13 決定）與 **CB Paper** 是因為線稿（統一線寬要用最終尺寸）、版面、背景裁切與生成尺寸都要同一份紙張設定，
+  獨立一顆比每個節點各填一次不容易填錯。線寬只在 CB Line Art 填一次，再由它的輸出接到 CB Close Gaps。
 - 生成部分不寫節點：全部用 ComfyUI 內建節點＋ComfyUI-GGUF 的 `UnetLoaderGGUF`，接法照網站三個 workflow 的
   `workflow_api.json`（ModelSamplingAuraFlow 3.1、CFGNorm 1.0、Lightning LoRA 1.0、euler／simple、4 步、cfg 1、
   `FluxKontextMultiReferenceLatentMethod index_timestep_zero`、`LoadBackgroundRemovalModel`＋`RemoveBackground`）。
@@ -106,16 +108,18 @@
 CB Load Character（主角）─────┐
 CB Pose Prompt ──→ Qwen 編輯（image1＝主角）→ RemoveBackground ─→ 角色 IMAGE ─┐
                                                 └→ MASK → CB Clean Mask ─────┤
-CB Background Prompt → Qwen 文字生圖 ─→ CB Background Switch ←─ LoadImage（上傳背景，預設略過）
+CB Background Prompt → Qwen 文字生圖 ─→ CB Background Switch ←─ LoadImage（上傳背景，預設靜音）
                                                  │                            │
                                                  └──────→ CB Composite ←──────┘
-CB Paper ──→ CB Line Art ← 合成圖                         │
-       ├──→ CB Close Gaps ← 線稿                          ↓（預覽）
+                                                              ├──→ 預覽
+CB Paper（只有紙張）──→ CB Line Art（線寬、線條細節）←── 合成圖 ┘
+       │                   └─ 線稿＋線寬 ──→ CB Close Gaps
        └──→ CB Page Layout ← 補線後線稿＋中英文字 → CB Save Print PNG
+（CB Paper 的寬、高另外接到背景的 EmptySD3LatentImage）
 ```
 - 三組生成共用同一組載入節點（UNET、CLIP、VAE、LoRA），模型只載入一次。
-- 背景與角色動作的 KSampler seed 預設 **fixed**：改文字、位置、紙張、線寬重跑時只重算後面的影像處理（幾秒）。
-  想換一張就改 seed。workflow 裡用 Note 節點寫明這件事。
+- 背景與角色動作的 KSampler seed 預設 **fixed**：改文字、位置、線寬、線條細節重跑時只重算後面的影像處理（幾秒）；
+  改紙張會重新生成背景（seed 相同就是同一張圖）。想換一張就改 seed。workflow 裡用 Note 節點寫明這件事。
 - 背景生成尺寸由 CB Paper 的寬、高輸出決定（`compute_layout` 的 generation_size：A4／A5／B5 832×1216；
   Letter 896×1152；正方形 1024×1024），連到 EmptySD3LatentImage；上傳的背景也 cover_crop 到這個尺寸。
 - 角色動作固定 832×1216（同網站）。
