@@ -630,8 +630,11 @@ describe("EditorPage", () => {
     const converted = [{ op: "draw", width_px: 11, points: [[0.5, 0.06]] }];
     book = { ...book!, print_mode: "home", layout: { content_px: [2362, 3425], generation_size: [864, 1216] } };
     edits = converted;
+    const qaGets = calledWith("GET", "/api/pages/1/qa").length;
     await userEvent.click(within(screen.getByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
-    expect(await screen.findByText(new RegExp(STALE_LAYOUT))).toBeInTheDocument();
+    expect(await screen.findByText("紙張或列印方式剛改過，最後一筆沒有存到，已重新載入，請再畫一次")).toBeInTheDocument();
+    // 線稿與缺口也是舊版面的：要重抓 QA（線稿網址）
+    await waitFor(() => expect(calledWith("GET", "/api/pages/1/qa").length).toBeGreaterThan(qaGets));
     await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1"));
     expect(qc.getQueryData(qk.edits(1))).toMatchObject({ strokes: converted });
     await userEvent.click(within(screen.getByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
@@ -640,6 +643,44 @@ describe("EditorPage", () => {
     expect(last.strokes[0]).toEqual(converted[0]);
     expect(last.content_px).toEqual([2362, 3425]);
     expect(edits).toHaveLength(2);
+  });
+
+  it("寫入失敗的筆畫是舊版面畫的：版面改了之後畫布用伺服器換算後的筆畫，不用本機的舊座標", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    edits = [{ op: "draw", width_px: 11, points: [[0.5, 0.05]] }];
+    failWith["PUT /api/pages/1/lineart/edits"] = 500;
+    const qc = setup();
+    expect(await screen.findByTestId("linefix")).toHaveAttribute("data-strokes", "1");
+    await userEvent.click(within(screen.getByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/lineart/edits")).toHaveLength(1));
+    expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "2");
+    // 另一個分頁改了版面（伺服器換算了筆畫），這裡重抓書本
+    delete failWith["PUT /api/pages/1/lineart/edits"];
+    book = { ...book!, print_mode: "home", layout: { content_px: [2362, 3425], generation_size: [864, 1216] } };
+    edits = [{ op: "draw", width_px: 11, points: [[0.5, 0.06]] }];
+    await act(() => qc.invalidateQueries({ queryKey: qk.book(1) }));
+    await act(() => qc.invalidateQueries({ queryKey: qk.edits(1) }));
+    await waitFor(() => expect(screen.getByTestId("linefix")).toHaveAttribute("data-strokes", "1"));
+  });
+
+  it("等修線寫完時按取消：之後不會送出 PATCH", async () => {
+    search = "page=1&mode=line";
+    pages[0] = mkPage(1, { selected_generation_id: 5 });
+    gens = [mkGen(5)];
+    let release!: () => void;
+    gate["PUT /api/pages/1/lineart/edits"] = new Promise<void>((r) => (release = r));
+    setup();
+    await userEvent.click(within(await screen.findByTestId("linefix")).getByRole("button", { name: "stub-draw" }));
+    await userEvent.click(screen.getByRole("button", { name: "繪本設定" }));
+    await userEvent.click(screen.getByRole("radio", { name: /家用印表機/ }));
+    await userEvent.click(screen.getByRole("button", { name: "儲存" }));
+    expect(await screen.findByText("等修線存好再改紙張…")).toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "取消" }));
+    await act(async () => release());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calledWith("PATCH", "/api/books/1")).toHaveLength(0);
   });
 
   it("背景卡片：點縮圖呼叫 POST /background（不是 /select），變成選用的；合成圖與角色動作不在背景縮圖裡", async () => {

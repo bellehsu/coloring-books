@@ -6,7 +6,7 @@ import type { QA } from "@/api/client";
 import { qk, useAutofix, useEdits } from "@/api/hooks";
 import { useToast } from "@/components/ui/Toast";
 import type { Stroke, StrokeOp } from "@/lib/strokes";
-import { editsQueueFor, type EditsEntry } from "./editsQueue";
+import { STALE_LAYOUT_NOTICE, editsQueueFor, isStaleLayout, type EditsEntry } from "./editsQueue";
 import { errMsg } from "./errMsg";
 import { LineFixCanvas } from "./LineFixCanvas";
 import styles from "./stage.module.css";
@@ -46,7 +46,10 @@ export function LineFixStage(props: LineFixStageProps) {
 
   // 版面（content_px）也在 key 裡：改紙張／列印方式後伺服器換算了筆畫，畫布要重新載入（review 2026-11-13）
   const key = `${pageId}-${genId}-${props.contentPx[0]}x${props.contentPx[1]}`;
-  const local = entry.shouldSeedFromLocal() ? entry.latest : null;
+  // 本機的筆畫（還在送或送失敗）只在同一個版面才能用；版面改了，伺服器的換算後筆畫才是對的
+  const px = entry.latestPx;
+  const samePx = px === null || (px[0] === props.contentPx[0] && px[1] === props.contentPx[1]);
+  const local = entry.shouldSeedFromLocal() && samePx ? entry.latest : null;
   // 第一次 seed 時，重抓中的快取可能是舊的（例如畫布不在時 QA 面板自動補線），要等重抓完成。
   // 一旦這個（頁, 選圖）的編輯器掛上，就不再因背景重抓（自動補線、改線寬）卸載它。
   const server =
@@ -110,7 +113,9 @@ function LineFixEditor({
   );
 
   useEffect(() => {
-    entry.setErrorHandler((e) => toast.show(`${errMsg(e, "儲存失敗")}，修線尚未儲存`, "error"));
+    entry.setErrorHandler((e) =>
+      toast.show(isStaleLayout(e) ? STALE_LAYOUT_NOTICE : `${errMsg(e, "儲存失敗")}，修線尚未儲存`, "error"),
+    );
   }, [entry, toast]);
 
   function onChange(next: Stroke[]) {

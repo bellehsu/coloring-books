@@ -51,7 +51,9 @@ export interface EditsQueueOptions {
 
 /** 伺服器的「筆畫是舊版面座標」（PUT 帶的 content_px 跟書本目前版面不同，見後端 page_lineart.STALE_LAYOUT）。 */
 export const STALE_LAYOUT = "紙張或列印方式剛改過，請重新整理這一頁再畫";
-const isStaleLayout = (e: unknown) => e instanceof ApiError && e.status === 409 && e.detail === STALE_LAYOUT;
+/** 用戶端收到 STALE_LAYOUT 後的提示（筆畫已丟掉、畫布已重新載入）。 */
+export const STALE_LAYOUT_NOTICE = "紙張或列印方式剛改過，最後一筆沒有存到，已重新載入，請再畫一次";
+export const isStaleLayout = (e: unknown) => e instanceof ApiError && e.status === 409 && e.detail === STALE_LAYOUT;
 
 const registry = new WeakMap<QueryClient, Map<string, EditsEntry>>();
 const keyOf = (pageId: number, genId: number, opts?: EditsQueueOptions) =>
@@ -158,13 +160,14 @@ export function editsQueueFor(
       },
       onError: (err) => {
         if (isStaleLayout(err)) {
-          // 書本版面已經改了（伺服器已把存好的筆畫換算過）：丟掉舊座標的筆畫，重新載入版面與換算後的筆畫
+          // 書本版面已經改了（伺服器已把存好的筆畫換算過）：丟掉舊座標的筆畫（不算失敗，完成、匯出不被擋），
+          // 重新載入版面、換算後的筆畫與新版面的線稿／缺口
           latest = null;
           latestPx = null;
           failed = false;
-          void qc.invalidateQueries({ queryKey: qk.edits(pageId) });
-          void qc.invalidateQueries({ queryKey: qk.book(bookId) });
-          void qc.invalidateQueries({ queryKey: qk.pages(bookId) });
+          queue.discardError();
+          for (const queryKey of [qk.edits(pageId), qk.book(bookId), qk.pages(bookId), qk.qa(pageId), qk.exportSummary(bookId)])
+            void qc.invalidateQueries({ queryKey });
         } else {
           failed = true;
         }
