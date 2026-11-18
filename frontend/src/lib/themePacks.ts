@@ -53,9 +53,9 @@ const JOBS: readonly PackPage[] = [
 
 /** 衛生習慣：主角自己做這件事。 */
 const HYGIENE: readonly PackPage[] = [
-  { scene: "浴室的洗手台，有水龍頭和肥皂", action: "在水龍頭下搓手洗手，手上有泡泡", zh: "洗手", en: "Wash Your Hands" },
+  { scene: "浴室裡有檯面的大洗手台，上面有水龍頭和肥皂，牆上有鏡子", action: "雙手在胸前搓洗，手上都是泡泡", zh: "洗手", en: "Wash Your Hands" },
   { scene: "浴室的洗手台前，牆上有鏡子", action: "一手拿牙刷刷牙，一手拿漱口杯", zh: "刷牙", en: "Brush Your Teeth" },
-  { scene: "浴室，有浴缸和蓮蓬頭", action: "坐在裝滿泡泡的浴缸裡洗澡", zh: "洗澡", en: "Take a Bath" },
+  { scene: "浴室，有瓷磚牆、蓮蓬頭和毛巾架，沒有浴缸", action: "坐在裝滿泡泡的浴缸裡洗澡", zh: "洗澡", en: "Take a Bath" },
   { scene: "浴室的洗手台，旁邊掛著毛巾", action: "雙手捧水洗臉", zh: "洗臉", en: "Wash Your Face" },
   { scene: "臥室的梳妝台，有鏡子", action: "一手拿梳子梳頭髮", zh: "梳頭髮", en: "Comb Your Hair" },
   { scene: "客廳，有沙發和茶几，茶几上有一盒面紙", action: "一手拿著面紙擦鼻子", zh: "擦鼻涕", en: "Wipe Your Nose" },
