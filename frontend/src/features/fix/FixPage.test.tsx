@@ -7,7 +7,7 @@ import { DEFAULT_PLACEMENT, type BookOverview, type Generation, type Page, type 
 import { movePlacement } from "@/lib/placement";
 import { FIX_POLL_MS } from "./fixApi";
 import { FixPage } from "./FixPage";
-import type { FixFilter } from "./fixState";
+import type { FixFilter } from "@/lib/fixHref";
 import { mkPage, ovPage } from "./testData";
 
 const push = vi.fn();

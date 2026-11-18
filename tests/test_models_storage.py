@@ -8,7 +8,7 @@ from sqlmodel import select
 from app.db import init_db, make_engine, session_factory
 from app.models import Book, GenKind, Generation, GenStatus, Owner, Page, PageStatus
 from app.services.layout import PaperSize, PrintMode
-from app.storage import ImageRejected, LocalStorage, normalize_png
+from app.storage import ImageRejected, LocalStorage, load_rgb
 
 
 def _img_bytes(size, fmt):
@@ -78,17 +78,17 @@ def test_storage_paths_and_put(tmp_path):
     st.delete("books/3/generations/7.png")
 
 
-def test_normalize_png_rejects():
+def test_load_rgb_rejects():
     with pytest.raises(ImageRejected):
-        normalize_png(b"not an image")
+        load_rgb(b"not an image")
     with pytest.raises(ImageRejected):
-        normalize_png(_img_bytes((100, 100), "PNG"), max_bytes=10)
+        load_rgb(_img_bytes((100, 100), "PNG"), max_bytes=10)
     with pytest.raises(ImageRejected):
-        normalize_png(_img_bytes((32, 32), "PNG"))
+        load_rgb(_img_bytes((32, 32), "PNG"))
     with pytest.raises(ImageRejected):
-        normalize_png(_img_bytes((200, 100), "PNG"), max_side=150)
-    data, size = normalize_png(_img_bytes((128, 96), "JPEG"))
-    assert data.startswith(b"\x89PNG")
+        load_rgb(_img_bytes((200, 100), "PNG"), max_side=150)
+    rgb, size = load_rgb(_img_bytes((128, 96), "JPEG"))
+    assert rgb.mode == "RGB"
     assert size == (128, 96)
 
 
@@ -104,7 +104,7 @@ def _png_header_only(width: int, height: int) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", b"") + chunk(b"IEND", b"")
 
 
-def test_normalize_png_too_many_pixels_rejected_before_decoding(monkeypatch):
+def test_load_rgb_too_many_pixels_rejected_before_decoding(monkeypatch):
     from PIL import ImageFile
 
     from app.storage import UPLOAD_MAX_PIXELS, UPLOAD_TOO_MANY_PIXELS, TooManyPixels
@@ -118,18 +118,18 @@ def test_normalize_png_too_many_pixels_rejected_before_decoding(monkeypatch):
     assert len(buf.getvalue()) < 1024 * 1024
     for data in (buf.getvalue(), _png_header_only(100_000, 100_000), _png_header_only(8000, 8001)):
         with pytest.raises(TooManyPixels) as ei:
-            normalize_png(data, max_side=200_000, max_pixels=UPLOAD_MAX_PIXELS)
+            load_rgb(data, max_side=200_000, max_pixels=UPLOAD_MAX_PIXELS)
         assert str(ei.value) == UPLOAD_TOO_MANY_PIXELS == "圖片像素太多（最多 6400 萬像素）"
         assert isinstance(ei.value, ImageRejected)
 
 
-def test_normalize_png_pixel_limit_is_inclusive():
+def test_load_rgb_pixel_limit_is_inclusive():
     from app.storage import TooManyPixels
 
     data = _img_bytes((100, 64), "PNG")
-    assert normalize_png(data, max_pixels=6400)[1] == (100, 64)
+    assert load_rgb(data, max_pixels=6400)[1] == (100, 64)
     with pytest.raises(TooManyPixels):
-        normalize_png(data, max_pixels=6399)
+        load_rgb(data, max_pixels=6399)
 
 
 def _gray_mean(im: Image.Image) -> float:
@@ -138,7 +138,7 @@ def _gray_mean(im: Image.Image) -> float:
     return float(np.asarray(im.convert("L"), dtype=np.float64).mean())
 
 
-def test_normalize_png_16bit_grayscale_keeps_tones():
+def test_load_rgb_16bit_grayscale_keeps_tones():
     """16-bit 灰階 PNG（Pillow 讀成 I;16）直接 convert("RGB") 會被截到 255 → 幾乎全白。"""
     import numpy as np
 
@@ -147,8 +147,7 @@ def test_normalize_png_16bit_grayscale_keeps_tones():
     assert src.mode == "I;16"
     buf = io.BytesIO()
     src.save(buf, "PNG")
-    data, size = normalize_png(buf.getvalue())
-    out = Image.open(io.BytesIO(data))
+    out, size = load_rgb(buf.getvalue())
     assert out.mode == "RGB" and size == (512, 256)
     assert abs(_gray_mean(out) - 127.5) < 2
     assert out.getpixel((0, 0))[0] < 5 and out.getpixel((511, 0))[0] > 250
@@ -190,14 +189,13 @@ def test_storage_rejects_escape(tmp_path):
     assert not (tmp_path / "evil.png").exists()
 
 
-def test_normalize_png_composites_alpha_on_white():
+def test_load_rgb_composites_alpha_on_white():
     im = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
     for x in range(100):
         im.putpixel((x, 50), (0, 0, 0, 255))
     buf = io.BytesIO()
     im.save(buf, "PNG")
-    data, size = normalize_png(buf.getvalue())
-    out = Image.open(io.BytesIO(data))
+    out, size = load_rgb(buf.getvalue())
     assert out.mode == "RGB"
     assert out.getpixel((0, 0)) == (255, 255, 255)
     assert out.getpixel((50, 50)) == (0, 0, 0)

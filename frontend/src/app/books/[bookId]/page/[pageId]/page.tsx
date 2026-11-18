@@ -3,7 +3,7 @@
 import { Suspense, use } from "react";
 import { notFound, useSearchParams } from "next/navigation";
 import { FixPage } from "@/features/fix/FixPage";
-import { parseFilter } from "@/features/fix/fixState";
+import { parseFilter } from "@/lib/fixHref";
 
 /** C 處理一頁（spec §4.4）。?filter=attention：從 B 的「請看一下」打開。 */
 export default function FixRoute({ params }: { params: Promise<{ bookId: string; pageId: string }> }) {

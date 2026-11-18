@@ -344,6 +344,32 @@ def test_cache_evicts_oldest_over_max(tmp_path):
     assert sum((cache / f).stat().st_size for f in _cache_files(cache)) <= 300
 
 
+def test_cache_does_not_rescan_under_limit(tmp_path, monkeypatch):
+    """遠低於上限時，每次寫入快取不必掃整個資料夾（只在估計總量超過上限時才掃）。"""
+    import app.storage as storage_mod
+
+    scans = {"n": 0}
+    real = storage_mod._walk_files
+
+    def counting(*a, **kw):
+        scans["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(storage_mod, "_walk_files", counting)
+    st = CachedStorage(LocalStorage(tmp_path / "root", b"k"), tmp_path / "cache", 1_000_000)
+    for i in range(20):
+        st.put(f"books/1/{i}.png", bytes(100))
+    assert scans["n"] <= 1
+
+
+def test_cache_still_evicts_after_many_small_writes(tmp_path):
+    cache = tmp_path / "cache"
+    st = CachedStorage(LocalStorage(tmp_path / "root", b"k"), cache, 1_000)
+    for i in range(30):
+        st.put(f"books/1/{i}.png", bytes(100))
+    assert sum((cache / f).stat().st_size for f in _cache_files(cache)) <= 1_000
+
+
 def test_cache_skips_objects_larger_than_max(tmp_path):
     inner = LocalStorage(tmp_path / "root", b"k")
     inner.put("books/1/small.png", bytes(10))

@@ -16,7 +16,8 @@ import {
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { errMsg } from "@/features/editing/errMsg";
-import { fixHref, printedCaptions } from "@/features/fix/fixState";
+import { printedCaptions } from "@/features/fix/fixState";
+import { fixHref } from "@/lib/fixHref";
 import { formatRemaining } from "@/lib/eta";
 import { NO_QUOTA } from "@/lib/limits";
 import { ExportSheet } from "./ExportSheet";

@@ -474,14 +474,17 @@ class GenerationWorker:
         所以 stop() 取消等待時，跑到一半的流程仍會正常收尾。"""
         n = 0
         while True:
-            with self.sessions() as s:
-                auth.cancel_revoked_queues(s)
-                task = pipeline.claim_page_task(s)
-                if task is None:
-                    return n
-                task_id, page_id = task.id, task.page_id
-            await asyncio.to_thread(self._run_page_task, task_id, page_id)
+            claimed = await asyncio.to_thread(self._claim_page_task)  # 資料庫讀寫不卡 event loop
+            if claimed is None:
+                return n
+            await asyncio.to_thread(self._run_page_task, *claimed)
             n += 1
+
+    def _claim_page_task(self) -> tuple[int, int] | None:
+        with self.sessions() as s:
+            auth.cancel_revoked_queues(s)
+            task = pipeline.claim_page_task(s)
+            return None if task is None else (task.id, task.page_id)
 
     def _run_page_task(self, task_id: int, page_id: int) -> None:
         status, error = PageTaskStatus.SUCCEEDED, None

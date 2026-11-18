@@ -12,7 +12,7 @@ import { useToast } from "@/components/ui/Toast";
 import { checklist } from "@/lib/checklist";
 import { hardAttention } from "@/lib/pageState";
 import { PHONE_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
-import { fixHref } from "@/features/fix/fixState";
+import { fixHref } from "@/lib/fixHref";
 import { errMsg } from "@/features/editing/errMsg";
 import { ZoomControls } from "@/features/editing/LineFixCanvas";
 import { onBeforeUnload } from "@/features/editing/pendingWrites";

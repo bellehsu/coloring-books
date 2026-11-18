@@ -8,7 +8,8 @@ import { errMsg } from "@/features/editing/errMsg";
 import { onBeforeUnload } from "@/features/editing/pendingWrites";
 import { useSingleFlight } from "@/lib/useSingleFlight";
 import { useAcceptPage, useRedoPage, useRestorePage, useRetryPage, useSelectPoseC, useUndoPage } from "./fixApi";
-import { fixHref, type FixFilter, type RestoreItem } from "./fixState";
+import { fixHref, type FixFilter } from "@/lib/fixHref";
+import type { RestoreItem } from "./fixState";
 import type { PlacementSaves } from "./usePlacementSaves";
 
 export interface FixActionsArgs {

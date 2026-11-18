@@ -3,11 +3,9 @@ import {
   RECOMPOSE_FAILED,
   RECOMPOSE_PENDING,
   captionSummary,
-  fixHref,
   neighbours,
   pageState,
   pageTitle,
-  parseFilter,
   penBlocked,
   printUrl,
   showRestore,
@@ -84,14 +82,6 @@ describe("neighbours（上一頁／下一頁）", () => {
 });
 
 describe("small helpers", () => {
-  it("parseFilter and fixHref keep only attention", () => {
-    expect(parseFilter("attention")).toBe("attention");
-    expect(parseFilter("ready")).toBeNull();
-    expect(parseFilter(null)).toBeNull();
-    expect(fixHref(1, 5)).toBe("/books/1/page/5");
-    expect(fixHref(1, 5, "attention")).toBe("/books/1/page/5?filter=attention");
-  });
-
   it("pageTitle and captionSummary", () => {
     expect(pageTitle(mkPage())).toBe("第 2 頁・消防車");
     expect(pageTitle(mkPage({ caption_zh: null }))).toBe("第 2 頁");

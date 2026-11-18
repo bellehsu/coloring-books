@@ -2,15 +2,8 @@ import type { OverviewPage, Page } from "@/api/client";
 import { normalizeCaption } from "@/lib/limits";
 import { hardAttention } from "@/lib/pageState";
 import { inAttention, type PageState } from "@/features/book/overviewState";
+import type { FixFilter } from "@/lib/fixHref";
 
-/** C 是從 B 的哪個篩選打開的：「請看一下」時上一頁／下一頁只在要看的頁之間跳。 */
-export type FixFilter = "attention" | null;
-
-export const parseFilter = (v: string | null | undefined): FixFilter => (v === "attention" ? "attention" : null);
-
-export function fixHref(bookId: number, pageId: number, filter: FixFilter = null): string {
-  return `/books/${bookId}/page/${pageId}${filter ? `?filter=${filter}` : ""}`;
-}
 
 export type RestoreItem = "background" | "pose" | "lines";
 

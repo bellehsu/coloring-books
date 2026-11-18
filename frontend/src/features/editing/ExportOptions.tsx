@@ -14,7 +14,7 @@ import {
   formatCm,
 } from "@/lib/layout";
 import { errMsg } from "./errMsg";
-import { fixHref } from "@/features/fix/fixState";
+import { fixHref } from "@/lib/fixHref";
 import { BookWritesError, retryFailedWrites, whenBookWritesIdle, type WriteFailure } from "./pendingWrites";
 import styles from "./ExportOptions.module.css";
 
