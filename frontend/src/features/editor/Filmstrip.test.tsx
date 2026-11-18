@@ -173,6 +173,10 @@ describe("Filmstrip", () => {
     expect(within(pageButton(2)).getByText("製作中")).toBeInTheDocument();
     expect(within(pageButton(4)).getByText("請看一下")).toBeInTheDocument();
     expect(within(pageButton(3)).getByText("完成")).toBeInTheDocument();
+    // 整本進度只算真的完成的頁（請看一下、製作中的不算）
+    const bar = screen.getByRole("progressbar", { name: "整本進度" });
+    expect(bar).toHaveAttribute("aria-valuenow", "1");
+    expect(bar).toHaveAttribute("aria-valuetext", "1 / 4 頁完成");
   });
 
   it("軟標記 review_pose：通過的頁和 B 一樣標「請看一下」；還沒通過的頁照一般狀態（不是問題）", () => {

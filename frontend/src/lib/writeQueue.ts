@@ -31,6 +31,8 @@ export interface WriteQueue<Q> {
    */
   flush(): Promise<Q | undefined>;
   busy(): boolean;
+  /** 呼叫端決定丟掉這份筆畫（例如伺服器說它是舊版面的座標）：最後一次的失敗不再讓 flush reject。 */
+  discardError(): void;
 }
 
 export function createWriteQueue<Q>(
@@ -111,6 +113,9 @@ export function createWriteQueue<Q>(
       pending = strokes.slice();
       lastError = null;
       pump();
+    },
+    discardError() {
+      lastError = null;
     },
     flush() {
       if (!inflight && pending === null) {

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, type Book } from "@/api/client";
 import { useUpdateBook } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
+import { whenBookWritesIdle } from "@/features/editing/pendingWrites";
 import {
   PAPER_LABELS,
   PAPER_MM,
@@ -42,7 +44,19 @@ export function BookSettingsDialog({
 }
 
 function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
+  const qc = useQueryClient();
   const update = useUpdateBook(book.id);
+  /** 改版面前等待中的修線寫入（送完才 PATCH），與等待失敗的原因。 */
+  const [waiting, setWaiting] = useState(false);
+  const [writeError, setWriteError] = useState<string | null>(null);
+  /** 等待中被關掉（取消、Esc）或改了選項：等完後不送出（每次送出的請求帶自己的編號，只有最新且還開著的會送）。 */
+  const attempt = useRef(0);
+  useEffect(() => () => void (attempt.current += 1), []);
+  const invalidate = () => {
+    attempt.current += 1;
+    setWaiting(false);
+    setWriteError(null);
+  };
   const [title, setTitle] = useState(book.title);
   const [size, setSize] = useState<PaperSize>(book.paper_size);
   const [mode, setMode] = useState<PrintMode>(book.print_mode);
@@ -51,9 +65,25 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
   const dirty = layoutChanged || (trimmed !== book.title && trimmed !== "");
   const layout = computeLayout(size, mode);
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!dirty || !trimmed || update.isPending) return;
+    if (!dirty || !trimmed || update.isPending || waiting) return;
+    if (layoutChanged) {
+      // 伺服器改版面時會換算已存的修線座標（C1）：還在送或送失敗的修線要先處理完，否則舊座標會蓋回去
+      const mine = ++attempt.current;
+      setWriteError(null);
+      setWaiting(true);
+      try {
+        await whenBookWritesIdle(qc, book.id);
+      } catch (err) {
+        if (mine === attempt.current)
+          setWriteError(`修線還沒存好（${err instanceof Error ? err.message : "儲存失敗"}），請先重送或重新整理後再改紙張`);
+        return;
+      } finally {
+        if (mine === attempt.current) setWaiting(false);
+      }
+      if (mine !== attempt.current) return;
+    }
     const body: {
       title?: string;
       paper_size?: PaperSize;
@@ -76,6 +106,7 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
           value={title}
           onChange={(e) => {
             update.reset();
+            invalidate();
             setTitle(e.target.value);
           }}
           maxLength={100}
@@ -102,6 +133,7 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
                 className={`${styles.card} ${styles.sizeCard} ${on ? styles.on : ""} ${locked ? styles.locked : ""}`}
                 onClick={() => {
                   update.reset();
+                  invalidate();
                   setSize(s);
                 }}
               >
@@ -137,6 +169,7 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
                 className={`${styles.card} ${styles.modeCard} ${on ? styles.on : ""}`}
                 onClick={() => {
                   update.reset();
+                  invalidate();
                   setMode(m);
                 }}
               >
@@ -172,6 +205,16 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
         </p>
       )}
 
+      {waiting && (
+        <p role="status" className={styles.warning}>
+          等修線存好再改紙張…
+        </p>
+      )}
+      {writeError && (
+        <p role="alert" className={styles.error}>
+          {writeError}
+        </p>
+      )}
       {error && (
         <p role="alert" className={styles.error}>
           {error instanceof ApiError ? error.message : "儲存失敗，請稍後再試"}
@@ -183,7 +226,7 @@ function SettingsForm({ onClose, book }: { onClose: () => void; book: Book }) {
         <Button
           type="submit"
           variant="primary"
-          disabled={!dirty || update.isPending}
+          disabled={!dirty || update.isPending || waiting}
         >
           儲存
         </Button>

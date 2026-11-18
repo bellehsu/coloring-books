@@ -363,6 +363,27 @@ def _fake_report(n):
                     dangling_count=2 * n, gap_count=n, bridges=bridges)
 
 
+def test_autofix_with_layout_changed_mid_request_is_409(client, app, monkeypatch):
+    """自動補線算好、存檔前改了列印方式：回 409，不存舊版面座標的補線（review 2026-11-13 bug 2）。"""
+    from app.api import lineart as lineart_api
+    from app.services.page_lineart import STALE_LAYOUT, load_strokes
+
+    b, p, ids = selected_page(client, app, gap=12)
+    real = lineart_api.plan_autofix
+
+    def racing(*a, **kw):
+        out = real(*a, **kw)
+        assert client.patch(f"/api/books/{b['id']}", json={"print_mode": "print_shop"}).status_code == 200
+        return out
+
+    monkeypatch.setattr(lineart_api, "plan_autofix", racing)
+    r = client.post(f"/api/pages/{p['id']}/lineart/autofix", json={"generation_id": ids[0]})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == STALE_LAYOUT
+    with app.state.sessions() as s:
+        assert load_strokes(s, ids[0], layer=StrokeLayer.AUTO) == []
+
+
 @pytest.mark.parametrize("counts, added", [
     ([4, 3, 2, 1], 4 + 3 + 2),  # 最多 3 輪
     ([3, 2, 2], 3),  # 第二輪沒減少：那一輪的筆畫不留，停止
@@ -533,6 +554,73 @@ def test_page_out_aspect_and_no_sketch_url(client, app):
     r = client.patch(f"/api/pages/{p['id']}", json={"scene_prompt": "公園"})
     assert r.json()["aspect_mismatch"] is True
     assert "sketch_url" not in page_out(client, b["id"], p["id"])  # 構圖草圖已移除（0006）
+
+
+def _layout_changed_page(client, app):
+    """有一筆修線的頁，然後改成印刷廠：回傳 (book, page, gen id, 舊 content_px, 新 content_px)。"""
+    b, p, ids = selected_page(client, app)
+    mark = {"op": "draw", "width_px": 12, "points": [[0.2, 0.05], [0.8, 0.05]]}
+    assert client.put(f"/api/pages/{p['id']}/lineart/edits", json=edits_body(ids[0], [mark])).status_code == 200
+    old_px = b["layout"]["content_px"]
+    r = client.patch(f"/api/books/{b['id']}", json={"print_mode": "print_shop"})
+    assert r.status_code == 200
+    return b, p, ids[0], old_px, r.json()["layout"]["content_px"]
+
+
+def test_put_edits_with_stale_layout_is_409(client, app):
+    """畫的時候還是舊版面（content_px 不同）：不能把舊座標存回去（review 2026-11-13 bug 1）。"""
+    from app.services.page_lineart import STALE_LAYOUT
+
+    b, p, gid, old_px, new_px = _layout_changed_page(client, app)
+    url = f"/api/pages/{p['id']}/lineart/edits"
+    converted = client.get(url).json()["strokes"]
+    stale = {"op": "draw", "width_px": 12, "points": [[0.2, 0.05], [0.8, 0.05]]}
+    r = client.put(url, json={**edits_body(gid, [stale, DRAW]), "content_px": old_px})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == STALE_LAYOUT
+    assert client.get(url).json()["strokes"] == converted
+
+
+def test_put_edits_layout_changed_back_is_accepted(client, app):
+    """畫的時候是 A4 家用，期間改成印刷廠又改回來：座標仍然對，照常存（plan Review Focus 1）。"""
+    b, p, ids = selected_page(client, app)
+    px = b["layout"]["content_px"]
+    for mode in ("print_shop", "home"):
+        assert client.patch(f"/api/books/{b['id']}", json={"print_mode": mode}).status_code == 200
+    r = client.put(f"/api/pages/{p['id']}/lineart/edits", json={**edits_body(ids[0], [DRAW]), "content_px": px})
+    assert r.status_code == 200, r.text
+
+
+def test_autofix_layout_changed_back_is_accepted(client, app, monkeypatch):
+    from app.api import lineart as lineart_api
+
+    b, p, ids = selected_page(client, app, gap=12)
+    real = lineart_api.plan_autofix
+
+    def flipping(*a, **kw):
+        out = real(*a, **kw)
+        for mode in ("print_shop", "home"):
+            assert client.patch(f"/api/books/{b['id']}", json={"print_mode": mode}).status_code == 200
+        return out
+
+    monkeypatch.setattr(lineart_api, "plan_autofix", flipping)
+    r = client.post(f"/api/pages/{p['id']}/lineart/autofix", json={"generation_id": ids[0]})
+    assert r.status_code == 200, r.text
+    assert r.json()["autofix_added"] == 1
+
+
+def test_put_edits_with_current_layout_saves(client, app):
+    b, p, gid, old_px, new_px = _layout_changed_page(client, app)
+    url = f"/api/pages/{p['id']}/lineart/edits"
+    r = client.put(url, json={**edits_body(gid, [DRAW]), "content_px": new_px})
+    assert r.status_code == 200, r.text
+    assert len(client.get(url).json()["strokes"]) == 1
+
+
+def test_put_edits_without_content_px_still_saves(client, app):
+    b, p, gid, old_px, new_px = _layout_changed_page(client, app)
+    url = f"/api/pages/{p['id']}/lineart/edits"
+    assert client.put(url, json=edits_body(gid, [DRAW])).status_code == 200
 
 
 def test_change_size_recomputes_and_demotes(client, app, monkeypatch):

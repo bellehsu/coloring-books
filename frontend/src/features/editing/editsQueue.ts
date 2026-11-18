@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { api, type QA } from "@/api/client";
+import { ApiError, api, type QA } from "@/api/client";
 import { qk } from "@/api/hooks";
 import type { Stroke } from "@/lib/strokes";
 import { createWriteQueue, type WriteQueue } from "@/lib/writeQueue";
@@ -13,13 +13,16 @@ export interface EditsEntry {
   readonly bookId: number;
   readonly pageId: number;
   readonly genId: number;
-  push(strokes: Stroke[]): void;
+  /** contentPx：畫這些筆畫時的 book.layout.content_px（伺服器用來擋舊版面的座標）；省略＝沿用上一次的。 */
+  push(strokes: Stroke[], contentPx?: readonly [number, number]): void;
   flush(): Promise<QA | undefined>;
   busy(): boolean;
   /** 訂閱忙碌／失敗狀態變化（useSyncExternalStore 用）。 */
   subscribe(fn: () => void): () => void;
   /** 最後 push 的完整筆畫（尚未確認也算）；這個 session 沒 push 過為 null。 */
   readonly latest: Stroke[] | null;
+  /** latest 是在哪個版面（content_px）畫的。 */
+  readonly latestPx: readonly [number, number] | null;
   /** 最新一次寫入失敗（伺服器與畫面不一致），下一次 push 清除。 */
   readonly failed: boolean;
   /**
@@ -45,6 +48,12 @@ export type AutofixRunner = () => Promise<number | null>;
 export interface EditsQueueOptions {
   oneclick?: boolean;
 }
+
+/** 伺服器的「筆畫是舊版面座標」（PUT 帶的 content_px 跟書本目前版面不同，見後端 page_lineart.STALE_LAYOUT）。 */
+export const STALE_LAYOUT = "紙張或列印方式剛改過，請重新整理這一頁再畫";
+/** 用戶端收到 STALE_LAYOUT 後的提示（筆畫已丟掉、畫布已重新載入）。 */
+export const STALE_LAYOUT_NOTICE = "紙張或列印方式剛改過，最後一筆沒有存到，已重新載入，請再畫一次";
+export const isStaleLayout = (e: unknown) => e instanceof ApiError && e.status === 409 && e.detail === STALE_LAYOUT;
 
 const registry = new WeakMap<QueryClient, Map<string, EditsEntry>>();
 const keyOf = (pageId: number, genId: number, opts?: EditsQueueOptions) =>
@@ -129,12 +138,14 @@ export function editsQueueFor(
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((fn) => fn());
   let latest: Stroke[] | null = null;
+  let latestPx: readonly [number, number] | null = null;
   let failed = false;
   let reportError: (error: unknown) => void = () => {};
   let autofix: AutofixRunner | null = null;
 
   const queue: WriteQueue<QA> = createWriteQueue<QA>(
-    (strokes) => api.put<QA>(putUrl, { generation_id: genId, strokes }),
+    (strokes) =>
+      api.put<QA>(putUrl, { generation_id: genId, strokes, ...(latestPx ? { content_px: [...latestPx] } : {}) }),
     {
       onSuccess: (qa, strokes) => {
         failed = false;
@@ -148,7 +159,18 @@ export function editsQueueFor(
         if (opts?.oneclick) void qc.invalidateQueries({ queryKey: qk.overview(bookId) });
       },
       onError: (err) => {
-        failed = true;
+        if (isStaleLayout(err)) {
+          // 書本版面已經改了（伺服器已把存好的筆畫換算過）：丟掉舊座標的筆畫（不算失敗，完成、匯出不被擋），
+          // 重新載入版面、換算後的筆畫與新版面的線稿／缺口
+          latest = null;
+          latestPx = null;
+          failed = false;
+          queue.discardError();
+          for (const queryKey of [qk.edits(pageId), qk.book(bookId), qk.pages(bookId), qk.qa(pageId), qk.exportSummary(bookId)])
+            void qc.invalidateQueries({ queryKey });
+        } else {
+          failed = true;
+        }
         notify();
         reportError(err);
       },
@@ -160,8 +182,9 @@ export function editsQueueFor(
     bookId,
     pageId,
     genId,
-    push(strokes) {
+    push(strokes, contentPx) {
       latest = strokes.slice();
+      if (contentPx) latestPx = contentPx;
       const wasFailed = failed;
       failed = false;
       // 樂觀更新：重新掛載或其他讀者看到的是畫面上的筆畫
@@ -177,6 +200,9 @@ export function editsQueueFor(
     },
     get latest() {
       return latest;
+    },
+    get latestPx() {
+      return latestPx;
     },
     get failed() {
       return failed;

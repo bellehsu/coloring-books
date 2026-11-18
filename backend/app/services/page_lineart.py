@@ -13,7 +13,7 @@ from sqlmodel import Session, col, select
 from app.models import Book, Generation, GenKind, LineartEdit, Page, PageStatus, StrokeLayer, utcnow
 from app.services import lineart_post
 from app.services.imageio import ink_to_png
-from app.services.layout import compute_layout
+from app.services.layout import PaperSize, PrintMode, compute_layout
 from app.services.lineart_extract import OUTLINE_FILL_VERSION
 from app.services.lineart_render import (
     RENDER_VERSION, Stroke, apply_strokes, render_lineart,
@@ -26,6 +26,7 @@ MAX_ATTEMPTS = 3
 
 
 SOURCE_MISSING = "選定的圖片檔案遺失，請重新選圖或重新生成"
+STALE_LAYOUT = "紙張或列印方式剛改過，請重新整理這一頁再畫"
 
 
 class LineartUnavailable(Exception):
@@ -115,21 +116,40 @@ def save_strokes(session: Session, page_id: int, gen_id: int, strokes: list[Stro
         session.add(edit)
 
 
+LayoutKey = tuple[str, str]  # (book.paper_size, book.print_mode)：筆畫座標屬於哪個版面
+
+
+def book_layout_key(session: Session, page_id: int) -> LayoutKey:
+    """頁面所屬書本目前的版面（紙張、列印方式）。"""
+    page = session.get(Page, page_id)
+    if page is None:
+        raise LineartUnavailable("這一頁不存在")
+    book = session.get(Book, page.book_id)
+    return _enum_value(book.paper_size), _enum_value(book.print_mode)
+
+
+def _enum_value(v) -> str:
+    return str(getattr(v, "value", v))
+
+
 def commit_layer(
-    session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer, demote: bool = True
+    session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer, demote: bool = True,
+    layout: LayoutKey | None = None,
 ) -> bool:
     """整份覆寫一層修線，並在同一個交易以條件式 UPDATE 確認頁面仍選定這張圖；修線後 passed 退回 draft
     （demote=False：不退回，由呼叫端排頁面流程重跑）。同一個交易裡呼叫端之前的寫入一起提交／rollback。
-    頁面已不再選定這張圖時 rollback、回 False。兩個請求同時建立同一層丟 IntegrityError（已 rollback）。"""
+    layout：筆畫是在這個版面算的；書本版面已經改了（C1 已把存好的筆畫換算過）就不能存舊座標。
+    頁面已不再選定這張圖、或版面不同時 rollback、回 False。兩個請求同時建立同一層丟 IntegrityError（已 rollback）。"""
     try:
         save_strokes(session, page_id, gen_id, strokes, layer=layer)
         session.flush()
         values = {"status": PageStatus.DRAFT, "passed_at": None} if demote else {}
-        res = session.exec(
-            update(Page)
-            .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gen_id)
-            .values(**values, updated_at=utcnow())
-        )
+        cond = [col(Page.id) == page_id, col(Page.selected_generation_id) == gen_id]
+        if layout is not None:
+            same = select(Book.id).where(col(Book.paper_size) == PaperSize(layout[0]),
+                                          col(Book.print_mode) == PrintMode(layout[1]))
+            cond.append(col(Page.book_id).in_(same))
+        res = session.exec(update(Page).where(*cond).values(**values, updated_at=utcnow()))
         if res.rowcount == 0:
             session.rollback()
             return False
@@ -235,7 +255,8 @@ def ensure_page_lineart(
     raise LineartUnavailable("線稿產生時頁面一直被更動，請稍後再試")
 
 
-def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_id: int, *, with_auto: bool = True):
+def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_id: int, *, with_auto: bool = True,
+                          layout: LayoutKey | None = None):
     """選定圖的底稿＋auto 層（還沒套 user 層）的墨水陣列，與 ensure_page_lineart 同樣的設定。
     自動補線要依渲染順序（auto 再 user）試補線時用；with_auto=False 只回底稿（頁面流程重算整層 auto）。
     來源圖片不見丟 LineartSourceMissing。"""
@@ -243,8 +264,9 @@ def ink_before_user_layer(session: Session, storage: Storage, page_id: int, gen_
     gen = session.get(Generation, gen_id)
     if page is None or gen is None:
         raise LineartUnavailable("這一頁還沒有選定圖片")
-    book = session.get(Book, page.book_id)
-    content_px = compute_layout(book.paper_size, book.print_mode).content_px
+    if layout is None:
+        layout = book_layout_key(session, page_id)
+    content_px = compute_layout(PaperSize(layout[0]), PrintMode(layout[1])).content_px
     ink = render_lineart(_load(storage, gen), content_px, page.line_detail, page.line_width_px,
                          outline_fill=page.outline_fill)
     auto = load_strokes(session, gen_id, layer=StrokeLayer.AUTO) if with_auto else []

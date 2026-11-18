@@ -2,7 +2,15 @@ import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/hooks";
 import type { Stroke } from "@/lib/strokes";
-import { editsBusyFor, editsQueueFor, flushAllEditsFor, forgetEditsQueues, peekEditsQueue, pruneEditsQueues } from "./editsQueue";
+import {
+  STALE_LAYOUT,
+  editsBusyFor,
+  editsQueueFor,
+  flushAllEditsFor,
+  forgetEditsQueues,
+  peekEditsQueue,
+  pruneEditsQueues,
+} from "./editsQueue";
 
 const s = (x: number): Stroke => ({ op: "draw", width_px: 11, points: [[x, x]] });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -26,6 +34,29 @@ beforeEach(() => {
   );
 });
 afterEach(() => vi.unstubAllGlobals());
+
+describe("editsQueueFor：伺服器說筆畫是舊版面座標（409 STALE_LAYOUT）", () => {
+  it("丟掉舊筆畫、不算寫入失敗、flush 不再 reject；重抓 edits、book、pages、qa", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) =>
+        init.method === "PUT"
+          ? new Response(JSON.stringify({ detail: STALE_LAYOUT }), { status: 409, headers: { "content-type": "application/json" } })
+          : new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+      ),
+    );
+    const qc = new QueryClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    const e = editsQueueFor(qc, 1, 10, 7);
+    e.push([s(0.1)], [100, 200]);
+    await expect(e.flush()).resolves.toBeUndefined();
+    expect(e.failed).toBe(false);
+    expect(e.latest).toBeNull();
+    await expect(flushAllEditsFor(qc, 10, 7)).resolves.toBeUndefined();
+    for (const key of [qk.edits(10), qk.book(1), qk.pages(1), qk.qa(10)])
+      expect(spy).toHaveBeenCalledWith({ queryKey: key });
+  });
+});
 
 describe("editsQueueFor", () => {
   it("同一個 QueryClient＋頁＋選圖回傳同一個 entry（重新掛載也共用，不會兩個請求並行）", () => {

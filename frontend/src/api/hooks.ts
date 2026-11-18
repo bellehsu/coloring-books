@@ -293,6 +293,8 @@ export function useUpdateBook(bookId: number) {
         qc.invalidateQueries({ queryKey: qk.pages(bookId) }),
         // 版面改變後後端會重算線稿與 QA；QA 結果以 ["qa"] 前綴一併重抓
         qc.invalidateQueries({ queryKey: ["qa"] }),
+        // 修線座標也換算到新版面（C1）：畫布要重新載入，不能留著舊座標再送回去
+        qc.invalidateQueries({ queryKey: ["edits"] }),
         qc.invalidateQueries({ queryKey: qk.exportSummary(bookId) }),
       ]),
   });

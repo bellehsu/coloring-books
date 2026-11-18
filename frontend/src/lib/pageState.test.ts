@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Page } from "@/api/client";
-import { hardAttention, recomposeRunning } from "./pageState";
+import { hardAttention, pageDone, recomposeRunning } from "./pageState";
 
 const pg = (o: Partial<Page>) => ({ recompose_pending: false, attention: null, ...o }) as Page;
 
@@ -21,5 +21,17 @@ describe("recomposeRunning", () => {
     expect(recomposeRunning(pg({ recompose_pending: true, attention: "failed" }))).toBe(false);
     expect(recomposeRunning(pg({ recompose_pending: false }))).toBe(false);
     expect(recomposeRunning(undefined)).toBe(false);
+  });
+});
+
+describe("pageDone", () => {
+  it("counts passed pages without a real problem, including the soft review_pose tag", () => {
+    expect(pageDone(pg({ status: "passed" }))).toBe(true);
+    expect(pageDone(pg({ status: "passed", attention: "review_pose" }))).toBe(true);
+  });
+  it("does not count drafts, real problems or pages still recomposing", () => {
+    expect(pageDone(pg({ status: "draft" }))).toBe(false);
+    expect(pageDone(pg({ status: "passed", attention: "failed" }))).toBe(false);
+    expect(pageDone(pg({ status: "passed", recompose_pending: true }))).toBe(false);
   });
 });

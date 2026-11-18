@@ -45,8 +45,8 @@ from app.services.page_compose import (
     INPUTS_CHANGED, ComposeError, compose_page, is_usable, slot_change_values, usable_conditions,
 )
 from app.services.page_lineart import (
-    LineartUnavailable, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes, save_strokes,
-    strokes_from_json, strokes_to_json,
+    LineartUnavailable, book_layout_key, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes,
+    save_strokes, strokes_from_json, strokes_to_json,
 )
 from app.services.page_state import ATTENTION_REVIEW_POSE, REVIEW_POSE_DETAIL
 from app.services.qa import evaluate
@@ -412,15 +412,16 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
         session.refresh(page)
     # 3–4. 線稿＋自動補線：以「底稿＋user 層」重算整層 auto（覆寫，不附加）
     width = page.line_width_px
+    layout = book_layout_key(session, page_id)  # 存檔時確認版面沒變（改版面時已存的筆畫會被換算，review 2026-11-13）
     user = load_strokes(session, gid, layer=StrokeLayer.USER)
-    pre = ink_before_user_layer(session, storage, page_id, gid, with_auto=False)
+    pre = ink_before_user_layer(session, storage, page_id, gid, with_auto=False, layout=layout)
     qa = evaluate(apply_strokes(pre, user) if user else pre, width)
     auto = (plan_autofix(pre, user, qa.gap_count, qa.bridges, width,
                          room_strokes=MAX_STROKES, room_points=MAX_TOTAL_POINTS)
             if qa.bridges else [])
     if strokes_to_json(auto) != strokes_to_json(load_strokes(session, gid, layer=StrokeLayer.AUTO)):
         try:
-            if not commit_layer(session, page_id, gid, auto, layer=StrokeLayer.AUTO):
+            if not commit_layer(session, page_id, gid, auto, layer=StrokeLayer.AUTO, layout=layout):
                 raise _Stale()
         except IntegrityError as e:  # 同時有請求建立同一層（例如舊編輯器的自動補線）
             raise _Stale() from e
