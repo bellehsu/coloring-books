@@ -76,11 +76,11 @@ const NEW_PACKS: [string, string, [string, string][]][] = [
       ["洗澡", "Take a Bath"],
       ["洗臉", "Wash Your Face"],
       ["梳頭髮", "Comb Your Hair"],
-      ["剪指甲", "Trim Your Nails"],
+      ["擦鼻涕", "Wipe Your Nose"],
       ["摀住口鼻", "Cover Your Sneeze"],
       ["戴口罩", "Wear a Mask"],
       ["換乾淨衣服", "Put On Clean Clothes"],
-      ["丟垃圾", "Throw Away Trash"],
+      ["喝白開水", "Drink Water"],
     ],
   ],
 ];

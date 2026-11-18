@@ -58,11 +58,11 @@ const HYGIENE: readonly PackPage[] = [
   { scene: "浴室，有浴缸和蓮蓬頭", action: "坐在裝滿泡泡的浴缸裡洗澡", zh: "洗澡", en: "Take a Bath" },
   { scene: "浴室的洗手台，旁邊掛著毛巾", action: "雙手捧水洗臉", zh: "洗臉", en: "Wash Your Face" },
   { scene: "臥室的梳妝台，有鏡子", action: "一手拿梳子梳頭髮", zh: "梳頭髮", en: "Comb Your Hair" },
-  { scene: "客廳的桌子旁，桌上有小盒子", action: "雙手舉在胸前，一手拿著一個大大的指甲剪，剪另一隻手的指甲", zh: "剪指甲", en: "Trim Your Nails" },
+  { scene: "客廳，有沙發和茶几，茶几上有一盒面紙", action: "一手拿著面紙擦鼻子", zh: "擦鼻涕", en: "Wipe Your Nose" },
   { scene: "教室的座位旁，有書桌和窗戶", action: "用手肘摀住口鼻打噴嚏", zh: "摀住口鼻", en: "Cover Your Sneeze" },
   { scene: "公車站，有站牌和候車亭", action: "臉上戴著口罩，雙手把口罩邊緣按好", zh: "戴口罩", en: "Wear a Mask" },
   { scene: "臥室，有衣櫃和床", action: "手上拿著一件乾淨的衣服準備換上", zh: "換乾淨衣服", en: "Put On Clean Clothes" },
-  { scene: "公園，有長椅、大樹和一個有蓋子的垃圾桶", action: "站在垃圾桶旁邊，把手上的紙團丟進垃圾桶", zh: "丟垃圾", en: "Throw Away Trash" },
+  { scene: "廚房的餐桌旁，桌上有水壺", action: "雙手捧著一杯水在喝", zh: "喝白開水", en: "Drink Water" },
 ];
 
 export const THEME_PACKS: ThemePack[] = [
