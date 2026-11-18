@@ -50,4 +50,4 @@
 - 不要自行下載模型。需要模型時，列出 Hugging Face 頁面、檔名與應放置的子資料夾，由我下載。
 - 每個模組都要有測試；ComfyUI 相關測試要能用 mock 執行，不依賴 GPU。
 - 範圍外的功能（帳號系統、付費、雲端 GPU、自動訓練 LoRA）不要實作。
-- 實驗紀錄寫在 `experiments/results/`，包含一致性評分、線稿指標、耗時與失敗原因。
+- 實驗紀錄寫在 `experiments/results/`，包含一致性評分、線稿指標、耗時與失敗原因；`experiments/results/` 不進 git（已列在 .gitignore），不要 `git add -f`。

@@ -4,9 +4,8 @@ __pycache__/
 config/settings.yaml
 storage/*
 !storage/.gitkeep
-# 實驗紀錄（csv/json/md/html）進版控，圖片不進
-experiments/results/*/raw/
-experiments/results/*/processed/
+# 實驗結果一律不進 git（使用者 2026-11-18）；已追蹤的舊結果不受影響
+experiments/results/
 experiments/samples/character_ref.*
 
 # brainstorming 視覺草稿
