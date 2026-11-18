@@ -9,6 +9,7 @@ import { qk, useBook, useGenerations, usePages, useProduce, useProducePlan, useU
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { errMsg } from "@/features/editing/errMsg";
+import { whenBookWritesIdle } from "@/features/editing/pendingWrites";
 import { PAPER_LABELS, PAPER_SIZES, PRINT_MODE_LABELS, ratioGroup, type PaperSize, type PrintMode } from "@/lib/layout";
 import { applyImport } from "./applyImport";
 import { CharacterSection } from "./CharacterSection";
@@ -128,10 +129,18 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
     }
   }
 
-  function changePaper(value: string) {
+  async function changePaper(value: string) {
     const [s, m] = value.split(":") as [PaperSize, PrintMode];
     setPaperDraft({ size: s, mode: m });
     if (!has) return;
+    // 伺服器改版面時會換算已存的修線座標：還在送或送失敗的修線要先處理完（同繪本設定）
+    try {
+      await whenBookWritesIdle(qc, id);
+    } catch (err) {
+      setPaperDraft(null);
+      toast.show(`修線還沒存好（${err instanceof Error ? err.message : "儲存失敗"}），請先到那一頁重送或重新整理後再改紙張`, "error");
+      return;
+    }
     updateBook.mutate(
       { paper_size: s, print_mode: m },
       {
@@ -327,7 +336,7 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
               id={paperId}
               className={styles.input}
               value={paperValue(size, mode)}
-              onChange={(e) => changePaper(e.target.value)}
+              onChange={(e) => void changePaper(e.target.value)}
             >
               {PAPER_SIZES.map((s) =>
                 MODES.map((m) => (
