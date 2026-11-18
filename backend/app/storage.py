@@ -351,6 +351,9 @@ class R2Storage(_KeyBuilders):
             raise OSError(f"R2 刪除失敗 {len(errors)} 筆，例如 {errors[0].get('Key')!r}：{errors[0].get('Code')}")
 
 
+CACHE_LOW_WATER = 0.9  # 快取超過上限時刪到上限的這個比例
+
+
 class CachedStorage(_KeyBuilders):
     """包住遠端 Storage，get 經過本機磁碟快取（依 mtime 淘汰最舊的，總量上限 max_bytes）。
 
@@ -360,8 +363,10 @@ class CachedStorage(_KeyBuilders):
         self.inner = inner
         self.cache_dir = Path(cache_dir)
         self.max_bytes = int(max_bytes)
-        # 快取總量的估計（只加不減：覆寫、刪除、別的行程寫入都不扣，寧可高估）。None＝還沒掃過。
+        # 快取總量的估計（只加不減：覆寫、刪除都不扣，寧可高估）。None＝還沒掃過。
         # 只有估計超過上限才真的掃資料夾、依 mtime 淘汰，掃完換成實際總量；不必每次寫入都掃。
+        # 估計值只是這個行程的（多個執行緒同時加可能少算一點；別的行程寫入的不算），
+        # 所以快取最多可能超出上限約「上限 ×（共用快取的行程數）」，下一次掃描就會修正。
         self._approx_total: int | None = None
 
     def __repr__(self) -> str:
@@ -399,9 +404,11 @@ class CachedStorage(_KeyBuilders):
             entries.append((st.st_mtime_ns, str(path), path, st.st_size))
             total += st.st_size
         if total > self.max_bytes:
+            # 一次刪到低水位（上限的 90%），留一段空間：快取滿了之後不會每寫一次就再掃一次
+            target = self.max_bytes * CACHE_LOW_WATER
             entries.sort()
             for _mtime, _name, path, size in entries:
-                if total <= self.max_bytes:
+                if total <= target:
                     break
                 path.unlink(missing_ok=True)
                 total -= size

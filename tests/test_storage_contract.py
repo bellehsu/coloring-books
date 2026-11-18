@@ -16,6 +16,7 @@ boto3 = pytest.importorskip("boto3")
 moto = pytest.importorskip("moto")
 
 from app.storage import (  # noqa: E402
+    CACHE_LOW_WATER,
     CachedStorage,
     LocalStorage,
     R2Storage,
@@ -339,9 +340,9 @@ def test_cache_evicts_oldest_over_max(tmp_path):
         os.utime(cache / f"books/1/{i}.png", (base + i, base + i))
     # 讀到 1 → 變成最近使用，最舊的是 0
     st.get("books/1/1.png")
-    st.get("books/1/3.png")  # 總量 400 > 300，淘汰最舊的 0
-    assert _cache_files(cache) == ["books/1/1.png", "books/1/2.png", "books/1/3.png"]
-    assert sum((cache / f).stat().st_size for f in _cache_files(cache)) <= 300
+    st.get("books/1/3.png")  # 總量 400 > 300，從最舊的刪到低水位 270：先刪 0、再刪 2（1 剛讀過、3 最新）
+    assert _cache_files(cache) == ["books/1/1.png", "books/1/3.png"]
+    assert sum((cache / f).stat().st_size for f in _cache_files(cache)) <= 300 * CACHE_LOW_WATER
 
 
 def test_cache_does_not_rescan_under_limit(tmp_path, monkeypatch):
@@ -360,6 +361,26 @@ def test_cache_does_not_rescan_under_limit(tmp_path, monkeypatch):
     for i in range(20):
         st.put(f"books/1/{i}.png", bytes(100))
     assert scans["n"] <= 1
+
+
+def test_full_cache_does_not_rescan_every_write(tmp_path, monkeypatch):
+    """快取滿了以後：一次淘汰到低於上限一段（低水位），之後不必每寫一次就掃整個資料夾。"""
+    import app.storage as storage_mod
+
+    st = CachedStorage(LocalStorage(tmp_path / "root", b"k"), tmp_path / "cache", 10_000)
+    for i in range(100):  # 填滿
+        st.put(f"books/1/fill{i}.png", bytes(100))
+    scans = {"n": 0}
+    real = storage_mod._walk_files
+
+    def counting(*a, **kw):
+        scans["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(storage_mod, "_walk_files", counting)
+    for i in range(20):
+        st.put(f"books/1/more{i}.png", bytes(100))
+    assert scans["n"] <= 2
 
 
 def test_cache_still_evicts_after_many_small_writes(tmp_path):

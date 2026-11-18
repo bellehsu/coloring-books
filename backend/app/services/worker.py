@@ -522,10 +522,14 @@ class GenerationWorker:
                 await self._wait(self.retry_backoff_s)
                 continue
             if not did:
-                # 佇列已空：不再有待重試的任務，回到 IDLE 並無限期等待 notify()
                 self.state = WorkerState.IDLE
                 self.last_error = None
-                await self._wakeup.wait()
+                if self._unfinished or self._unfinished_page_tasks:
+                    # 還有沒寫成的收尾：退避後再試（不等別的事件叫醒，否則頁面會一直停在「製作中」）
+                    await self._wait(self.retry_backoff_s)
+                else:
+                    # 佇列已空、沒有待補寫的收尾：無限期等待 notify()
+                    await self._wakeup.wait()
             elif self.state == WorkerState.ENGINE_UNAVAILABLE:
                 await self._wait(self.retry_backoff_s)
 

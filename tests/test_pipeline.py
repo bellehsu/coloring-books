@@ -638,6 +638,41 @@ def test_worker_loop_runs_pipeline_between_generations(settings_file):
     assert seen[2][1] == PageStatus.PASSED  # 角色圖開始前，這頁已經做好
 
 
+def test_idle_loop_retries_unfinished_page_task(settings_file, monkeypatch):
+    """沒有生成在跑（閒置）時，記結果一直失敗的頁面流程也會在退避後補寫，不等別的事件把迴圈叫醒。"""
+    app = create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False)
+    with TestClient(app) as client:
+        worker = app.state.worker
+        worker.retry_backoff_s = 0.05
+        b, p = book_page(client, app)
+        pid = p["id"]
+        gen_background(client, app, pid)
+        gen_pose(client, app, pid)
+        real = pipeline.finish_page_task
+        fails = {"n": 0}
+
+        def flaky(*a, **kw):
+            if fails["n"] < 2:
+                fails["n"] += 1
+                raise RuntimeError("database is locked")
+            return real(*a, **kw)
+
+        monkeypatch.setattr(pipeline, "finish_page_task", flaky)
+
+        async def run():
+            await worker.start()
+            try:
+                for _ in range(200):
+                    if tasks(app, pid) and tasks(app, pid)[-1].status == PageTaskStatus.SUCCEEDED.value:
+                        return
+                    await asyncio.sleep(0.02)
+                raise AssertionError([(t.status, t.error) for t in tasks(app, pid)])
+            finally:
+                await worker.stop()
+
+        client.portal.call(run)
+
+
 def test_page_tasks_run_while_engine_unavailable(settings_file):
     app = create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False)
     with TestClient(app) as client:
