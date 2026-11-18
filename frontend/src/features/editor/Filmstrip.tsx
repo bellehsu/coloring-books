@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { Dialog } from "@/components/ui/Dialog";
 import { Icons } from "@/components/ui/Icons";
-import { hardAttention, recomposeRunning } from "@/lib/pageState";
+import { hardAttention, pageDone, recomposeRunning } from "@/lib/pageState";
 import { STATE_LABEL } from "@/features/book/overviewState";
 import styles from "./Filmstrip.module.css";
 
@@ -57,7 +57,7 @@ export function Filmstrip({
   compact = false,
 }: FilmstripProps) {
   const [confirm, setConfirm] = useState<{ id: number; n: number } | null>(null);
-  const passed = pages.filter((p) => p.status === "passed").length;
+  const passed = pages.filter(pageDone).length;
   const total = pages.length;
   const addButton = (
     <button type="button" aria-label="新增頁面" title="新增頁面" className={styles.add} disabled={adding} onClick={onAdd}>
