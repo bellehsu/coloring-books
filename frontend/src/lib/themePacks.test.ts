@@ -118,6 +118,7 @@ describe("衛生習慣：主角用的東西跟主角畫在一起，背景不重�
   const pages = parseStory(THEME_PACKS.find((p) => p.id === "hygiene")!.text).pages;
   it("洗手：洗手台和水龍頭在動作裡，背景完全不提洗手台、檯面（提了就會畫出第二個）", () => {
     expect(pages[0].action).toContain("洗手台的水龍頭");
+    expect(pages[0].action).toContain("到腰那麼高"); // 一般大小的洗手台（使用者 2026-11-19：太小）
     expect(pages[0].scene).not.toMatch(/洗手台|檯面|水龍頭/);
   });
   it("洗澡：浴缸只在動作裡，背景沒有浴缸", () => {
