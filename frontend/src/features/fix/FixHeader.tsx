@@ -2,7 +2,8 @@ import Link from "next/link";
 import type { OverviewPage, Page } from "@/api/client";
 import { Button } from "@/components/ui/Button";
 import { STATE_LABEL, type PageState } from "@/features/book/overviewState";
-import { fixHref, pageTitle, type FixFilter } from "./fixState";
+import { fixHref, type FixFilter } from "@/lib/fixHref";
+import { pageTitle } from "./fixState";
 import styles from "./FixPage.module.css";
 
 /** C 的頁首：← 整本書、標題與狀態、↶ 復原／↷ 重做、上一頁／下一頁。 */

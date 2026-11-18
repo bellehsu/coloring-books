@@ -132,6 +132,13 @@ def _enum_value(v) -> str:
     return str(getattr(v, "value", v))
 
 
+def same_layout(layout: LayoutKey):
+    """條件式 UPDATE Page 用：頁面所屬書本的紙張與列印方式仍是 layout。"""
+    same = select(Book.id).where(col(Book.paper_size) == PaperSize(layout[0]),
+                                  col(Book.print_mode) == PrintMode(layout[1]))
+    return col(Page.book_id).in_(same)
+
+
 def commit_layer(
     session: Session, page_id: int, gen_id: int, strokes: list[Stroke], *, layer: StrokeLayer, demote: bool = True,
     layout: LayoutKey | None = None,
@@ -146,9 +153,7 @@ def commit_layer(
         values = {"status": PageStatus.DRAFT, "passed_at": None} if demote else {}
         cond = [col(Page.id) == page_id, col(Page.selected_generation_id) == gen_id]
         if layout is not None:
-            same = select(Book.id).where(col(Book.paper_size) == PaperSize(layout[0]),
-                                          col(Book.print_mode) == PrintMode(layout[1]))
-            cond.append(col(Page.book_id).in_(same))
+            cond.append(same_layout(layout))
         res = session.exec(update(Page).where(*cond).values(**values, updated_at=utcnow()))
         if res.rowcount == 0:
             session.rollback()

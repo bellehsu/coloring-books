@@ -466,6 +466,38 @@ def test_layout_change_mid_run_recomputes_auto_with_new_layout(client, app, monk
     assert _auto(app, pid) == auto
 
 
+def test_layout_change_before_pass_reruns(client, app, monkeypatch):
+    """沒有缺口的頁（auto 層是空的、不會寫 auto 層）：算完缺口、標可以印之前改了列印方式，
+    不能用舊版面標成可以印；重試後以新版面做完。"""
+    b, p = book_page(client, app, gap=0)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    gen_pose(client, app, pid)
+    real = pipeline.evaluate
+    calls = []
+
+    def racing(*a, **kw):  # 舊版面算完缺口（沒有缺口 → 不寫 auto 層）之後才改版面
+        report = real(*a, **kw)
+        if not calls:
+            calls.append(1)
+            assert client.patch(f"/api/books/{b['id']}", json={"print_mode": "print_shop"}).status_code == 200
+        return report
+
+    monkeypatch.setattr(pipeline, "evaluate", racing)
+    real_layout = pipeline.book_layout_key
+    seen = []
+
+    def spy(session, page_id):
+        key = real_layout(session, page_id)
+        seen.append(key)
+        return key
+
+    monkeypatch.setattr(pipeline, "book_layout_key", spy)
+    drain(client, app)
+    assert get_page(app, pid).status == PageStatus.PASSED
+    assert seen[-1] == ("a5", "print_shop") and len(seen) >= 2  # 重試了一次，用的是新版面
+
+
 def test_layout_changed_back_is_accepted(client, app, monkeypatch):
     """計算中版面改了又改回來：計算時的版面＝寫入時的版面，照常存檔（不多重試一次）。"""
     b, p = book_page(client, app)
@@ -487,6 +519,45 @@ def test_layout_changed_back_is_accepted(client, app, monkeypatch):
     drain(client, app)
     assert get_page(app, pid).status == PageStatus.PASSED
     assert len(calls) == 1 and _auto(app, pid)
+
+
+def test_after_success_failure_still_enqueues_page(client, app, monkeypatch):
+    """生成成功、但自動選圖／排流程丟例外：頁面仍要排進流程，不能停在「製作中」。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+
+    def boom(session, gen_id):
+        raise RuntimeError("資料庫暫時鎖住")
+
+    monkeypatch.setattr(pipeline, "on_generation_succeeded", boom)
+    gen_background(client, app, pid)
+    gen_pose(client, app, pid)
+    assert queued(app, pid)
+    monkeypatch.undo()
+    drain(client, app)
+    assert get_page(app, pid).status == PageStatus.PASSED
+
+
+def test_page_task_finish_failure_is_retried_next_loop(client, app, monkeypatch):
+    """流程跑完但記結果一直失敗：下一輪迴圈補寫，不留 RUNNING 到重啟。"""
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    gen_pose(client, app, pid)
+    real = pipeline.finish_page_task
+    fails = {"n": 0}
+
+    def flaky(*a, **kw):
+        if fails["n"] < 2:
+            fails["n"] += 1
+            raise RuntimeError("database is locked")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(pipeline, "finish_page_task", flaky)
+    drain(client, app)
+    assert [t.status for t in tasks(app, pid)][-1] == PageTaskStatus.RUNNING.value
+    client.portal.call(app.state.worker._retry_unfinished)
+    assert [t.status for t in tasks(app, pid)][-1] == PageTaskStatus.SUCCEEDED.value
 
 
 # ---- 排隊與重啟 ------------------------------------------------------------------------
@@ -565,6 +636,41 @@ def test_worker_loop_runs_pipeline_between_generations(settings_file):
         client.portal.call(run)
     assert [k for k, _ in seen] == [GenKind.BACKGROUND, GenKind.POSE, GenKind.CHARACTER]
     assert seen[2][1] == PageStatus.PASSED  # 角色圖開始前，這頁已經做好
+
+
+def test_idle_loop_retries_unfinished_page_task(settings_file, monkeypatch):
+    """沒有生成在跑（閒置）時，記結果一直失敗的頁面流程也會在退避後補寫，不等別的事件把迴圈叫醒。"""
+    app = create_app(load_settings(settings_file), engine=FakeEngine(), start_worker=False)
+    with TestClient(app) as client:
+        worker = app.state.worker
+        worker.retry_backoff_s = 0.05
+        b, p = book_page(client, app)
+        pid = p["id"]
+        gen_background(client, app, pid)
+        gen_pose(client, app, pid)
+        real = pipeline.finish_page_task
+        fails = {"n": 0}
+
+        def flaky(*a, **kw):
+            if fails["n"] < 2:
+                fails["n"] += 1
+                raise RuntimeError("database is locked")
+            return real(*a, **kw)
+
+        monkeypatch.setattr(pipeline, "finish_page_task", flaky)
+
+        async def run():
+            await worker.start()
+            try:
+                for _ in range(200):
+                    if tasks(app, pid) and tasks(app, pid)[-1].status == PageTaskStatus.SUCCEEDED.value:
+                        return
+                    await asyncio.sleep(0.02)
+                raise AssertionError([(t.status, t.error) for t in tasks(app, pid)])
+            finally:
+                await worker.stop()
+
+        client.portal.call(run)
 
 
 def test_page_tasks_run_while_engine_unavailable(settings_file):

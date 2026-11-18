@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
+import { editsQueueFor } from "@/features/editing/editsQueue";
 import { SetupPage } from "./SetupPage";
 
 const push = vi.fn();
@@ -134,13 +135,14 @@ afterEach(() => vi.unstubAllGlobals());
 
 function setup(bookId: number | null = 1) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const r = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <SetupPage bookId={bookId} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return Object.assign(r, { qc });
 }
 const posts = (url: string | RegExp) =>
   calls.filter((c) => c.method === "POST" && (typeof url === "string" ? c.url === url : url.test(c.url)));
@@ -205,6 +207,46 @@ describe("① 書名和紙張：建立書", () => {
     expect(calls.find((c) => c.method === "PATCH")!.body).toEqual({ title: "書二" });
     expect(screen.getByRole("option", { name: "Letter・家用印表機" })).toBeDisabled();
     expect(screen.getByRole("option", { name: "B5・家用印表機" })).toBeEnabled();
+  });
+});
+
+describe("① 改紙張前等修線存好", () => {
+  const stroke = { op: "draw" as const, width_px: 11, points: [[0.5, 0.5]] as [number, number][] };
+  const paperPatches = () =>
+    calls.filter((c) => c.method === "PATCH" && c.url === "/api/books/1" && "paper_size" in ((c.body as J) ?? {}));
+
+  it("修線還在送：送完才改紙張", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    respond = async (method, url) => {
+      if (method === "PUT" && url.includes("/lineart/edits")) {
+        await gate;
+        return json({ status: "draft", gaps: [], gap_count: 0, errors: [], warnings: [] });
+      }
+      return undefined;
+    };
+    const { qc } = setup();
+    await screen.findByDisplayValue("小兔子的交通工具書");
+    editsQueueFor(qc, 1, 7, 5).push([stroke], [2244, 3272]);
+    await userEvent.selectOptions(screen.getByLabelText("紙張"), "B5・家用印表機");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(paperPatches()).toHaveLength(0);
+    await act(async () => release());
+    await waitFor(() => expect(paperPatches()).toHaveLength(1));
+  });
+
+  it("修線最後寫入失敗：不改紙張，說明原因", async () => {
+    respond = async (method, url) =>
+      method === "PUT" && url.includes("/lineart/edits") ? json({ detail: "伺服器壞了" }, 500) : undefined;
+    const { qc } = setup();
+    await screen.findByDisplayValue("小兔子的交通工具書");
+    const e = editsQueueFor(qc, 1, 7, 5);
+    e.push([stroke], [2244, 3272]);
+    await e.flush().catch(() => {});
+    await userEvent.selectOptions(screen.getByLabelText("紙張"), "B5・家用印表機");
+    expect(await screen.findByText(/修線還沒存好/)).toBeInTheDocument();
+    expect(paperPatches()).toHaveLength(0);
+    expect(screen.getByLabelText("紙張")).toHaveValue("a4:home"); // 選單回到原本的紙張
   });
 });
 

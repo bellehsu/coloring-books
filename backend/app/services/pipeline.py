@@ -46,7 +46,7 @@ from app.services.page_compose import (
 )
 from app.services.page_lineart import (
     LineartUnavailable, book_layout_key, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes,
-    save_strokes, strokes_from_json, strokes_to_json,
+    same_layout, save_strokes, strokes_from_json, strokes_to_json,
 )
 from app.services.page_state import ATTENTION_REVIEW_POSE, REVIEW_POSE_DETAIL
 from app.services.qa import evaluate
@@ -246,6 +246,17 @@ def on_generation_succeeded(session: Session, gen_id: int) -> bool:
     return True
 
 
+def enqueue_after_generation(session: Session, gen_id: int) -> bool:
+    """on_generation_succeeded 失敗時的保底：只把頁面排進流程（流程第一步會自己補選圖）。
+    和 on_generation_succeeded 同樣只處理頁面的背景／角色動作、不含重畫主角的候選。"""
+    gen = session.get(Generation, gen_id)
+    if gen is None or gen.page_id is None or gen.kind not in SLOTS or is_candidate(gen):
+        return False
+    enqueue_page_task(session, gen.page_id)
+    session.commit()
+    return True
+
+
 def on_generation_failed(session: Session, gen_id: int) -> None:
     """頁面的背景／角色動作生成失敗：頁面 attention="failed"，說明是生成的中文錯誤訊息。
     重畫主角的候選失敗不動頁面（頁面用的是 take 或原本的動作，好好的；候選本身照樣 FAILED、退回額度）。"""
@@ -433,7 +444,7 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid,
-               col(Page.lineart_key) == lin.key)
+               col(Page.lineart_key) == lin.key, same_layout(layout))  # 補線是在這個版面算的
         .values(status=PageStatus.PASSED,
                 passed_at=func.coalesce(case((already, col(Page.passed_at))),
                                         literal(now, Page.__table__.c.passed_at.type)),

@@ -271,12 +271,7 @@ def create_character_candidates(
     book = owned_book(session, owner, book_id)
     if book.character_generation_id is not None and not body.confirm_change:
         raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
-    # 一次一張：再按一次＝再產生一張，變化語不重複這本書上一張
     seed = body.seed if body.seed is not None else random.randint(0, MAX_SEED)
-    variation = pick_character_variation(
-        random.Random(), exclude=_last_character_variation(session, book_id)
-    )
-    prompt = qwen_character_prompt(body.description, variation)
     width, height = CHARACTER_SIZE
     # 先以條件式 UPDATE 取得寫入鎖並確認角色仍未設定（確認要換角色時不必），與 set_character 互斥
     unset = col(Book.character_generation_id).is_(None)
@@ -288,6 +283,12 @@ def create_character_candidates(
     if res.rowcount == 0:
         session.rollback()
         raise HTTPException(409, "這本繪本的角色已經設定，不能再產生候選圖")
+    # 一次一張：再按一次＝再產生一張，變化語不重複這本書上一張。拿到寫入鎖之後才讀上一張：
+    # 連按兩下時第二個請求會等第一個寫完，看得到它的變化語
+    variation = pick_character_variation(
+        random.Random(), exclude=_last_character_variation(session, book_id)
+    )
+    prompt = qwen_character_prompt(body.description, variation)
     try:
         day = usage.reserve(session, owner, 1, usage.clock())  # 同一個交易：429 時什麼都不寫
     except HTTPException:
