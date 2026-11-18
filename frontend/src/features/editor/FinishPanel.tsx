@@ -63,7 +63,8 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
 
   const genId = page.selected_generation_id;
   const passed = page.status === "passed" && !hardAttention(page);
-  const review = passed && page.attention != null;
+  // 重新合成中不能「看過了」（後端 409）：正常情況補線步驟會被擋住，只有頁面快取過期時才會走到這裡
+  const review = passed && page.attention != null && !page.recompose_pending;
   const saved = page.character_check;
   const result = check.isPending ? check.variables.result : saved;
   const consistent = result === "consistent";
@@ -159,6 +160,8 @@ function FinishPanelInner({ book, page, qa, onPatch, onGoCompose }: FinishPanelP
       await accept.mutateAsync();
     } catch (e) {
       toast.show(errMsg(e, "無法完成這一頁"), "error");
+      // 409：頁面在別處改了（例如另一個分頁開始重新合成），重抓才看得到現在的狀態
+      if (e instanceof ApiError && e.status === 409) void qc.invalidateQueries({ queryKey: qk.pages(book.id) });
     } finally {
       setConfirmGaps(null);
       end();

@@ -220,6 +220,26 @@ describe("FinishPanel", () => {
     await waitFor(() => expect(posts("/api/pages/7/accept")).toHaveLength(1));
   });
 
+  it("通過＋review_pose 但正在重新合成（快取過期的情況）：不顯示「看過了 ✓」", () => {
+    setup(
+      mkPage({ status: "passed", attention: "review_pose", recompose_pending: true }),
+      mkQA({ status: "passed" }),
+    );
+    expect(screen.queryByRole("button", { name: "看過了 ✓" })).not.toBeInTheDocument();
+  });
+
+  it("「看過了 ✓」回 409（頁面在另一個分頁改了）：提示並重抓頁面", async () => {
+    responses["POST /api/pages/7/accept"] = () => j({ detail: "這一頁正在重新合成，請等一下" }, 409);
+    const { qc } = setup(
+      mkPage({ status: "passed", attention: "review_pose", attention_detail: "請看一下" }),
+      mkQA({ status: "passed" }),
+    );
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    await userEvent.click(screen.getByRole("button", { name: "看過了 ✓" }));
+    expect(await screen.findByText("這一頁正在重新合成，請等一下")).toBeInTheDocument();
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["pages", 1] });
+  });
+
   it("通過、沒有請看一下：沒有「看過了」", () => {
     setup(mkPage({ status: "passed", character_check: "consistent" }), mkQA({ status: "passed" }));
     expect(screen.queryByRole("button", { name: "看過了 ✓" })).not.toBeInTheDocument();
