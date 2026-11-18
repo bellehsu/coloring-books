@@ -142,6 +142,29 @@ def test_character_variation_never_repeats_consecutively(client, app):
     assert all(x != y for x, y in zip(seen, seen[1:])), seen
 
 
+def test_character_variation_is_read_after_the_write_lock(client, app):
+    """連按「再產生」：上一張的變化語要在取得寫入鎖（條件式 UPDATE books）之後才讀，
+    第二個請求才看得到第一個寫入的變化語（不重複）。"""
+    from sqlalchemy import event
+
+    b = new_book(client)
+    with app.state.sessions() as s:
+        engine = s.get_bind()
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, *a):
+        statements.append(" ".join(statement.split()).lower())
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        assert candidates(client, b["id"]).status_code == 202
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    lock = next(i for i, s in enumerate(statements) if s.startswith("update book "))
+    reads = [i for i, s in enumerate(statements) if s.startswith("select") and "from generation " in s]
+    assert reads and min(reads) > lock, statements
+
+
 def test_character_variation_exclusion_is_per_book(client, app, monkeypatch):
     from app.api import books as books_mod
 
