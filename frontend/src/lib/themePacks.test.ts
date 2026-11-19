@@ -175,4 +175,11 @@ describe("theme pack world", () => {
       expect(countChars(p.captionEn ?? "")).toBeLessThanOrEqual(MAX_CAPTION_EN);
     }
   });
+  it("actions never name the landmark (it would be drawn again in the character's hands)", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      const name = WORLD[i][0].split("・")[1];
+      expect(p.action).not.toContain(name.slice(0, 2));
+      expect(p.action).not.toContain(name.slice(-2));
+    }
+  });
 });
