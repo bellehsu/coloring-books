@@ -102,6 +102,22 @@
   color: var(--muted-2);
 }
 /* 舞台下方：水平翻轉、重設位置、自動合成狀態 */
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 20px;
+}
+.presetGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.presetTitle {
+  font-size: 13px;
+  color: var(--muted-2);
+}
 .bar {
   display: flex;
   flex-wrap: wrap;
