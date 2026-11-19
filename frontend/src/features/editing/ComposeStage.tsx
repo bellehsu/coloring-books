@@ -38,7 +38,7 @@ export interface ComposeStageProps {
   /** 目前位置（本 session 最後存的 → 伺服器草稿 → DEFAULT_PLACEMENT）。 */
   placement: Placement;
   /**
-   * 結束拖曳、縮放，每次按鍵，或按「水平翻轉」「重設位置」時呼叫一次；
+   * 結束拖曳、縮放，每次按鍵，或按位置／大小快捷鈕、「水平翻轉」「重設位置」時呼叫一次；
    * EditorPage 會自動存（placementSaver，依序、最新為準）並排自動合成。
    * via＝"key"：方向鍵／＋－（按住會自動重複，C 等停下來才存）。
    */
@@ -76,8 +76,9 @@ function readSize(img: HTMLImageElement): Size | undefined {
 }
 
 /**
- * 合成模式的舞台：背景圖上疊去背角色，下方是「水平翻轉」「重設位置」與狀態。
+ * 合成模式的舞台：背景圖上疊去背角色，下方是位置／大小快捷鈕、「水平翻轉」「重設位置」與狀態。
  * 拖曳角色移動、拖右下角把手等比縮放（左上角固定）；角色框可聚焦：方向鍵移動 1%、Shift＋方向鍵 5%、+／- 縮放 5%。
+ * 下方快捷鈕：位置（靠左／置中／靠右）與大小（小／中／大），見 lib/placement 的 withSide／withSize。
  * 位置用百分比擺放，舞台寬度跟著容器（手機寬也一樣）；超出背景的部分裁掉（與合成結果相同）。
  */
 export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, status }: ComposeStageProps) {
@@ -171,8 +172,9 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
   const bw = bgSize?.w ?? 1;
   const bh = bgSize?.h ?? 1;
   const b = placementBox(shown, aspect, bw, bh);
-  /** 按鈕：結果與目前相同就不送（不重複存檔／合成）。 */
+  /** 按鈕：拖曳中（觸控時另一隻手指）不作用，否則放開時拖曳會蓋掉；結果與目前相同就不送（不重複存檔／合成）。 */
   const apply = (next: Placement) => {
+    if (drag) return;
     if (!same(next, placement)) onChange(next);
   };
   const boxStyle = ready
@@ -251,14 +253,14 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
       </div>
       <div className={styles.presets}>
         <PresetGroup
-          label="主角位置"
+          label="位置快捷鈕"
           title="位置"
           options={SIDES}
           current={currentSide(placement)}
           onPick={(side) => apply(withSide(placement, side))}
         />
         <PresetGroup
-          label="主角大小"
+          label="大小快捷鈕"
           title="大小"
           options={SIZES}
           current={currentSize(placement)}
@@ -284,7 +286,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
         {status}
       </div>
       <p id={hintId} className={styles.hint}>
-        拖曳角色移動，拉右下角圓點縮放；也可以選取角色後用方向鍵移動（Shift 一次 5%）、＋／－ 縮放。放開後自動合成，不用另外按確認。
+        拖曳角色移動，拉右下角圓點縮放；也可以按下方的「位置」「大小」按鈕快速擺放，或選取角色後用方向鍵移動（Shift 一次 5%）、＋／－ 縮放。放開後自動合成，不用另外按確認。
       </p>
     </div>
   );

@@ -150,8 +150,8 @@ describe("ComposeStage", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
-  const sideBtn = (name: string) => within(screen.getByRole("group", { name: "主角位置" })).getByRole("button", { name });
-  const sizeBtn = (name: string) => within(screen.getByRole("group", { name: "主角大小" })).getByRole("button", { name });
+  const sideBtn = (name: string) => within(screen.getByRole("group", { name: "位置快捷鈕" })).getByRole("button", { name });
+  const sizeBtn = (name: string) => within(screen.getByRole("group", { name: "大小快捷鈕" })).getByRole("button", { name });
 
   it("位置與大小按鈕：預設位置時「置中」「中」亮著", () => {
     view({ placement: DEFAULT_PLACEMENT });
@@ -187,6 +187,29 @@ describe("ComposeStage", () => {
     view({ placement: { cx: 0.4, cy: 0.5, height: 0.5, flip: false } });
     for (const b of [sideBtn("靠左"), sideBtn("置中"), sideBtn("靠右"), sizeBtn("小"), sizeBtn("中"), sizeBtn("大")])
       expect(b).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("快捷鈕的名稱和可拖曳的角色框（角色位置）分得開", () => {
+    view();
+    expect(screen.getAllByRole("group", { name: /位置/ }).map((g) => g.getAttribute("aria-label"))).toEqual(["角色位置", "位置快捷鈕"]);
+  });
+
+  it("拖曳中（例如另一隻手指）按快捷鈕不作用，放開時只存拖曳的結果", () => {
+    const { load, onChange } = view();
+    load();
+    fireEvent.pointerDown(box(), { pointerId: 1, button: 0, clientX: 250, clientY: 200 });
+    fireEvent.pointerMove(box(), { pointerId: 1, clientX: 300, clientY: 200 });
+    fireEvent.click(sideBtn("靠右"));
+    fireEvent.click(sizeBtn("大"));
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.pointerUp(box(), { pointerId: 1, clientX: 300, clientY: 200 });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toEqual({ ...P, cx: 0.6 });
+  });
+
+  it("說明提到位置、大小快捷鈕", () => {
+    view();
+    expect(screen.getByText(/也可以按下方的「位置」「大小」按鈕快速擺放/)).toBeInTheDocument();
   });
 
   it("舞台下方顯示狀態；說明寫明放開後自動合成", () => {
