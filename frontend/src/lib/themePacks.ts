@@ -97,7 +97,7 @@ const TAIWAN: readonly PackPage[] = [
   { scene: "新北野柳的岩石海岸，畫面左邊是女王頭：一塊一層樓高的蕈狀砂岩，上面是一顆粗大的圓球形岩石，像女王抬起下巴的側臉和高高盤起的頭髮，下面接著一根很細的石柱當脖子，旁邊是平平的岩石地和海", action: "一手拿著相機在拍照", zh: "新北・野柳女王頭", en: "Yehliu Queen's Head" },
   { scene: "新北平溪的老街和鐵軌，夜空中飄著很多天燈", action: "雙手捧著一盞紙做的大燈籠往上放", zh: "新北・平溪天燈", en: "Pingxi Sky Lanterns" },
   { scene: "新北淡水漁人碼頭的白色情人橋，橋下是河，遠處是夕陽", action: "高高舉起一隻手揮手", zh: "新北・淡水漁人碼頭", en: "Tamsui Fisherman's Wharf" },
-  { scene: "宜蘭頭城的沙灘和海，畫面右邊的海上有一座很大的火山島：一頭是低低突出的小岬角，另一頭是高高隆起、像倒扣的碗一樣的大山", action: "一手拿著望遠鏡在看", zh: "宜蘭・龜山島", en: "Guishan Island" },
+  { scene: "宜蘭頭城的沙灘和海，畫面右邊的海上是龜山島，一座很大的火山島：一頭是低低突出的小岬角，另一頭是高高隆起、像倒扣的碗一樣的大山", action: "一手拿著望遠鏡在看", zh: "宜蘭・龜山島", en: "Guishan Island" },
   { scene: "苗栗的勝興車站，日式的木造小車站，旁邊有鐵軌", action: "雙手拿著一張車票", zh: "苗栗・勝興車站", en: "Shengxing Station" },
   { scene: "台中的高美濕地，一排大風車，地上有淺淺的水和夕陽", action: "一手拿著一個小風車玩具", zh: "台中・高美濕地", en: "Gaomei Wetlands" },
   { scene: "彰化八卦山上的大佛像，前面有階梯和樹", action: "雙手合十微笑", zh: "彰化・八卦山大佛", en: "Baguashan Great Buddha" },
@@ -109,7 +109,7 @@ const TAIWAN: readonly PackPage[] = [
   { scene: "屏東墾丁的鵝鑾鼻燈塔，白色的燈塔在草地上，旁邊是海", action: "戴著遮陽帽，一手拿著一杯椰子汁", zh: "屏東・鵝鑾鼻燈塔", en: "Eluanbi Lighthouse" },
   { scene: "花蓮的太魯閣峽谷，高高的大理石山壁中間有溪流和吊橋", action: "戴著安全帽，一手扶著帽子往上看", zh: "花蓮・太魯閣", en: "Taroko Gorge" },
   { scene: "台東的三仙台，海上一座像波浪一樣彎彎的長橋連到小島", action: "一手拿著貝殼", zh: "台東・三仙台", en: "Sanxiantai Bridge" },
-  { scene: "澎湖七美的雙心石滬：從海邊高處往下看，淺淺的海水裡，用黑色石塊疊成的矮石牆排成兩個相連的愛心，一大一小，旁邊是綠色的草坡", action: "一手拿著相機在拍照", zh: "澎湖・雙心石滬", en: "Twin Hearts Stone Weir" },
+  { scene: "澎湖七美的雙心石滬：從海邊高處往下看，淺淺的海水裡，用黑色石塊疊成的矮石牆排成兩個大大的愛心，兩個愛心相連，一大一小，旁邊是綠色的草坡", action: "一手拿著相機在拍照", zh: "澎湖・雙心石滬", en: "Twin Hearts Stone Weir" },
   { scene: "金門的風獅爺石像，披著紅色披風站在路邊，後面有閩南式的老房子", action: "一手拿著一個小紙風車", zh: "金門・風獅爺", en: "Wind Lion God" },
 ];
 
