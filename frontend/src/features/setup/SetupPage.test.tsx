@@ -100,6 +100,7 @@ beforeEach(() => {
         return json(p, 201);
       }
       if (url.startsWith("/api/pages/") && method === "PATCH") return json({});
+      if (/^\/api\/pages\/\d+\/placement$/.test(url) && method === "PUT") return json({});
       if (url === "/api/books/1/generations?kind=character") return json(gens.filter((g) => g.kind === "character"));
       if (url === "/api/books/1/generations") return json(gens);
       if (url === "/api/books/1/produce/plan") return json(plan);
@@ -379,6 +380,31 @@ describe("③ 故事：預覽與每頁的背景", () => {
     const patches = calls.filter((c) => c.method === "PATCH" && c.url.startsWith("/api/pages/"));
     expect(patches).toHaveLength(10);
     for (const c of patches) expect(c.body).toMatchObject({ line_detail: "simple" });
+  });
+
+  it("套用動物園主題包：每頁主角放小、放在動物的另一邊（使用者 2026-11-20）", async () => {
+    book = bookOf({ character_generation_id: 5 });
+    setup();
+    await screen.findByText("選好了 ✓");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "套用主題包" })).getByRole("button", { name: /動物園/ }));
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    const puts = calls.filter((c) => c.method === "PUT" && c.url.endsWith("/placement"));
+    expect(puts).toHaveLength(12);
+    expect(puts[0].body).toEqual({ cx: 0.26, cy: 0.75, height: 0.42, flip: false });
+    expect(puts[1].body).toEqual({ cx: 0.74, cy: 0.75, height: 0.42, flip: false });
+  });
+
+  it("交通工具主題包不帶位置：不存位置", async () => {
+    book = bookOf({ character_generation_id: 5 });
+    setup();
+    await screen.findByText("選好了 ✓");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "套用主題包" })).getByRole("button", { name: /交通工具/ }));
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    expect(calls.filter((c) => c.url.endsWith("/placement"))).toHaveLength(0);
   });
 
   it("套用主題包後自己改了文字：不再套用主題包的線條設定", async () => {

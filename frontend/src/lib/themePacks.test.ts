@@ -374,6 +374,7 @@ describe("驗收後修正（使用者 2026-11-19）", () => {
     const h = pages("holidays");
     expect(h[0].scene).toContain("三朵大大的煙火");
     expect(h[0].scene).toContain("天空其他地方是空的");
+    expect(h[0].scene).toContain("沒有星星和雲"); // 夜空的星星、雲做成線稿會變成一大片細碎點點
     expect(h[1].scene).toContain("沒有字");
     expect(h[5].action).toContain("坐在龍舟上");
     expect(h[5].scene).not.toContain("龍舟");
@@ -382,9 +383,22 @@ describe("驗收後修正（使用者 2026-11-19）", () => {
     for (const [i, p] of pages("zoo").entries()) expect(p.scene).toContain(i % 2 === 0 ? "畫面右邊" : "畫面左邊");
     expect(pages("zoo")[9].scene).toContain("袋鼠站在草地上"); // 「在草地上跳」那一版袋鼠沒畫出來
   });
-  it("運動：體操在室內軟墊上，不是球場", () => {
+  it("運動：體操用鞍馬（使用者 2026-11-20）；鞍馬跟主角畫在一起，背景只有軟墊", () => {
     const gym = pages("sports")[10];
     expect(gym.scene).toContain("軟墊");
     expect(gym.scene).not.toContain("球場");
+    expect(gym.scene).not.toContain("鞍馬");
+    expect(gym.action).toContain("鞍馬");
+  });
+  it("動物園：主角小一點、不放中間，放在動物的另一邊（使用者 2026-11-20）", () => {
+    const zoo = THEME_PACKS.find((p) => p.id === "zoo")!;
+    expect(zoo.placements).toHaveLength(12);
+    for (const [i, pl] of (zoo.placements ?? []).entries()) {
+      expect(pl.height).toBe(0.42);
+      expect(pl.cx).toBe(i % 2 === 0 ? 0.26 : 0.74); // 動物在右邊 → 主角在左邊
+    }
+  });
+  it("其他主題包不帶位置", () => {
+    for (const p of THEME_PACKS.filter((x) => x.id !== "zoo")) expect(p.placements).toBeUndefined();
   });
 });

@@ -1,5 +1,8 @@
 /** 內建主題包：用和「貼上整本故事」相同的格式寫成文字，套用時走同一個解析器。 */
 
+import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
+import { withSide, withSize } from "./placement";
+
 export type LineDetail = "simple" | "standard" | "detailed";
 
 export interface ThemePack {
@@ -9,6 +12,8 @@ export interface ThemePack {
   text: string;
   /** 用這個主題包建立／填入的頁，線條多寡設成這個（使用者 2026-11-19：小區塊太多 → 預設簡單）。 */
   lineDetail: LineDetail;
+  /** 每頁主角的位置（依頁序）；沒有＝預設置中。套用時存成各頁的位置，之後在編輯頁可以改。 */
+  placements?: Placement[];
 }
 
 interface PackPage {
@@ -124,7 +129,7 @@ const TAIWAN: readonly PackPage[] = [
 
 /** 節日：場景是節日的地方，主角拿節日的小東西（使用者 2026-11-19 確認清單）。 */
 const HOLIDAYS: readonly PackPage[] = [
-  { scene: "晚上的城市，天空中只有三朵大大的煙火，天空其他地方是空的", action: "雙手舉高，開心地歡呼", zh: "新年快樂", en: "Happy New Year" },
+  { scene: "晚上的城市，天空中只有三朵大大的煙火，天空其他地方是空的，沒有星星和雲", action: "雙手舉高，開心地歡呼", zh: "新年快樂", en: "Happy New Year" },
   { scene: "家門口，門兩邊貼著長長的紅紙，紅紙上沒有字，門上掛著兩個紅燈籠", action: "雙手拿著一個紅包，開心地笑", zh: "過年", en: "Lunar New Year" },
   { scene: "晚上的廟口廣場，上面掛著一排圓圓的燈籠", action: "一手提著一盞小燈籠", zh: "元宵節", en: "Lantern Festival" },
   { scene: "遊樂園，有旋轉木馬和摩天輪", action: "一手拿著一顆氣球", zh: "兒童節", en: "Children's Day" },
@@ -166,7 +171,7 @@ const SPORTS: readonly PackPage[] = [
   { scene: "學校操場，後面有一排大樹", action: "雙手拿著跳繩跳起來", zh: "跳繩", en: "Jump Rope" },
   { scene: "操場的跑道，有一條一條的白線", action: "往前跑步，頭上綁著頭帶", zh: "跑步", en: "Running" },
   { scene: "公園裡平平的廣場，旁邊有大樹", action: "踩在滑板上，雙手張開保持平衡", zh: "滑板", en: "Skateboarding" },
-  { scene: "室內體育館，地上鋪著一大塊平平的軟墊，旁邊有一根平衡木", action: "雙手舉高，單腳站立，另一隻腳往後抬高", zh: "體操", en: "Gymnastics" },
+  { scene: "室內體育館，地上鋪著一大塊平平的軟墊", action: "雙手撐在一個鞍馬的兩個把手上，雙腳往旁邊抬起", zh: "體操", en: "Gymnastics" },
   { scene: "山上的步道，遠處有一座一座的山", action: "背著背包，一手拿著登山杖", zh: "登山", en: "Hiking" },
 ];
 
@@ -219,6 +224,8 @@ export const THEME_PACKS: ThemePack[] = [
     description: "12 種動物園的動物，主角在旁邊看、拍照……每頁有中英文字",
     text: packText(ZOO, SIMPLE_BG + NO_PEOPLE),
     lineDetail: "simple",
+    // 使用者 2026-11-20：主角小一點、不放中間；動物在右邊（單數頁）就放左邊，反之放右邊
+    placements: ZOO.map((_, i) => withSide(withSize(DEFAULT_PLACEMENT, "small"), i % 2 === 0 ? "left" : "right")),
   },
   {
     id: "sports",
