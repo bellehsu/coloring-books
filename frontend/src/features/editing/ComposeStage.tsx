@@ -9,7 +9,18 @@ import {
   type ReactNode,
 } from "react";
 import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
-import { cornerResize, movePlacement, placementBox, resizePlacement } from "@/lib/placement";
+import {
+  cornerResize,
+  currentSide,
+  currentSize,
+  movePlacement,
+  placementBox,
+  resizePlacement,
+  withSide,
+  withSize,
+  type PresetSide,
+  type PresetSize,
+} from "@/lib/placement";
 import stage from "./stage.module.css";
 import styles from "./ComposeStage.module.css";
 
@@ -53,6 +64,9 @@ interface Drag {
 const KEY_STEP = 0.01;
 const KEY_STEP_BIG = 0.05;
 const KEY_RESIZE = 0.05;
+
+const SIDES: [PresetSide, string][] = [["left", "靠左"], ["center", "置中"], ["right", "靠右"]];
+const SIZES: [PresetSize, string][] = [["small", "小"], ["medium", "中"], ["large", "大"]];
 
 const same = (a: Placement, b: Placement) => a.cx === b.cx && a.cy === b.cy && a.height === b.height && a.flip === b.flip;
 const pct = (v: number) => `${+(v * 100).toFixed(4)}%`;
@@ -157,6 +171,10 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
   const bw = bgSize?.w ?? 1;
   const bh = bgSize?.h ?? 1;
   const b = placementBox(shown, aspect, bw, bh);
+  /** 按鈕：結果與目前相同就不送（不重複存檔／合成）。 */
+  const apply = (next: Placement) => {
+    if (!same(next, placement)) onChange(next);
+  };
   const boxStyle = ready
     ? { left: pct(b.left / bw), top: pct(b.top / bh), width: pct(b.width / bw), height: pct(b.height / bh) }
     : undefined;
@@ -231,6 +249,22 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
           </p>
         )}
       </div>
+      <div className={styles.presets}>
+        <PresetGroup
+          label="主角位置"
+          title="位置"
+          options={SIDES}
+          current={currentSide(placement)}
+          onPick={(side) => apply(withSide(placement, side))}
+        />
+        <PresetGroup
+          label="主角大小"
+          title="大小"
+          options={SIZES}
+          current={currentSize(placement)}
+          onPick={(size) => apply(withSize(placement, size))}
+        />
+      </div>
       <div className={styles.bar}>
         <button
           type="button"
@@ -243,10 +277,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
         <button
           type="button"
           className={styles.mini}
-          onClick={() => {
-            const next = { ...DEFAULT_PLACEMENT, flip: placement.flip };
-            if (!same(next, placement)) onChange(next);
-          }}
+          onClick={() => apply({ ...DEFAULT_PLACEMENT, flip: placement.flip })}
         >
           重設位置
         </button>
@@ -337,6 +368,34 @@ export function ComposeStatus({
         ) : null}
       </span>
     </>
+  );
+}
+
+/** 一組三選一快捷鈕（位置或大小）；符合目前位置的那顆 aria-pressed。 */
+function PresetGroup<K extends string>({
+  label,
+  title,
+  options,
+  current,
+  onPick,
+}: {
+  label: string;
+  title: string;
+  options: [K, string][];
+  current: K | null;
+  onPick: (k: K) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className={styles.presetGroup}>
+      <span className={styles.presetTitle} aria-hidden="true">
+        {title}
+      </span>
+      {options.map(([k, text]) => (
+        <button key={k} type="button" className={styles.mini} aria-pressed={current === k} onClick={() => onPick(k)}>
+          {text}
+        </button>
+      ))}
+    </div>
   );
 }
 

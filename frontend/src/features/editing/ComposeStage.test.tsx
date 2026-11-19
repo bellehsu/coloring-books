@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
 import { ComposePreview, ComposeStage, ComposeStatus, type ComposeStageProps } from "./ComposeStage";
@@ -148,6 +148,45 @@ describe("ComposeStage", () => {
     rerender({ placement: { ...DEFAULT_PLACEMENT, flip: true } });
     fireEvent.click(screen.getByRole("button", { name: "重設位置" }));
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  const sideBtn = (name: string) => within(screen.getByRole("group", { name: "主角位置" })).getByRole("button", { name });
+  const sizeBtn = (name: string) => within(screen.getByRole("group", { name: "主角大小" })).getByRole("button", { name });
+
+  it("位置與大小按鈕：預設位置時「置中」「中」亮著", () => {
+    view({ placement: DEFAULT_PLACEMENT });
+    expect(sideBtn("靠左")).toHaveAttribute("aria-pressed", "false");
+    expect(sideBtn("置中")).toHaveAttribute("aria-pressed", "true");
+    expect(sideBtn("靠右")).toHaveAttribute("aria-pressed", "false");
+    expect(sizeBtn("小")).toHaveAttribute("aria-pressed", "false");
+    expect(sizeBtn("中")).toHaveAttribute("aria-pressed", "true");
+    expect(sizeBtn("大")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("按「靠右」呼叫一次 onChange，只改 cx（翻轉保留）", () => {
+    const { onChange } = view({ placement: { ...DEFAULT_PLACEMENT, flip: true } });
+    fireEvent.click(sideBtn("靠右"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({ cx: 0.74, cy: 0.66, height: 0.6, flip: true });
+  });
+
+  it("按「小」：腳留在原處", () => {
+    const { onChange } = view({ placement: DEFAULT_PLACEMENT });
+    fireEvent.click(sizeBtn("小"));
+    expect(onChange).toHaveBeenCalledWith({ cx: 0.5, cy: 0.75, height: 0.42, flip: false });
+  });
+
+  it("已經是該選項時再按不呼叫 onChange", () => {
+    const { onChange } = view({ placement: DEFAULT_PLACEMENT });
+    fireEvent.click(sideBtn("置中"));
+    fireEvent.click(sizeBtn("中"));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("拖曳過的位置兩組都不亮", () => {
+    view({ placement: { cx: 0.4, cy: 0.5, height: 0.5, flip: false } });
+    for (const b of [sideBtn("靠左"), sideBtn("置中"), sideBtn("靠右"), sizeBtn("小"), sizeBtn("中"), sizeBtn("大")])
+      expect(b).toHaveAttribute("aria-pressed", "false");
   });
 
   it("舞台下方顯示狀態；說明寫明放開後自動合成", () => {

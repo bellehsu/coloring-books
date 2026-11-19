@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PLACEMENT } from "@/api/client";
-import { clampPlacement, cornerResize, movePlacement, placementBox, resizePlacement } from "./placement";
+import {
+  clampPlacement,
+  cornerResize,
+  currentSide,
+  currentSize,
+  movePlacement,
+  placementBox,
+  resizePlacement,
+  withSide,
+  withSize,
+} from "./placement";
 
 describe("clampPlacement", () => {
   it("keeps values inside the ranges (cx, cy 0–1; height 0.1–1.0) and keeps flip", () => {
@@ -76,5 +86,25 @@ describe("cornerResize", () => {
 
   it("clamps to the minimum height", () => {
     expect(cornerResize(start, 0.5, -1, -1).height).toBe(0.1);
+  });
+});
+
+describe("position presets", () => {
+  it("withSide only changes cx (left 0.26) and keeps size and flip", () => {
+    expect(withSide({ cx: 0.5, cy: 0.66, height: 0.6, flip: true }, "left")).toEqual({ cx: 0.26, cy: 0.66, height: 0.6, flip: true });
+  });
+  it("withSize keeps cx and the feet (bottom edge 0.96) where they were", () => {
+    expect(withSize(DEFAULT_PLACEMENT, "small")).toEqual({ cx: 0.5, cy: 0.75, height: 0.42, flip: false });
+    expect(withSize(DEFAULT_PLACEMENT, "large")).toEqual({ cx: 0.5, cy: 0.57, height: 0.78, flip: false });
+  });
+  it("withSize near the top clamps cy to 0 instead of failing", () => {
+    expect(withSize({ cx: 0.3, cy: 0.2, height: 0.2, flip: false }, "large")).toEqual({ cx: 0.3, cy: 0, height: 0.78, flip: false });
+  });
+  it("current preset: default is center + medium; a dragged spot matches none", () => {
+    expect(currentSide(DEFAULT_PLACEMENT)).toBe("center");
+    expect(currentSize(DEFAULT_PLACEMENT)).toBe("medium");
+    expect(currentSide({ ...DEFAULT_PLACEMENT, cx: 0.743 })).toBe("right");
+    expect(currentSide({ ...DEFAULT_PLACEMENT, cx: 0.4 })).toBeNull();
+    expect(currentSize({ ...DEFAULT_PLACEMENT, height: 0.5 })).toBeNull();
   });
 });
