@@ -233,7 +233,12 @@ describe("theme pack taiwan", () => {
     expect(at(4).scene).not.toContain("皇冠");
     expect(at(7).scene).not.toContain("烏龜");
     expect(at(11).scene).toContain("湖中間");
-    expect(at(12).scene).toContain("火車頭在畫面中間");
+    // 阿里山：背景不肯畫火車 → 改成交通工具那包的寫法，車廂跟主角一起畫（背景不提火車，免得畫兩台）
+    expect(at(12).scene).not.toContain("火車");
+    expect(at(12).action).toContain("車廂");
+    // 會被主角擋住的景點指定位置（主角在畫面中間）
+    expect(at(4).scene).toContain("畫面左邊");
+    expect(at(7).scene).toContain("畫面右邊");
     expect(at(19).scene).toContain("兩個大大的愛心");
     expect(at(19).action).not.toContain("愛心");
   });
