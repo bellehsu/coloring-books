@@ -223,3 +223,7 @@
   flex-direction: column;
   gap: 6px;
 }
+/* 欄位本身的 flex: 1 1 160px 是給橫排用的；在這個直排容器裡會變成 160px 高、下面留一大片空白 */
+.captionLine > * {
+  flex: 0 0 auto;
+}
