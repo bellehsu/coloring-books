@@ -309,13 +309,13 @@ const MORE_PACKS: [string, string, [string, string][]][] = [
     "sports",
     "運動",
     [
-      ["籃球", "Basketball"],
+      ["溜冰", "Ice Skating"],
       ["足球", "Soccer"],
       ["棒球", "Baseball"],
-      ["桌球", "Table Tennis"],
-      ["羽球", "Badminton"],
-      ["網球", "Tennis"],
-      ["游泳", "Swimming"],
+      ["高爾夫球", "Golf"],
+      ["排球", "Volleyball"],
+      ["美式足球", "American Football"],
+      ["撞球", "Billiards"],
       ["跳繩", "Jump Rope"],
       ["跑步", "Running"],
       ["滑板", "Skateboarding"],
@@ -368,11 +368,21 @@ describe("動物園：動物在背景，動作不提動物（否則手上會再�
   });
 });
 
-describe("運動：游泳站在池邊（在水裡的畫面難畫）", () => {
-  const parsed = parseStory(THEME_PACKS.find((p) => p.id === "sports")?.text ?? "");
-  it("swimming page keeps the character at the poolside holding a kickboard", () => {
-    const swim = parsed.pages[6];
-    expect(swim.scene).toContain("游泳池邊");
-    expect(swim.action).toContain("浮板");
+describe("驗收後修正（使用者 2026-11-19）", () => {
+  const pages = (id: string) => parseStory(THEME_PACKS.find((p) => p.id === id)?.text ?? "").pages;
+  it("節日：新年只畫三朵大煙火；過年紅紙不寫字（會畫成亂字）；端午主角坐在龍舟上（船在背景畫不出來）", () => {
+    const h = pages("holidays");
+    expect(h[0].scene).toContain("三朵大大的煙火");
+    expect(h[1].scene).toContain("沒有字");
+    expect(h[5].action).toContain("坐在龍舟上");
+    expect(h[5].scene).not.toContain("龍舟");
+  });
+  it("動物園：動物在畫面左邊或右邊、左右輪流（置中的主角會擋住）", () => {
+    for (const [i, p] of pages("zoo").entries()) expect(p.scene).toContain(i % 2 === 0 ? "畫面右邊" : "畫面左邊");
+  });
+  it("運動：體操在室內軟墊上，不是球場", () => {
+    const gym = pages("sports")[10];
+    expect(gym.scene).toContain("軟墊");
+    expect(gym.scene).not.toContain("球場");
   });
 });

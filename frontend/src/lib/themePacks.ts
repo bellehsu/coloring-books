@@ -124,12 +124,12 @@ const TAIWAN: readonly PackPage[] = [
 
 /** 節日：場景是節日的地方，主角拿節日的小東西（使用者 2026-11-19 確認清單）。 */
 const HOLIDAYS: readonly PackPage[] = [
-  { scene: "晚上的城市，天空中有很多大大的煙火", action: "雙手舉高，開心地歡呼", zh: "新年快樂", en: "Happy New Year" },
-  { scene: "家門口，門兩邊貼著春聯，門上掛著兩個紅燈籠", action: "雙手拿著一個紅包，開心地笑", zh: "過年", en: "Lunar New Year" },
+  { scene: "晚上的城市，天空中只有三朵大大的煙火", action: "雙手舉高，開心地歡呼", zh: "新年快樂", en: "Happy New Year" },
+  { scene: "家門口，門兩邊貼著長長的紅紙，紅紙上沒有字，門上掛著兩個紅燈籠", action: "雙手拿著一個紅包，開心地笑", zh: "過年", en: "Lunar New Year" },
   { scene: "晚上的廟口廣場，上面掛著一排圓圓的燈籠", action: "一手提著一盞小燈籠", zh: "元宵節", en: "Lantern Festival" },
   { scene: "遊樂園，有旋轉木馬和摩天輪", action: "一手拿著一顆氣球", zh: "兒童節", en: "Children's Day" },
   { scene: "客廳，有沙發和窗戶，窗外有陽光", action: "雙手捧著一束康乃馨", zh: "母親節", en: "Mother's Day" },
-  { scene: "河邊，水面上有一艘長長的龍舟，船頭是龍頭", action: "雙手捧著一顆粽子", zh: "端午節", en: "Dragon Boat Festival" },
+  { scene: "河邊，水面平靜，岸邊有幾棵大樹", action: "坐在龍舟上划槳，龍舟長長的，船頭是龍頭", zh: "端午節", en: "Dragon Boat Festival" },
   { scene: "客廳，有一張大沙發和一盞立燈", action: "雙手拿著一張自己畫的卡片", zh: "父親節", en: "Father's Day" },
   { scene: "晚上的院子，天上有一個又大又圓的月亮", action: "雙手捧著一個圓圓的月餅", zh: "中秋節", en: "Mid-Autumn Festival" },
   { scene: "教室，有黑板和一排課桌", action: "雙手拿著一張謝卡", zh: "教師節", en: "Teachers' Day" },
@@ -140,33 +140,33 @@ const HOLIDAYS: readonly PackPage[] = [
 
 /** 動物園：動物在背景；動作不提動物（否則會在主角手上再畫一隻）。 */
 const ZOO: readonly PackPage[] = [
-  { scene: "動物園裡，一隻高高的長頸鹿站在大樹旁邊吃葉子", action: "一手指著上面，開心地笑", zh: "長頸鹿", en: "Giraffe" },
-  { scene: "動物園裡，一隻大象站在水池邊，用長鼻子噴水", action: "雙手撐著一把小雨傘", zh: "大象", en: "Elephant" },
-  { scene: "動物園裡，一隻有大鬃毛的獅子趴在大石頭上", action: "雙手拿著望遠鏡在看", zh: "獅子", en: "Lion" },
-  { scene: "動物園裡，一隻貓熊坐在竹林裡吃竹子", action: "一手拿著一片竹葉", zh: "貓熊", en: "Giant Panda" },
-  { scene: "動物園裡，幾隻猴子在樹上盪來盪去", action: "雙手捧著一串香蕉", zh: "猴子", en: "Monkeys" },
-  { scene: "動物園裡，幾隻企鵝站在大冰塊上，旁邊是水池", action: "戴著毛線帽，一手揮手", zh: "企鵝", en: "Penguins" },
-  { scene: "動物園裡，兩隻斑馬站在草地上，後面有矮樹", action: "一手拿著相機在拍照", zh: "斑馬", en: "Zebras" },
-  { scene: "動物園裡，一隻河馬在泥水池裡張大嘴巴", action: "雙手摀著嘴巴偷笑", zh: "河馬", en: "Hippo" },
-  { scene: "動物園裡，一隻無尾熊抱著樹幹睡覺", action: "一根手指放在嘴巴前面，小聲說噓", zh: "無尾熊", en: "Koala" },
-  { scene: "動物園裡，一隻袋鼠在草地上跳，肚子的袋子裡有一隻小袋鼠", action: "雙腳跳起來，開心地笑", zh: "袋鼠", en: "Kangaroo" },
-  { scene: "動物園裡，一群紅鶴單腳站在淺淺的水裡", action: "單腳站立，雙手張開保持平衡", zh: "紅鶴", en: "Flamingos" },
-  { scene: "動物園裡，一隻鱷魚趴在河邊，嘴巴張開", action: "一手拿著一根冰棒", zh: "鱷魚", en: "Crocodile" },
+  { scene: "動物園裡，畫面右邊有一隻高高的長頸鹿站在大樹旁邊吃葉子", action: "一手指著上面，開心地笑", zh: "長頸鹿", en: "Giraffe" },
+  { scene: "動物園裡，畫面左邊有一隻大大的大象站在水池邊，用長鼻子噴水", action: "雙手撐著一把小雨傘", zh: "大象", en: "Elephant" },
+  { scene: "動物園裡，畫面右邊有一隻有大鬃毛的獅子趴在大石頭上", action: "雙手拿著望遠鏡在看", zh: "獅子", en: "Lion" },
+  { scene: "動物園裡，畫面左邊有一隻大大的貓熊坐在竹林裡吃竹子", action: "一手拿著一片竹葉", zh: "貓熊", en: "Giant Panda" },
+  { scene: "動物園裡，畫面右邊的大樹上有幾隻猴子在盪來盪去", action: "雙手捧著一串香蕉", zh: "猴子", en: "Monkeys" },
+  { scene: "動物園裡，畫面左邊有幾隻企鵝站在大冰塊上，旁邊是水池", action: "戴著毛線帽，一手揮手", zh: "企鵝", en: "Penguins" },
+  { scene: "動物園裡，畫面右邊有兩隻斑馬站在草地上，後面有矮樹", action: "一手拿著相機在拍照", zh: "斑馬", en: "Zebras" },
+  { scene: "動物園裡，畫面左邊有一隻大大的河馬在泥水池裡張大嘴巴", action: "雙手摀著嘴巴偷笑", zh: "河馬", en: "Hippo" },
+  { scene: "動物園裡，畫面右邊有一隻無尾熊抱著大樹的樹幹睡覺", action: "一根手指放在嘴巴前面，小聲說噓", zh: "無尾熊", en: "Koala" },
+  { scene: "動物園裡，畫面左邊有一隻大大的袋鼠在草地上跳，肚子的袋子裡有一隻小袋鼠", action: "雙腳跳起來，開心地笑", zh: "袋鼠", en: "Kangaroo" },
+  { scene: "動物園裡，畫面右邊有一群紅鶴單腳站在淺淺的水裡", action: "單腳站立，雙手張開保持平衡", zh: "紅鶴", en: "Flamingos" },
+  { scene: "動物園裡，畫面左邊有一隻大大的鱷魚趴在河邊，嘴巴張開", action: "一手拿著一根冰棒", zh: "鱷魚", en: "Crocodile" },
 ];
 
-/** 運動：場地在背景，主角拿器材（游泳站在池邊，在水裡的畫面難畫）。 */
+/** 運動：場地在背景，主角拿器材（使用者 2026-11-19 換掉籃球、桌球、羽球、網球、游泳）。 */
 const SPORTS: readonly PackPage[] = [
-  { scene: "戶外籃球場，有一個高高的籃框", action: "雙手舉起一顆籃球準備投籃", zh: "籃球", en: "Basketball" },
+  { scene: "室內溜冰場，冰面平平亮亮的，四周有矮矮的圍欄", action: "穿著溜冰鞋，雙手張開在冰上滑", zh: "溜冰", en: "Ice Skating" },
   { scene: "足球場的草地，後面有一個大球門", action: "一腳踢著一顆足球", zh: "足球", en: "Soccer" },
   { scene: "棒球場，有本壘板和後面的鐵絲網", action: "戴著打擊頭盔，雙手握著球棒準備揮棒", zh: "棒球", en: "Baseball" },
-  { scene: "室內，有一張桌球桌，中間有矮矮的球網", action: "一手拿著桌球拍，一手拿著一顆小白球", zh: "桌球", en: "Table Tennis" },
-  { scene: "室內羽球場，中間有一面高高的球網", action: "一手拿著羽毛球拍往上揮", zh: "羽球", en: "Badminton" },
-  { scene: "戶外網球場，中間有球網", action: "一手拿著網球拍，一手拿著一顆網球", zh: "網球", en: "Tennis" },
-  { scene: "游泳池邊，水面平靜，旁邊有一個跳水台", action: "戴著泳鏡和泳帽，雙手拿著一塊浮板", zh: "游泳", en: "Swimming" },
+  { scene: "高爾夫球場的綠色草地，遠處有一面插在洞裡的小旗子", action: "雙手握著一根高爾夫球桿準備揮桿", zh: "高爾夫球", en: "Golf" },
+  { scene: "沙灘排球場，中間有一面高高的球網，後面是海", action: "雙手把一顆排球往上托", zh: "排球", en: "Volleyball" },
+  { scene: "美式足球場的草地，有一條一條的白線，遠處有高高的球門柱", action: "戴著美式足球頭盔，一手抱著一顆橢圓形的美式足球", zh: "美式足球", en: "American Football" },
+  { scene: "室內，有一張大大的撞球桌，桌上有幾顆球", action: "雙手拿著一根長長的撞球桿", zh: "撞球", en: "Billiards" },
   { scene: "學校操場，後面有一排大樹", action: "雙手拿著跳繩跳起來", zh: "跳繩", en: "Jump Rope" },
   { scene: "操場的跑道，有一條一條的白線", action: "往前跑步，頭上綁著頭帶", zh: "跑步", en: "Running" },
   { scene: "公園裡平平的廣場，旁邊有大樹", action: "踩在滑板上，雙手張開保持平衡", zh: "滑板", en: "Skateboarding" },
-  { scene: "體育館，地上鋪著大大的軟墊", action: "雙手舉高，一腳往後抬起", zh: "體操", en: "Gymnastics" },
+  { scene: "室內體育館，地上鋪著一大塊平平的軟墊，旁邊有一根平衡木", action: "雙手舉高，單腳站立，另一隻腳往後抬高", zh: "體操", en: "Gymnastics" },
   { scene: "山上的步道，遠處有一座一座的山", action: "背著背包，一手拿著登山杖", zh: "登山", en: "Hiking" },
 ];
 
@@ -223,7 +223,7 @@ export const THEME_PACKS: ThemePack[] = [
   {
     id: "sports",
     title: "運動",
-    description: "12 種運動：籃球、足球、游泳、跳繩……主角拿著器材，每頁有中英文字",
+    description: "12 種運動：溜冰、足球、棒球、排球、跳繩……主角拿著器材，每頁有中英文字",
     text: packText(SPORTS, SIMPLE_BG + NO_PEOPLE),
     lineDetail: "simple",
   },
