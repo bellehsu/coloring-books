@@ -228,6 +228,15 @@ describe("theme pack taiwan", () => {
       expect(p.scene).toContain(TAIWAN[i][0].split("・")[1].slice(0, 2));
     }
   });
+  it("2026-11-19 驗收後修正：野柳不寫皇冠、龜山島就是一座島（不寫烏龜）、阿里山小火車要在畫面中間、雙心石滬寫清楚兩個愛心", () => {
+    const at = (n: number) => parsed.pages[n - 1];
+    expect(at(4).scene).not.toContain("皇冠");
+    expect(at(7).scene).not.toContain("烏龜");
+    expect(at(11).scene).toContain("湖中間");
+    expect(at(12).scene).toContain("火車頭在畫面中間");
+    expect(at(19).scene).toContain("兩個大大的愛心");
+    expect(at(19).action).not.toContain("愛心");
+  });
   it("actions never name the spot (it would be drawn again in the character's hands)", () => {
     for (const [i, p] of parsed.pages.entries()) {
       const name = TAIWAN[i][0].split("・")[1];
