@@ -21,7 +21,7 @@ describe("THEME_PACKS", () => {
   const parsed = parseStory(pack.text);
 
   it("has the vehicles pack", () => {
-    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene"]);
+    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world"]);
     expect(pack.title).toBe("交通工具");
     expect(pack.description).not.toBe("");
   });
@@ -124,5 +124,66 @@ describe("衛生習慣：主角用的東西跟主角畫在一起，背景不重�
   it("洗澡：浴缸只在動作裡，背景沒有浴缸", () => {
     expect(pages[2].action).toContain("浴缸");
     expect(pages[2].scene).toContain("沒有浴缸");
+  });
+});
+
+const WORLD: [string, string][] = [
+  ["法國・艾菲爾鐵塔", "Eiffel Tower"],
+  ["美國・自由女神像", "Statue of Liberty"],
+  ["中國・萬里長城", "Great Wall of China"],
+  ["埃及・金字塔", "Pyramids of Giza"],
+  ["埃及・人面獅身像", "Great Sphinx"],
+  ["義大利・比薩斜塔", "Leaning Tower of Pisa"],
+  ["義大利・羅馬競技場", "Colosseum"],
+  ["英國・大笨鐘", "Big Ben"],
+  ["英國・倫敦塔橋", "Tower Bridge"],
+  ["澳洲・雪梨歌劇院", "Sydney Opera House"],
+  ["印度・泰姬瑪哈陵", "Taj Mahal"],
+  ["日本・富士山", "Mount Fuji"],
+  ["台灣・台北101", "Taipei 101"],
+  ["柬埔寨・吳哥窟", "Angkor Wat"],
+  ["祕魯・馬丘比丘", "Machu Picchu"],
+  ["美國・金門大橋", "Golden Gate Bridge"],
+  ["西班牙・聖家堂", "Sagrada Família"],
+  ["德國・布蘭登堡門", "Brandenburg Gate"],
+  ["智利・摩艾石像", "Moai Statues"],
+  ["俄羅斯・聖瓦西里大教堂", "St. Basil's Cathedral"],
+];
+
+describe("theme pack world", () => {
+  const pack = THEME_PACKS.find((p) => p.id === "world")!;
+  const parsed = parseStory(pack?.text ?? "");
+  it("is 環遊世界 with 20 pages in order and no problems", () => {
+    expect(pack.title).toBe("環遊世界");
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.pages.map((p) => p.n)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+  });
+  it("captions are 國家・地標 / English name", () => {
+    expect(parsed.pages.map((p) => [p.captionZh, p.captionEn])).toEqual(WORLD);
+  });
+  it("landmarks stay in the background with no people; the character only holds small things", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      expect(p.scene.endsWith("，畫面裡沒有人")).toBe(true);
+      expect(p.scene).toContain(WORLD[i][0].split("・")[1].replace("台北101", "101"));
+    }
+  });
+  it("is within limits", () => {
+    for (const p of parsed.pages) {
+      expect(countChars(p.scene)).toBeLessThanOrEqual(MAX_SCENE);
+      expect(countChars(p.action)).toBeLessThanOrEqual(MAX_ACTION);
+      expect(countChars(p.captionZh ?? "")).toBeLessThanOrEqual(MAX_CAPTION_ZH);
+      expect(countChars(p.captionEn ?? "")).toBeLessThanOrEqual(MAX_CAPTION_EN);
+    }
+  });
+  it("比薩斜塔：最常見的「扶住斜塔」拍照姿勢，要笑（使用者 2026-11-19）", () => {
+    expect(parsed.pages[5].action).toContain("撐住");
+    expect(parsed.pages[5].action).toContain("笑");
+  });
+  it("actions never name the landmark (it would be drawn again in the character's hands)", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      const name = WORLD[i][0].split("・")[1];
+      expect(p.action).not.toContain(name.slice(0, 2));
+      expect(p.action).not.toContain(name.slice(-2));
+    }
   });
 });
