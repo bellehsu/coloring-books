@@ -193,31 +193,33 @@ const TAIWAN: [string, string][] = [
   ["台北・陽明山", "Yangmingshan"],
   ["新北・九份老街", "Jiufen Old Street"],
   ["新北・平溪天燈", "Pingxi Sky Lanterns"],
+  ["新北・十分瀑布", "Shifen Waterfall"],
   ["新北・淡水漁人碼頭", "Tamsui Fisherman's Wharf"],
   ["苗栗・勝興車站", "Shengxing Station"],
   ["台中・高美濕地", "Gaomei Wetlands"],
-  ["台中・國家歌劇院", "National Taichung Theater"],
   ["彰化・八卦山大佛", "Baguashan Great Buddha"],
+  ["南投・清境農場", "Cingjing Farm"],
   ["台南・赤崁樓", "Chihkan Tower"],
   ["台南・安平古堡", "Anping Fort"],
   ["台南・孔廟", "Tainan Confucius Temple"],
   ["高雄・蓮池潭龍虎塔", "Dragon and Tiger Pagodas"],
-  ["高雄・85大樓", "85 Sky Tower"],
   ["屏東・鵝鑾鼻燈塔", "Eluanbi Lighthouse"],
   ["屏東・墾丁帆船石", "Sail Rock, Kenting"],
   ["花蓮・太魯閣", "Taroko Gorge"],
   ["花蓮・七星潭", "Qixingtan Beach"],
+  ["台東・伯朗大道", "Mr. Brown Avenue"],
   ["台東・三仙台", "Sanxiantai Bridge"],
+  ["澎湖・雙心石滬", "Twin Hearts Stone Weir"],
   ["金門・風獅爺", "Wind Lion God"],
 ];
 
 describe("theme pack taiwan", () => {
   const pack = THEME_PACKS.find((p) => p.id === "taiwan")!;
   const parsed = parseStory(pack?.text ?? "");
-  it("is 台灣景點 with 20 pages in order and no problems", () => {
+  it("is 台灣景點 with 22 pages in order and no problems (user 2026-11-19: 22 is fine)", () => {
     expect(pack.title).toBe("台灣景點");
     expect(parsed.errors).toEqual([]);
-    expect(parsed.pages.map((p) => p.n)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    expect(parsed.pages.map((p) => p.n)).toEqual(Array.from({ length: 22 }, (_, i) => i + 1));
   });
   it("captions are 縣市・景點 / English name", () => {
     expect(parsed.pages.map((p) => [p.captionZh, p.captionEn])).toEqual(TAIWAN);
