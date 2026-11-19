@@ -12,6 +12,7 @@ describe("ThemePackDialog", () => {
     expect(screen.getByText("職業")).toBeInTheDocument();
     expect(screen.getByText("衛生習慣")).toBeInTheDocument();
     expect(screen.getByText("環遊世界")).toBeInTheDocument();
+    expect(screen.getByText("台灣景點")).toBeInTheDocument();
     expect(screen.getByText(THEME_PACKS[0].description)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /交通工具/ }));
     expect(onChoose).toHaveBeenCalledWith(THEME_PACKS[0]);

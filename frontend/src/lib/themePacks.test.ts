@@ -21,7 +21,7 @@ describe("THEME_PACKS", () => {
   const parsed = parseStory(pack.text);
 
   it("has the vehicles pack", () => {
-    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world"]);
+    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world", "taiwan"]);
     expect(pack.title).toBe("交通工具");
     expect(pack.description).not.toBe("");
   });
@@ -184,6 +184,63 @@ describe("theme pack world", () => {
       const name = WORLD[i][0].split("・")[1];
       expect(p.action).not.toContain(name.slice(0, 2));
       expect(p.action).not.toContain(name.slice(-2));
+    }
+  });
+});
+
+const TAIWAN: [string, string][] = [
+  ["台北・故宮博物院", "National Palace Museum"],
+  ["台北・陽明山", "Yangmingshan"],
+  ["新北・九份老街", "Jiufen Old Street"],
+  ["新北・野柳女王頭", "Yehliu Queen's Head"],
+  ["新北・平溪天燈", "Pingxi Sky Lanterns"],
+  ["新北・淡水漁人碼頭", "Tamsui Fisherman's Wharf"],
+  ["宜蘭・龜山島", "Guishan Island"],
+  ["苗栗・勝興車站", "Shengxing Station"],
+  ["台中・高美濕地", "Gaomei Wetlands"],
+  ["彰化・八卦山大佛", "Baguashan Great Buddha"],
+  ["南投・日月潭", "Sun Moon Lake"],
+  ["嘉義・阿里山小火車", "Alishan Forest Railway"],
+  ["台南・赤崁樓", "Chihkan Tower"],
+  ["台南・安平古堡", "Anping Fort"],
+  ["高雄・蓮池潭龍虎塔", "Dragon and Tiger Pagodas"],
+  ["屏東・鵝鑾鼻燈塔", "Eluanbi Lighthouse"],
+  ["花蓮・太魯閣", "Taroko Gorge"],
+  ["台東・三仙台", "Sanxiantai Bridge"],
+  ["澎湖・雙心石滬", "Twin Hearts Stone Weir"],
+  ["金門・風獅爺", "Wind Lion God"],
+];
+
+describe("theme pack taiwan", () => {
+  const pack = THEME_PACKS.find((p) => p.id === "taiwan")!;
+  const parsed = parseStory(pack?.text ?? "");
+  it("is 台灣景點 with 20 pages in order and no problems", () => {
+    expect(pack.title).toBe("台灣景點");
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.pages.map((p) => p.n)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+  });
+  it("captions are 縣市・景點 / English name", () => {
+    expect(parsed.pages.map((p) => [p.captionZh, p.captionEn])).toEqual(TAIWAN);
+  });
+  it("spots stay in the background with no people", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      expect(p.scene.endsWith("，畫面裡沒有人")).toBe(true);
+      expect(p.scene).toContain(TAIWAN[i][0].split("・")[1].slice(0, 2));
+    }
+  });
+  it("actions never name the spot (it would be drawn again in the character's hands)", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      const name = TAIWAN[i][0].split("・")[1];
+      expect(p.action).not.toContain(name.slice(0, 2));
+      expect(p.action).not.toContain(name.slice(-2));
+    }
+  });
+  it("is within limits", () => {
+    for (const p of parsed.pages) {
+      expect(countChars(p.scene)).toBeLessThanOrEqual(MAX_SCENE);
+      expect(countChars(p.action)).toBeLessThanOrEqual(MAX_ACTION);
+      expect(countChars(p.captionZh ?? "")).toBeLessThanOrEqual(MAX_CAPTION_ZH);
+      expect(countChars(p.captionEn ?? "")).toBeLessThanOrEqual(MAX_CAPTION_EN);
     }
   });
 });

@@ -89,6 +89,30 @@ const WORLD: readonly PackPage[] = [
   { scene: "俄羅斯莫斯科的聖瓦西里大教堂，屋頂是洋蔥形的圓頂", action: "戴著毛線帽，雙手拿著一杯熱可可", zh: "俄羅斯・聖瓦西里大教堂", en: "St. Basil's Cathedral" },
 ];
 
+/** 台灣景點：同環遊世界的寫法（景點在背景，主角手上拿小東西；動作不提景點名稱，否則會在手上再畫一個）。 */
+const TAIWAN: readonly PackPage[] = [
+  { scene: "台北的故宮博物院，宮殿式的建築，前面有很長的階梯和廣場", action: "一手拿著導覽手冊，開心地笑", zh: "台北・故宮博物院", en: "National Palace Museum" },
+  { scene: "台北的陽明山，山坡上開滿海芋和花，遠處有山", action: "一手拿著一朵小花聞香", zh: "台北・陽明山", en: "Yangmingshan" },
+  { scene: "新北的九份老街，山坡上的窄階梯兩旁掛著紅燈籠，有木造的茶樓", action: "雙手捧著一碗芋圓", zh: "新北・九份老街", en: "Jiufen Old Street" },
+  { scene: "新北野柳海邊的女王頭岩石，形狀像戴著皇冠的頭，旁邊是海", action: "一手拿著相機在拍照", zh: "新北・野柳女王頭", en: "Yehliu Queen's Head" },
+  { scene: "新北平溪的老街和鐵軌，夜空中飄著很多天燈", action: "雙手捧著一盞紙做的大燈籠往上放", zh: "新北・平溪天燈", en: "Pingxi Sky Lanterns" },
+  { scene: "新北淡水漁人碼頭的白色情人橋，橋下是河，遠處是夕陽", action: "高高舉起一隻手揮手", zh: "新北・淡水漁人碼頭", en: "Tamsui Fisherman's Wharf" },
+  { scene: "宜蘭外海的龜山島，島的形狀像一隻烏龜，前面是沙灘和海", action: "一手拿著望遠鏡在看", zh: "宜蘭・龜山島", en: "Guishan Island" },
+  { scene: "苗栗的勝興車站，日式的木造小車站，旁邊有鐵軌", action: "雙手拿著一張車票", zh: "苗栗・勝興車站", en: "Shengxing Station" },
+  { scene: "台中的高美濕地，一排大風車，地上有淺淺的水和夕陽", action: "一手拿著一個小風車玩具", zh: "台中・高美濕地", en: "Gaomei Wetlands" },
+  { scene: "彰化八卦山上的大佛像，前面有階梯和樹", action: "雙手合十微笑", zh: "彰化・八卦山大佛", en: "Baguashan Great Buddha" },
+  { scene: "南投的日月潭，平靜的湖面，湖邊有山和一座小寺廟", action: "一手拿著一顆茶葉蛋，開心地笑", zh: "南投・日月潭", en: "Sun Moon Lake" },
+  { scene: "嘉義阿里山的森林，紅色的小火車開在山裡的鐵軌上，旁邊有高大的神木", action: "背著小背包，一手拿著登山杖", zh: "嘉義・阿里山小火車", en: "Alishan Forest Railway" },
+  { scene: "台南的赤崁樓，紅磚牆和中式屋頂的古樓，前面有石碑", action: "一手拿著打開的地圖", zh: "台南・赤崁樓", en: "Chihkan Tower" },
+  { scene: "台南的安平古堡，紅磚城牆上有白色的瞭望塔", action: "一手拿著一面小旗子", zh: "台南・安平古堡", en: "Anping Fort" },
+  { scene: "高雄蓮池潭的龍虎塔，兩座七層的塔立在湖上，前面有曲折的橋", action: "雙手拿著一張明信片", zh: "高雄・蓮池潭龍虎塔", en: "Dragon and Tiger Pagodas" },
+  { scene: "屏東墾丁的鵝鑾鼻燈塔，白色的燈塔在草地上，旁邊是海", action: "戴著遮陽帽，一手拿著一杯椰子汁", zh: "屏東・鵝鑾鼻燈塔", en: "Eluanbi Lighthouse" },
+  { scene: "花蓮的太魯閣峽谷，高高的大理石山壁中間有溪流和吊橋", action: "戴著安全帽，一手扶著帽子往上看", zh: "花蓮・太魯閣", en: "Taroko Gorge" },
+  { scene: "台東的三仙台，海上一座像波浪一樣彎彎的長橋連到小島", action: "一手拿著貝殼", zh: "台東・三仙台", en: "Sanxiantai Bridge" },
+  { scene: "澎湖海邊的雙心石滬，海水退潮時石頭圍成兩個愛心", action: "雙手在胸前比出一個愛心", zh: "澎湖・雙心石滬", en: "Twin Hearts Stone Weir" },
+  { scene: "金門的風獅爺石像，披著紅色披風站在路邊，後面有閩南式的老房子", action: "一手拿著一個小紙風車", zh: "金門・風獅爺", en: "Wind Lion God" },
+];
+
 export const THEME_PACKS: ThemePack[] = [
   {
     id: "vehicles",
@@ -113,5 +137,11 @@ export const THEME_PACKS: ThemePack[] = [
     title: "環遊世界",
     description: "20 個世界知名地標，主角在地標前拍照、看地圖……每頁有中英文字",
     text: packText(WORLD, NO_PEOPLE),
+  },
+  {
+    id: "taiwan",
+    title: "台灣景點",
+    description: "20 個台灣的知名景點，從北到南、到離島，每頁有中英文字",
+    text: packText(TAIWAN, NO_PEOPLE),
   },
 ];
