@@ -3,6 +3,7 @@
  * 維持頁序對應）、有問題的段落整段不套用、從不刪除頁面。A 的「開始做這本書」第一步用它。
  */
 
+import type { Placement } from "@/api/client";
 import type { ImportRow } from "@/lib/storyImport";
 import type { LineDetail } from "@/lib/themePacks";
 
@@ -18,11 +19,15 @@ export interface PagePatch {
 export interface ImportOptions {
   /** 主題包的書：建立的頁與填了內容的頁一起設定線條多寡。 */
   lineDetail?: LineDetail;
+  /** 主題包的每頁主角位置（第 n 頁在 n-1）：建立的頁與填了內容的頁存成位置草稿。 */
+  placements?: readonly (Placement | undefined)[];
 }
 
 export interface ImportCalls {
   createPage: (b: { scene_prompt: string; action_prompt: string }) => Promise<{ id: number }>;
   updatePage: (b: PagePatch) => Promise<unknown>;
+  /** 有 placements 時才會呼叫。 */
+  savePlacement?: (pageId: number, p: Placement) => Promise<unknown>;
 }
 
 const cells = (r: ImportRow) => +r.fill.scene + +r.fill.action + +r.fill.captionZh + +r.fill.captionEn;
@@ -39,6 +44,10 @@ export async function applyImport(
 ): Promise<number[]> {
   const detail = opts.lineDetail ? { line_detail: opts.lineDetail } : {};
   const ids = existing.map((p) => p.id);
+  const place = async (pageId: number, n: number) => {
+    const p = opts.placements?.[n - 1];
+    if (p && calls.savePlacement) await calls.savePlacement(pageId, p);
+  };
   const ok = rows.filter((r) => r.problems.length === 0);
   const byN = new Map(ok.map((r) => [r.n, r]));
   const last = Math.max(existing.length, ...ok.filter((r) => r.create).map((r) => r.n));
@@ -56,6 +65,7 @@ export async function applyImport(
         ...detail,
       });
     }
+    if (r) await place(made.id, n);
   }
   // 2. 現有頁只填空欄位
   for (const r of ok) {
@@ -68,6 +78,7 @@ export async function applyImport(
       ...(r.fill.captionEn ? { caption_en: r.captionEn } : {}),
       ...detail,
     });
+    await place(existing[r.n - 1].id, r.n);
   }
   return ids;
 }

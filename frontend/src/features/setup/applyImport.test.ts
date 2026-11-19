@@ -66,4 +66,14 @@ describe("applyImport（貼上整本故事的匯入規則）", () => {
     expect(updatePage).toHaveBeenCalledWith({ pageId: 31, line_detail: "simple" });
     expect(updatePage.mock.calls.some(([b]) => b.pageId === 12)).toBe(false);
   });
+
+  it("主題包帶位置：建立的頁和填了內容的現有頁存位置；沒填內容的頁不動", async () => {
+    const savePlacement = vi.fn().mockResolvedValue({});
+    const P = (cx: number) => ({ cx, cy: 0.75, height: 0.42, flip: false });
+    const existing = [pg(11, 0, "", ""), pg(12, 1, "舊場景", "舊動作")];
+    await applyImport(rowsFor(TEXT_OK, existing), existing, { createPage, updatePage, savePlacement }, { placements: [P(0.26), P(0.74), P(0.26)] });
+    expect(savePlacement).toHaveBeenCalledWith(11, P(0.26));
+    expect(savePlacement).toHaveBeenCalledWith(31, P(0.26));
+    expect(savePlacement.mock.calls.some(([id]) => id === 12)).toBe(false);
+  });
 });

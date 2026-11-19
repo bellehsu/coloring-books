@@ -217,8 +217,9 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
         {
           createPage: (body) => api.post<Page>(`/books/${bookId}/pages`, body),
           updatePage: ({ pageId, ...body }) => api.patch<Page>(`/pages/${pageId}`, body),
+          savePlacement: (pageId, p) => api.put<Page>(`/pages/${pageId}/placement`, p),
         },
-        { lineDetail: pack && pack.text === text ? pack.lineDetail : undefined },
+        pack && pack.text === text ? { lineDetail: pack.lineDetail, placements: pack.placements } : {},
       );
       // 「＋ 加一頁」的頁接在後面；建好就變成現有的頁（選好的上傳圖改用頁碼記）
       for (const e of entries) {
