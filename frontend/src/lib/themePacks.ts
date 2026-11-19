@@ -99,10 +99,10 @@ const WORLD: readonly PackPage[] = [
 /** 台灣景點：同環遊世界的寫法（景點在背景，主角手上拿小東西；動作不提景點名稱，否則會在手上再畫一個）。 */
 const TAIWAN: readonly PackPage[] = [
   { scene: "台北的故宮博物院，宮殿式的建築，前面有很長的階梯和廣場", action: "一手拿著導覽手冊，開心地笑", zh: "台北・故宮博物院", en: "National Palace Museum" },
+  { scene: "台北的中正紀念堂：一座白色的大建築站在高高的台階上，屋頂是藍色的八角形尖屋頂，前面是一大片廣場", action: "一手比 YA，開心地笑", zh: "台北・中正紀念堂", en: "CKS Memorial Hall" },
   { scene: "台北的陽明山，山坡上開滿海芋和花，遠處有山", action: "一手拿著一朵小花聞香", zh: "台北・陽明山", en: "Yangmingshan" },
   { scene: "新北的九份老街，山坡上的窄階梯兩旁掛著紅燈籠，有木造的茶樓", action: "雙手捧著一碗芋圓", zh: "新北・九份老街", en: "Jiufen Old Street" },
   { scene: "新北平溪的老街和鐵軌，夜空中飄著很多天燈", action: "雙手捧著一盞紙做的大燈籠往上放", zh: "新北・平溪天燈", en: "Pingxi Sky Lanterns" },
-  { scene: "新北平溪的十分瀑布：畫面上半部是一整排又寬又矮的瀑布，水從一大片岩壁的整排邊緣一起往下流，下面是寬寬的水潭，瀑布上方有一道彩虹", action: "雙手張開，開心地感受水花", zh: "新北・十分瀑布", en: "Shifen Waterfall" },
   { scene: "新北淡水漁人碼頭的情人橋：一座白色的人行橋橫跨河面，橋中間立著一根高高斜斜的白色柱子，很多條鋼索從柱子拉到橋上，後面是夕陽和海", action: "高高舉起一隻手揮手", zh: "新北・淡水漁人碼頭", en: "Tamsui Fisherman's Wharf" },
   { scene: "苗栗的勝興車站，日式的木造小車站，旁邊有鐵軌", action: "雙手拿著一張車票", zh: "苗栗・勝興車站", en: "Shengxing Station" },
   { scene: "台中的高美濕地，一排大風車，地上有淺淺的水和夕陽", action: "一手拿著一個小風車玩具", zh: "台中・高美濕地", en: "Gaomei Wetlands" },

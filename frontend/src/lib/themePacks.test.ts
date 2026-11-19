@@ -190,10 +190,10 @@ describe("theme pack world", () => {
 
 const TAIWAN: [string, string][] = [
   ["台北・故宮博物院", "National Palace Museum"],
+  ["台北・中正紀念堂", "CKS Memorial Hall"],
   ["台北・陽明山", "Yangmingshan"],
   ["新北・九份老街", "Jiufen Old Street"],
   ["新北・平溪天燈", "Pingxi Sky Lanterns"],
-  ["新北・十分瀑布", "Shifen Waterfall"],
   ["新北・淡水漁人碼頭", "Tamsui Fisherman's Wharf"],
   ["苗栗・勝興車站", "Shengxing Station"],
   ["台中・高美濕地", "Gaomei Wetlands"],
@@ -230,10 +230,9 @@ describe("theme pack taiwan", () => {
       expect(p.scene).toContain(TAIWAN[i][0].split("・")[1].slice(0, 2));
     }
   });
-  it("十分瀑布在畫面上半部、有彩虹；漁人碼頭寫出情人橋的斜柱與鋼索（使用者 2026-11-19 不滿意第二版）", () => {
+  it("中正紀念堂取代十分瀑布（使用者 2026-11-19 選的）；漁人碼頭寫出情人橋的斜柱與鋼索", () => {
     const at = (n: number) => parsed.pages[n - 1];
-    expect(at(5).scene).toContain("畫面上半部");
-    expect(at(5).scene).toContain("彩虹");
+    expect(at(2).scene).toContain("藍色的八角形尖屋頂");
     expect(at(6).scene).toContain("鋼索");
   });
   it("no metaphors in scenes (they get drawn literally: 像皇冠 → a crown, 像碗 → a bowl)", () => {
