@@ -1,10 +1,14 @@
 /** 內建主題包：用和「貼上整本故事」相同的格式寫成文字，套用時走同一個解析器。 */
 
+export type LineDetail = "simple" | "standard" | "detailed";
+
 export interface ThemePack {
   id: string;
   title: string;
   description: string;
   text: string;
+  /** 用這個主題包建立／填入的頁，線條多寡設成這個（使用者 2026-11-19：小區塊太多 → 預設簡單）。 */
+  lineDetail: LineDetail;
 }
 
 interface PackPage {
@@ -33,6 +37,9 @@ const VEHICLES: readonly PackPage[] = [
   { scene: "公園的腳踏車道，有大樹和長椅", action: "騎著腳踏車", zh: "腳踏車", en: "Bicycle" },
   { scene: "山上的草地，有大石頭和小花", action: "坐在直升機裡，從窗戶揮手，畫出整台直升機的外觀", zh: "直升機", en: "Helicopter" },
 ];
+
+/** 地標類主題包：背景畫得簡單、大塊，線稿才不會有一堆小格子（使用者 2026-11-19）。 */
+const SIMPLE_BG = "，背景簡單、大塊的形狀、細節少";
 
 /** 每頁場景的結尾：背景裡不要有人（主角由角色動作畫上去）。 */
 const NO_PEOPLE = "，畫面裡沒有人";
@@ -89,29 +96,66 @@ const WORLD: readonly PackPage[] = [
   { scene: "俄羅斯莫斯科的聖瓦西里大教堂，屋頂是洋蔥形的圓頂", action: "戴著毛線帽，雙手拿著一杯熱可可", zh: "俄羅斯・聖瓦西里大教堂", en: "St. Basil's Cathedral" },
 ];
 
+/** 台灣景點：同環遊世界的寫法（景點在背景，主角手上拿小東西；動作不提景點名稱，否則會在手上再畫一個）。 */
+const TAIWAN: readonly PackPage[] = [
+  { scene: "台北的故宮博物院，宮殿式的建築，前面有很長的階梯和廣場", action: "一手拿著導覽手冊，開心地笑", zh: "台北・故宮博物院", en: "National Palace Museum" },
+  { scene: "台北的中正紀念堂：一座白色的大建築站在高高的台階上，屋頂是藍色的八角形尖屋頂，前面是一大片廣場", action: "一手比 YA，開心地笑", zh: "台北・中正紀念堂", en: "CKS Memorial Hall" },
+  { scene: "台北的陽明山，山坡上開滿海芋和花，遠處有山", action: "一手拿著一朵小花聞香", zh: "台北・陽明山", en: "Yangmingshan" },
+  { scene: "新北的九份老街，山坡上的窄階梯兩旁掛著紅燈籠，有木造的茶樓", action: "雙手捧著一碗芋圓", zh: "新北・九份老街", en: "Jiufen Old Street" },
+  { scene: "新北平溪的老街和鐵軌，夜空中飄著很多天燈", action: "雙手捧著一盞紙做的大燈籠往上放", zh: "新北・平溪天燈", en: "Pingxi Sky Lanterns" },
+  { scene: "新北淡水漁人碼頭的情人橋：一座白色的人行橋橫跨河面，橋中間立著一根高高斜斜的白色柱子，很多條鋼索從柱子拉到橋上，後面是夕陽和海", action: "高高舉起一隻手揮手", zh: "新北・淡水漁人碼頭", en: "Tamsui Fisherman's Wharf" },
+  { scene: "苗栗的勝興車站，日式的木造小車站，旁邊有鐵軌", action: "雙手拿著一張車票", zh: "苗栗・勝興車站", en: "Shengxing Station" },
+  { scene: "台中的高美濕地，一排大風車，地上有淺淺的水和夕陽", action: "一手拿著一個小風車玩具", zh: "台中・高美濕地", en: "Gaomei Wetlands" },
+  { scene: "彰化八卦山上的大佛像，前面有階梯和樹", action: "雙手合十微笑", zh: "彰化・八卦山大佛", en: "Baguashan Great Buddha" },
+  { scene: "南投的清境農場，一大片綠色的草原，草地上有幾隻白白胖胖的綿羊，遠處是山", action: "蹲下來，一手拿著一把青草", zh: "南投・清境農場", en: "Cingjing Farm" },
+  { scene: "台南的赤崁樓，紅磚牆和中式屋頂的古樓，前面有石碑", action: "一手拿著打開的地圖", zh: "台南・赤崁樓", en: "Chihkan Tower" },
+  { scene: "台南的安平古堡，紅磚城牆上有白色的瞭望塔", action: "一手拿著一面小旗子", zh: "台南・安平古堡", en: "Anping Fort" },
+  { scene: "台南的孔廟，紅色牆壁和黑色屋瓦的古老廟宇，屋頂兩邊翹起來，前面有一棵大榕樹", action: "雙手捧著一本打開的書", zh: "台南・孔廟", en: "Tainan Confucius Temple" },
+  { scene: "高雄蓮池潭的龍虎塔，兩座七層的塔立在湖上，前面有曲折的橋", action: "雙手拿著一張明信片", zh: "高雄・蓮池潭龍虎塔", en: "Dragon and Tiger Pagodas" },
+  { scene: "屏東墾丁的鵝鑾鼻燈塔，白色的燈塔在草地上，旁邊是海", action: "戴著遮陽帽，一手拿著一杯椰子汁", zh: "屏東・鵝鑾鼻燈塔", en: "Eluanbi Lighthouse" },
+  { scene: "屏東墾丁的海邊，畫面右邊的海裡有一塊很大的岩石，上面尖尖、下面寬寬，是三角形的，旁邊是沙灘和椰子樹", action: "戴著草帽，一手拿著一個貝殼", zh: "屏東・墾丁帆船石", en: "Sail Rock, Kenting" },
+  { scene: "花蓮的太魯閣峽谷，高高的大理石山壁中間有溪流和吊橋", action: "戴著安全帽，一手扶著帽子往上看", zh: "花蓮・太魯閣", en: "Taroko Gorge" },
+  { scene: "花蓮的七星潭，彎彎的海岸，岸邊鋪滿圓圓的鵝卵石，遠處有高高的山，海浪拍上岸", action: "蹲下來，一手撿起一顆圓圓的小石頭", zh: "花蓮・七星潭", en: "Qixingtan Beach" },
+  { scene: "台東池上的伯朗大道，一條筆直的小路穿過一大片稻田，遠處是高高的山和白雲", action: "騎著腳踏車，一手揮手", zh: "台東・伯朗大道", en: "Mr. Brown Avenue" },
+  { scene: "台東的三仙台，海上一座像波浪一樣彎彎的長橋連到小島", action: "一手拿著貝殼", zh: "台東・三仙台", en: "Sanxiantai Bridge" },
+  { scene: "澎湖七美的雙心石滬：從海邊高處往下看，淺淺的海水裡，用黑色石塊疊成的矮石牆排成兩個大大的愛心，兩個愛心相連，一大一小，旁邊是綠色的草坡", action: "一手拿著相機在拍照", zh: "澎湖・雙心石滬", en: "Twin Hearts Stone Weir" },
+  { scene: "金門的風獅爺石像，披著紅色披風站在路邊，後面有閩南式的老房子", action: "一手拿著一個小紙風車", zh: "金門・風獅爺", en: "Wind Lion God" },
+];
+
 export const THEME_PACKS: ThemePack[] = [
   {
     id: "vehicles",
     title: "交通工具",
     description: "10 種交通工具，每頁有場景、動作和中英文字",
     text: packText(VEHICLES, NO_VEHICLES),
+    lineDetail: "simple",
   },
   {
     id: "jobs",
     title: "職業",
     description: "10 種職業，主角拿著那個職業的工具，每頁有中英文字",
     text: packText(JOBS, NO_PEOPLE),
+    lineDetail: "simple",
   },
   {
     id: "hygiene",
     title: "衛生習慣",
     description: "10 個好習慣：洗手、刷牙、戴口罩……每頁有中英文字",
     text: packText(HYGIENE, NO_PEOPLE),
+    lineDetail: "simple",
   },
   {
     id: "world",
     title: "環遊世界",
     description: "20 個世界知名地標，主角在地標前拍照、看地圖……每頁有中英文字",
-    text: packText(WORLD, NO_PEOPLE),
+    text: packText(WORLD, SIMPLE_BG + NO_PEOPLE),
+    lineDetail: "simple",
+  },
+  {
+    id: "taiwan",
+    title: "台灣景點",
+    description: "22 個台灣的知名景點，從北到南、到離島，每頁有中英文字",
+    text: packText(TAIWAN, SIMPLE_BG + NO_PEOPLE),
+    lineDetail: "simple",
   },
 ];

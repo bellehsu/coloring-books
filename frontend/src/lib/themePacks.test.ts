@@ -21,7 +21,7 @@ describe("THEME_PACKS", () => {
   const parsed = parseStory(pack.text);
 
   it("has the vehicles pack", () => {
-    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world"]);
+    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world", "taiwan"]);
     expect(pack.title).toBe("交通工具");
     expect(pack.description).not.toBe("");
   });
@@ -184,6 +184,85 @@ describe("theme pack world", () => {
       const name = WORLD[i][0].split("・")[1];
       expect(p.action).not.toContain(name.slice(0, 2));
       expect(p.action).not.toContain(name.slice(-2));
+    }
+  });
+});
+
+const TAIWAN: [string, string][] = [
+  ["台北・故宮博物院", "National Palace Museum"],
+  ["台北・中正紀念堂", "CKS Memorial Hall"],
+  ["台北・陽明山", "Yangmingshan"],
+  ["新北・九份老街", "Jiufen Old Street"],
+  ["新北・平溪天燈", "Pingxi Sky Lanterns"],
+  ["新北・淡水漁人碼頭", "Tamsui Fisherman's Wharf"],
+  ["苗栗・勝興車站", "Shengxing Station"],
+  ["台中・高美濕地", "Gaomei Wetlands"],
+  ["彰化・八卦山大佛", "Baguashan Great Buddha"],
+  ["南投・清境農場", "Cingjing Farm"],
+  ["台南・赤崁樓", "Chihkan Tower"],
+  ["台南・安平古堡", "Anping Fort"],
+  ["台南・孔廟", "Tainan Confucius Temple"],
+  ["高雄・蓮池潭龍虎塔", "Dragon and Tiger Pagodas"],
+  ["屏東・鵝鑾鼻燈塔", "Eluanbi Lighthouse"],
+  ["屏東・墾丁帆船石", "Sail Rock, Kenting"],
+  ["花蓮・太魯閣", "Taroko Gorge"],
+  ["花蓮・七星潭", "Qixingtan Beach"],
+  ["台東・伯朗大道", "Mr. Brown Avenue"],
+  ["台東・三仙台", "Sanxiantai Bridge"],
+  ["澎湖・雙心石滬", "Twin Hearts Stone Weir"],
+  ["金門・風獅爺", "Wind Lion God"],
+];
+
+describe("theme pack taiwan", () => {
+  const pack = THEME_PACKS.find((p) => p.id === "taiwan")!;
+  const parsed = parseStory(pack?.text ?? "");
+  it("is 台灣景點 with 22 pages in order and no problems (user 2026-11-19: 22 is fine)", () => {
+    expect(pack.title).toBe("台灣景點");
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.pages.map((p) => p.n)).toEqual(Array.from({ length: 22 }, (_, i) => i + 1));
+  });
+  it("captions are 縣市・景點 / English name", () => {
+    expect(parsed.pages.map((p) => [p.captionZh, p.captionEn])).toEqual(TAIWAN);
+  });
+  it("spots stay in the background with no people", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      expect(p.scene.endsWith("，畫面裡沒有人")).toBe(true);
+      expect(p.scene).toContain(TAIWAN[i][0].split("・")[1].slice(0, 2));
+    }
+  });
+  it("中正紀念堂取代十分瀑布（使用者 2026-11-19 選的）；漁人碼頭寫出情人橋的斜柱與鋼索", () => {
+    const at = (n: number) => parsed.pages[n - 1];
+    expect(at(2).scene).toContain("藍色的八角形尖屋頂");
+    expect(at(6).scene).toContain("鋼索");
+  });
+  it("no metaphors in scenes (they get drawn literally: 像皇冠 → a crown, 像碗 → a bowl)", () => {
+    for (const p of parsed.pages) expect(p.scene).not.toMatch(/像[^，]*(皇冠|碗|烏龜|帆船)/);
+  });
+  it("actions never name the spot (it would be drawn again in the character's hands)", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      const name = TAIWAN[i][0].split("・")[1];
+      expect(p.action).not.toContain(name.slice(0, 2));
+      expect(p.action).not.toContain(name.slice(-2));
+    }
+  });
+  it("is within limits", () => {
+    for (const p of parsed.pages) {
+      expect(countChars(p.scene)).toBeLessThanOrEqual(MAX_SCENE);
+      expect(countChars(p.action)).toBeLessThanOrEqual(MAX_ACTION);
+      expect(countChars(p.captionZh ?? "")).toBeLessThanOrEqual(MAX_CAPTION_ZH);
+      expect(countChars(p.captionEn ?? "")).toBeLessThanOrEqual(MAX_CAPTION_EN);
+    }
+  });
+});
+
+describe("fewer small regions (user 2026-11-19)", () => {
+  it("every pack makes pages with simple line detail", () => {
+    for (const pack of THEME_PACKS) expect(pack.lineDetail).toBe("simple");
+  });
+  it("landmark packs ask for simple backgrounds with big shapes", () => {
+    for (const id of ["world", "taiwan"]) {
+      for (const p of parseStory(THEME_PACKS.find((x) => x.id === id)!.text).pages)
+        expect(p.scene).toContain("背景簡單、大塊的形狀、細節少");
     }
   });
 });

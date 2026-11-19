@@ -12,12 +12,15 @@ import type { DraftPage, PreviewEntry, StoryPreview } from "./storyPreview";
 import type { SetupPagePatch } from "./useUpdatePageFromSetup";
 import { CopyPromptDialog } from "./CopyPromptDialog";
 import { ThemePackDialog } from "./ThemePackDialog";
+import type { ThemePack } from "@/lib/themePacks";
 import styles from "./SetupPage.module.css";
 
 export interface StorySectionProps {
   preview: StoryPreview;
   text: string;
   onText: (t: string) => void;
+  /** 套用了主題包（開始做時，貼上框的文字還是這個主題包的，就用它的線條設定）。 */
+  onPack?: (pack: ThemePack) => void;
   /** 選了上傳背景的頁（PreviewEntry.key → 檔案）：按「開始做這本書」才上傳。 */
   uploads: ReadonlyMap<string, File>;
   onUpload: (key: string, file: File | null) => void;
@@ -40,6 +43,7 @@ export function StorySection({
   preview,
   text,
   onText,
+  onPack,
   uploads,
   onUpload,
   onAddPage,
@@ -143,6 +147,7 @@ export function StorySection({
         onChoose={(pack) => {
           setPackOpen(false);
           onText(pack.text);
+          onPack?.(pack);
         }}
       />
       <CopyPromptDialog open={promptOpen} text={prompt} onClose={() => setPromptOpen(false)} />

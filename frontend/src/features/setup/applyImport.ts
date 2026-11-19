@@ -4,6 +4,7 @@
  */
 
 import type { ImportRow } from "@/lib/storyImport";
+import type { LineDetail } from "@/lib/themePacks";
 
 export interface PagePatch {
   pageId: number;
@@ -11,6 +12,12 @@ export interface PagePatch {
   action_prompt?: string;
   caption_zh?: string;
   caption_en?: string;
+  line_detail?: LineDetail;
+}
+
+export interface ImportOptions {
+  /** 主題包的書：建立的頁與填了內容的頁一起設定線條多寡。 */
+  lineDetail?: LineDetail;
 }
 
 export interface ImportCalls {
@@ -28,7 +35,9 @@ export async function applyImport(
   rows: readonly ImportRow[],
   existing: readonly { id: number }[],
   calls: ImportCalls,
+  opts: ImportOptions = {},
 ): Promise<number[]> {
+  const detail = opts.lineDetail ? { line_detail: opts.lineDetail } : {};
   const ids = existing.map((p) => p.id);
   const ok = rows.filter((r) => r.problems.length === 0);
   const byN = new Map(ok.map((r) => [r.n, r]));
@@ -39,11 +48,12 @@ export async function applyImport(
     const r = byN.get(n);
     const made = await calls.createPage({ scene_prompt: r?.scene ?? "", action_prompt: r?.action ?? "" });
     ids.push(made.id);
-    if (r && (r.fill.captionZh || r.fill.captionEn)) {
+    if (r && (r.fill.captionZh || r.fill.captionEn || opts.lineDetail)) {
       await calls.updatePage({
         pageId: made.id,
         ...(r.fill.captionZh ? { caption_zh: r.captionZh } : {}),
         ...(r.fill.captionEn ? { caption_en: r.captionEn } : {}),
+        ...detail,
       });
     }
   }
@@ -56,6 +66,7 @@ export async function applyImport(
       ...(r.fill.action ? { action_prompt: r.action } : {}),
       ...(r.fill.captionZh ? { caption_zh: r.captionZh } : {}),
       ...(r.fill.captionEn ? { caption_en: r.captionEn } : {}),
+      ...detail,
     });
   }
   return ids;
