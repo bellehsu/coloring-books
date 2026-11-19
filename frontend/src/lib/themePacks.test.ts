@@ -249,3 +249,15 @@ describe("theme pack taiwan", () => {
     }
   });
 });
+
+describe("fewer small regions (user 2026-11-19)", () => {
+  it("every pack makes pages with simple line detail", () => {
+    for (const pack of THEME_PACKS) expect(pack.lineDetail).toBe("simple");
+  });
+  it("landmark packs ask for simple backgrounds with big shapes", () => {
+    for (const id of ["world", "taiwan"]) {
+      for (const p of parseStory(THEME_PACKS.find((x) => x.id === id)!.text).pages)
+        expect(p.scene).toContain("背景簡單、大塊的形狀、細節少");
+    }
+  });
+});

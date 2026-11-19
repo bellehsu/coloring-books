@@ -12,6 +12,7 @@ import { errMsg } from "@/features/editing/errMsg";
 import { whenBookWritesIdle } from "@/features/editing/pendingWrites";
 import { PAPER_LABELS, PAPER_SIZES, PRINT_MODE_LABELS, ratioGroup, type PaperSize, type PrintMode } from "@/lib/layout";
 import { applyImport } from "./applyImport";
+import type { ThemePack } from "@/lib/themePacks";
 import { CharacterSection } from "./CharacterSection";
 import { useUpdatePageFromSetup } from "./useUpdatePageFromSetup";
 import { StorySection } from "./StorySection";
@@ -65,6 +66,8 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
   const [paperDraft, setPaperDraft] = useState<{ size: PaperSize; mode: PrintMode } | null>(null);
   // ③ 故事
   const [text, setText] = useState("");
+  /** 最後套用的主題包：開始做時文字沒被改過，就用它的線條設定。 */
+  const [pack, setPack] = useState<ThemePack | null>(null);
   /** 選了上傳背景的頁（PreviewEntry.key → 檔案）：按「開始做這本書」才上傳。 */
   const [uploads, setUploads] = useState<ReadonlyMap<string, File>>(new Map());
   const [drafts, setDrafts] = useState<DraftPage[]>([]);
@@ -208,10 +211,15 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
     setPhase({ step: "import" });
     const { entries, rows } = preview;
     try {
-      const ids = await applyImport(rows, pages, {
-        createPage: (body) => api.post<Page>(`/books/${bookId}/pages`, body),
-        updatePage: ({ pageId, ...body }) => api.patch<Page>(`/pages/${pageId}`, body),
-      });
+      const ids = await applyImport(
+        rows,
+        pages,
+        {
+          createPage: (body) => api.post<Page>(`/books/${bookId}/pages`, body),
+          updatePage: ({ pageId, ...body }) => api.patch<Page>(`/pages/${pageId}`, body),
+        },
+        { lineDetail: pack && pack.text === text ? pack.lineDetail : undefined },
+      );
       // 「＋ 加一頁」的頁接在後面；建好就變成現有的頁（選好的上傳圖改用頁碼記）
       for (const e of entries) {
         if (e.draft == null) continue;
@@ -361,6 +369,7 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
         preview={preview}
         text={text}
         onText={setText}
+        onPack={setPack}
         uploads={uploads}
         onUpload={setUpload}
         onAddPage={addDraft}

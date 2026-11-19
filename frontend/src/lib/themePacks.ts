@@ -1,10 +1,14 @@
 /** 內建主題包：用和「貼上整本故事」相同的格式寫成文字，套用時走同一個解析器。 */
 
+export type LineDetail = "simple" | "standard" | "detailed";
+
 export interface ThemePack {
   id: string;
   title: string;
   description: string;
   text: string;
+  /** 用這個主題包建立／填入的頁，線條多寡設成這個（使用者 2026-11-19：小區塊太多 → 預設簡單）。 */
+  lineDetail: LineDetail;
 }
 
 interface PackPage {
@@ -33,6 +37,9 @@ const VEHICLES: readonly PackPage[] = [
   { scene: "公園的腳踏車道，有大樹和長椅", action: "騎著腳踏車", zh: "腳踏車", en: "Bicycle" },
   { scene: "山上的草地，有大石頭和小花", action: "坐在直升機裡，從窗戶揮手，畫出整台直升機的外觀", zh: "直升機", en: "Helicopter" },
 ];
+
+/** 地標類主題包：背景畫得簡單、大塊，線稿才不會有一堆小格子（使用者 2026-11-19）。 */
+const SIMPLE_BG = "，背景簡單、大塊的形狀、細節少";
 
 /** 每頁場景的結尾：背景裡不要有人（主角由角色動作畫上去）。 */
 const NO_PEOPLE = "，畫面裡沒有人";
@@ -121,29 +128,34 @@ export const THEME_PACKS: ThemePack[] = [
     title: "交通工具",
     description: "10 種交通工具，每頁有場景、動作和中英文字",
     text: packText(VEHICLES, NO_VEHICLES),
+    lineDetail: "simple",
   },
   {
     id: "jobs",
     title: "職業",
     description: "10 種職業，主角拿著那個職業的工具，每頁有中英文字",
     text: packText(JOBS, NO_PEOPLE),
+    lineDetail: "simple",
   },
   {
     id: "hygiene",
     title: "衛生習慣",
     description: "10 個好習慣：洗手、刷牙、戴口罩……每頁有中英文字",
     text: packText(HYGIENE, NO_PEOPLE),
+    lineDetail: "simple",
   },
   {
     id: "world",
     title: "環遊世界",
     description: "20 個世界知名地標，主角在地標前拍照、看地圖……每頁有中英文字",
-    text: packText(WORLD, NO_PEOPLE),
+    text: packText(WORLD, SIMPLE_BG + NO_PEOPLE),
+    lineDetail: "simple",
   },
   {
     id: "taiwan",
     title: "台灣景點",
     description: "22 個台灣的知名景點，從北到南、到離島，每頁有中英文字",
-    text: packText(TAIWAN, NO_PEOPLE),
+    text: packText(TAIWAN, SIMPLE_BG + NO_PEOPLE),
+    lineDetail: "simple",
   },
 ];

@@ -368,6 +368,34 @@ describe("③ 故事：預覽與每頁的背景", () => {
     expect(within(screen.getByRole("list", { name: "每一頁" })).getAllByRole("listitem")).toHaveLength(10);
   });
 
+  it("套用主題包後開始做：新頁設成簡單線條", async () => {
+    book = bookOf({ character_generation_id: 5 });
+    setup();
+    await screen.findByText("選好了 ✓");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "套用主題包" })).getByRole("button", { name: /交通工具/ }));
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    const patches = calls.filter((c) => c.method === "PATCH" && c.url.startsWith("/api/pages/"));
+    expect(patches).toHaveLength(10);
+    for (const c of patches) expect(c.body).toMatchObject({ line_detail: "simple" });
+  });
+
+  it("套用主題包後自己改了文字：不再套用主題包的線條設定", async () => {
+    book = bookOf({ character_generation_id: 5 });
+    setup();
+    await screen.findByText("選好了 ✓");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "套用主題包" })).getByRole("button", { name: /交通工具/ }));
+    const box = screen.getByLabelText("把故事貼在這裡") as HTMLTextAreaElement;
+    paste(box.value.replace("消防車", "大消防車"));
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    const patches = calls.filter((c) => c.method === "PATCH" && c.url.startsWith("/api/pages/"));
+    expect(patches.length).toBeGreaterThan(0);
+    for (const c of patches) expect(c.body).not.toHaveProperty("line_detail");
+  });
+
   it("每頁 AI 畫背景／↑ 上傳背景：選了圖片就算上傳（背景少一張），按 AI 畫背景改回來", async () => {
     book = bookOf({ character_generation_id: 5 });
     setup();

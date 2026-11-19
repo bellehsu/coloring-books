@@ -58,4 +58,12 @@ describe("applyImport（貼上整本故事的匯入規則）", () => {
     expect(createPage).not.toHaveBeenCalled();
     expect(updatePage).not.toHaveBeenCalled();
   });
+
+  it("主題包的書：建立的頁和填了內容的現有頁都設成簡單線條；沒填內容的頁不動", async () => {
+    const existing = [pg(11, 0, "", ""), pg(12, 1, "舊場景", "舊動作")];
+    await applyImport(rowsFor(TEXT_OK, existing), existing, { createPage, updatePage }, { lineDetail: "simple" });
+    expect(updatePage).toHaveBeenCalledWith({ pageId: 11, scene_prompt: "森林", action_prompt: "跑步", line_detail: "simple" });
+    expect(updatePage).toHaveBeenCalledWith({ pageId: 31, line_detail: "simple" });
+    expect(updatePage.mock.calls.some(([b]) => b.pageId === 12)).toBe(false);
+  });
 });
