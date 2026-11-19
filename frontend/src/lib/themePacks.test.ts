@@ -192,22 +192,22 @@ const TAIWAN: [string, string][] = [
   ["台北・故宮博物院", "National Palace Museum"],
   ["台北・陽明山", "Yangmingshan"],
   ["新北・九份老街", "Jiufen Old Street"],
-  ["新北・野柳女王頭", "Yehliu Queen's Head"],
   ["新北・平溪天燈", "Pingxi Sky Lanterns"],
   ["新北・淡水漁人碼頭", "Tamsui Fisherman's Wharf"],
-  ["宜蘭・龜山島", "Guishan Island"],
   ["苗栗・勝興車站", "Shengxing Station"],
   ["台中・高美濕地", "Gaomei Wetlands"],
+  ["台中・國家歌劇院", "National Taichung Theater"],
   ["彰化・八卦山大佛", "Baguashan Great Buddha"],
-  ["南投・日月潭", "Sun Moon Lake"],
-  ["嘉義・阿里山小火車", "Alishan Forest Railway"],
   ["台南・赤崁樓", "Chihkan Tower"],
   ["台南・安平古堡", "Anping Fort"],
+  ["台南・孔廟", "Tainan Confucius Temple"],
   ["高雄・蓮池潭龍虎塔", "Dragon and Tiger Pagodas"],
+  ["高雄・85大樓", "85 Sky Tower"],
   ["屏東・鵝鑾鼻燈塔", "Eluanbi Lighthouse"],
+  ["屏東・墾丁帆船石", "Sail Rock, Kenting"],
   ["花蓮・太魯閣", "Taroko Gorge"],
+  ["花蓮・七星潭", "Qixingtan Beach"],
   ["台東・三仙台", "Sanxiantai Bridge"],
-  ["澎湖・雙心石滬", "Twin Hearts Stone Weir"],
   ["金門・風獅爺", "Wind Lion God"],
 ];
 
@@ -228,19 +228,8 @@ describe("theme pack taiwan", () => {
       expect(p.scene).toContain(TAIWAN[i][0].split("・")[1].slice(0, 2));
     }
   });
-  it("2026-11-19 驗收後修正：野柳不寫皇冠、龜山島就是一座島（不寫烏龜）、阿里山小火車要在畫面中間、雙心石滬寫清楚兩個愛心", () => {
-    const at = (n: number) => parsed.pages[n - 1];
-    expect(at(4).scene).not.toContain("皇冠");
-    expect(at(7).scene).not.toContain("烏龜");
-    expect(at(11).scene).toContain("湖中間");
-    // 阿里山：背景不肯畫火車 → 改成交通工具那包的寫法，車廂跟主角一起畫（背景不提火車，免得畫兩台）
-    expect(at(12).scene).not.toContain("火車");
-    expect(at(12).action).toContain("車廂");
-    // 會被主角擋住的景點指定位置（主角在畫面中間）
-    expect(at(4).scene).toContain("畫面左邊");
-    expect(at(7).scene).toContain("畫面右邊");
-    expect(at(19).scene).toContain("兩個大大的愛心");
-    expect(at(19).action).not.toContain("愛心");
+  it("no metaphors in scenes (they get drawn literally: 像皇冠 → a crown, 像碗 → a bowl)", () => {
+    for (const p of parsed.pages) expect(p.scene).not.toMatch(/像[^，]*(皇冠|碗|烏龜|帆船)/);
   });
   it("actions never name the spot (it would be drawn again in the character's hands)", () => {
     for (const [i, p] of parsed.pages.entries()) {
