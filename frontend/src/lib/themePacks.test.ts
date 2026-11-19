@@ -21,7 +21,7 @@ describe("THEME_PACKS", () => {
   const parsed = parseStory(pack.text);
 
   it("has the vehicles pack", () => {
-    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world", "taiwan"]);
+    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world", "taiwan", "holidays", "zoo", "sports"]);
     expect(pack.title).toBe("交通工具");
     expect(pack.description).not.toBe("");
   });
@@ -260,9 +260,119 @@ describe("fewer small regions (user 2026-11-19)", () => {
     for (const pack of THEME_PACKS) expect(pack.lineDetail).toBe("simple");
   });
   it("landmark packs ask for simple backgrounds with big shapes", () => {
-    for (const id of ["world", "taiwan"]) {
+    for (const id of ["world", "taiwan", "holidays", "zoo", "sports"]) {
       for (const p of parseStory(THEME_PACKS.find((x) => x.id === id)!.text).pages)
         expect(p.scene).toContain("背景簡單、大塊的形狀、細節少");
     }
+  });
+});
+
+/** 節日、動物園、運動（使用者 2026-11-19 確認清單，各 12 頁）。 */
+const MORE_PACKS: [string, string, [string, string][]][] = [
+  [
+    "holidays",
+    "節日",
+    [
+      ["新年快樂", "Happy New Year"],
+      ["過年", "Lunar New Year"],
+      ["元宵節", "Lantern Festival"],
+      ["兒童節", "Children's Day"],
+      ["母親節", "Mother's Day"],
+      ["端午節", "Dragon Boat Festival"],
+      ["父親節", "Father's Day"],
+      ["中秋節", "Mid-Autumn Festival"],
+      ["教師節", "Teachers' Day"],
+      ["萬聖節", "Halloween"],
+      ["聖誕節", "Christmas"],
+      ["生日快樂", "Happy Birthday"],
+    ],
+  ],
+  [
+    "zoo",
+    "動物園",
+    [
+      ["長頸鹿", "Giraffe"],
+      ["大象", "Elephant"],
+      ["獅子", "Lion"],
+      ["貓熊", "Giant Panda"],
+      ["猴子", "Monkeys"],
+      ["企鵝", "Penguins"],
+      ["斑馬", "Zebras"],
+      ["河馬", "Hippo"],
+      ["無尾熊", "Koala"],
+      ["袋鼠", "Kangaroo"],
+      ["紅鶴", "Flamingos"],
+      ["鱷魚", "Crocodile"],
+    ],
+  ],
+  [
+    "sports",
+    "運動",
+    [
+      ["籃球", "Basketball"],
+      ["足球", "Soccer"],
+      ["棒球", "Baseball"],
+      ["桌球", "Table Tennis"],
+      ["羽球", "Badminton"],
+      ["網球", "Tennis"],
+      ["游泳", "Swimming"],
+      ["跳繩", "Jump Rope"],
+      ["跑步", "Running"],
+      ["滑板", "Skateboarding"],
+      ["體操", "Gymnastics"],
+      ["登山", "Hiking"],
+    ],
+  ],
+];
+
+describe.each(MORE_PACKS)("theme pack %s", (id, title, captions) => {
+  const pack = THEME_PACKS.find((p) => p.id === id)!;
+  const parsed = parseStory(pack?.text ?? "");
+  it("exists with title, description and 12 pages in order with no problems", () => {
+    expect(pack.title).toBe(title);
+    expect(pack.description).not.toBe("");
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.pages.map((p) => p.n)).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+  });
+  it("captions match the list", () => {
+    expect(parsed.pages.map((p) => [p.captionZh, p.captionEn])).toEqual(captions);
+  });
+  it("simple big-shape backgrounds with no people", () => {
+    for (const p of parsed.pages) expect(p.scene.endsWith("，背景簡單、大塊的形狀、細節少，畫面裡沒有人")).toBe(true);
+  });
+  it("no metaphors (像… gets drawn literally)", () => {
+    for (const p of parsed.pages) {
+      expect(p.scene).not.toContain("像");
+      expect(p.action).not.toContain("像");
+    }
+  });
+  it("is within limits", () => {
+    for (const p of parsed.pages) {
+      expect(countChars(p.scene)).toBeLessThanOrEqual(MAX_SCENE);
+      expect(p.action.length).toBeGreaterThan(0);
+      expect(countChars(p.action)).toBeLessThanOrEqual(MAX_ACTION);
+      expect(countChars(p.captionZh ?? "")).toBeLessThanOrEqual(MAX_CAPTION_ZH);
+      expect(countChars(p.captionEn ?? "")).toBeLessThanOrEqual(MAX_CAPTION_EN);
+    }
+  });
+});
+
+describe("動物園：動物在背景，動作不提動物（否則手上會再畫一隻）", () => {
+  const parsed = parseStory(THEME_PACKS.find((p) => p.id === "zoo")?.text ?? "");
+  const animals = MORE_PACKS[1][2].map(([zh]) => zh);
+  it("each scene names its animal; no action names any animal", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      expect(p.scene).toContain(animals[i]);
+      for (const a of animals) expect(p.action).not.toContain(a);
+    }
+  });
+});
+
+describe("運動：游泳站在池邊（在水裡的畫面難畫）", () => {
+  const parsed = parseStory(THEME_PACKS.find((p) => p.id === "sports")?.text ?? "");
+  it("swimming page keeps the character at the poolside holding a kickboard", () => {
+    const swim = parsed.pages[6];
+    expect(swim.scene).toContain("游泳池邊");
+    expect(swim.action).toContain("浮板");
   });
 });
