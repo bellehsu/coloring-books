@@ -230,6 +230,12 @@ describe("theme pack taiwan", () => {
       expect(p.scene).toContain(TAIWAN[i][0].split("・")[1].slice(0, 2));
     }
   });
+  it("十分瀑布在畫面上半部、有彩虹；漁人碼頭寫出情人橋的斜柱與鋼索（使用者 2026-11-19 不滿意第二版）", () => {
+    const at = (n: number) => parsed.pages[n - 1];
+    expect(at(5).scene).toContain("畫面上半部");
+    expect(at(5).scene).toContain("彩虹");
+    expect(at(6).scene).toContain("鋼索");
+  });
   it("no metaphors in scenes (they get drawn literally: 像皇冠 → a crown, 像碗 → a bowl)", () => {
     for (const p of parsed.pages) expect(p.scene).not.toMatch(/像[^，]*(皇冠|碗|烏龜|帆船)/);
   });
