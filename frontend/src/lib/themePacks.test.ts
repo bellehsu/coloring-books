@@ -175,6 +175,10 @@ describe("theme pack world", () => {
       expect(countChars(p.captionEn ?? "")).toBeLessThanOrEqual(MAX_CAPTION_EN);
     }
   });
+  it("比薩斜塔：最常見的「扶住斜塔」拍照姿勢，要笑（使用者 2026-11-19）", () => {
+    expect(parsed.pages[5].action).toContain("撐住");
+    expect(parsed.pages[5].action).toContain("笑");
+  });
   it("actions never name the landmark (it would be drawn again in the character's hands)", () => {
     for (const [i, p] of parsed.pages.entries()) {
       const name = WORLD[i][0].split("・")[1];

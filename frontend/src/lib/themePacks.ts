@@ -72,7 +72,7 @@ const WORLD: readonly PackPage[] = [
   { scene: "中國的萬里長城，城牆在山上彎彎曲曲延伸", action: "背著小背包，一手拿著打開的地圖", zh: "中國・萬里長城", en: "Great Wall of China" },
   { scene: "埃及沙漠裡的三座金字塔，天上有太陽", action: "戴著遮陽帽，一手拿著水壺", zh: "埃及・金字塔", en: "Pyramids of Giza" },
   { scene: "埃及沙漠裡的人面獅身像，後面有金字塔", action: "一手拿著放大鏡在看", zh: "埃及・人面獅身像", en: "Great Sphinx" },
-  { scene: "義大利的比薩斜塔，前面是草地", action: "雙手往右邊伸直、手掌張開，好像在用力推東西", zh: "義大利・比薩斜塔", en: "Leaning Tower of Pisa" },
+  { scene: "義大利的比薩斜塔，前面是草地", action: "雙手往右上方高高舉起、手掌張開，好像把旁邊快倒下來的東西撐住，開心地大笑", zh: "義大利・比薩斜塔", en: "Leaning Tower of Pisa" },
   { scene: "義大利羅馬的羅馬競技場，圓形的石頭建築有很多拱門", action: "一手拿著冰淇淋甜筒", zh: "義大利・羅馬競技場", en: "Colosseum" },
   { scene: "英國倫敦的大笨鐘鐘塔，旁邊是河", action: "一手拿著雨傘", zh: "英國・大笨鐘", en: "Big Ben" },
   { scene: "英國倫敦的倫敦塔橋，橋下是河", action: "雙手拿著一張明信片", zh: "英國・倫敦塔橋", en: "Tower Bridge" },
