@@ -65,6 +65,30 @@ const HYGIENE: readonly PackPage[] = [
   { scene: "廚房的餐桌旁，桌上有水壺", action: "雙手捧著一杯水在喝", zh: "喝白開水", en: "Drink Water" },
 ];
 
+/** 環遊世界：地標在背景（大建築放背景），主角站在前面，只拿相機、地圖這類小東西（拿在手上才不會被去背拿掉）。 */
+const WORLD: readonly PackPage[] = [
+  { scene: "法國巴黎的艾菲爾鐵塔，前面是一大片草地", action: "一手拿著相機在拍照，開心地笑", zh: "法國・艾菲爾鐵塔", en: "Eiffel Tower" },
+  { scene: "美國紐約港口的自由女神像，遠處有海和雲", action: "高高舉起一隻手揮手", zh: "美國・自由女神像", en: "Statue of Liberty" },
+  { scene: "中國的萬里長城，城牆在山上彎彎曲曲延伸", action: "背著小背包，一手拿著打開的地圖", zh: "中國・萬里長城", en: "Great Wall of China" },
+  { scene: "埃及沙漠裡的三座金字塔，天上有太陽", action: "戴著遮陽帽，一手拿著水壺", zh: "埃及・金字塔", en: "Pyramids of Giza" },
+  { scene: "埃及沙漠裡的人面獅身像，後面有金字塔", action: "一手拿著放大鏡在看", zh: "埃及・人面獅身像", en: "Great Sphinx" },
+  { scene: "義大利的比薩斜塔，前面是草地", action: "雙手往旁邊伸，做出推著斜塔的姿勢", zh: "義大利・比薩斜塔", en: "Leaning Tower of Pisa" },
+  { scene: "義大利羅馬的羅馬競技場，圓形的石頭建築有很多拱門", action: "一手拿著冰淇淋甜筒", zh: "義大利・羅馬競技場", en: "Colosseum" },
+  { scene: "英國倫敦的大笨鐘鐘塔，旁邊是河", action: "一手拿著雨傘", zh: "英國・大笨鐘", en: "Big Ben" },
+  { scene: "英國倫敦的倫敦塔橋，橋下是河", action: "雙手拿著一張明信片", zh: "英國・倫敦塔橋", en: "Tower Bridge" },
+  { scene: "澳洲的雪梨歌劇院，屋頂像一片片白色的帆，旁邊是海港", action: "一手拿著相機在拍照", zh: "澳洲・雪梨歌劇院", en: "Sydney Opera House" },
+  { scene: "印度的泰姬瑪哈陵，前面有長長的水池", action: "雙手合十微笑", zh: "印度・泰姬瑪哈陵", en: "Taj Mahal" },
+  { scene: "日本的富士山，山頂有雪，前面有櫻花樹", action: "一手拿著一把小紙扇", zh: "日本・富士山", en: "Mount Fuji" },
+  { scene: "台灣台北的台北101大樓，旁邊有其他大樓和樹", action: "高高舉起一隻手揮手", zh: "台灣・台北101", en: "Taipei 101" },
+  { scene: "柬埔寨的吳哥窟寺廟，前面有水池", action: "一手拿著打開的地圖", zh: "柬埔寨・吳哥窟", en: "Angkor Wat" },
+  { scene: "祕魯山上的馬丘比丘古城遺跡，後面有高高的山峰", action: "背著小背包，手拿登山杖", zh: "祕魯・馬丘比丘", en: "Machu Picchu" },
+  { scene: "美國舊金山的金門大橋，橋下是海", action: "一手拿著相機在拍照", zh: "美國・金門大橋", en: "Golden Gate Bridge" },
+  { scene: "西班牙巴塞隆納的聖家堂，有很多尖尖的高塔", action: "仰頭往上看，一手指著上面", zh: "西班牙・聖家堂", en: "Sagrada Família" },
+  { scene: "德國柏林的布蘭登堡門，有很多大石柱", action: "雙手拿著一張明信片", zh: "德國・布蘭登堡門", en: "Brandenburg Gate" },
+  { scene: "智利復活節島草地上的一排摩艾石像，後面是海", action: "一手拿著放大鏡在看", zh: "智利・摩艾石像", en: "Moai Statues" },
+  { scene: "俄羅斯莫斯科的聖瓦西里大教堂，屋頂是洋蔥形的圓頂", action: "戴著毛線帽，雙手拿著一杯熱可可", zh: "俄羅斯・聖瓦西里大教堂", en: "St. Basil's Cathedral" },
+];
+
 export const THEME_PACKS: ThemePack[] = [
   {
     id: "vehicles",
@@ -83,5 +107,11 @@ export const THEME_PACKS: ThemePack[] = [
     title: "衛生習慣",
     description: "10 個好習慣：洗手、刷牙、戴口罩……每頁有中英文字",
     text: packText(HYGIENE, NO_PEOPLE),
+  },
+  {
+    id: "world",
+    title: "環遊世界",
+    description: "20 個世界知名地標，主角在地標前拍照、看地圖……每頁有中英文字",
+    text: packText(WORLD, NO_PEOPLE),
   },
 ];
