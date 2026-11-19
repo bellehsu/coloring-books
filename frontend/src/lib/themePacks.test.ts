@@ -373,12 +373,14 @@ describe("驗收後修正（使用者 2026-11-19）", () => {
   it("節日：新年只畫三朵大煙火；過年紅紙不寫字（會畫成亂字）；端午主角坐在龍舟上（船在背景畫不出來）", () => {
     const h = pages("holidays");
     expect(h[0].scene).toContain("三朵大大的煙火");
+    expect(h[0].scene).toContain("天空其他地方是空的");
     expect(h[1].scene).toContain("沒有字");
     expect(h[5].action).toContain("坐在龍舟上");
     expect(h[5].scene).not.toContain("龍舟");
   });
   it("動物園：動物在畫面左邊或右邊、左右輪流（置中的主角會擋住）", () => {
     for (const [i, p] of pages("zoo").entries()) expect(p.scene).toContain(i % 2 === 0 ? "畫面右邊" : "畫面左邊");
+    expect(pages("zoo")[9].scene).toContain("袋鼠站在草地上"); // 「在草地上跳」那一版袋鼠沒畫出來
   });
   it("運動：體操在室內軟墊上，不是球場", () => {
     const gym = pages("sports")[10];

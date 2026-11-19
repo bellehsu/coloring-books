@@ -124,7 +124,7 @@ const TAIWAN: readonly PackPage[] = [
 
 /** 節日：場景是節日的地方，主角拿節日的小東西（使用者 2026-11-19 確認清單）。 */
 const HOLIDAYS: readonly PackPage[] = [
-  { scene: "晚上的城市，天空中只有三朵大大的煙火", action: "雙手舉高，開心地歡呼", zh: "新年快樂", en: "Happy New Year" },
+  { scene: "晚上的城市，天空中只有三朵大大的煙火，天空其他地方是空的", action: "雙手舉高，開心地歡呼", zh: "新年快樂", en: "Happy New Year" },
   { scene: "家門口，門兩邊貼著長長的紅紙，紅紙上沒有字，門上掛著兩個紅燈籠", action: "雙手拿著一個紅包，開心地笑", zh: "過年", en: "Lunar New Year" },
   { scene: "晚上的廟口廣場，上面掛著一排圓圓的燈籠", action: "一手提著一盞小燈籠", zh: "元宵節", en: "Lantern Festival" },
   { scene: "遊樂園，有旋轉木馬和摩天輪", action: "一手拿著一顆氣球", zh: "兒童節", en: "Children's Day" },
@@ -149,7 +149,7 @@ const ZOO: readonly PackPage[] = [
   { scene: "動物園裡，畫面右邊有兩隻斑馬站在草地上，後面有矮樹", action: "一手拿著相機在拍照", zh: "斑馬", en: "Zebras" },
   { scene: "動物園裡，畫面左邊有一隻大大的河馬在泥水池裡張大嘴巴", action: "雙手摀著嘴巴偷笑", zh: "河馬", en: "Hippo" },
   { scene: "動物園裡，畫面右邊有一隻無尾熊抱著大樹的樹幹睡覺", action: "一根手指放在嘴巴前面，小聲說噓", zh: "無尾熊", en: "Koala" },
-  { scene: "動物園裡，畫面左邊有一隻大大的袋鼠在草地上跳，肚子的袋子裡有一隻小袋鼠", action: "雙腳跳起來，開心地笑", zh: "袋鼠", en: "Kangaroo" },
+  { scene: "動物園裡，畫面左邊有一隻大大的袋鼠站在草地上，肚子的袋子裡有一隻小袋鼠", action: "雙腳跳起來，開心地笑", zh: "袋鼠", en: "Kangaroo" },
   { scene: "動物園裡，畫面右邊有一群紅鶴單腳站在淺淺的水裡", action: "單腳站立，雙手張開保持平衡", zh: "紅鶴", en: "Flamingos" },
   { scene: "動物園裡，畫面左邊有一隻大大的鱷魚趴在河邊，嘴巴張開", action: "一手拿著一根冰棒", zh: "鱷魚", en: "Crocodile" },
 ];
