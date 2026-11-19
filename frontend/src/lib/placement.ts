@@ -61,3 +61,34 @@ export function cornerResize(start: Placement, k: number, dxRel: number, dyRel: 
   const h = Math.min(PLACEMENT_MAX_HEIGHT, Math.max(PLACEMENT_MIN_HEIGHT, Math.max(fromX, fromY)));
   return clampPlacement({ ...start, height: h, cx: left + (h * k) / 2, cy: top + h / 2 });
 }
+
+/** 編輯頁快捷鈕：位置（左右）與大小（見 docs/superpowers/specs/2026-11-19-position-presets-design.md）。 */
+export type PresetSide = "left" | "center" | "right";
+export type PresetSize = "small" | "medium" | "large";
+export const PRESET_CX: Record<PresetSide, number> = { left: 0.26, center: 0.5, right: 0.74 };
+export const PRESET_HEIGHT: Record<PresetSize, number> = { small: 0.42, medium: 0.6, large: 0.78 };
+const PRESET_TOLERANCE = 0.005;
+
+/** 只改左右位置；大小、高度、翻轉不變。 */
+export function withSide(p: Placement, side: PresetSide): Placement {
+  return clampPlacement({ ...p, cx: PRESET_CX[side] });
+}
+
+/** 只改大小；左右不變，腳（底緣 cy + height/2）留在原處。 */
+export function withSize(p: Placement, size: PresetSize): Placement {
+  const height = PRESET_HEIGHT[size];
+  return clampPlacement({ ...p, height, cy: p.cy + p.height / 2 - height / 2 });
+}
+
+const matching = <K extends string>(table: Record<K, number>, v: number): K | null =>
+  (Object.keys(table) as K[]).find((k) => Math.abs(table[k] - v) < PRESET_TOLERANCE) ?? null;
+
+/** 目前位置符合哪個左右選項；拖曳到別處時 null。 */
+export function currentSide(p: Placement): PresetSide | null {
+  return matching(PRESET_CX, p.cx);
+}
+
+/** 目前大小符合哪個選項；拖曳縮放到別的大小時 null。 */
+export function currentSize(p: Placement): PresetSize | null {
+  return matching(PRESET_HEIGHT, p.height);
+}
