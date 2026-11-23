@@ -175,6 +175,29 @@ const SPORTS: readonly PackPage[] = [
   { scene: "山上的步道，遠處有一座一座的山", action: "背著背包，一手拿著登山杖", zh: "登山", en: "Hiking" },
 ];
 
+/** 華麗相框：背景是古典捲草花紋外框、中間空白，主角站在框裡（使用者 2026-11-24）。 */
+const FRAME_STYLE = "，只有黑色線條、沒有塗黑的地方";
+const frame = (shape: string, extra = "") =>
+  `白色背景，畫面正中間一個大大的${shape}古典捲草花紋外框${extra}，框裡面和框外面都是空白`;
+
+const FRAMES: readonly PackPage[] = [
+  { scene: frame("直立橢圓形"), action: "一手揮手，開心地微笑", zh: "橢圓形", en: "Oval" },
+  { scene: frame("直立長方形"), action: "雙手放在背後，站得直直的，微笑", zh: "長方形", en: "Rectangle" },
+  { scene: frame("圓形"), action: "雙手托著臉頰，開心地笑", zh: "圓形", en: "Circle" },
+  { scene: frame("愛心形"), action: "雙手在胸前比出一個愛心", zh: "愛心", en: "Heart" },
+  { scene: frame("五角星星形"), action: "一手舉著一根星星魔法棒", zh: "星星", en: "Star" },
+  { scene: frame("圓形花環", "，外框上有花朵和葉子"), action: "雙手捧著一束花", zh: "花環", en: "Wreath" },
+  { scene: frame("拱門形", "，上面是圓弧、兩邊是直的"), action: "張開雙手歡迎", zh: "拱門", en: "Arch" },
+  { scene: frame("盾牌形"), action: "一手叉腰，一手比讚", zh: "盾牌", en: "Shield" },
+  { scene: frame("雲朵形"), action: "雙手抱著一隻泰迪熊", zh: "雲朵", en: "Cloud" },
+  { scene: frame("直立長方形", "，外框上方正中間有一個大蝴蝶結"), action: "雙手捧著一個禮物盒", zh: "蝴蝶結", en: "Bow" },
+  { scene: frame("直立橢圓形", "，外框頂上有一頂皇冠"), action: "頭上戴著一頂小皇冠，雙手提起衣角行禮", zh: "皇冠", en: "Crown" },
+  { scene: frame("菱形"), action: "雙腳跳起來，開心地笑", zh: "菱形", en: "Diamond" },
+];
+
+/** 華麗相框的主角位置：置中、小（0.42），腳在 0.80，落在框裡面（GPU 驗收量過再調）。 */
+const FRAME_PLACEMENT: Placement = { cx: 0.5, cy: 0.59, height: 0.42, flip: false };
+
 export const THEME_PACKS: ThemePack[] = [
   {
     id: "vehicles",
@@ -233,5 +256,14 @@ export const THEME_PACKS: ThemePack[] = [
     description: "12 種運動：溜冰、足球、棒球、排球、跳繩……主角拿著器材，每頁有中英文字",
     text: packText(SPORTS, SIMPLE_BG + NO_PEOPLE),
     lineDetail: "simple",
+  },
+  {
+    id: "frames",
+    title: "華麗相框",
+    description: "12 種形狀的古典花紋相框，主角站在框裡，每頁有中英文字",
+    text: packText(FRAMES, FRAME_STYLE + NO_PEOPLE),
+    // 使用者 2026-11-24：複雜度中等
+    lineDetail: "standard",
+    placements: FRAMES.map(() => FRAME_PLACEMENT),
   },
 ];
