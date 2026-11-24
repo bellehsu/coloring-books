@@ -51,7 +51,7 @@ def find_interior(background: Image.Image, seed: tuple[float, float]) -> np.ndar
         return mask
     # 拱門的柱腳若停在紙邊之上，內部會從柱腳下漏到框外：在最低的線條處補一條虛擬地板再試一次
     rows = np.nonzero(ink.any(axis=1))[0]
-    if rows.size == 0:
+    if rows.size == 0 or rows.max() >= h - k:  # 線條已到紙邊：不是柱腳懸空的拱門
         return None
     floored = ink.copy()
     floored[max(0, int(rows.max()) - k + 1) : int(rows.max()) + 1, :] = 1

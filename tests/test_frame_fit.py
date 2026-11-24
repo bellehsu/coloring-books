@@ -66,6 +66,13 @@ def test_horizon_as_lowest_ink_is_none():
     assert frame_fit.find_interior(_img(arr), SEED) is None
 
 
+def test_corner_scene_touching_bottom_edge_is_none():
+    arr = _canvas()
+    cv2.line(arr, (0, 300), (W - 1, 300), (0, 0, 0), 8)
+    cv2.line(arr, (650, 300), (650, H - 1), (0, 0, 0), 8)
+    assert frame_fit.find_interior(_img(arr), SEED) is None
+
+
 def test_scene_without_frame_is_none():
     arr = _canvas()
     cv2.line(arr, (0, 800), (W - 1, 800), (0, 0, 0), 8)
