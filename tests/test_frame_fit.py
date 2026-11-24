@@ -43,6 +43,29 @@ def test_arch_open_at_bottom_counts():
     assert frame_fit.find_interior(_img(arr), SEED) is not None
 
 
+def _pillar_arch(arr: np.ndarray) -> None:
+    cv2.rectangle(arr, (40, 450), (160, 1180), (0, 0, 0), -1)
+    cv2.rectangle(arr, (670, 450), (790, 1180), (0, 0, 0), -1)
+    cv2.ellipse(arr, (416, 450), (255, 300), 0, 180, 360, (0, 0, 0), 8)
+
+
+def test_arch_with_pillars_above_bottom_edge():
+    arr = _canvas()
+    _pillar_arch(arr)
+    mask = frame_fit.find_interior(_img(arr), SEED)
+    assert mask is not None
+    assert mask[600, 416] and not mask[600, 20] and not mask[600, 812]
+    xs = np.nonzero(mask.any(axis=0))[0]
+    assert xs.min() >= 160 and xs.max() <= 670
+
+
+def test_horizon_as_lowest_ink_is_none():
+    arr = _canvas()
+    cv2.line(arr, (0, 1000), (W - 1, 1000), (0, 0, 0), 8)
+    cv2.circle(arr, (600, 200), 80, (0, 0, 0), 8)
+    assert frame_fit.find_interior(_img(arr), SEED) is None
+
+
 def test_scene_without_frame_is_none():
     arr = _canvas()
     cv2.line(arr, (0, 800), (W - 1, 800), (0, 0, 0), 8)

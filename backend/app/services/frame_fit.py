@@ -46,6 +46,21 @@ def find_interior(background: Image.Image, seed: tuple[float, float]) -> np.ndar
     ink = (gray < INK_GRAY_MAX).astype(np.uint8)
     k = max(MIN_DILATE_PX, round(DILATE_PX_AT_832 * w / 832))
     ink = cv2.dilate(ink, np.ones((k, k), np.uint8))
+    mask = _interior_from_ink(ink, seed)
+    if mask is not None:
+        return mask
+    # 拱門的柱腳若停在紙邊之上，內部會從柱腳下漏到框外：在最低的線條處補一條虛擬地板再試一次
+    rows = np.nonzero(ink.any(axis=1))[0]
+    if rows.size == 0:
+        return None
+    floored = ink.copy()
+    floored[max(0, int(rows.max()) - k + 1) : int(rows.max()) + 1, :] = 1
+    return _interior_from_ink(floored, seed)
+
+
+def _interior_from_ink(ink: np.ndarray, seed: tuple[float, float]) -> np.ndarray | None:
+    """（已膨脹的）線條遮罩 → 種子所在空白區域通過規則後的內部遮罩。"""
+    h, w = ink.shape
     free = (ink == 0).astype(np.uint8)
     _, labels = cv2.connectedComponents(free, connectivity=4)
 
