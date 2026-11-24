@@ -406,7 +406,7 @@ describe("驗收後修正（使用者 2026-11-19）", () => {
 describe("華麗相框（使用者 2026-11-24）", () => {
   const pack = THEME_PACKS.find((p) => p.id === "frames");
   const parsed = parseStory(pack?.text ?? "");
-  const SHAPES = ["橢圓", "長方形", "圓形", "愛心", "星星", "花環", "拱門", "盾牌", "雲朵", "蝴蝶結", "皇冠", "菱形"];
+  const SHAPES = ["橢圓", "長方形", "圓形", "四葉草", "六角形", "花環", "拱門", "盾牌", "方形", "蝴蝶結", "皇冠", "菱形"];
   it("is the 華麗相框 pack with 12 pages and shape captions", () => {
     expect(pack?.title).toBe("華麗相框");
     expect(parsed.errors).toEqual([]);
@@ -414,12 +414,12 @@ describe("華麗相框（使用者 2026-11-24）", () => {
       ["橢圓形", "Oval"],
       ["長方形", "Rectangle"],
       ["圓形", "Circle"],
-      ["愛心", "Heart"],
-      ["星星", "Star"],
+      ["四葉草", "Four-Leaf Clover"],
+      ["六角形", "Hexagon"],
       ["花環", "Wreath"],
       ["拱門", "Arch"],
       ["盾牌", "Shield"],
-      ["雲朵", "Cloud"],
+      ["圓角方形", "Rounded Square"],
       ["蝴蝶結", "Bow"],
       ["皇冠", "Crown"],
       ["菱形", "Diamond"],
@@ -440,11 +440,21 @@ describe("華麗相框（使用者 2026-11-24）", () => {
       expect(p.action).not.toContain("像");
     }
   });
-  it("驗收後：圓形框不被切掉；星星、雲朵本身就是框（外面不再包方框）；花環是直立橢圓形", () => {
+  it("驗收後：圓形框不被切掉；v2 的四葉草、六角形、圓角方形措辭；花環是直立橢圓形", () => {
     expect(parsed.pages[2].scene).toContain("整個圓形外框都在紙張裡面，沒有被切掉");
-    expect(parsed.pages[4].scene).toContain("外框本身就是一顆大星星的形狀");
+    expect(parsed.pages[3].scene).toContain("空心四葉草形");
+    expect(parsed.pages[3].scene).toContain("四葉草裡面是乾淨的白色");
+    expect(parsed.pages[4].scene).toContain("最上面和最下面是尖角，左右兩邊是直的，總共六條邊");
     expect(parsed.pages[5].scene).toContain("直立橢圓形花環");
-    expect(parsed.pages[8].scene).toContain("外框本身就是一朵大雲的形狀");
+    expect(parsed.pages[8].scene).toContain("直立方形");
+    expect(parsed.pages[8].scene).toContain("四個角是圓角");
+  });
+  it("v2 actions for the crown and diamond pages", () => {
+    expect(parsed.pages[10].action).toBe("頭上戴著一頂小皇冠，雙手合在胸前微笑");
+    expect(parsed.pages[11].action).toBe("一手比 V，開心地笑");
+  });
+  it("description names the portrait", () => {
+    expect(pack?.description).toBe("12 種形狀的古典花紋相框，主角是框裡的半身肖像，每頁有中英文字");
   });
   it("objects in the frame aren't repeated in the action (drawn twice otherwise)", () => {
     for (const p of parsed.pages) {
@@ -461,6 +471,6 @@ describe("華麗相框（使用者 2026-11-24）", () => {
   it("medium detail; character small and raised into the frame", () => {
     expect(pack?.lineDetail).toBe("standard");
     expect(pack?.placements).toHaveLength(12);
-    for (const pl of pack?.placements ?? []) expect(pl).toEqual({ cx: 0.5, cy: 0.59, height: 0.42, flip: false });
+    for (const pl of pack?.placements ?? []) expect(pl).toEqual({ cx: 0.5, cy: 0.59, height: 0.42, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true });
   });
 });

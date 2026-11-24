@@ -188,19 +188,20 @@ const FRAMES: readonly PackPage[] = [
   { scene: frame("直立橢圓形"), action: "一手揮手，開心地微笑", zh: "橢圓形", en: "Oval" },
   { scene: frame("直立長方形"), action: "雙手放在背後，站得直直的，微笑", zh: "長方形", en: "Rectangle" },
   { scene: frame("圓形", "，整個圓形外框都在紙張裡面，沒有被切掉"), action: "雙手托著臉頰，開心地笑", zh: "圓形", en: "Circle" },
-  { scene: frame("愛心形"), action: "雙手在胸前比出一個愛心", zh: "愛心", en: "Heart" },
-  { scene: frame("五角星星形", "，外框本身就是一顆大星星的形狀"), action: "一手舉著一根星星魔法棒", zh: "星星", en: "Star" },
+  { scene: frame("空心四葉草形", "，外框就是四葉草的輪廓線，用捲草花紋畫成，四葉草裡面是乾淨的白色"), action: "雙手在胸前比出一個愛心", zh: "四葉草", en: "Four-Leaf Clover" },
+  { scene: frame("直立六角形", "，外框的最上面和最下面是尖角，左右兩邊是直的，總共六條邊"), action: "一手舉著一根星星魔法棒", zh: "六角形", en: "Hexagon" },
   { scene: frame("直立橢圓形花環", "，外框上有花朵和葉子"), action: "雙手捧著一束花", zh: "花環", en: "Wreath" },
   { scene: frame("拱門形", "，上面是圓弧、兩邊是直的"), action: "張開雙手歡迎", zh: "拱門", en: "Arch" },
   { scene: frame("盾牌形"), action: "一手叉腰，一手比讚", zh: "盾牌", en: "Shield" },
-  { scene: frame("雲朵形", "，外框本身就是一朵大雲的形狀"), action: "雙手抱著一隻泰迪熊", zh: "雲朵", en: "Cloud" },
+  { scene: frame("直立方形", "，四個角是圓角"), action: "雙手抱著一隻泰迪熊", zh: "圓角方形", en: "Rounded Square" },
   { scene: frame("直立長方形", "，外框上方正中間有一個大蝴蝶結"), action: "雙手捧著一個禮物盒", zh: "蝴蝶結", en: "Bow" },
-  { scene: frame("直立橢圓形", "，外框頂上有一頂皇冠"), action: "頭上戴著一頂小皇冠，雙手提起衣角行禮", zh: "皇冠", en: "Crown" },
-  { scene: frame("菱形"), action: "雙腳跳起來，開心地笑", zh: "菱形", en: "Diamond" },
+  { scene: frame("直立橢圓形", "，外框頂上有一頂皇冠"), action: "頭上戴著一頂小皇冠，雙手合在胸前微笑", zh: "皇冠", en: "Crown" },
+  { scene: frame("菱形"), action: "一手比 V，開心地笑", zh: "菱形", en: "Diamond" },
 ];
 
-/** 華麗相框的主角位置：置中、小（0.42），腳在 0.80，落在框裡面（GPU 驗收量過再調）。 */
-const FRAME_PLACEMENT: Placement = { cx: 0.5, cy: 0.59, height: 0.42, flip: false };
+// v2（使用者 2026-11-24）：星星、愛心、雲朵常多包方框 → 換四葉草（帶方框也可以）、六角形、圓角方形；肖像模式預設開。
+/** 華麗相框的主角位置：半身肖像放進框裡，frame 是框的中心，autofit 讓後端依框自動縮放。 */
+const FRAME_PLACEMENT: Placement = { cx: 0.5, cy: 0.59, height: 0.42, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true };
 
 export const THEME_PACKS: ThemePack[] = [
   {
@@ -264,7 +265,7 @@ export const THEME_PACKS: ThemePack[] = [
   {
     id: "frames",
     title: "華麗相框",
-    description: "12 種形狀的古典花紋相框，主角站在框裡，每頁有中英文字",
+    description: "12 種形狀的古典花紋相框，主角是框裡的半身肖像，每頁有中英文字",
     text: packText(FRAMES, FRAME_STYLE + NO_PEOPLE),
     // 使用者 2026-11-24：複雜度中等
     lineDetail: "standard",
