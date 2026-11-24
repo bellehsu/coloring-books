@@ -138,20 +138,26 @@ def cutout(pose: Image.Image, mask: Image.Image) -> Image.Image:
 
 
 def compose(
-    background: Image.Image, pose: Image.Image, mask: Image.Image, placement: Placement
+    background: Image.Image, pose: Image.Image, mask: Image.Image, placement: Placement,
+    interior: np.ndarray | None = None,
 ) -> Image.Image:
     """回傳與背景同尺寸的 RGB 合成圖。超出背景的部分會被裁掉。
 
     只使用 mask 決定角色輪廓；pose 本身的 alpha 會被忽略（直接丟掉 alpha 通道）。
     RGBA 背景會先壓平鋪在白底上。mask 與 pose 尺寸必須相同。
+    interior（肖像：與背景同尺寸的布林遮罩，True＝框的內圈）：貼上的遮罩再乘上它，角色只出現在內圈裡
+    （內圈不膨脹，切口藏在框線底下）。沒有 interior 時 height 超過 1.0 夾到 1.0（找不到框的肖像照一般合成）。
     """
     bg = flatten_on_white(background)
+    if interior is not None and interior.shape != (bg.height, bg.width):
+        raise ValueError("內圈遮罩與背景尺寸不同")
+    height = placement.height if interior is not None else min(placement.height, 1.0)
     cut = cutout(pose, mask)  # 尺寸不同或遮罩全空時丟 ValueError
     _check_mask_box(*cut.size)
     pose_rgb = cut.convert("RGB")  # 只留 RGB；輪廓用 alpha（＝裁好的遮罩）
     m = cut.getchannel("A")
 
-    target_h = max(1, round(placement.height * bg.height))
+    target_h = max(1, round(height * bg.height))
     target_w = min(max(1, round(pose_rgb.width * target_h / pose_rgb.height)), MAX_WIDTH_FACTOR * bg.width)
     pose_rgb = pose_rgb.resize((target_w, target_h), Image.LANCZOS)
     m = m.resize((target_w, target_h), Image.BILINEAR)
@@ -162,9 +168,24 @@ def compose(
 
     x = round(placement.cx * bg.width - target_w / 2)
     y = round(placement.cy * bg.height - target_h / 2)
+    if interior is not None:
+        m = _clip_to_interior(m, interior, x, y)
     out = bg.copy()
     out.paste(pose_rgb, (x, y), m)  # paste 會自動裁掉超出邊界的部分
     return out
+
+
+def _clip_to_interior(m: Image.Image, interior: np.ndarray, x: int, y: int) -> Image.Image:
+    """貼在 (x, y) 的遮罩 m 乘上內圈：內圈外（含超出背景的部分）一律 0。"""
+    a = np.asarray(m)
+    th, tw = a.shape
+    bh, bw = interior.shape
+    window = np.zeros((th, tw), bool)
+    y0, y1 = max(0, y), min(bh, y + th)
+    x0, x1 = max(0, x), min(bw, x + tw)
+    if y0 < y1 and x0 < x1:
+        window[y0 - y:y1 - y, x0 - x:x1 - x] = interior[y0:y1, x0:x1]
+    return Image.fromarray(np.where(window, a, 0).astype(np.uint8), "L")
 
 
 def _fill_holes(binary: np.ndarray) -> np.ndarray:

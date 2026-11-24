@@ -562,7 +562,7 @@ class OverviewPageOut(BaseModel):
     thumb_url: str | None  # 選定圖（合成圖；舊書是整頁圖）
     lineart_url: str | None  # 目前線稿（?v= 為目前的 key）；沒選定圖為 None
     attention_detail: str | None  # 有 attention 時的中文說明（review_pose 也有）
-    review: bool  # attention == "review_pose"：換了新的主角動作（軟標記，state 照樣是 ready）
+    review: bool  # 軟標記：attention 是 "review_pose"（換了新的主角動作）或 "review_frame"（背景找不到框），state 照樣是 ready
 
 
 class RunProgress(BaseModel):

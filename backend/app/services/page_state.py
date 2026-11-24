@@ -18,11 +18,15 @@ PageState = Literal["ready", "attention", "working", "todo"]
 # 「印出這本書」都算），繼續做也不會因為它重排頁面流程；其他 attention（failed…）才是「請看一下」狀態。
 ATTENTION_REVIEW_POSE = "review_pose"
 REVIEW_POSE_DETAIL = "請看一下：換了新的主角動作"
+# 軟標記：肖像頁（放進框裡）的背景找不到框，這張照一般擺放（頁面流程第 5 步依合成圖的 frame_found 設定／清掉）
+ATTENTION_REVIEW_FRAME = "review_frame"
+REVIEW_FRAME_DETAIL = "這張背景找不到框，照一般擺放，可以再畫一張背景"
+SOFT_ATTENTIONS = (ATTENTION_REVIEW_POSE, ATTENTION_REVIEW_FRAME)
 
 
 def hard_attention(attention: str | None) -> bool:
-    """擋住「可以印」的 attention：有值而且不是軟標記 review_pose。"""
-    return attention is not None and attention != ATTENTION_REVIEW_POSE
+    """擋住「可以印」的 attention：有值而且不是軟標記（review_pose、review_frame）。"""
+    return attention is not None and attention not in SOFT_ATTENTIONS
 
 
 def busy_page_ids(session: Session, book_ids: list[int]) -> set[int]:
@@ -49,7 +53,7 @@ def busy_page_ids(session: Session, book_ids: list[int]) -> set[int]:
 
 def page_state(page: Page, busy: set[int]) -> PageState:
     """B 的每頁狀態：製作中＞請看一下＞可以印＞還沒做完。線沒接起來不算請看一下（只是提示）；
-    review_pose 是軟標記，PASSED 的照樣是可以印。"""
+    review_pose、review_frame 是軟標記，PASSED 的照樣是可以印。"""
     if page.id in busy:
         return "working"
     if hard_attention(page.attention):

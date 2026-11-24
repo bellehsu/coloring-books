@@ -5,6 +5,8 @@
   3. 線稿；
   4. 自動補線：重算整層 auto 修線（覆寫，不附加；services/autofix.plan_autofix，與自動補線端點共用）；
   5. 可以印：PASSED、passed_at，清掉 attention（不需要角色檢查「對」）；軟標記 review_pose 保留。
+     肖像頁（放進框裡）的合成圖找不到框（params 的 frame_found 是 false）：標軟標記 review_frame（照樣可以印）；
+     找到框或不是肖像就清掉它。
 
 失敗時頁面 attention="failed"、attention_detail 是中文說明，工作標成 FAILED。
 
@@ -25,6 +27,7 @@ C 自己按的角色動作 take（沒有 review）換上去時清掉 review_pose
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Callable
 
@@ -48,7 +51,9 @@ from app.services.page_lineart import (
     LineartUnavailable, book_layout_key, commit_layer, ensure_page_lineart, ink_before_user_layer, load_strokes,
     same_layout, save_strokes, strokes_from_json, strokes_to_json,
 )
-from app.services.page_state import ATTENTION_REVIEW_POSE, REVIEW_POSE_DETAIL
+from app.services.page_state import (
+    ATTENTION_REVIEW_FRAME, ATTENTION_REVIEW_POSE, REVIEW_FRAME_DETAIL, REVIEW_POSE_DETAIL,
+)
 from app.services.qa import evaluate
 from app.storage import Storage
 
@@ -398,6 +403,15 @@ def _write_pending(session: Session, page_id: int, gid: int, pending: str) -> No
         raise
 
 
+def _frame_missing(session: Session, gid: int) -> bool:
+    """選定的合成圖是肖像，而且背景上找不到框（params 的 frame_found 是 false）。"""
+    gen = session.get(Generation, gid)
+    try:
+        return json.loads(gen.params_json or "").get("frame_found") is False
+    except (AttributeError, ValueError):
+        return False
+
+
 def _attempt(session: Session, storage: Storage, page_id: int) -> str:
     if session.get(Page, page_id) is None:
         raise _PageGone()
@@ -437,10 +451,16 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
         except IntegrityError as e:  # 同時有請求建立同一層（例如舊編輯器的自動補線）
             raise _Stale() from e
     lin = ensure_page_lineart(session, storage, page_id, from_pipeline=True)
-    # 5. 可以印（已經是 PASSED 的保留原本的通過時間）；清掉 failed 等，保留軟標記 review_pose
+    # 5. 可以印（已經是 PASSED 的保留原本的通過時間）；清掉 failed 等，保留軟標記 review_pose；
+    #    肖像頁找不到框：標軟標記 review_frame（蓋過 review_pose，這頁要的是換一張有框的背景）
     now = utcnow()
     already = col(Page.status) == PageStatus.PASSED
-    review = col(Page.attention) == ATTENTION_REVIEW_POSE
+    if _frame_missing(session, gid):
+        attention, detail = ATTENTION_REVIEW_FRAME, REVIEW_FRAME_DETAIL
+    else:
+        review = col(Page.attention) == ATTENTION_REVIEW_POSE
+        attention = case((review, ATTENTION_REVIEW_POSE), else_=None)
+        detail = case((review, col(Page.attention_detail)), else_=None)
     res = session.exec(
         update(Page)
         .where(col(Page.id) == page_id, col(Page.selected_generation_id) == gid,
@@ -449,8 +469,8 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
                 passed_at=func.coalesce(case((already, col(Page.passed_at))),
                                         literal(now, Page.__table__.c.passed_at.type)),
                 forced_pass_reason=None,
-                attention=case((review, ATTENTION_REVIEW_POSE), else_=None),
-                attention_detail=case((review, col(Page.attention_detail)), else_=None),
+                attention=attention,
+                attention_detail=detail,
                 updated_at=now)
     )
     session.commit()

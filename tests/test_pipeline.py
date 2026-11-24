@@ -793,3 +793,38 @@ def test_pipeline_keeps_review_pose(client, app):
     pg = get_page(app, pid)
     assert pg.status == PageStatus.PASSED
     assert pg.attention == "review_pose" and pg.attention_detail == "請看一下：換了新的主角動作"
+
+
+def test_review_frame_is_soft():
+    from app.services.page_state import hard_attention
+
+    assert hard_attention("review_frame") is False
+    assert hard_attention("review_pose") is False
+    assert hard_attention("failed") is True and hard_attention(None) is False
+
+
+def test_pipeline_flags_review_frame(client, app):
+    """一鍵流程：肖像頁的背景找不到框 → 照一般合成、照樣可以印，但標軟標記 review_frame；換上有框的背景 → 清掉。"""
+    from tests.test_page_compose import SEED, ring_png
+
+    b, p, bg, pose = produced(client, app)  # 背景上緣有缺口：不是封閉的框
+    pid = p["id"]
+    r = client.put(f"/api/pages/{pid}/placement?oneclick=true",
+                   json={"cx": 0.5, "cy": 0.66, "height": 0.6, "flip": False, "frame": SEED, "autofit": True})
+    assert r.status_code == 200, r.text
+    assert drain(client, app) == 1
+    pg = get_page(app, pid)
+    assert pg.status == PageStatus.PASSED
+    assert pg.attention == "review_frame"
+    assert pg.attention_detail == "這張背景找不到框，照一般擺放，可以再畫一張背景"
+    ov = next(x for x in client.get(f"/api/books/{b['id']}/overview").json()["pages"] if x["id"] == pid)
+    assert ov["state"] == "ready" and ov["review"] is True  # 軟標記：B 照樣算可以印，卡片顯示請看一下
+
+    # 換一張有框的背景（oneclick 會排流程）
+    r = client.post(f"/api/pages/{pid}/backgrounds/upload?oneclick=true",
+                    files={"file": ("bg.png", ring_png(), "image/png")})
+    assert r.status_code == 201, r.text
+    assert drain(client, app) == 1
+    pg = get_page(app, pid)
+    assert pg.status == PageStatus.PASSED and pg.attention is None and pg.attention_detail is None
+    assert json.loads(pg.placement_json)["height"] > 1.0  # autofit 寫回了框的肖像位置

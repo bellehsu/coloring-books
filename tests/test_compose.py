@@ -387,3 +387,66 @@ def test_target_width_clamped(monkeypatch):
     mask = Image.new("L", (800, 100), 255)  # 8:1，剛好可接受
     compose(_bg(100, 300), pose, mask, Placement(0.5, 0.5, 1.0, False))
     assert max(w for w, _ in seen) <= 300
+
+
+# ---- 放進框裡（肖像）：只把角色貼在框的內圈裡 ---------------------------------------------
+
+# compose() 加上 interior 參數之前算出的雜湊（size＋RGB 位元組）：沒開肖像的輸出必須逐位元組不變
+PRE_INTERIOR_HASHES = {
+    (0.4, 0.55, 0.7, True): "812f37655d2df3d955e3c0ff28dc41aed370b51d3f0a3ccda2d09e3a5e1cf43f",
+    (0.9, 0.95, 1.0, False): "f366ab6783f1b1a14f1f911e4f867bcb29ea8951611e367cdb3a9dacff39a05a",  # 超出右下邊界
+}
+
+
+def _hash(img: Image.Image) -> str:
+    import hashlib
+
+    return hashlib.sha256(str(img.size).encode() + img.tobytes()).hexdigest()
+
+
+@pytest.mark.parametrize("pl", list(PRE_INTERIOR_HASHES))
+def test_compose_without_interior_is_byte_identical(pl):
+    pose, mask = _pose()
+    placement = Placement(*pl)
+    out = compose(_bg(), pose, mask, placement)
+    assert _hash(out) == PRE_INTERIOR_HASHES[pl]
+    assert compose(_bg(), pose, mask, placement, interior=None).tobytes() == out.tobytes()
+
+
+def _ring_bg(w=832, h=1216, axes=(300, 480)) -> Image.Image:
+    import cv2
+
+    arr = np.full((h, w, 3), 255, np.uint8)
+    cv2.ellipse(arr, (w // 2, round(h * 0.49)), axes, 0, 0, 360, (0, 0, 0), 8)
+    return Image.fromarray(arr)
+
+
+def test_compose_clips_to_interior():
+    from app.services.frame_fit import find_interior
+
+    bg = _ring_bg()
+    interior = find_interior(bg, (0.5, 0.55))
+    assert interior is not None
+    pose, mask = _pose()
+    pl = Placement(0.5, 0.6, 1.6, False, frame=(0.5, 0.55))  # 角色比框大很多
+    out = np.asarray(compose(bg, pose, mask, pl, interior=interior))
+    src = np.asarray(bg)
+    # 內圈外（包括框線本身）一個像素都沒變；內圈裡有角色
+    assert np.array_equal(out[~interior], src[~interior])
+    line = src.min(axis=2) < 128
+    assert line.any() and np.array_equal(out[line], src[line])
+    assert (np.abs(out[interior].astype(int) - src[interior]).sum(axis=1) > 0).mean() > 0.5
+
+
+def test_compose_without_interior_clamps_height_above_one():
+    """沒有內圈時 height 超過 1.0 夾到 1.0（框找不到的肖像頁照一般合成）。"""
+    pose, mask = _pose()
+    big = compose(_bg(), pose, mask, Placement(0.5, 0.5, 1.6, False, frame=(0.5, 0.5)))
+    one = compose(_bg(), pose, mask, Placement(0.5, 0.5, 1.0, False))
+    assert big.tobytes() == one.tobytes()
+
+
+def test_compose_interior_must_match_background():
+    pose, mask = _pose()
+    with pytest.raises(ValueError):
+        compose(_bg(), pose, mask, DEFAULT_PLACEMENT, interior=np.ones((10, 10), bool))

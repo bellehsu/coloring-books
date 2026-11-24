@@ -11,8 +11,8 @@
   有素材要排卻一次都不剩 → 429「今天的生成次數已用完，明天再來」（同時有頁面流程可排時照排、回 202）。
   與「產生全部素材」共用 BATCH_LOCK、略過規則與任務組法（services/jobs.py）。
 - `GET /books/{id}/overview`：每頁狀態（working＞attention＞ready＞todo）、做好幾頁（progress_pages）、本輪進度、
-  還有幾頁沒排（不含「要重畫」的，它們另算 redraw_count）。review_pose（換了新的主角動作）是軟標記：
-  算做好、繼續做不因它重排。
+  還有幾頁沒排（不含「要重畫」的，它們另算 redraw_count）。review_pose（換了新的主角動作）與 review_frame
+  （肖像頁的背景找不到框）是軟標記：算做好、繼續做不因它重排；每頁的 review 是「有軟標記」。
 
 本輪進度：queued／running 是「現在」這本書排隊中／執行中的生成（任何種類）與頁面流程；done 是
 book.produce_started_at 之後建立、已結束的生成與頁面流程。produce 有排到東西、而且當時這本書沒有進行中的
@@ -39,7 +39,7 @@ from app.api.urls import generation_image_url, lineart_url_is_current
 from app.models import Generation, GenKind, GenStatus, Owner, PageStatus, PageTask, PageTaskStatus, utcnow
 from app.services import usage
 from app.services.jobs import BATCH_LOCK, BookState, add_queued, build_job, clear_redraw_flag, has_character
-from app.services.page_state import ATTENTION_REVIEW_POSE, GEN_ACTIVE, TASK_ACTIVE, hard_attention, page_state
+from app.services.page_state import GEN_ACTIVE, SOFT_ATTENTIONS, TASK_ACTIVE, hard_attention, page_state
 from app.services.pipeline import enqueue_page_task
 from app.services.slots import not_upload
 from app.services.worker import GenerationWorker
@@ -207,7 +207,7 @@ def book_overview(
             thumb_url=generation_image_url(sel) if sel is not None else None,
             lineart_url=po.lineart_url,
             attention_detail=page.attention_detail if page.attention else None,
-            review=page.attention == ATTENTION_REVIEW_POSE,
+            review=page.attention in SOFT_ATTENTIONS,
         ))
     return BookOverviewOut(
         book_id=book_id,
