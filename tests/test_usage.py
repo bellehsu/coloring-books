@@ -542,6 +542,33 @@ def test_reserve_up_to_grants_what_is_left(tmp_path):
         assert s.get(Usage, (owner_id, TODAY)).generations == 5
 
 
+def test_fitting_prefix_stops_at_first_item_that_does_not_fit():
+    assert usage.fitting_prefix([1, 2, 1], None) == 3
+    assert usage.fitting_prefix([1, 2, 1], 4) == 3
+    assert usage.fitting_prefix([1, 2, 1], 2) == 1  # 第二筆要 2 次放不下：後面便宜的也不排
+    assert usage.fitting_prefix([2, 1], 1) == 0
+    assert usage.fitting_prefix([1, 1, 1], 2) == 2
+
+
+def test_reserve_prefix_reserves_weighted_counts(tmp_path):
+    sessions, owner_id = _db(tmp_path, cap=5)
+    with sessions() as s:
+        owner = s.get(Owner, owner_id)
+        assert usage.reserve_prefix(s, owner, [2, 1, 2, 1], NOW) == (TODAY, 3)  # 2+1+2 = 5；最後一筆放不下
+        s.commit()
+        assert usage.remaining(s, owner, NOW) == 0
+        owner.daily_generation_cap = 6  # 剩 1
+        s.add(owner)
+        s.commit()
+        with pytest.raises(HTTPException) as e:  # 第一筆就要 2 次：整批擋下、說清楚
+            usage.reserve_prefix(s, owner, [2, 1], NOW)
+        assert e.value.status_code == 429 and e.value.detail == "今天只剩 1 次，這次需要 3 次"
+        s.rollback()
+        assert usage.reserve_prefix(s, owner, [1, 2], NOW) == (TODAY, 1)
+        s.commit()
+        assert s.get(Usage, (owner_id, TODAY)).generations == 6
+
+
 def test_reserve_up_to_admin_is_uncapped(tmp_path):
     sessions, owner_id = _db(tmp_path, cap=1)
     with sessions() as s:

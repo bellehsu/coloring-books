@@ -549,10 +549,10 @@ class PoseRedrawOut(BaseModel):
 class ProducePlanOut(BaseModel):
     backgrounds: int  # AI 背景：有場景描述、沒選背景（也沒上傳）、沒有排隊中的
     poses: int  # 角色動作：有動作描述、沒選、沒有排隊中的（要先有角色）
-    total: int
-    estimate_s: int  # 這次按下去會做的張數（min(total, fits)）× 每張約 22 秒
+    total: int  # 要幾次：auto_cleanup 頁的背景算 2 次（背景＋自動清理），其他每張 1 次
+    estimate_s: int  # 這次按下去會做的次數（fits）× 每次約 22 秒
     remaining: int | None  # 今天還能排幾次；admin 不設上限為 None
-    fits: int  # total 裡今天放得下的張數
+    fits: int  # total 裡今天放得下的次數（依頁序，放不下的那筆之後都留到明天）
 
 
 class ProduceOut(BaseModel):

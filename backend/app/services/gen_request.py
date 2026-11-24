@@ -10,6 +10,11 @@ request_json 不只是來源紀錄：核心欄位（kind、prompt、seed…）�
 - `cleanup`（CLEANUP）：背景清理（「清掉框外雜物」）。來源列被刪掉後 source_generation_id 會變 null，
   靠這個旗標仍認得出是清理：worker 讓它失敗而不是當一般背景畫，失敗也不設 attention、不算「再試一次」
   的失敗（services/worker.py、services/pipeline.py、api/history.py 讀）。
+- `cleanup_reserved`（CLEANUP_RESERVED）：`auto_cleanup` 頁的 AI 背景，排隊時已經多預留 1 次給它的自動清理
+  （services/jobs.py 寫）。背景成功、排了清理時這 1 次的計數紀錄（usage_day／usage_owner）帶到清理上、旗標改成
+  false（services/pipeline.py）；背景失敗／取消時連同清理一起退 2 次（services/usage.py 的 refund_generations）。
+- `auto_cleanup`（AUTO_CLEANUP）：自動清理（背景好了自動排的清理，不是按鈕）：好了照新背景的規則選用；
+  失敗時改選用來源背景、照常排頁面流程（services/pipeline.py、services/slots.py 讀）。
 - `usage_day`／`usage_owner`／`usage_refunded`：當日額度的計數與退回依據（services/usage.py 寫、
   `refund_generations` 改寫）；遺失它們就不會退、或重複退。
 - `engine_requeues`／`engine_unavailable_since`：引擎連不上時放回佇列的計數（只有 worker 寫，
@@ -31,11 +36,13 @@ TAKE = "take"  # request_json 的旗標：C 的「換一張／AI 再畫一張」
 CANDIDATE = "candidate"  # request_json 的旗標：重畫主角的第 2、3 張，只當候選、不自動選用
 REVIEW = "review"  # request_json 的旗標：批次重畫主角的 take，換上去時頁面標成 review_pose
 CLEANUP = "cleanup"  # request_json 的旗標：背景清理（「清掉框外雜物」）
+CLEANUP_RESERVED = "cleanup_reserved"  # request_json 的旗標：背景已替它的自動清理多預留 1 次
+AUTO_CLEANUP = "auto_cleanup"  # request_json 的旗標：自動清理（不是按鈕）
 USAGE_DAY = "usage_day"
 USAGE_OWNER = "usage_owner"
 USAGE_REFUNDED = "usage_refunded"
 
-# request_json 的核心欄位（extra 不能蓋掉）。TAKE、CANDIDATE、REVIEW、CLEANUP 與 USAGE_* 是排隊時由 extra 帶入的控制欄位，不在此列
+# request_json 的核心欄位（extra 不能蓋掉）。TAKE、CANDIDATE、REVIEW、CLEANUP*、AUTO_CLEANUP 與 USAGE_* 是排隊時由 extra 帶入的控制欄位，不在此列
 _CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
                         "variation", ENGINE_REQUEUES, ENGINE_UNAVAILABLE_SINCE})
 
@@ -82,6 +89,13 @@ def _flag(gen: Generation, key: str) -> bool:
     return isinstance(d, dict) and d.get(key) is True
 
 
+def with_flag(request_json: str, key: str, value: bool) -> str:
+    """request_json 的控制旗標改成 value（其他欄位不動）。"""
+    d = json.loads(request_json)
+    d[key] = value
+    return json.dumps(d, ensure_ascii=False, sort_keys=True)
+
+
 def wants_take(gen: Generation) -> bool:
     return _flag(gen, TAKE)
 
@@ -97,6 +111,15 @@ def wants_review(gen: Generation) -> bool:
 def is_cleanup(gen: Generation) -> bool:
     """背景清理產生的（或要產生的）generation：有來源列，或來源列已刪掉但 request_json 帶 cleanup 旗標。"""
     return gen.source_generation_id is not None or _flag(gen, CLEANUP)
+
+
+def is_auto_cleanup(gen: Generation) -> bool:
+    """自動清理（auto_cleanup 頁的背景好了自動排的），不是按鈕的。"""
+    return is_cleanup(gen) and _flag(gen, AUTO_CLEANUP)
+
+
+def cleanup_reserved(gen: Generation) -> bool:
+    return _flag(gen, CLEANUP_RESERVED)
 
 
 def is_retired(d: dict) -> bool:
