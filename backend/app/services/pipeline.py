@@ -22,7 +22,8 @@ B 的批次重畫主角的 take 另帶 review=true：換上去的同一個交易
 C 自己按的角色動作 take（沒有 review）換上去時清掉 review_pose（使用者刻意選的，同 C 點選另一個動作）。
 重畫主角一次畫多張的第 2、3 張帶 candidate=true：只當候選，好了不選用、不排流程；失敗也不動頁面
 （不設 failed，「再試一次」也不看它）。
-背景清理（「清掉框外雜物」，is_cleanup）成功時照新背景的規則選用（take 也一樣）；失敗不設 failed、「再試一次」不看它。
+背景清理（「清掉框外雜物」，is_cleanup）成功時：take 同上；不帶 take 的，頁面選用的背景仍是它的來源就換上
+（使用者選的、上傳的也換，舊的留在縮圖），期間改選了別張就不動。失敗不設 failed、「再試一次」不看它。
 重新合成後，page.pending_user_strokes（C 的修改與復原／重做留下的使用者筆畫）寫進新合成圖的 user 層。
 """
 
@@ -245,9 +246,50 @@ def on_generation_succeeded(session: Session, gen_id: int) -> bool:
             session.rollback()
             log.warning("換上新圖失敗（generation %s）", gen_id, exc_info=True)
             auto_select(session, page_id)  # take 的快照已經在 take_generation 裡（失敗時一起 rollback 掉了）
+    elif is_cleanup(gen):
+        # 背景清理（不帶 take）：選用中的背景還是它的來源才換上；期間改選了別張就不動（不走 auto_select：
+        # 清好的是最新一張 AI 圖，會蓋掉使用者剛改選、剛好又是 auto_* 的那張）
+        try:
+            _land_cleanup(session, gen)
+        except Exception:  # noqa: BLE001  換不上去：清好的那張留在縮圖，頁面照常排流程
+            session.rollback()
+            log.warning("換上清理後的背景失敗（generation %s）", gen_id, exc_info=True)
     else:
         auto_select(session, page_id, snapshot=True)
     enqueue_page_task(session, page_id)
+    session.commit()
+    return True
+
+
+def _land_cleanup(session: Session, gen: Generation) -> bool:
+    """清理好的背景換上去：條件是頁面選用的背景仍是清理的來源（使用者選的、上傳的也換）。
+    auto_* 原本指著來源（自動選的）就改指清好的，否則不動（仍算使用者選的）。頁面有選定圖時換之前存復原快照
+    （同 auto_select）；不清「要重畫」（清理不是新的場景）。commit；回傳有沒有換。"""
+    src = gen.source_generation_id
+    page = session.get(Page, gen.page_id)
+    if src is None or page is None or not is_usable(gen, GenKind.BACKGROUND, page.id):
+        return False
+    session.refresh(page)
+    if page.background_generation_id != src:
+        return False
+    if page.selected_generation_id is not None:
+        history.push_snapshot(session, page)
+    auto = col(Page.auto_background_generation_id)
+    still_valid = (
+        select(Generation.id)
+        .where(col(Generation.id) == gen.id, col(Generation.page_id) == page.id,
+               *usable_conditions(GenKind.BACKGROUND))
+        .exists()
+    )
+    res = session.exec(
+        update(Page)
+        .where(col(Page.id) == page.id, col(Page.background_generation_id) == src, still_valid)
+        .values(**slot_change_values("background_generation_id", gen.id, new_selection=False),
+                auto_background_generation_id=case((auto == src, gen.id), else_=auto))
+    )
+    if res.rowcount != 1:
+        session.rollback()  # 同時被改了：快照也不留
+        return False
     session.commit()
     return True
 

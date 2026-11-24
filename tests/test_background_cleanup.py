@@ -141,23 +141,76 @@ def test_cleanup_uses_page_cleanup_prompt(client, app):
     assert gen_row(app, out["id"]).prompt == mine
 
 
-def test_cleanup_oneclick_snapshots_replaces_upload_and_recomposes(client, app):
-    """oneclick（C）：上傳的背景也可以清；好了一定換上去（換之前存快照），重新合成。舊編輯器的不換使用者選的。"""
-    b, p, bg, pose = portrait_page(client, app)
-    pid = p["id"]
+def upload_selected(client, app, pid) -> int:
     r = client.post(f"/api/pages/{pid}/backgrounds/upload", params=C,
                     files={"file": ("mine.png", png_bytes(), "image/png")})
     assert r.status_code == 201, r.text
     drain(client, app)
-    upload = get_page(app, pid).background_generation_id
-    assert upload != bg
+    return get_page(app, pid).background_generation_id
 
-    plain = cleanup(client, pid)  # 舊編輯器：清好的不換掉使用者選的（上傳的）背景
-    assert plain["source_generation_id"] == upload
+
+def test_cleanup_replaces_user_picked_source_and_keeps_it_as_thumbnail(client, app):
+    """舊編輯器（不帶 oneclick）：選用中的背景還是清理的來源，好了就換上（使用者上傳／選的也換），
+    舊的那張留在縮圖；仍算使用者選的（auto_* 不動），換之前存快照，重新合成。"""
+    b, p, bg, pose = portrait_page(client, app)
+    pid = p["id"]
+    upload = upload_selected(client, app, pid)
+    assert upload != bg
+    auto_before = get_page(app, pid).auto_background_generation_id
+    composite_before = get_page(app, pid).selected_generation_id
+    n = history_count(app, pid)
+
+    out = cleanup(client, pid)
+    assert out["source_generation_id"] == upload and not wants_take(gen_row(app, out["id"]))
+    run_jobs(client, app)
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == out["id"]
+    assert pg.auto_background_generation_id == auto_before  # 來源是使用者選的：清好的也算使用者選的
+    assert history_count(app, pid) == n + 1  # 換上去之前存快照
+    old = gen_row(app, upload)
+    assert old.status == GenStatus.SUCCEEDED and not old.discarded  # 舊的那張留在縮圖
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.status == PageStatus.PASSED and pg.selected_generation_id != composite_before  # 重新合成
+    assert pg.background_generation_id == out["id"]
+
+
+def test_cleanup_of_auto_source_stays_auto(client, app):
+    b, p, bg, pose = portrait_page(client, app)
+    pid = p["id"]
+    assert get_page(app, pid).auto_background_generation_id == bg
+    out = cleanup(client, pid)
+    run_jobs(client, app)
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == out["id"] == pg.auto_background_generation_id
+
+
+def test_cleanup_does_not_override_selection_changed_meanwhile(client, app):
+    """清理排隊時使用者改選了別張：好了不換掉（清好的那張留在縮圖）。"""
+    from tests.test_api_compose import gen_background
+
+    b, p, bg, pose = portrait_page(client, app)
+    pid = p["id"]
+    other = gen_background(client, app, pid)  # 自動換上 other
+    drain(client, app)
+    assert client.post(f"/api/pages/{pid}/background", json={"generation_id": bg}).status_code == 200
+    drain(client, app)
+    out = cleanup(client, pid)
+    assert out["source_generation_id"] == bg
+    assert client.post(f"/api/pages/{pid}/background", json={"generation_id": other}).status_code == 200
+    n = history_count(app, pid)
     run_jobs(client, app)
     drain(client, app)
-    assert get_page(app, pid).background_generation_id == upload
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == other and history_count(app, pid) == n
+    assert gen_row(app, out["id"]).status == GenStatus.SUCCEEDED
 
+
+def test_cleanup_oneclick_snapshots_replaces_upload_and_recomposes(client, app):
+    """oneclick（C）：上傳的背景也可以清；好了一定換上去並記成 auto_*（換之前存快照），重新合成。"""
+    b, p, bg, pose = portrait_page(client, app)
+    pid = p["id"]
+    upload = upload_selected(client, app, pid)
     composite_before = get_page(app, pid).selected_generation_id
     n = history_count(app, pid)
     out = cleanup(client, pid, **C)

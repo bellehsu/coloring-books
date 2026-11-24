@@ -142,7 +142,8 @@ def _failed_kinds(session: Session, page_id: int) -> list[GenKind]:
     失敗的背景清理略過（原本的背景好好的，不用重畫）；略過後再往前看，清理之前就失敗的背景照樣算。"""
     out = []
     for kind in (GenKind.BACKGROUND, GenKind.POSE):
-        newest = next((g for g in session.exec(_newest_query(page_id, kind)).all()
+        # 只有背景會有清理；由新到舊逐筆讀，找到第一筆就停
+        newest = next((g for g in session.exec(_newest_query(page_id, kind))
                        if not (g.status == GenStatus.FAILED and is_cleanup(g))), None)
         if newest is not None and newest.status == GenStatus.FAILED:
             out.append(kind)
