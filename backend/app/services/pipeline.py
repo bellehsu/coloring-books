@@ -22,6 +22,7 @@ B 的批次重畫主角的 take 另帶 review=true：換上去的同一個交易
 C 自己按的角色動作 take（沒有 review）換上去時清掉 review_pose（使用者刻意選的，同 C 點選另一個動作）。
 重畫主角一次畫多張的第 2、3 張帶 candidate=true：只當候選，好了不選用、不排流程；失敗也不動頁面
 （不設 failed，「再試一次」也不看它）。
+背景清理（「清掉框外雜物」，is_cleanup）成功時照新背景的規則選用（take 也一樣）；失敗不設 failed、「再試一次」不看它。
 重新合成後，page.pending_user_strokes（C 的修改與復原／重做留下的使用者筆畫）寫進新合成圖的 user 層。
 """
 
@@ -40,7 +41,7 @@ from app.models import (
 )
 from app.services import history
 from app.services.engine import public_engine_error
-from app.services.gen_request import is_candidate, wants_review, wants_take
+from app.services.gen_request import is_candidate, is_cleanup, wants_review, wants_take
 from app.services.slots import SLOTS, newest_usable_ai
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix
 from app.services.lineart_render import apply_strokes
@@ -264,10 +265,11 @@ def enqueue_after_generation(session: Session, gen_id: int) -> bool:
 
 def on_generation_failed(session: Session, gen_id: int) -> None:
     """頁面的背景／角色動作生成失敗：頁面 attention="failed"，說明是生成的中文錯誤訊息。
-    重畫主角的候選失敗不動頁面（頁面用的是 take 或原本的動作，好好的；候選本身照樣 FAILED、退回額度）。"""
+    重畫主角的候選失敗不動頁面（頁面用的是 take 或原本的動作，好好的；候選本身照樣 FAILED、退回額度）。
+    背景清理失敗也不動頁面：原本的背景維持選用，錯誤記在那筆 generation 上（縮圖照現有方式顯示）。"""
     gen = session.get(Generation, gen_id)
     if (gen is None or gen.page_id is None or gen.kind not in SLOTS or gen.status != GenStatus.FAILED
-            or is_candidate(gen)):
+            or is_candidate(gen) or is_cleanup(gen)):
         return
     session.exec(
         update(Page).where(col(Page.id) == gen.page_id)

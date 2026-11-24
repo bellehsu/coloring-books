@@ -15,10 +15,11 @@ from sqlmodel import Session, col, select, update
 
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page
 from app.services import usage
-from app.services.gen_request import CANDIDATE, REVIEW, TAKE, encode_request, is_candidate
+from app.services.gen_request import CANDIDATE, CLEANUP, REVIEW, TAKE, encode_request, is_candidate
 from app.services.layout import compute_layout
 from app.services.page_compose import is_usable
 from app.services.prompts import (
+    GENERIC_CLEANUP_PROMPT,
     POSE_SIZE,
     has_facing,
     pick_background_variation,
@@ -142,6 +143,25 @@ def background_job(session: Session, book: Book, page: Page) -> Job:
         request_json="",
     )
     return Job(gen, variation=variation, extra={"background_style": "simple"})
+
+
+def cleanup_job(session: Session, book: Book, page: Page, source: Generation) -> Job:
+    """背景清理（「清掉框外雜物」）：用 qwen_edit_cleanup 編輯 source（這頁的背景），尺寸與它相同。
+    指令＝頁面的 cleanup_prompt，沒有就用 GENERIC。request_json 帶 cleanup 旗標（來源列被刪掉後仍認得出是清理）。"""
+    gen = Generation(
+        book_id=book.id,
+        page_id=page.id,
+        kind=GenKind.BACKGROUND,
+        user_text="",
+        prompt=page.cleanup_prompt or GENERIC_CLEANUP_PROMPT,
+        negative_prompt="",
+        seed=random.randint(0, MAX_SEED),
+        width=source.width,
+        height=source.height,
+        request_json="",
+        source_generation_id=source.id,
+    )
+    return Job(gen, extra={CLEANUP: True})
 
 
 def pose_job(session: Session, book: Book, page: Page, action: str, *, picked: Sequence[str | None] = ()) -> Job:

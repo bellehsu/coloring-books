@@ -849,6 +849,61 @@
         }
       }
     },
+    "/api/pages/{page_id}/backgrounds/cleanup": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Create Background Cleanup",
+        "description": "「清掉框外雜物」：用這頁目前選用的背景（上傳的也可以）排一筆清理，算 1 次當日額度。\n沒有可用的選用背景 409；不是肖像模式（位置沒有 frame）409。好了的選用規則同新背景；\noneclick（C）：好了一定換上去（換之前存復原快照）、重新合成。",
+        "operationId": "create_background_cleanup_api_pages__page_id__backgrounds_cleanup_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/books/{book_id}/materials/batch": {
       "post": {
         "tags": [

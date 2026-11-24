@@ -958,3 +958,15 @@ async def test_run_once_cleanup_source_missing_fails_clearly(env):
     g = get(sessions, gid)
     assert g.status == GenStatus.FAILED and "背景圖檔案遺失" in g.error
     assert engine.requests == []
+
+
+async def test_run_once_cleanup_whose_source_row_is_gone_fails_instead_of_plain_background(env):
+    """清理的來源列被刪掉（ON DELETE SET NULL）：request_json 的 cleanup 旗標還在，失敗而不是當一般背景畫。"""
+    worker, engine, sessions, storage = env
+    rj = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="", seed=1, width=64, height=64,
+                        extra={"cleanup": True})
+    gid = add_gen(sessions, request_json=rj, kind=GenKind.BACKGROUND)
+    assert await worker.run_once() is True
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED and g.error == "要清理的背景圖檔案遺失，請重新生成背景"
+    assert engine.requests == []

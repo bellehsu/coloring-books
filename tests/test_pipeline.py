@@ -350,6 +350,30 @@ def test_failed_page_generation_sets_attention(client, app):
     assert queued(app, pid) == []  # 失敗不排頁面流程
 
 
+def test_failed_cleanup_generation_does_not_set_attention(client, app):
+    """背景清理失敗（按鈕的）：不設 hard attention；來源列被刪掉（source_generation_id 變 null）的也一樣。"""
+    from app.services.gen_request import encode_request
+
+    b, p, bg, pose = produced(client, app)
+    pid = p["id"]
+    assert get_page(app, pid).attention is None
+    rj = encode_request(kind=GenKind.BACKGROUND, prompt="clean", negative_prompt="", seed=1, width=8, height=8,
+                        extra={"cleanup": True})
+    with app.state.sessions() as s:
+        ids = []
+        for source in (bg, None):
+            g = Generation(book_id=b["id"], page_id=pid, kind=GenKind.BACKGROUND, user_text="", prompt="clean",
+                           negative_prompt="", seed=1, width=8, height=8, request_json=rj,
+                           status=GenStatus.FAILED, error="ComfyUI 執行失敗", source_generation_id=source)
+            s.add(g)
+            s.commit()
+            ids.append(g.id)
+    for gid in ids:
+        with app.state.sessions() as s:
+            pipeline.on_generation_failed(s, gid)
+        assert get_page(app, pid).attention is None
+
+
 def test_engine_unavailable_does_not_set_attention(client, app):
     b, p = book_page(client, app)
     app.state.engine.outcomes.append(EngineUnavailable("ComfyUI 沒有回應"))

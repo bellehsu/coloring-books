@@ -739,6 +739,33 @@ def test_retry_ignores_failure_followed_by_success(client, app):
     assert out["requeued"] == [] and out["pipeline"] is True
 
 
+def test_retry_ignores_failed_cleanup(client, app):
+    """按鈕的清理失敗：「再試一次」不重畫背景（跑流程）；清理之前就失敗的背景照樣重排。"""
+    from app.services.engine import EngineError
+    from tests.test_api_lineart import set_page
+
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    r = client.put(f"/api/pages/{pid}/placement", json={**MOVED, "frame": {"x": 0.5, "y": 0.5}})
+    assert r.status_code == 200, r.text
+    app.state.engine.outcomes.append(EngineError("壞了"))
+    assert client.post(f"/api/pages/{pid}/backgrounds/cleanup", params=C).status_code == 202
+    run_jobs(client, app)
+    drain(client, app)
+    set_page(app, pid, attention="failed", attention_detail="x")
+    out = retry(client, pid)
+    assert out["requeued"] == [] and out["pipeline"] is True
+    drain(client, app)
+
+    app.state.engine.outcomes.extend([EngineError("壞了"), EngineError("又壞了")])
+    assert client.post(f"/api/pages/{pid}/backgrounds", params=C).status_code == 202  # 換一張失敗
+    run_jobs(client, app)
+    assert client.post(f"/api/pages/{pid}/backgrounds/cleanup", params=C).status_code == 202  # 清理也失敗
+    run_jobs(client, app)
+    out = retry(client, pid)
+    assert out["requeued"] == ["background"] and out["pipeline"] is False
+
+
 def test_retry_without_images_is_409(client, app):
     from tests.test_pipeline import book_page
 

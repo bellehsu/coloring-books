@@ -51,6 +51,7 @@ from app.services.jobs import (
     Job,
     background_job,
     build_job,
+    cleanup_job,
     enqueue_jobs,
     has_character,
     redraw_jobs,
@@ -101,6 +102,31 @@ def create_background(
     page = owned_page(session, owner, page_id)
     book = owned_book(session, owner, page.book_id)
     gens = enqueue_jobs(session, worker, owner, [take(background_job(session, book, page), oneclick)])
+    return GenerationOut.for_worker(gens[0], worker)
+
+
+NOT_PORTRAIT = "有框的背景（肖像模式）才能清"
+
+
+@router.post("/pages/{page_id}/backgrounds/cleanup", status_code=202, response_model=GenerationOut)
+def create_background_cleanup(
+    page_id: int,
+    oneclick: bool = OneClick,
+    session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
+) -> GenerationOut:
+    """「清掉框外雜物」：用這頁目前選用的背景（上傳的也可以）排一筆清理，算 1 次當日額度。
+    沒有可用的選用背景 409；不是肖像模式（位置沒有 frame）409。好了的選用規則同新背景；
+    oneclick（C）：好了一定換上去（換之前存復原快照）、重新合成。"""
+    page = owned_page(session, owner, page_id)
+    book = owned_book(session, owner, page.book_id)
+    bg = session.get(Generation, page.background_generation_id) if page.background_generation_id else None
+    if not is_usable(bg, GenKind.BACKGROUND, page_id):
+        raise HTTPException(409, NEED_BACKGROUND)
+    if page_placement(page.placement_json).frame is None:
+        raise HTTPException(409, NOT_PORTRAIT)
+    gens = enqueue_jobs(session, worker, owner, [take(cleanup_job(session, book, page, bg), oneclick)])
     return GenerationOut.for_worker(gens[0], worker)
 
 

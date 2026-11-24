@@ -28,6 +28,7 @@ from app.services.gen_request import (
     ENGINE_REQUEUES,
     ENGINE_UNAVAILABLE_SINCE,
     decode_request,
+    is_cleanup,
     is_retired,
 )
 from app.services.compose import largest_component
@@ -254,9 +255,12 @@ class GenerationWorker:
                     return s.get(Generation, gen_id)
 
     def _source_key(self, gen: Generation) -> str | None:
-        """背景清理：來源 generation 的圖檔 key；沒有來源回 None，來源沒有圖就當檔案遺失。"""
-        if gen.source_generation_id is None:
+        """背景清理：來源 generation 的圖檔 key；不是清理回 None。來源沒有圖、或來源列已被刪掉
+        （source_generation_id 變 null、只剩 request_json 的 cleanup 旗標）就當檔案遺失：失敗，不當一般背景畫。"""
+        if not is_cleanup(gen):
             return None
+        if gen.source_generation_id is None:
+            raise StorageNotFound("cleanup source generation deleted")
         with self.sessions() as s:
             src = s.get(Generation, gen.source_generation_id)
             if src is None or not src.image_path:
@@ -290,8 +294,7 @@ class GenerationWorker:
                 source_key = await asyncio.to_thread(self._source_key, gen)
                 req = await asyncio.to_thread(decode_request, gen.request_json, self.storage, source_key)
             except StorageNotFound:
-                await self._fail_retrying(
-                    gen_id, SOURCE_MISSING if gen.source_generation_id is not None else CHARACTER_MISSING)
+                await self._fail_retrying(gen_id, SOURCE_MISSING if is_cleanup(gen) else CHARACTER_MISSING)
                 return True
             except ValueError as e:
                 if str(e) == RETIRED:  # 已停用的路線：只回報原因
