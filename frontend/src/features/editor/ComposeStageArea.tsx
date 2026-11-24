@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { DEFAULT_PLACEMENT, type Generation, type Page, type Placement } from "@/api/client";
+import { DEFAULT_PLACEMENT, frameFit, frameMaskUrl, type Generation, type Page, type Placement } from "@/api/client";
 import { isActive } from "@/api/hooks";
 import { ComposePreview, ComposeStage, ComposeStatus, type AutoComposeStatus } from "@/features/editing/ComposeStage";
 import { errMsg } from "@/features/editing/errMsg";
@@ -28,7 +28,9 @@ export interface ComposeStageAreaProps {
 /**
  * ① 構圖的舞台：兩個都選了才能擺位置（ComposeStage＋自動合成狀態）；只有一個時有什麼就顯示什麼；
  * 圖片缺漏（沒有圖、沒有遮罩 → 沒有 cutout_url）由 ComposeStage 說明要重新產生。
- * 角色位置：還沒存好時畫面用最後存的值（placementSaver），否則用伺服器的。
+ * 角色位置：還沒存好時畫面用最後存的值（placementSaver），否則用伺服器的。存好之後一定改用伺服器的，
+ * 所以肖像（autofit）合成時後端寫回的對齊位置會直接出現在舞台上，不會被這裡留著的舊值蓋掉或重送。
+ * 「放進框裡」：frame-fit 用這頁存的背景與角色動作；遮罩用選用背景＋位置的 frame 種子點。
  */
 export function ComposeStageArea({
   page,
@@ -89,6 +91,8 @@ export function ComposeStageArea({
         cutoutUrl={poseGen.cutout_url}
         placement={placement}
         onChange={(p) => onPlace(p)}
+        onFrameFit={() => frameFit(page.id)}
+        frameMaskUrl={placement.frame ? frameMaskUrl(backgroundGen.id, placement.frame) : null}
         status={
           <ComposeStatus
             status={composeStatus}

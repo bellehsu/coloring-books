@@ -50,12 +50,32 @@
   outline: 3px solid var(--focus);
   outline-offset: 0;
 }
+/* 只放去背圖的圖層，與舞台（背景）同大小：肖像時套框內遮罩（L 模式 PNG，白＝框內 → 以亮度當遮罩） */
+.cutLayer {
+  --frame-mask: none; /* 框內遮罩 url(...)；元件在遮罩載入後以 inline style 覆寫 */
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.cutLayer[data-masked="true"] {
+  -webkit-mask-image: var(--frame-mask);
+  mask-image: var(--frame-mask);
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-source-type: luminance;
+  mask-mode: luminance;
+}
+/* 去背圖的位置與角色框相同（同一組百分比）；角色框本身是透明的，疊在上面接拖曳與焦點 */
 .cutout {
+  position: absolute;
   display: block;
-  width: 100%;
-  height: 100%;
   pointer-events: none;
   -webkit-user-drag: none;
+}
+.cutout[data-ready="false"] {
+  visibility: hidden;
 }
 .cutout[data-flip="true"] {
   transform: scaleX(-1);
@@ -144,8 +164,12 @@
   font-size: 14px;
   cursor: pointer;
 }
-.mini:hover {
+.mini:hover:not(:disabled) {
   background: var(--accent-softer);
+}
+.mini:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .mini:focus-visible {
   outline: 3px solid var(--focus);

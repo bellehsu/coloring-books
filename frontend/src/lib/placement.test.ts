@@ -100,6 +100,16 @@ describe("cornerResize", () => {
   it("clamps to the minimum height", () => {
     expect(cornerResize(start, 0.5, -1, -1).height).toBe(0.1);
   });
+
+  it("caps at 1 without a frame and at 2 in portrait (frame set), keeping frame/autofit", () => {
+    expect(cornerResize(start, 0.5, 0, 5).height).toBe(1);
+    const portrait = { ...start, frame: { x: 0.5, y: 0.55 }, autofit: false };
+    const big = cornerResize(portrait, 0.5, 0, 1.2); // 0.4 + 1.2 = 1.6
+    expect(big.height).toBeCloseTo(1.6);
+    expect(big.frame).toEqual({ x: 0.5, y: 0.55 });
+    expect(big.autofit).toBe(false);
+    expect(cornerResize(portrait, 0.5, 0, 5).height).toBe(2);
+  });
 });
 
 describe("position presets", () => {

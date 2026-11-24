@@ -3,6 +3,7 @@ import type { OverviewPage, Page } from "@/api/client";
 import { Button } from "@/components/ui/Button";
 import { STATE_LABEL, type PageState } from "@/features/book/overviewState";
 import { fixHref, type FixFilter } from "@/lib/fixHref";
+import { softAttention } from "@/lib/pageState";
 import { pageTitle } from "./fixState";
 import styles from "./FixPage.module.css";
 
@@ -30,14 +31,14 @@ export function FixHeader({
   onUndo: () => void;
   onRedo: () => void;
 }) {
-  const shown: PageState = page.attention === "review_pose" && state === "ready" ? "attention" : state;
+  const shown: PageState = softAttention(page) && state === "ready" ? "attention" : state;
   return (
     <header className={styles.head}>
       <Link href={`/books/${bookId}`} className={styles.back}>
         <span aria-hidden="true">←</span> 整本書
       </Link>
       <h1 className={styles.h1}>{pageTitle(page)}</h1>
-      {/* 批次重畫換了新動作（review_pose）而且可以印：和 B 的卡片一樣顯示「請看一下」 */}
+      {/* 軟標記（換了新動作 review_pose、背景找不到框 review_frame）而且可以印：和 B 的卡片一樣顯示「請看一下」 */}
       <span className={`${styles.pill} ${styles[`pill_${shown}`]}`}>{STATE_LABEL[shown]}</span>
       <div className={styles.headActions}>
         <Button className={styles.headBtn} disabled={!page.can_undo || busy} aria-busy={textSaving} onClick={onUndo}>

@@ -63,6 +63,7 @@ export function placementBox(
  * 拖右下角把手：左上角固定、等比縮放。
  * k＝角色框寬（相對舞台寬）／高（相對舞台高）＝ poseAspect × 舞台高 ／ 舞台寬。
  * 水平與垂直拉動各換算成一個新高度，取較大者（把手跟著拉得比較多的方向）。
+ * 高度上限同 clampPlacement：肖像（有 frame）到 2，否則 1。
  */
 export function cornerResize(start: Placement, k: number, dxRel: number, dyRel: number): Placement {
   const w = start.height * k;
@@ -70,7 +71,8 @@ export function cornerResize(start: Placement, k: number, dxRel: number, dyRel: 
   const top = start.cy - start.height / 2;
   const fromY = start.height + dyRel;
   const fromX = (w + dxRel) / k;
-  const h = Math.min(PLACEMENT_MAX_HEIGHT, Math.max(PLACEMENT_MIN_HEIGHT, Math.max(fromX, fromY)));
+  const max = start.frame ? PLACEMENT_MAX_HEIGHT_PORTRAIT : PLACEMENT_MAX_HEIGHT;
+  const h = Math.min(max, Math.max(PLACEMENT_MIN_HEIGHT, Math.max(fromX, fromY)));
   return clampPlacement({ ...start, height: h, cx: left + (h * k) / 2, cy: top + h / 2 });
 }
 

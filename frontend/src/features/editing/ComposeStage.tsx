@@ -10,6 +10,7 @@ import {
 } from "react";
 import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
 import {
+  clampPlacement,
   cornerResize,
   currentSide,
   currentSize,
@@ -21,6 +22,7 @@ import {
   type PresetSide,
   type PresetSize,
 } from "@/lib/placement";
+import { errMsg } from "./errMsg";
 import stage from "./stage.module.css";
 import styles from "./ComposeStage.module.css";
 
@@ -45,11 +47,23 @@ export interface ComposeStageProps {
   onChange: (p: Placement, via?: "key") => void;
   /** 舞台下方、翻轉／重設旁的狀態（自動合成、位置存檔失敗）。 */
   status?: ReactNode;
+  /**
+   * 「放進框裡（肖像）」：算好的肖像位置（POST /pages/{id}/frame-fit，不存）；null＝這張背景找不到框。
+   * 沒給（背景或角色動作還沒選好）時不顯示按鈕。結果經 onChange 存檔＋自動合成。
+   */
+  onFrameFit?: () => Promise<Placement | null>;
+  /**
+   * 肖像開著時背景的框內遮罩（GET /generations/{id}/frame-mask，與背景同尺寸，白＝框內），角色圖層用它裁切預覽。
+   * 載入失敗（404＝這張背景找不到框）→ 不裁，狀態列說明。
+   */
+  frameMaskUrl?: string | null;
 }
 
 type Size = { w: number; h: number };
 /** 每張圖的載入狀態以網址為 key：換圖時自然回到「載入中」。 */
 type Loaded = { url: string; size?: Size; error?: boolean };
+/** 「放進框裡」的結果說明，以背景網址為 key：換背景就不再顯示。 */
+type FitNote = { url: string; text: string };
 
 interface Drag {
   kind: "move" | "resize";
@@ -67,6 +81,12 @@ const KEY_RESIZE = 0.05;
 
 const SIDES: [PresetSide, string][] = [["left", "靠左"], ["center", "置中"], ["right", "靠右"]];
 const SIZES: [PresetSize, string][] = [["small", "小"], ["medium", "中"], ["large", "大"]];
+
+/** 找不到框（frame-fit 422、frame-mask 404）時狀態列的說明（spec §5.5）。 */
+const NO_FRAME = "這張背景找不到框，照一般擺放";
+const HINT =
+  "拖曳角色移動，拉右下角圓點縮放；也可以按下方的「位置」「大小」按鈕快速擺放，或選取角色後用方向鍵移動（Shift 一次 5%）、＋／－ 縮放。放開後自動合成，不用另外按確認。";
+const HINT_PORTRAIT = "肖像：主角自動放大，框外的部分裁掉。可以拖曳或拉圓點微調；再按一次『放進框裡』關掉。";
 
 const same = (a: Placement, b: Placement) =>
   a.cx === b.cx &&
@@ -87,13 +107,27 @@ function readSize(img: HTMLImageElement): Size | undefined {
  * 拖曳角色移動、拖右下角把手等比縮放（左上角固定）；角色框可聚焦：方向鍵移動 1%、Shift＋方向鍵 5%、+／- 縮放 5%。
  * 下方快捷鈕：位置（靠左／置中／靠右）與大小（小／中／大），見 lib/placement 的 withSide／withSize。
  * 位置用百分比擺放，舞台寬度跟著容器（手機寬也一樣）；超出背景的部分裁掉（與合成結果相同）。
+ * 「放進框裡（肖像）」（spec 2026-11-24-portrait-frame-fit §5.5）：placement.frame 不是 null＝肖像開著；
+ * 去背圖在一個與舞台同大小的圖層裡，套上框內遮罩裁切（角色框、圓點把手不在圖層裡，不會被裁掉）；
+ * 肖像開著時位置／大小快捷鈕停用，拖曳、圓點、方向鍵、＋／－ 照常但都送 autofit: false（保留 frame）。
  */
-export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, status }: ComposeStageProps) {
+export function ComposeStage({
+  backgroundUrl,
+  cutoutUrl,
+  placement,
+  onChange,
+  status,
+  onFrameFit,
+  frameMaskUrl,
+}: ComposeStageProps) {
   const hintId = useId();
   const [bg, setBg] = useState<Loaded | null>(null);
   const [cut, setCut] = useState<Loaded | null>(null);
+  const [mask, setMask] = useState<Loaded | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
+  const [fitting, setFitting] = useState(false);
+  const [fitNote, setFitNote] = useState<FitNote | null>(null);
 
   if (!backgroundUrl) return <Msg>背景圖片無法載入，請重新產生</Msg>;
   if (!cutoutUrl) return <Msg>角色動作缺少去背遮罩，請重新產生</Msg>;
@@ -109,6 +143,13 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
   /** 角色框寬（相對背景寬）／高（相對背景高）。 */
   const k = bgSize ? (aspect * bgSize.h) / bgSize.w : aspect;
   const shown = drag?.draft ?? placement;
+  const portrait = placement.frame != null;
+  const maskState = portrait && frameMaskUrl && mask?.url === frameMaskUrl ? mask : null;
+  /** 遮罩載入好了才裁（還沒載入或載入失敗都不裁）。 */
+  const masked = maskState?.size != null;
+  const note = maskState?.error ? NO_FRAME : fitNote?.url === backgroundUrl ? fitNote.text : null;
+  /** 肖像開著的手動調整：送 autofit: false，伺服器合成時不再依框重新對齊（frame 保留）。 */
+  const manual = (p: Placement): Placement => (p.frame ? { ...p, autofit: false } : p);
 
   const draftOf = (d: Drag, e: PointerEvent<HTMLElement>) => {
     const dx = (e.clientX - d.x) / d.rect.width;
@@ -136,7 +177,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     const next = draftOf(drag, e);
     setDrag(null);
-    if (!same(next, drag.start)) onChange(next);
+    if (!same(next, drag.start)) onChange(manual(next));
   };
   const cancel = (e: PointerEvent<HTMLElement>) => {
     if (drag && e.pointerId === drag.pointerId) setDrag(null);
@@ -172,7 +213,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
     }
     if (!next) return;
     e.preventDefault();
-    if (!same(next, placement)) onChange(next, "key");
+    if (!same(next, placement)) onChange(manual(next), "key");
   };
 
   // 背景像素座標下的角色框 → 百分比（與後端同樣以背景尺寸計算）
@@ -183,6 +224,26 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
   const apply = (next: Placement) => {
     if (drag) return;
     if (!same(next, placement)) onChange(next);
+  };
+  /** 「放進框裡」：關 → 開 找框並套用；開 → 關 回到預設位置（保留翻轉，frame／autofit 清掉）。 */
+  const togglePortrait = async () => {
+    if (drag || fitting || !onFrameFit) return;
+    if (portrait) {
+      apply({ ...DEFAULT_PLACEMENT, flip: placement.flip });
+      return;
+    }
+    const url = backgroundUrl;
+    setFitNote(null);
+    setFitting(true);
+    try {
+      const fit = await onFrameFit();
+      if (fit) onChange(clampPlacement({ ...fit, flip: placement.flip }));
+      else setFitNote({ url, text: NO_FRAME });
+    } catch (e) {
+      setFitNote({ url, text: errMsg(e, "找框失敗，請再試一次") });
+    } finally {
+      setFitting(false);
+    }
   };
   const boxStyle = ready
     ? { left: pct(b.left / bw), top: pct(b.top / bh), width: pct(b.width / bw), height: pct(b.height / bh) }
@@ -209,6 +270,27 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
           onError={() => setBg({ url: backgroundUrl, error: true })}
         />
         <div ref={setOverlay} className={styles.overlay} data-testid="compose-overlay">
+          {/* 只放去背圖的圖層（與舞台同大小）：肖像時套框內遮罩，遮罩與背景對齊 */}
+          <div
+            className={styles.cutLayer}
+            data-testid="cutout-layer"
+            data-masked={masked}
+            style={masked ? ({ "--frame-mask": `url("${frameMaskUrl}")` } as CSSProperties) : undefined}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={cutoutUrl}
+              alt=""
+              data-testid="cutout"
+              data-flip={shown.flip}
+              data-ready={ready}
+              className={styles.cutout}
+              style={boxStyle}
+              draggable={false}
+              onLoad={(e) => setCut({ url: cutoutUrl, size: readSize(e.currentTarget) })}
+              onError={() => setCut({ url: cutoutUrl, error: true })}
+            />
+          </div>
           <div
             role="group"
             aria-roledescription="可移動的角色"
@@ -225,19 +307,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
             onPointerCancel={cancel}
             onLostPointerCapture={cancel}
             onKeyDown={onKeyDown}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={cutoutUrl}
-              alt=""
-              data-testid="cutout"
-              data-flip={shown.flip}
-              className={styles.cutout}
-              draggable={false}
-              onLoad={(e) => setCut({ url: cutoutUrl, size: readSize(e.currentTarget) })}
-              onError={() => setCut({ url: cutoutUrl, error: true })}
-            />
-          </div>
+          />
           {ready && (
             <div
               aria-hidden="true"
@@ -252,6 +322,18 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
             />
           )}
         </div>
+        {portrait && frameMaskUrl && (
+          // 先載入遮罩：成功才裁（CSS mask 載入失敗會把角色整個遮掉），404＝這張背景找不到框
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            hidden
+            src={frameMaskUrl}
+            alt=""
+            data-testid="frame-mask-probe"
+            onLoad={(e) => setMask({ url: frameMaskUrl, size: readSize(e.currentTarget) ?? { w: 1, h: 1 } })}
+            onError={() => setMask({ url: frameMaskUrl, error: true })}
+          />
+        )}
         {!ready && (
           <p className={styles.loading} aria-busy="true">
             載入中…
@@ -264,6 +346,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
           title="位置"
           options={SIDES}
           current={currentSide(placement)}
+          disabled={portrait}
           onPick={(side) => apply(withSide(placement, side))}
         />
         <PresetGroup
@@ -271,6 +354,7 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
           title="大小"
           options={SIZES}
           current={currentSize(placement)}
+          disabled={portrait}
           onPick={(size) => apply(withSize(placement, size))}
         />
       </div>
@@ -290,10 +374,27 @@ export function ComposeStage({ backgroundUrl, cutoutUrl, placement, onChange, st
         >
           重設位置
         </button>
+        {onFrameFit && (
+          <>
+            <button
+              type="button"
+              className={styles.mini}
+              aria-pressed={portrait}
+              disabled={fitting}
+              aria-busy={fitting}
+              onClick={() => void togglePortrait()}
+            >
+              放進框裡（肖像）
+            </button>
+            <span role="status" data-testid="portrait-status" className={styles.status}>
+              {note}
+            </span>
+          </>
+        )}
         {status}
       </div>
       <p id={hintId} className={styles.hint}>
-        拖曳角色移動，拉右下角圓點縮放；也可以按下方的「位置」「大小」按鈕快速擺放，或選取角色後用方向鍵移動（Shift 一次 5%）、＋／－ 縮放。放開後自動合成，不用另外按確認。
+        {portrait ? HINT_PORTRAIT : HINT}
       </p>
     </div>
   );
@@ -386,12 +487,15 @@ function PresetGroup<K extends string>({
   title,
   options,
   current,
+  disabled = false,
   onPick,
 }: {
   label: string;
   title: string;
   options: [K, string][];
   current: K | null;
+  /** 肖像開著時停用（位置由框決定）。 */
+  disabled?: boolean;
   onPick: (k: K) => void;
 }) {
   return (
@@ -400,7 +504,14 @@ function PresetGroup<K extends string>({
         {title}
       </span>
       {options.map(([k, text]) => (
-        <button key={k} type="button" className={styles.mini} aria-pressed={current === k} onClick={() => onPick(k)}>
+        <button
+          key={k}
+          type="button"
+          className={styles.mini}
+          aria-pressed={current === k}
+          disabled={disabled}
+          onClick={() => onPick(k)}
+        >
           {text}
         </button>
       ))}
