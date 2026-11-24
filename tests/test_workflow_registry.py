@@ -314,3 +314,21 @@ def test_birefnet_source_matches_comfy_blueprint():
     wf = WorkflowRegistry(REPO / "comfy_workflows").load().get("qwen_edit_pose_cutout")
     m = next(m for m in wf.models if m["filename"] == "birefnet.safetensors")
     assert (m["folder"], m["source"]) == ("background_removal", BIREFNET_URL)
+
+
+def test_qwen_cleanup_manifest_loads_and_maps_titles():
+    wf = WorkflowRegistry(REPO / "comfy_workflows").load().get("qwen_edit_cleanup")
+    assert wf.ok, wf.errors
+    assert set(wf.manifest["parameters"]) == {"prompt", "source_image", "lora_strength", "width", "height",
+                                              "seed", "steps", "cfg"}
+    assert [o["title"] for o in wf.manifest["outputs"]] == ["OUTPUT"]
+    pose = WorkflowRegistry(REPO / "comfy_workflows").load().get("qwen_edit_pose_cutout")
+    assert [m["filename"] for m in wf.manifest["models"]] == \
+        [m["filename"] for m in pose.manifest["models"] if m["id"] != "birefnet"]
+    built = wf.build_prompt({"prompt": "p", "seed": 1, "width": 1216, "height": 832, "source_image": "s.png"})
+    by_title = {n["_meta"]["title"]: n for n in built.prompt.values()}
+    assert by_title["SOURCE_IMAGE"]["inputs"]["image"] == "s.png"
+    assert by_title["POSITIVE"]["inputs"]["prompt"] == "p" and by_title["NEGATIVE"]["inputs"]["prompt"] == ""
+    assert (by_title["LATENT"]["inputs"]["width"], by_title["LATENT"]["inputs"]["height"]) == (1216, 832)
+    assert not {"BG_REMOVAL_MODEL", "REMOVE_BG", "MASK_TO_IMAGE", "MASK"} & set(by_title)
+    _assert_no_orphans(built.prompt)

@@ -189,3 +189,22 @@ async def test_missing_workflow_is_engine_error(tmp_path):
     with pytest.raises(EngineError, match="qwen_character"):
         await make_engine(fake, registry).generate(make_req(tmp_path))
     assert fake.prompts == []
+
+
+async def test_background_with_source_image_runs_cleanup_workflow(tmp_path):
+    fake = FakeComfy()
+    req = make_req(tmp_path, kind=GenKind.BACKGROUND, width=864, source_image=png_bytes())
+    res = await make_engine(fake).generate(req)
+    assert len(fake.uploads) == 1 and fake.uploads[0]["name"].endswith("_src.png")
+    sent = fake.prompts[0]["prompt"]
+    assert by_title(sent, "SOURCE_IMAGE")["image"].endswith("_src.png")
+    assert by_title(sent, "OUTPUT")["filename_prefix"] == "coloring_books/cleanup"
+    assert not any(n["_meta"]["title"] in ("REMOVE_BG", "MASK") for n in sent.values())
+    assert res.workflow_name == "qwen_edit_cleanup" and res.extra_images == {}
+    assert (res.params["width"], res.params["height"]) == (864, 1216)
+
+
+async def test_background_without_source_image_stays_qwen_background(tmp_path):
+    fake = FakeComfy()
+    res = await make_engine(fake).generate(make_req(tmp_path, kind=GenKind.BACKGROUND))
+    assert res.workflow_name == "qwen_background" and fake.uploads == []

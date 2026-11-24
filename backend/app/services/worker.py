@@ -69,6 +69,7 @@ def _now() -> datetime:
 
 
 CHARACTER_MISSING = "角色參考圖檔案遺失，請重新選擇角色"
+SOURCE_MISSING = "要清理的背景圖檔案遺失，請重新生成背景"
 
 
 class GenerationWorker:
@@ -252,6 +253,16 @@ class GenerationWorker:
                 if res.rowcount == 1:
                     return s.get(Generation, gen_id)
 
+    def _source_key(self, gen: Generation) -> str | None:
+        """背景清理：來源 generation 的圖檔 key；沒有來源回 None，來源沒有圖就當檔案遺失。"""
+        if gen.source_generation_id is None:
+            return None
+        with self.sessions() as s:
+            src = s.get(Generation, gen.source_generation_id)
+            if src is None or not src.image_path:
+                raise StorageNotFound(f"source generation {gen.source_generation_id}")
+            return src.image_path
+
     def _finish(self, gen_id: int, **values) -> bool:
         """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋），回傳有沒有改到。
         改成 FAILED 時在同一個交易退回當天額度（只有真的改到這一列才退）。"""
@@ -276,9 +287,11 @@ class GenerationWorker:
         try:
             try:
                 # Storage 可能是遠端（R2）：讀寫放到 thread，不卡住 event loop
-                req = await asyncio.to_thread(decode_request, gen.request_json, self.storage)
+                source_key = await asyncio.to_thread(self._source_key, gen)
+                req = await asyncio.to_thread(decode_request, gen.request_json, self.storage, source_key)
             except StorageNotFound:
-                await self._fail_retrying(gen_id, CHARACTER_MISSING)
+                await self._fail_retrying(
+                    gen_id, SOURCE_MISSING if gen.source_generation_id is not None else CHARACTER_MISSING)
                 return True
             except ValueError as e:
                 if str(e) == RETIRED:  # 已停用的路線：只回報原因

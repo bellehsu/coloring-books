@@ -136,11 +136,11 @@ async def test_repo_route_a_without_ipadapter_node(object_info_subset):
     assert any(m.id == "ipadapter_plus_sdxl" for m in w.missing_models)
 
 
-QWEN_WORKFLOWS = {"qwen_character", "qwen_background", "qwen_edit_pose_cutout"}
+QWEN_WORKFLOWS = {"qwen_character", "qwen_background", "qwen_edit_pose_cutout", "qwen_edit_cleanup"}
 
 
 async def test_preflight_lists_only_qwen():
-    """Phase 9：comfy_workflows/ 只剩三個 Qwen workflow；preflight 只檢查它們的模型（不再有 SDXL、IP-Adapter、ControlNet）。"""
+    """Phase 9：comfy_workflows/ 只剩四個 Qwen workflow；preflight 只檢查它們的模型（不再有 SDXL、IP-Adapter、ControlNet）。"""
     reg = WorkflowRegistry(REPO / "comfy_workflows").load()
     assert set(reg.entries) == QWEN_WORKFLOWS
     fake = FakeComfy(object_info={})
@@ -206,3 +206,15 @@ async def test_list_models_non_json_is_connection_error():
     async with ComfyClient("http://x", transport=httpx.MockTransport(html)) as c:
         with pytest.raises(ComfyConnectionError):
             await c.list_models("checkpoints")
+
+
+async def test_preflight_cleanup_workflow_needs_no_birefnet():
+    reg = WorkflowRegistry(REPO / "comfy_workflows").load()
+    async with FakeComfy(object_info={}).client() as c:
+        rep = await run_preflight(c, reg)
+    w = next(w for w in rep.workflows if w.name == "qwen_edit_cleanup")
+    assert {m.filename for m in w.missing_models} == {
+        "qwen-image-edit-2511-Q4_K_M.gguf", "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors", "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"}
+    assert {n.class_type for n in w.missing_nodes} >= {"UnetLoaderGGUF", "TextEncodeQwenImageEditPlus"}
+    assert "RemoveBackground" not in {n.class_type for n in w.missing_nodes}

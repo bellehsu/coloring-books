@@ -62,8 +62,11 @@ class FakeEngine:
         if req.kind == GenKind.POSE and self.pose_mask:
             with Image.open(io.BytesIO(self.image)) as im:  # 遮罩與角色圖同尺寸（合成時會檢查）
                 extra["mask"] = self.mask_override or make_mask_png(im.size)
+        image = self.image
+        if req.kind == GenKind.BACKGROUND and req.source_image is not None:
+            image = req.source_image  # 背景清理：回傳來源圖（尺寸相同的有效 PNG）
         return GenerationResult(
-            image=self.image,
+            image=image,
             extra_images=extra,
             elapsed_s=0.25,
             engine="fake",

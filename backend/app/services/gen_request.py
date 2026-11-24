@@ -97,8 +97,10 @@ def is_retired(d: dict) -> bool:
         or d.get("background_style") == "detailed"
 
 
-def decode_request(text: str, storage: Storage) -> GenerationRequest:
+def decode_request(text: str, storage: Storage, source_key: str | None = None) -> GenerationRequest:
     """還原 GenerationRequest；character_image 的 key 從 Storage 讀成 bytes。
+    source_key 是背景清理要編輯的那筆 generation 的圖檔 key（worker 由 Generation.source_generation_id 查出，
+    不放在 request_json，避免與資料列重複）；同樣讀成 bytes 放進 source_image。
     key 不合法丟 ValueError；物件不存在丟 StorageNotFound。
     需要已停用路線的請求丟 ValueError(RETIRED)。舊列多出的 structure_* 等欄位忽略。"""
     d = json.loads(text)
@@ -112,5 +114,6 @@ def decode_request(text: str, storage: Storage) -> GenerationRequest:
         width=d["width"],
         height=d["height"],
         character_image=None if rel is None else storage.get(rel),
+        source_image=None if source_key is None else storage.get(source_key),
         variation=d.get("variation"),
     )
