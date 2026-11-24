@@ -46,7 +46,8 @@ export interface paths {
         head?: never;
         /**
          * Update Book
-         * @description 改尺寸／列印方式：頁面流程做的可以印的頁排流程重跑（跑完仍可以印，不悄悄退回「還沒做完」），
+         * @description 改尺寸／列印方式：同一個交易把所有修線筆畫換算到新的內容框（stroke_remap，review C1），
+         *     頁面流程做的可以印的頁排流程重跑（跑完仍可以印，不悄悄退回「還沒做完」），
          *     其他有選圖的頁在背景重算線稿（舊編輯器的規則：可以印的頁有缺口就退回草稿）。
          */
         patch: operations["update_book_api_books__book_id__patch"];
@@ -229,8 +230,8 @@ export interface paths {
          * @description oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；
          *     線條設定變了，流程做的頁排流程重跑（不退回草稿）。
          *     from_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而
-         *     頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標；沒帶 from_setup 時不標；
-         *     與 oneclick 一起帶是 400。
+         *     頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標（改成空白也清掉那一格的旗標：
+         *     沒有東西可以畫）；沒帶 from_setup 時不標；與 oneclick 一起帶是 400。
          */
         patch: operations["update_page_api_pages__page_id__patch"];
         trace?: never;
@@ -1308,6 +1309,11 @@ export interface components {
             generation_id: number;
             /** Strokes */
             strokes: components["schemas"]["StrokeIn"][];
+            /** Content Px */
+            content_px?: [
+                number,
+                number
+            ] | null;
         };
         /** EditsOut */
         EditsOut: {
@@ -1315,6 +1321,16 @@ export interface components {
             generation_id: number;
             /** Strokes */
             strokes: components["schemas"]["StrokeOut"][];
+        };
+        /**
+         * FramePoint
+         * @description 背景上畫好的框內一點（相對背景 0–1）。
+         */
+        FramePoint: {
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
         };
         /**
          * GenKind
@@ -1581,6 +1597,7 @@ export interface components {
         /**
          * PagePlacement
          * @description 角色在背景上的位置（相對背景）：cx、cy 為角色中心，height 為角色高度／背景高度。
+         *     frame（框內種子點）有值＝放進框裡（肖像）模式，height 可到 2.0；autofit＝自動縮放到框內。
          */
         PagePlacement: {
             /** Cx */
@@ -1594,6 +1611,12 @@ export interface components {
              * @default false
              */
             flip: boolean;
+            frame?: components["schemas"]["FramePoint"] | null;
+            /**
+             * Autofit
+             * @default false
+             */
+            autofit: boolean;
         };
         /**
          * PageStatus

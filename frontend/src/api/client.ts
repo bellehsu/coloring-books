@@ -23,6 +23,10 @@ export interface Placement {
   cy: number;
   height: number;
   flip: boolean;
+  /** 放進框裡（肖像）：背景上框內一點（相對背景 0–1）；沒有或 null＝一般位置。 */
+  frame?: { x: number; y: number } | null;
+  /** 肖像模式：自動縮放到框內。 */
+  autofit?: boolean;
 }
 /** 同後端預設：中心 0.66、高 0.6 → 底緣 0.96，貼近下方。 */
 export const DEFAULT_PLACEMENT: Placement = { cx: 0.5, cy: 0.66, height: 0.6, flip: false };

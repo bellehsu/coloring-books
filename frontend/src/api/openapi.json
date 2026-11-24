@@ -150,7 +150,7 @@
           "books"
         ],
         "summary": "Update Book",
-        "description": "改尺寸／列印方式：頁面流程做的可以印的頁排流程重跑（跑完仍可以印，不悄悄退回「還沒做完」），\n其他有選圖的頁在背景重算線稿（舊編輯器的規則：可以印的頁有缺口就退回草稿）。",
+        "description": "改尺寸／列印方式：同一個交易把所有修線筆畫換算到新的內容框（stroke_remap，review C1），\n頁面流程做的可以印的頁排流程重跑（跑完仍可以印，不悄悄退回「還沒做完」），\n其他有選圖的頁在背景重算線稿（舊編輯器的規則：可以印的頁有缺口就退回草稿）。",
         "operationId": "update_book_api_books__book_id__patch",
         "parameters": [
           {
@@ -673,7 +673,7 @@
           "pages"
         ],
         "summary": "Update Page",
-        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。\nfrom_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而\n頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標；沒帶 from_setup 時不標；\n與 oneclick 一起帶是 400。",
+        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。\nfrom_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而\n頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標（改成空白也清掉那一格的旗標：\n沒有東西可以畫）；沒帶 from_setup 時不標；與 oneclick 一起帶是 400。",
         "operationId": "update_page_api_pages__page_id__patch",
         "parameters": [
           {
@@ -3615,6 +3615,29 @@
             "type": "array",
             "maxItems": 500,
             "title": "Strokes"
+          },
+          "content_px": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0.0
+                  },
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0.0
+                  }
+                ],
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Px"
           }
         },
         "type": "object",
@@ -3644,6 +3667,29 @@
           "strokes"
         ],
         "title": "EditsOut"
+      },
+      "FramePoint": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y"
+          }
+        },
+        "type": "object",
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "FramePoint",
+        "description": "背景上畫好的框內一點（相對背景 0–1）。"
       },
       "GenKind": {
         "type": "string",
@@ -4470,13 +4516,28 @@
           },
           "height": {
             "type": "number",
-            "maximum": 1.0,
+            "maximum": 2.0,
             "minimum": 0.1,
             "title": "Height"
           },
           "flip": {
             "type": "boolean",
             "title": "Flip",
+            "default": false
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FramePoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autofit": {
+            "type": "boolean",
+            "title": "Autofit",
             "default": false
           }
         },
@@ -4487,7 +4548,7 @@
           "height"
         ],
         "title": "PagePlacement",
-        "description": "角色在背景上的位置（相對背景）：cx、cy 為角色中心，height 為角色高度／背景高度。"
+        "description": "角色在背景上的位置（相對背景）：cx、cy 為角色中心，height 為角色高度／背景高度。\nframe（框內種子點）有值＝放進框裡（肖像）模式，height 可到 2.0；autofit＝自動縮放到框內。"
       },
       "PageStatus": {
         "type": "string",

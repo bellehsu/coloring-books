@@ -37,6 +37,9 @@ class Placement:
     cy: float
     height: float
     flip: bool
+    # 放進框裡（肖像）模式：框內一點（種子點，相對背景 0–1）；None＝不是肖像。autofit＝自動縮放到框內。
+    frame: tuple[float, float] | None = None
+    autofit: bool = False
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Placement":
@@ -58,24 +61,53 @@ class Placement:
         flip = d.get("flip", False)
         if not isinstance(flip, bool):
             raise ValueError("flip 必須是 true 或 false")
-        p = cls(cx=vals["cx"], cy=vals["cy"], height=vals["height"], flip=flip)
+        autofit = d.get("autofit", False)
+        if not isinstance(autofit, bool):
+            raise ValueError("autofit 必須是 true 或 false")
+        frame = None
+        if d.get("frame") is not None:
+            fd = d["frame"]
+            if not isinstance(fd, dict):
+                raise ValueError("frame 必須是 {x, y} 或 null")
+            pt: list[float] = []
+            for k in ("x", "y"):
+                v = fd.get(k)
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    raise ValueError(f"frame.{k} 必須是數字")
+                if not math.isfinite(v) or not 0.0 <= v <= 1.0:
+                    raise ValueError(f"frame.{k} 必須介於 0 到 1")
+                pt.append(float(v))
+            frame = (pt[0], pt[1])
+        p = cls(cx=vals["cx"], cy=vals["cy"], height=vals["height"], flip=flip, frame=frame, autofit=autofit)
         p.validate()
         return p
 
     def to_dict(self) -> dict[str, Any]:
-        return {"cx": self.cx, "cy": self.cy, "height": self.height, "flip": self.flip}
+        d: dict[str, Any] = {"cx": self.cx, "cy": self.cy, "height": self.height, "flip": self.flip}
+        if self.frame is not None:  # 沒有肖像欄位時與舊 JSON 完全相同
+            d["frame"] = {"x": self.frame[0], "y": self.frame[1]}
+        if self.autofit:
+            d["autofit"] = True
+        return d
 
     def validate(self) -> None:
         if not 0.0 <= self.cx <= 1.0:
             raise ValueError("cx 必須介於 0 到 1")
         if not 0.0 <= self.cy <= 1.0:
             raise ValueError("cy 必須介於 0 到 1")
-        if not 0.1 <= self.height <= 1.0:
-            raise ValueError("height 必須介於 0.1 到 1.0")
+        if self.frame is not None and not all(0.0 <= v <= 1.0 for v in self.frame):
+            raise ValueError("frame 必須介於 0 到 1")
+        top = 2.0 if self.frame is not None else 1.0
+        if not 0.1 <= self.height <= top:
+            raise ValueError(f"height 必須介於 0.1 到 {top}")
 
-    def key(self) -> tuple[float, float, float, bool]:
-        """比對用：四捨五入到小數 4 位。"""
-        return (round(self.cx, 4), round(self.cy, 4), round(self.height, 4), self.flip)
+    def key(self) -> tuple:
+        """比對用：四捨五入到小數 4 位。沒有肖像欄位時維持舊的四元組（既有合成圖照常比對得上）。"""
+        base = (round(self.cx, 4), round(self.cy, 4), round(self.height, 4), self.flip)
+        if self.frame is None and not self.autofit:
+            return base
+        fx, fy = self.frame if self.frame is not None else (None, None)
+        return base + (None if fx is None else round(fx, 4), None if fy is None else round(fy, 4), self.autofit)
 
 
 DEFAULT_PLACEMENT = Placement(0.5, 0.66, 0.6, False)

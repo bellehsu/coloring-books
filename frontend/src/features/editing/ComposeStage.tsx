@@ -68,7 +68,14 @@ const KEY_RESIZE = 0.05;
 const SIDES: [PresetSide, string][] = [["left", "靠左"], ["center", "置中"], ["right", "靠右"]];
 const SIZES: [PresetSize, string][] = [["small", "小"], ["medium", "中"], ["large", "大"]];
 
-const same = (a: Placement, b: Placement) => a.cx === b.cx && a.cy === b.cy && a.height === b.height && a.flip === b.flip;
+const same = (a: Placement, b: Placement) =>
+  a.cx === b.cx &&
+  a.cy === b.cy &&
+  a.height === b.height &&
+  a.flip === b.flip &&
+  (a.frame?.x ?? null) === (b.frame?.x ?? null) &&
+  (a.frame?.y ?? null) === (b.frame?.y ?? null) &&
+  !!a.autofit === !!b.autofit;
 const pct = (v: number) => `${+(v * 100).toFixed(4)}%`;
 
 function readSize(img: HTMLImageElement): Size | undefined {

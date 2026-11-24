@@ -279,16 +279,34 @@ class BackgroundCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")  # 沒有參數；舊客戶端送的 style 等欄位忽略
 
 
+class FramePoint(BaseModel):
+    """背景上畫好的框內一點（相對背景 0–1）。"""
+
+    x: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    y: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+
+
 class PagePlacement(BaseModel):
-    """角色在背景上的位置（相對背景）：cx、cy 為角色中心，height 為角色高度／背景高度。"""
+    """角色在背景上的位置（相對背景）：cx、cy 為角色中心，height 為角色高度／背景高度。
+    frame（框內種子點）有值＝放進框裡（肖像）模式，height 可到 2.0；autofit＝自動縮放到框內。"""
 
     cx: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
     cy: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
-    height: float = Field(ge=0.1, le=1.0, allow_inf_nan=False)
+    height: float = Field(ge=0.1, le=2.0, allow_inf_nan=False)
     flip: bool = False
+    frame: FramePoint | None = None
+    autofit: StrictBool = False
+
+    @model_validator(mode="after")
+    def _height_needs_frame(self) -> "PagePlacement":
+        if self.frame is None and self.height > 1.0:
+            raise ValueError("height 必須介於 0.1 到 1.0（放進框裡才可以更大）")
+        return self
 
     def to_placement(self) -> Placement:
-        return Placement(cx=self.cx, cy=self.cy, height=self.height, flip=self.flip)
+        return Placement(cx=self.cx, cy=self.cy, height=self.height, flip=self.flip,
+                         frame=None if self.frame is None else (self.frame.x, self.frame.y),
+                         autofit=self.autofit)
 
     @classmethod
     def from_json(cls, text: str | None) -> "PagePlacement | None":

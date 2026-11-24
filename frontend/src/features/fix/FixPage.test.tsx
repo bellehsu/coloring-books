@@ -137,7 +137,7 @@ beforeEach(() => {
       if (method === "POST" && url.startsWith("/api/pages/5/poses")) return json(gen(21, "pose", { status: "queued" }), 202);
       if (method === "POST" && url.startsWith("/api/pages/5/backgrounds")) return json(gen(11, "background", { status: "queued" }), 202);
       if (method === "PUT" && url.startsWith("/api/pages/5/placement")) {
-        page = { ...page, placement: body as Placement };
+        page = { ...page, placement: { autofit: false, ...(body as Placement) } };
         return json(page);
       }
       if (method === "PATCH" && url.startsWith("/api/pages/5")) return json(page);

@@ -93,6 +93,48 @@ def test_placement_dict_and_key():
     assert DEFAULT_PLACEMENT == Placement(0.5, 0.66, 0.6, False)
 
 
+def test_placement_old_json_roundtrip_unchanged():
+    d = {"cx": 0.3, "cy": 0.4, "height": 0.5, "flip": True}
+    p = Placement.from_dict(d)
+    assert p.to_dict() == d
+    assert p.key() == (0.3, 0.4, 0.5, True)
+    assert DEFAULT_PLACEMENT.key() == (0.5, 0.66, 0.6, False)
+
+
+def test_placement_frame_roundtrip():
+    d = {"cx": 0.5, "cy": 0.5, "height": 1.4, "flip": False, "frame": {"x": 0.25, "y": 0.75}, "autofit": True}
+    p = Placement.from_dict(d)
+    assert p.frame == (0.25, 0.75) and p.autofit is True
+    assert p.to_dict() == d
+    assert Placement.from_dict(p.to_dict()) == p
+    assert p.key() == (0.5, 0.5, 1.4, False, 0.25, 0.75, True)
+    assert Placement.from_dict({**d, "frame": None, "autofit": False, "height": 0.6}).to_dict() == {
+        "cx": 0.5, "cy": 0.5, "height": 0.6, "flip": False}
+
+
+def test_height_above_one_only_with_frame():
+    with pytest.raises(ValueError):
+        Placement(0.5, 0.5, 1.5, False).validate()
+    Placement(0.5, 0.5, 1.5, False, frame=(0.5, 0.5)).validate()
+    with pytest.raises(ValueError):
+        Placement(0.5, 0.5, 2.1, False, frame=(0.5, 0.5)).validate()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"frame": {"x": 1.5, "y": 0.5}},
+        {"frame": [0.5, 0.5]},
+        {"frame": {"x": 0.5}},
+        {"frame": {"x": True, "y": 0.5}},
+        {"autofit": "yes"},
+    ],
+)
+def test_bad_frame_rejected(extra):
+    with pytest.raises(ValueError):
+        Placement.from_dict({"cx": 0.5, "cy": 0.5, "height": 0.5, **extra})
+
+
 @pytest.mark.parametrize(
     "d",
     [

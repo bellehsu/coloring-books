@@ -12,6 +12,19 @@ import {
   withSize,
 } from "./placement";
 
+describe("clampPlacement portrait fields", () => {
+  it("keeps frame and autofit and allows height up to 2 only with a frame", () => {
+    const p = { cx: 0.5, cy: 0.5, height: 3, flip: false, frame: { x: 0.4, y: 0.6 }, autofit: true };
+    expect(clampPlacement(p)).toEqual({ ...p, height: 2 });
+    expect(clampPlacement({ ...p, height: 1.5 }).height).toBe(1.5);
+    expect(clampPlacement({ ...p, frame: null })).toEqual({ ...p, frame: null, height: 1 });
+    expect(clampPlacement({ ...p, frame: undefined, autofit: false })).toEqual({ cx: 0.5, cy: 0.5, height: 1, flip: false, autofit: false });
+  });
+  it("adds no keys when the placement has no portrait fields", () => {
+    expect(Object.keys(clampPlacement({ cx: 0.5, cy: 0.5, height: 0.5, flip: false }))).toEqual(["cx", "cy", "height", "flip"]);
+  });
+});
+
 describe("clampPlacement", () => {
   it("keeps values inside the ranges (cx, cy 0–1; height 0.1–1.0) and keeps flip", () => {
     expect(clampPlacement({ cx: -0.2, cy: 1.4, height: 0.02, flip: true })).toEqual({ cx: 0, cy: 1, height: 0.1, flip: true });
