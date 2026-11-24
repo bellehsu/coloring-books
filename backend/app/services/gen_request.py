@@ -14,7 +14,9 @@ request_json 不只是來源紀錄：核心欄位（kind、prompt、seed…）�
   （services/jobs.py 寫）。背景成功、排了清理時這 1 次的計數紀錄（usage_day／usage_owner）帶到清理上、旗標改成
   false（services/pipeline.py）；背景失敗／取消時連同清理一起退 2 次（services/usage.py 的 refund_generations）。
 - `auto_cleanup`（AUTO_CLEANUP）：自動清理（背景好了自動排的清理，不是按鈕）：好了照新背景的規則選用；
-  失敗時改選用來源背景、照常排頁面流程（services/pipeline.py、services/slots.py 讀）。
+  失敗、被取消或捨棄時改選用來源背景、照常排頁面流程（services/pipeline.py、services/slots.py 讀）。
+  `background_at_trigger`（BACKGROUND_AT_TRIGGER）記下排清理時頁面選用的背景：之後選用的背景換過了，
+  退回來源時就不照 take 硬換（services/pipeline.py 讀）。
 - `usage_day`／`usage_owner`／`usage_refunded`：當日額度的計數與退回依據（services/usage.py 寫、
   `refund_generations` 改寫）；遺失它們就不會退、或重複退。
 - `engine_requeues`／`engine_unavailable_since`：引擎連不上時放回佇列的計數（只有 worker 寫，
@@ -38,6 +40,7 @@ REVIEW = "review"  # request_json 的旗標：批次重畫主角的 take，換�
 CLEANUP = "cleanup"  # request_json 的旗標：背景清理（「清掉框外雜物」）
 CLEANUP_RESERVED = "cleanup_reserved"  # request_json 的旗標：背景已替它的自動清理多預留 1 次
 AUTO_CLEANUP = "auto_cleanup"  # request_json 的旗標：自動清理（不是按鈕）
+BACKGROUND_AT_TRIGGER = "background_at_trigger"  # request_json：自動清理排隊時頁面選用的背景 id（可為 null）
 USAGE_DAY = "usage_day"
 USAGE_OWNER = "usage_owner"
 USAGE_REFUNDED = "usage_refunded"
@@ -120,6 +123,15 @@ def is_auto_cleanup(gen: Generation) -> bool:
 
 def cleanup_reserved(gen: Generation) -> bool:
     return _flag(gen, CLEANUP_RESERVED)
+
+
+def background_at_trigger(gen: Generation) -> int | None:
+    """自動清理排隊時頁面選用的背景 id；沒記（或壞掉）回 None。"""
+    try:
+        v = json.loads(gen.request_json or "{}").get(BACKGROUND_AT_TRIGGER)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
 def is_retired(d: dict) -> bool:

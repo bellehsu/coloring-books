@@ -380,3 +380,123 @@ def test_button_cleanup_on_auto_page_does_not_chain(client, app):
     assert not is_auto_cleanup(cl) and cl.source_generation_id == src
     assert get_page(app, pid).background_generation_id == cl.id
     assert used(app, owner) == base + 1
+
+
+# ---- 自動清理被取消／捨棄、排清理時出錯：頁面不卡住 ------------------------------------------------
+
+
+def _auto_page_with_queued_cleanup(client, app, **params):
+    """auto 頁：背景好了（排了清理）、角色動作好了、角色動作的流程跑完（等清好的背景）。回傳 (owner, book, page, 來源, 清理)。"""
+    owner, b, p = setup(client, app)
+    pid = p["id"]
+    auto(client, pid)
+    src = new_bg(client, pid, **params)["id"]
+    new_pose(client, pid)
+    run_jobs(client, app, 2)
+    drain(client, app)
+    (cl,) = cleanups(app, pid)
+    assert cl.status == GenStatus.QUEUED and get_page(app, pid).background_generation_id is None
+    return owner, b, p, src, cl
+
+
+def test_cancelled_auto_cleanup_selects_source_and_runs_pipeline(client, app):
+    owner, b, p, src, cl = _auto_page_with_queued_cleanup(client, app)
+    pid = p["id"]
+    base = used(app, owner)
+    r = client.post(f"/api/generations/{cl.id}/cancel")
+    assert r.status_code == 200, r.text
+    assert used(app, owner) == base - 1  # 清理的那 1 次退回
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == src == pg.auto_background_generation_id
+    assert pg.attention is None and len(queued_tasks(app, pid)) == 1
+    drain(client, app)
+    assert get_page(app, pid).status == PageStatus.PASSED
+    assert overview_state(client, b["id"], pid) == "ready"
+
+
+def test_discarded_queued_auto_cleanup_selects_source_and_runs_pipeline(client, app):
+    owner, b, p, src, cl = _auto_page_with_queued_cleanup(client, app)
+    pid = p["id"]
+    base = used(app, owner)
+    r = client.patch(f"/api/generations/{cl.id}", json={"discarded": True})
+    assert r.status_code == 200, r.text
+    assert row(app, cl.id).status == GenStatus.CANCELLED and used(app, owner) == base - 1
+    assert get_page(app, pid).background_generation_id == src
+    drain(client, app)
+    assert get_page(app, pid).status == PageStatus.PASSED
+
+
+def test_auto_cleanup_discarded_while_running_selects_source(client, app):
+    """執行中被捨棄（狀態不變、好了也不能用）：好了時改用來源背景。"""
+    owner, b, p, src, cl = _auto_page_with_queued_cleanup(client, app)
+    pid = p["id"]
+    with app.state.sessions() as s:
+        g = s.get(Generation, cl.id)
+        g.discarded = True
+        s.add(g)
+        s.commit()
+    run_jobs(client, app)
+    assert row(app, cl.id).status == GenStatus.SUCCEEDED
+    assert get_page(app, pid).background_generation_id == src
+    drain(client, app)
+    assert get_page(app, pid).status == PageStatus.PASSED
+
+
+def test_cancelled_oneclick_auto_cleanup_takes_source_unless_background_changed(client, app):
+    owner, b, p = setup(client, app)
+    pid = p["id"]
+    first = new_bg(client, pid)["id"]
+    run_jobs(client, app)
+    new_pose(client, pid)
+    run_jobs(client, app)
+    drain(client, app)
+    auto(client, pid)
+
+    src = new_bg(client, pid, **C)["id"]  # 一鍵：取消清理後照 take 換上來源
+    run_jobs(client, app)
+    (cl,) = cleanups(app, pid)
+    assert client.post(f"/api/generations/{cl.id}/cancel").status_code == 200
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == src == pg.auto_background_generation_id
+    drain(client, app)
+
+    src2 = new_bg(client, pid, **C)["id"]  # 清理排隊時使用者改選了 first：取消後不硬換
+    run_jobs(client, app)
+    cl2 = cleanups(app, pid)[-1]
+    assert cl2.source_generation_id == src2
+    r = client.post(f"/api/pages/{pid}/background", json={"generation_id": first})
+    assert r.status_code == 200, r.text
+    assert client.post(f"/api/generations/{cl2.id}/cancel").status_code == 200
+    assert get_page(app, pid).background_generation_id == first
+    assert len(queued_tasks(app, pid)) == 1
+
+
+def test_failure_while_queuing_auto_cleanup_refunds_and_selects_source(client, app, monkeypatch):
+    owner, b, p = setup(client, app)
+    pid = p["id"]
+    auto(client, pid)
+    base = used(app, owner)
+    src = new_bg(client, pid)["id"]
+
+    def boom(*a, **k):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(pipeline, "add_queued", boom)
+    run_jobs(client, app)  # worker 的保底：退回預留的清理次數、選用來源、排流程
+    assert cleanups(app, pid) == []
+    assert used(app, owner) == base + 1
+    assert rj(row(app, src))[CLEANUP_RESERVED] is False
+    pg = get_page(app, pid)
+    assert pg.background_generation_id == src
+    assert len(queued_tasks(app, pid)) == 1
+
+
+def test_cancelled_auto_page_background_refunds_both_counts(client, app):
+    owner, b, p = setup(client, app)
+    pid = p["id"]
+    auto(client, pid)
+    base = used(app, owner)
+    gid = new_bg(client, pid)["id"]
+    assert used(app, owner) == base + 2
+    assert client.post(f"/api/generations/{gid}/cancel").status_code == 200
+    assert used(app, owner) == base and cleanups(app, pid) == []

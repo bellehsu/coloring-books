@@ -42,12 +42,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select, update
 
 from app.models import (
-    Book, Generation, GenKind, GenStatus, Owner, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer, utcnow,
+    Book, Generation, GenKind, GenStatus, Owner, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer,
+    utcnow,
 )
 from app.services import history, usage
 from app.services.engine import public_engine_error
 from app.services.gen_request import (
-    CLEANUP_RESERVED, cleanup_reserved, is_auto_cleanup, is_candidate, is_cleanup,
+    BACKGROUND_AT_TRIGGER, CLEANUP_RESERVED, background_at_trigger, cleanup_reserved, is_auto_cleanup, is_candidate, is_cleanup,
     wants_review, wants_take, with_flag,
 )
 from app.services.jobs import add_queued, auto_cleanup_job
@@ -237,6 +238,9 @@ def on_generation_succeeded(session: Session, gen_id: int) -> bool:
         return False
     if _queue_auto_cleanup(session, gen):
         return False
+    if is_auto_cleanup(gen) and not is_usable(gen, GenKind.BACKGROUND, gen.page_id):
+        _fall_back_to_source(session, gen)  # 執行中被捨棄：清好的不能用，改用來源
+        return True
     _select_new(session, gen)
     enqueue_page_task(session, gen.page_id)
     session.commit()
@@ -281,24 +285,22 @@ def _select_new(session: Session, gen: Generation) -> None:
 def _queue_auto_cleanup(session: Session, gen: Generation) -> bool:
     """auto_cleanup 頁的 AI 背景（不是清理產生的、不是上傳的）成功：不選用，同一個交易排一筆清理它的自動清理。
     次數：背景排隊時已預留（cleanup_reserved）就把那 1 次的計數紀錄帶到清理上；沒預留（排隊後才打開自動清理）
-    就現在替書的擁有者預留 1 次，次數用完就不清（照常選用這張）。預留了卻沒清（排隊後關掉了自動清理）的
-    那 1 次退回。commit；回傳有沒有排清理。"""
+    就現在替同一個 usage owner（來源背景的，沒有就書的擁有者）預留 1 次，次數用完就不清（照常選用這張）。
+    預留了卻沒清（排隊後關掉了自動清理）的那 1 次退回。commit；回傳有沒有排清理。"""
     if gen.kind != GenKind.BACKGROUND or is_cleanup(gen) or gen.engine == UPLOAD_ENGINE:
         return False
     page = session.get(Page, gen.page_id)
     book = session.get(Book, gen.book_id)
-    reserved = cleanup_reserved(gen)
-    counted = usage.counted(gen) if reserved else None
     if page is None or book is None or not page.auto_cleanup or not is_usable(gen, GenKind.BACKGROUND, page.id):
-        if counted is not None:
-            usage.refund(session, *counted)
-            _clear_cleanup_reserved(session, gen)
+        if _release_cleanup_reservation(session, gen):
             session.commit()
         return False
-    if counted is not None:
+    reserved = cleanup_reserved(gen)
+    counted = usage.counted(gen)
+    if reserved and counted is not None:
         extra = usage.usage_extra(*counted)  # 背景排隊時預留的那 1 次：退回時退到原本的日期與 owner
     else:
-        owner = session.get(Owner, book.owner_id)
+        owner = session.get(Owner, counted[0] if counted is not None else book.owner_id)
         if owner is None:
             return False
         try:
@@ -306,10 +308,23 @@ def _queue_auto_cleanup(session: Session, gen: Generation) -> bool:
         except HTTPException:  # 今天的次數用完了：不清，照常選用這張
             session.rollback()
             return False
+    session.refresh(page)
+    extra[BACKGROUND_AT_TRIGGER] = page.background_generation_id
     add_queued(session, auto_cleanup_job(session, book, page, gen), extra)
     if reserved:
         _clear_cleanup_reserved(session, gen)
     session.commit()
+    return True
+
+
+def _release_cleanup_reservation(session: Session, gen: Generation) -> bool:
+    """成功的背景還帶著 cleanup_reserved（不清了）：那 1 次退回、旗標改成 false。不 commit；回傳有沒有退。"""
+    if not cleanup_reserved(gen):
+        return False
+    counted = usage.counted(gen)
+    if counted is not None:
+        usage.refund(session, *counted)
+    _clear_cleanup_reserved(session, gen)
     return True
 
 
@@ -354,12 +369,20 @@ def _land_cleanup(session: Session, gen: Generation) -> bool:
 
 def enqueue_after_generation(session: Session, gen_id: int) -> bool:
     """on_generation_succeeded 失敗時的保底：只把頁面排進流程（流程第一步會自己補選圖）。
-    和 on_generation_succeeded 同樣只處理頁面的背景／角色動作、不含重畫主角的候選。"""
+    和 on_generation_succeeded 同樣只處理頁面的背景／角色動作、不含重畫主角的候選。
+    auto_cleanup 頁的背景排清理時出錯：不清了，預留給清理的那 1 次退回（同一個交易），再試著照新圖的規則選用它。"""
     gen = session.get(Generation, gen_id)
     if gen is None or gen.page_id is None or gen.kind not in SLOTS or is_candidate(gen):
         return False
+    released = _release_cleanup_reservation(session, gen)
     enqueue_page_task(session, gen.page_id)
     session.commit()
+    if released:
+        try:
+            _select_new(session, gen)
+        except Exception:  # noqa: BLE001  選不上：流程第一步會補選
+            session.rollback()
+            log.warning("保底選用背景失敗（generation %s）", gen_id, exc_info=True)
     return True
 
 
@@ -374,16 +397,38 @@ def on_generation_failed(session: Session, gen_id: int) -> None:
         return
     if is_cleanup(gen):
         if is_auto_cleanup(gen):
-            source = session.get(Generation, gen.source_generation_id) if gen.source_generation_id else None
-            if source is not None and source.page_id == gen.page_id:
-                _select_new(session, source)
-            enqueue_page_task(session, gen.page_id)
-            session.commit()
+            _fall_back_to_source(session, gen)
         return
     session.exec(
         update(Page).where(col(Page.id) == gen.page_id)
         .values(attention=ATTENTION_FAILED, attention_detail=public_engine_error(gen.error, False) or GENERATION_FAILED, updated_at=utcnow())
     )
+    session.commit()
+
+
+def on_generation_cancelled(session: Session, gen_id: int) -> bool:
+    """排隊中的生成被取消（取消、捨棄）之後呼叫：自動清理被取消時同失敗，改用來源背景、排頁面流程，
+    頁面才不會停在沒有背景、也沒有工作。其他的什麼都不做。回傳有沒有排流程。"""
+    gen = session.get(Generation, gen_id)
+    if gen is None or gen.page_id is None or gen.status != GenStatus.CANCELLED or not is_auto_cleanup(gen):
+        return False
+    _fall_back_to_source(session, gen)
+    return True
+
+
+def _fall_back_to_source(session: Session, cleanup: Generation) -> None:
+    """自動清理沒有成功（失敗、取消、捨棄）：來源背景照新圖的規則選用（不設 attention），並排頁面流程。
+    來源帶 take、但排清理之後頁面選用的背景換過了（使用者改選、上傳）：不硬換，只照自動選圖（使用者選的不動）。commit。"""
+    page_id = cleanup.page_id
+    source = session.get(Generation, cleanup.source_generation_id) if cleanup.source_generation_id else None
+    page = session.get(Page, page_id)
+    if source is not None and page is not None and source.page_id == page_id:
+        session.refresh(page)
+        if wants_take(source) and page.background_generation_id != background_at_trigger(cleanup):
+            auto_select(session, page_id, snapshot=True)
+        else:
+            _select_new(session, source)
+    enqueue_page_task(session, page_id)
     session.commit()
 
 

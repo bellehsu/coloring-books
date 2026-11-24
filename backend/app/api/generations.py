@@ -1,6 +1,7 @@
 """generation 查詢、圖片、捨棄、取消與佇列狀態端點。"""
 
 import io
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -17,11 +18,13 @@ from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
 from app.services.engine import ENGINE_UNREACHABLE_PUBLIC, public_engine_error
 from app.services.frame_fit import find_interior, interior_png
+from app.services import pipeline
 from app.services.usage import refund_generations
 from app.services.worker import GenerationWorker, WorkerState, worker_job
 from app.storage import Storage, StorageNotFound
 
 router = APIRouter(prefix="/api", tags=["generations"])
+log = logging.getLogger(__name__)
 
 IMAGE_CLEARED = "這張圖已被清理，無法還原"
 
@@ -202,12 +205,25 @@ def update_generation(
     if body.discarded and res.rowcount:
         refund_generations(session, [gen_id])  # 排隊中被取消的退回額度（已退過的不再退）
     session.commit()
+    if body.discarded and res.rowcount:
+        _after_cancel(session, gen_id)
     if res.rowcount == 0:
         if not body.discarded:
             raise HTTPException(409, IMAGE_CLEARED)
         raise HTTPException(409, "這筆生成紀錄正被頁面使用或作為角色，無法捨棄")
     session.refresh(gen)
     return GenerationOut.for_worker(gen, worker, is_admin=owner.is_admin)
+
+
+def _after_cancel(session: Session, gen_id: int) -> None:
+    """取消已經 commit：自動清理被取消時改用來源背景、排頁面流程（pipeline.on_generation_cancelled）。
+    失敗只記 log，取消本身照樣成功；頁面流程之後由「繼續做」補上。"""
+    try:
+        if pipeline.on_generation_cancelled(session, gen_id):
+            pipeline.wake()
+    except Exception:  # noqa: BLE001
+        session.rollback()
+        log.exception("取消自動清理後退回來源背景失敗（generation %s）", gen_id)
 
 
 @router.post("/generations/{gen_id}/cancel", response_model=GenerationOut)
@@ -228,6 +244,7 @@ def cancel_generation(
     session.commit()
     if res.rowcount == 0:
         raise HTTPException(409, "只有排隊中的任務可以取消")
+    _after_cancel(session, gen_id)
     session.refresh(gen)
     return GenerationOut.for_worker(gen, worker, is_admin=owner.is_admin)
 
