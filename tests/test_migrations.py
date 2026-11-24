@@ -696,6 +696,56 @@ def test_0015_fix_round_roundtrip(tmp_path):
     command.upgrade(alembic_config(eng), "head")
 
 
+def test_0016_background_cleanup_roundtrip(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0015")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, action_prompt, status, line_detail, "
+            "line_width_px, qa_note, created_at, updated_at) VALUES (1, 0, 's', 'a', 'DRAFT', 'STANDARD', 11, "
+            "'', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO generation (book_id, page_id, kind, status, discarded, user_text, prompt, negative_prompt, "
+            "seed, width, height, request_json, created_at) VALUES (1, 1, 'BACKGROUND', 'DONE', 0, 'u', 'p', '', "
+            "1, 8, 8, '{}', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "0016")
+    with eng.begin() as c:
+        pcols, gcols = _cols(c, "page"), _cols(c, "generation")
+        assert pcols["auto_cleanup"]["nullable"] is False and pcols["cleanup_prompt"]["nullable"] is True
+        assert gcols["source_generation_id"]["nullable"] is True
+        assert tuple(c.exec_driver_sql("SELECT auto_cleanup, cleanup_prompt FROM page").one()) == (0, None)
+        assert c.exec_driver_sql("SELECT source_generation_id FROM generation").scalar() is None
+        assert "AUTOINCREMENT" in table_sql(c, "page") and "AUTOINCREMENT" in table_sql(c, "generation")
+        fks = inspect(c).get_foreign_keys("generation")
+        assert any(f["constrained_columns"] == ["source_generation_id"]
+                   and f["options"].get("ondelete") == "SET NULL" for f in fks)
+        # ON DELETE SET NULL：刪來源那筆，指向它的 source_generation_id 變 NULL
+        c.exec_driver_sql("PRAGMA foreign_keys=ON")
+        c.exec_driver_sql(
+            "INSERT INTO generation (book_id, page_id, kind, status, discarded, user_text, prompt, negative_prompt, "
+            "seed, width, height, request_json, source_generation_id, created_at) VALUES (1, 1, 'BACKGROUND', 'DONE', "
+            "0, 'u', 'p', '', 1, 8, 8, '{}', 1, '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql("DELETE FROM generation WHERE id = 1")
+        assert c.exec_driver_sql("SELECT source_generation_id FROM generation WHERE id = 2").scalar() is None
+    eng.dispose()  # 丟掉開著 foreign_keys 的連線
+    command.downgrade(alembic_config(eng), "0015")
+    with eng.connect() as c:
+        assert not {"auto_cleanup", "cleanup_prompt"} & set(_cols(c, "page"))
+        assert "source_generation_id" not in _cols(c, "generation")
+        assert "AUTOINCREMENT" in table_sql(c, "page") and "AUTOINCREMENT" in table_sql(c, "generation")
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")
+
+
 def test_fresh_db_book_uses_autoincrement(tmp_path):
     eng = make_engine(tmp_path / "a.db")
     init_db(eng)

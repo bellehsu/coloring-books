@@ -1393,6 +1393,8 @@ export interface components {
             /** Page Id */
             page_id: number | null;
             kind: components["schemas"]["GenKind"];
+            /** Source Generation Id */
+            source_generation_id: number | null;
             status: components["schemas"]["GenStatus"];
             /** Discarded */
             discarded: boolean;
@@ -1625,6 +1627,10 @@ export interface components {
             redraw_background: boolean;
             /** Redraw Pose */
             redraw_pose: boolean;
+            /** Auto Cleanup */
+            auto_cleanup: boolean;
+            /** Cleanup Prompt */
+            cleanup_prompt: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1682,6 +1688,10 @@ export interface components {
             line_detail?: components["schemas"]["LineDetail"] | null;
             /** Line Width Px */
             line_width_px?: number | null;
+            /** Auto Cleanup */
+            auto_cleanup?: boolean;
+            /** Cleanup Prompt */
+            cleanup_prompt?: string | null;
         };
         /**
          * PaperSize
@@ -1892,6 +1902,10 @@ export interface components {
             redraw_background: boolean;
             /** Redraw Pose */
             redraw_pose: boolean;
+            /** Auto Cleanup */
+            auto_cleanup: boolean;
+            /** Cleanup Prompt */
+            cleanup_prompt: string | null;
             /**
              * Created At
              * Format: date-time

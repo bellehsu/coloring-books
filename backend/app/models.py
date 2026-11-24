@@ -159,6 +159,9 @@ class Page(SQLModel, table=True):
     # 「重畫背景／重畫角色動作」勾選（下次生成時才套用）
     redraw_background: bool = Field(default=False, sa_column_kwargs={"server_default": false()})
     redraw_pose: bool = Field(default=False, sa_column_kwargs={"server_default": false()})
+    # 背景清理（2026-11-24）：新背景生成後自動再跑一次「清掉框外雜物」；改場景文字就關掉（見 api/pages.patch_page）
+    auto_cleanup: bool = Field(default=False, sa_column_kwargs={"server_default": false()})
+    cleanup_prompt: str | None = None  # 使用者自訂的清理指示；None＝用預設
     selected_generation_id: int | None = None
     background_generation_id: int | None = None
     pose_generation_id: int | None = None
@@ -195,6 +198,8 @@ class Generation(SQLModel, table=True):
     book_id: int = Field(foreign_key="book.id", index=True)
     page_id: int | None = Field(default=None, foreign_key="page.id", index=True)
     kind: GenKind
+    # 這筆是從哪一筆生成編輯出來的（背景清理）；來源被刪就變 None
+    source_generation_id: int | None = Field(default=None, foreign_key="generation.id", ondelete="SET NULL")
     status: GenStatus = Field(default=GenStatus.QUEUED, index=True)
     discarded: bool = False
     discarded_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True))  # 保留期限從這裡起算

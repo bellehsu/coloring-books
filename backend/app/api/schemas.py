@@ -30,6 +30,8 @@ DbId = Annotated[int, Field(ge=SQLITE_INT_MIN, le=SQLITE_INT_MAX)]
 # 去除前後空白後再檢查長度，避免純空白字串通過
 TitleStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 DescriptionStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=800)]
+CleanupPromptStr = Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=600),
+                             AfterValidator(lambda v: v or None)]
 ScenePromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=800)]
 ActionPromptStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]
 
@@ -174,6 +176,7 @@ class GenerationOut(BaseModel):
     book_id: int
     page_id: int | None
     kind: GenKind
+    source_generation_id: int | None  # 清理後的背景：它是從哪一筆編輯出來的
     status: GenStatus
     discarded: bool
     user_text: str  # 使用者輸入的原文（角色描述或場景描述）
@@ -202,6 +205,7 @@ class GenerationOut(BaseModel):
             book_id=gen.book_id,
             page_id=gen.page_id,
             kind=gen.kind,
+            source_generation_id=gen.source_generation_id,
             status=gen.status,
             discarded=gen.discarded,
             user_text=gen.user_text,
@@ -253,6 +257,9 @@ class PageUpdate(BaseModel):
     caption_show_en: StrictBool = None  # type: ignore[assignment]
     line_detail: LineDetail | None = None
     line_width_px: int | None = Field(default=None, ge=LINE_WIDTH_MIN, le=LINE_WIDTH_MAX)
+    # 背景清理：未送＝不動（改場景文字時會一起關掉，除非同一個請求明確帶了）；cleanup_prompt ""、空白、null＝清除
+    auto_cleanup: StrictBool = None  # type: ignore[assignment]
+    cleanup_prompt: CleanupPromptStr = None
 
 
 class CaptionDisplay(BaseModel):
@@ -350,6 +357,8 @@ class PageOut(BaseModel):
     # 設定頁改了場景／動作、等「繼續做」重畫背景／角色動作（「要重畫」）
     redraw_background: bool
     redraw_pose: bool
+    auto_cleanup: bool  # 新背景生成後自動清掉框外雜物
+    cleanup_prompt: str | None  # 自訂清理指示；None＝預設
     created_at: datetime
     updated_at: datetime
 
@@ -407,6 +416,8 @@ class PageOut(BaseModel):
             can_redo=can_redo,
             redraw_background=page.redraw_background,
             redraw_pose=page.redraw_pose,
+            auto_cleanup=page.auto_cleanup,
+            cleanup_prompt=page.cleanup_prompt,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )

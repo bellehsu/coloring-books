@@ -3843,6 +3843,17 @@
           "kind": {
             "$ref": "#/components/schemas/GenKind"
           },
+          "source_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Generation Id"
+          },
           "status": {
             "$ref": "#/components/schemas/GenStatus"
           },
@@ -3958,6 +3969,7 @@
           "book_id",
           "page_id",
           "kind",
+          "source_generation_id",
           "status",
           "discarded",
           "user_text",
@@ -4557,6 +4569,21 @@
             "type": "boolean",
             "title": "Redraw Pose"
           },
+          "auto_cleanup": {
+            "type": "boolean",
+            "title": "Auto Cleanup"
+          },
+          "cleanup_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleanup Prompt"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -4601,6 +4628,8 @@
           "can_redo",
           "redraw_background",
           "redraw_pose",
+          "auto_cleanup",
+          "cleanup_prompt",
           "created_at",
           "updated_at"
         ],
@@ -4742,6 +4771,22 @@
               }
             ],
             "title": "Line Width Px"
+          },
+          "auto_cleanup": {
+            "type": "boolean",
+            "title": "Auto Cleanup"
+          },
+          "cleanup_prompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 600
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleanup Prompt"
           }
         },
         "type": "object",
@@ -5373,6 +5418,21 @@
             "type": "boolean",
             "title": "Redraw Pose"
           },
+          "auto_cleanup": {
+            "type": "boolean",
+            "title": "Auto Cleanup"
+          },
+          "cleanup_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleanup Prompt"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -5432,6 +5492,8 @@
           "can_redo",
           "redraw_background",
           "redraw_pose",
+          "auto_cleanup",
+          "cleanup_prompt",
           "created_at",
           "updated_at",
           "requeued",

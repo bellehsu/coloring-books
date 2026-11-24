@@ -205,7 +205,14 @@ def update_page(
         history.push_snapshot(session, page)
         session.refresh(page)
     if body.scene_prompt is not None:
+        if body.scene_prompt != page.scene_prompt:  # 改了場景文字：自動清理關掉（同一個請求明確帶的值優先，下面覆寫）
+            page.auto_cleanup = False
+            page.cleanup_prompt = None
         page.scene_prompt = body.scene_prompt
+    if body.auto_cleanup is not None:
+        page.auto_cleanup = body.auto_cleanup
+    if "cleanup_prompt" in fields:
+        page.cleanup_prompt = body.cleanup_prompt
     if body.action_prompt is not None:
         page.action_prompt = body.action_prompt
     # 頁面文字：用 model_fields_set 區分「沒送」與「送 null／空字串＝清除」；不動生成紀錄、線稿與 QA 狀態
