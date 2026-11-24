@@ -407,8 +407,9 @@ def on_generation_failed(session: Session, gen_id: int) -> None:
 
 
 def on_generation_cancelled(session: Session, gen_id: int) -> bool:
-    """排隊中的生成被取消（取消、捨棄）之後呼叫：自動清理被取消時同失敗，改用來源背景、排頁面流程，
-    頁面才不會停在沒有背景、也沒有工作。其他的什麼都不做。回傳有沒有排流程。"""
+    """排隊中的生成剛被取消（取消、捨棄）之後呼叫：自動清理被取消時同失敗，改用來源背景、排頁面流程，
+    頁面才不會停在沒有背景、也沒有工作。其他的什麼都不做。回傳有沒有排流程。
+    只看狀態是不是 CANCELLED：呼叫端要確定是這次才取消的（之後再捨棄已取消的那筆不能再呼叫）。"""
     gen = session.get(Generation, gen_id)
     if gen is None or gen.page_id is None or gen.status != GenStatus.CANCELLED or not is_auto_cleanup(gen):
         return False

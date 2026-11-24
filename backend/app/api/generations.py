@@ -163,6 +163,7 @@ def update_generation(
     owner: Owner = Depends(current_owner),
 ) -> GenerationOut:
     gen = owned_generation(session, owner, gen_id)
+    was_queued = gen.status == GenStatus.QUEUED  # 這次捨棄會不會把它取消（已取消、已結束的再捨棄不算）
     guard = col(Generation.id) == gen_id
     if body.discarded:
         in_use = (
@@ -205,8 +206,8 @@ def update_generation(
     if body.discarded and res.rowcount:
         refund_generations(session, [gen_id])  # 排隊中被取消的退回額度（已退過的不再退）
     session.commit()
-    if body.discarded and res.rowcount:
-        _after_cancel(session, gen_id)
+    if body.discarded and res.rowcount and was_queued:
+        _after_cancel(session, gen_id)  # 只在這次把排隊中的取消時：之後再捨棄已取消的那筆不再退回來源
     if res.rowcount == 0:
         if not body.discarded:
             raise HTTPException(409, IMAGE_CLEARED)
@@ -216,7 +217,8 @@ def update_generation(
 
 
 def _after_cancel(session: Session, gen_id: int) -> None:
-    """取消已經 commit：自動清理被取消時改用來源背景、排頁面流程（pipeline.on_generation_cancelled）。
+    """這個請求剛把排隊中的生成取消、已經 commit：自動清理被取消時改用來源背景、排頁面流程
+    （pipeline.on_generation_cancelled；只能在「剛取消」時呼叫，它只看狀態）。
     失敗只記 log，取消本身照樣成功；頁面流程之後由「繼續做」補上。"""
     try:
         if pipeline.on_generation_cancelled(session, gen_id):

@@ -500,3 +500,31 @@ def test_cancelled_auto_page_background_refunds_both_counts(client, app):
     assert used(app, owner) == base + 2
     assert client.post(f"/api/generations/{gid}/cancel").status_code == 200
     assert used(app, owner) == base and cleanups(app, pid) == []
+
+
+def test_discarding_an_already_cancelled_auto_cleanup_later_leaves_the_page_unchanged(client, app):
+    """取消清理（退回來源）後使用者改選回舊背景，之後再捨棄那筆已取消的清理：不再退回來源、不多排流程。"""
+    owner, b, p = setup(client, app)
+    pid = p["id"]
+    first = new_bg(client, pid)["id"]
+    run_jobs(client, app)
+    new_pose(client, pid)
+    run_jobs(client, app)
+    drain(client, app)
+    auto(client, pid)
+    src = new_bg(client, pid, **C)["id"]
+    run_jobs(client, app)
+    (cl,) = cleanups(app, pid)
+    assert client.post(f"/api/generations/{cl.id}/cancel").status_code == 200
+    assert get_page(app, pid).background_generation_id == src
+    drain(client, app)
+    r = client.post(f"/api/pages/{pid}/background", json={"generation_id": first})
+    assert r.status_code == 200, r.text
+    drain(client, app)
+    assert get_page(app, pid).background_generation_id == first and queued_tasks(app, pid) == []
+    base = used(app, owner)
+
+    r = client.patch(f"/api/generations/{cl.id}", json={"discarded": True})
+    assert r.status_code == 200, r.text
+    assert get_page(app, pid).background_generation_id == first
+    assert queued_tasks(app, pid) == [] and used(app, owner) == base
