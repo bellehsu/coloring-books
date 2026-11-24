@@ -120,13 +120,30 @@ def test_compose_page_no_frame_keeps_settings_and_clamps(client, app):
     page = portrait_page(client, app, png_bytes(color="white"))  # 白紙：沒有框
     pid = page["id"]
     put_placement(client, pid, cx=0.5, cy=0.6, height=1.6, flip=False, frame=SEED, autofit=True)
-    before = get_page(app, pid).placement_json
+    snapshots = history_count(app, pid)
     out = confirm(client, pid)
     p = params(app, out["selected_generation_id"])
     assert p["frame_found"] is False
     assert p["placement"]["height"] == 1.0 and p["placement"]["frame"] == SEED
-    assert get_page(app, pid).placement_json == before  # frame、autofit、height 1.6 都留著（換背景會再試）
-    assert confirm(client, pid)["selected_generation_id"] == out["selected_generation_id"]
+    # 夾過的高度寫回頁面（舞台與列印一致、不會一直「待更新」）；frame、autofit 留著（換背景會再試）
+    pl = stored_placement(app, pid)
+    assert pl == {"cx": 0.5, "cy": 0.6, "height": 1.0, "flip": False, "frame": SEED, "autofit": True}
+    assert pl == p["placement"]
+    assert out["compose_pending"] is False
+    assert history_count(app, pid) == snapshots and get_page(app, pid).pending_user_strokes is None
+    again = confirm(client, pid)
+    assert again["selected_generation_id"] == out["selected_generation_id"] and again["compose_pending"] is False
+
+
+def test_compose_page_no_frame_within_one_keeps_placement(client, app):
+    """找不到框、高度本來就 ≤ 1.0：位置照存的，頁面不動。"""
+    page = portrait_page(client, app, png_bytes(color="white"))
+    pid = page["id"]
+    put_placement(client, pid, cx=0.5, cy=0.6, height=0.8, flip=False, frame=SEED)
+    before = get_page(app, pid).placement_json
+    out = confirm(client, pid)
+    assert params(app, out["selected_generation_id"])["frame_found"] is False
+    assert get_page(app, pid).placement_json == before and out["compose_pending"] is False
 
 
 def test_compose_page_new_background_refits(client, app):

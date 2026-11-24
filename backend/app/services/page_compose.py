@@ -209,7 +209,7 @@ def composite_params(bg_id: int, pose_id: int, placement: Placement, frame_found
 def portrait_placement(placement: Placement, interior: np.ndarray | None,
                        cutout_size: tuple[int, int]) -> Placement:
     """肖像（placement.frame）這次實際合成用的位置。
-    找不到框：照存的位置一般合成，height 超過 1.0 夾到 1.0（只限這張合成圖；頁面存的位置不動）。
+    找不到框：照存的位置一般合成，height 超過 1.0 夾到 1.0（compose_page 把夾過的高度寫回頁面，frame、autofit 留著）。
     找到框而且 autofit：cx、cy、height 換成 fit_portrait 算出的肖像位置（四捨五入到 4 位、夾在合法範圍；
     cutout_size 是角色去背外接框的尺寸）。其餘照存的位置。"""
     if interior is None:
@@ -280,7 +280,7 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
     images: tuple[Image.Image, Image.Image, Image.Image] | None = None  # 背景、角色圖、遮罩（讀過就留著）
     interior: np.ndarray | None = None
     frame_found: bool | None = None
-    write_back: str | None = None  # autofit 算出的肖像位置（與選用新合成圖在同一個交易寫回頁面）
+    write_back: str | None = None  # 這次實際用的肖像位置（與選用新合成圖在同一個交易寫回頁面）
     placement = stored
     if stored.frame is not None:
         # 肖像：先找框、決定這次的位置，才比對既有合成圖（位置一樣就直接選回）
@@ -292,7 +292,9 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
         except ValueError as e:
             raise _compose_error(e) from e
         placement = portrait_placement(stored, interior, size)
-        if interior is not None and stored.autofit and json.dumps(placement.to_dict()) != placement_json:
+        # 寫回頁面：autofit 算出的肖像位置；找不到框時夾到 1.0 的高度（否則頁面與合成圖永遠對不上，
+        # 舞台畫的比列印大、一直「待更新」）。frame、autofit 都留著
+        if placement != stored and json.dumps(placement.to_dict()) != placement_json:
             write_back = json.dumps(placement.to_dict())
 
     target = find_composite(session, storage, page_id, bg.id, pose.id, placement)
@@ -355,7 +357,8 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
             )
             .values(selected_generation_id=target_id, updated_at=utcnow(),
                     **({"outline_fill": True} if written is not None else {}),  # 新合成圖用單線輪廓；重用舊的不動
-                    # autofit 的肖像位置寫回頁面：只是位置欄位（使用者的意圖沒變），不存復原快照、不動筆畫
+                    # 肖像位置寫回頁面（autofit、找不到框時夾過的高度）：只是位置欄位（使用者的意圖沒變），
+                    # 不存復原快照、不動筆畫
                     **({"placement_json": write_back} if write_back is not None else {}),
                     **reset_review_when(changed))
         )
