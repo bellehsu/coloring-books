@@ -429,11 +429,18 @@ describe("華麗相框（使用者 2026-11-24）", () => {
     for (const [i, p] of parsed.pages.entries()) {
       expect(p.scene).toContain(SHAPES[i]);
       expect(p.scene).toContain("古典捲草花紋外框");
-      expect(p.scene).toContain("框裡面和框外面都是空白");
+      expect(p.scene).toContain("外框幾乎佔滿整張紙"); // 框小的話 Qwen 會在旁邊畫一堆東西
+      expect(p.scene).toContain("框裡面是乾淨的白色，什麼都沒有");
+      expect(p.scene).toContain("除了這個外框，畫面裡沒有任何其他東西");
+      expect(p.scene).not.toContain("空白"); // 會被畫成透明格子
       expect(p.scene.endsWith("，只有黑色線條、沒有塗黑的地方，畫面裡沒有人")).toBe(true);
       expect(p.scene).not.toContain("像"); // 比喻會被照字面畫出來
       expect(p.action).not.toContain("像");
     }
+  });
+  it("驗收後：圓形框不被切掉、雲朵是一朵雲的輪廓（不是一堆圓）", () => {
+    expect(parsed.pages[2].scene).toContain("整個圓形外框都在紙張裡面，沒有被切掉");
+    expect(parsed.pages[8].scene).toContain("外框的外形是一朵大雲的輪廓");
   });
   it("objects in the frame aren't repeated in the action (drawn twice otherwise)", () => {
     for (const p of parsed.pages) {
