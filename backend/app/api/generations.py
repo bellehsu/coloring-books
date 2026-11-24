@@ -16,6 +16,7 @@ from app.models import SQLITE_INT_MAX, SQLITE_INT_MIN, Book, Generation, GenKind
 from app.services.comfy_engine import WORKFLOWS
 from app.services.compose import cutout
 from app.services.engine import ENGINE_UNREACHABLE_PUBLIC, public_engine_error
+from app.services.frame_fit import find_interior, interior_png
 from app.services.usage import refund_generations
 from app.services.worker import GenerationWorker, WorkerState, worker_job
 from app.storage import Storage, StorageNotFound
@@ -95,6 +96,37 @@ def get_generation_cutout(
     # 同一個 generation id 的去背圖不會變（圖與遮罩都不再改寫）
     return Response(content=buf.getvalue(), media_type="image/png",
                     headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/generations/{gen_id}/frame-mask")
+def get_generation_frame_mask(
+    gen_id: int,
+    x: Annotated[float, Query(ge=0.0, le=1.0, allow_inf_nan=False)],
+    y: Annotated[float, Query(ge=0.0, le=1.0, allow_inf_nan=False)],
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
+) -> Response:
+    """背景上以 (x, y)（相對背景 0–1）為種子點找到的相框內部：L 模式 PNG，255＝內部，尺寸同背景。
+    給舞台預覽肖像裁切用；不是背景或找不到框回 404。"""
+    gen = owned_generation(session, owner, gen_id)
+    if gen.kind != GenKind.BACKGROUND or not gen.image_path:
+        raise HTTPException(404, "這筆生成紀錄不是背景")
+    try:
+        data = storage.get(gen.image_path)
+    except StorageNotFound:
+        raise HTTPException(404, "圖片檔案遺失") from None
+    except ValueError:
+        raise HTTPException(409, "圖片檔案遺失，請重新產生") from None
+    try:
+        with Image.open(io.BytesIO(data)) as bg:
+            interior = find_interior(bg, (x, y))
+    except (OSError, ValueError):
+        raise HTTPException(409, "圖片檔案遺失，請重新產生") from None
+    if interior is None:
+        raise HTTPException(404, "這張背景找不到框")
+    return Response(content=interior_png(interior), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.get("/books/{book_id}/generations", response_model=list[GenerationOut])

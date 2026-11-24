@@ -165,3 +165,41 @@ def test_compose_page_without_frame_params_unchanged(client, app):
     page = portrait_page(client, app, ring_png())
     out = confirm(client, page["id"])
     assert "frame_found" not in params(app, out["selected_generation_id"])
+
+
+# ---- frame-fit：舞台的「放進框裡」即時計算（不存任何東西）----
+
+NO_FRAME = "這張背景找不到框，照一般擺放"
+
+
+def test_frame_fit_returns_placement_and_saves_nothing(client, app):
+    page = portrait_page(client, app, ring_png())
+    pid = page["id"]
+    put_placement(client, pid, cx=0.3, cy=0.6, height=0.5, flip=True)
+    before = get_page(app, pid).placement_json
+    r = client.post(f"/api/pages/{pid}/frame-fit")
+    assert r.status_code == 200, r.text
+    _, (cx, cy, height) = expected_fit(app, page)
+    body = r.json()
+    assert body["frame"] == SEED and body["autofit"] is True and body["flip"] is True
+    assert (body["cx"], body["cy"], body["height"]) == pytest.approx((cx, cy, height))
+    assert get_page(app, pid).placement_json == before  # 什麼都沒存
+    assert composites(app, pid) == []
+
+
+def test_frame_fit_422_when_no_frame(client, app):
+    page = portrait_page(client, app, png_bytes(color="white"))
+    r = client.post(f"/api/pages/{page['id']}/frame-fit")
+    assert r.status_code == 422 and r.json()["detail"] == NO_FRAME
+
+
+def test_frame_fit_needs_background_and_pose(client, app):
+    app.state.engine.image = color_png()
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p = new_page(client, b["id"], scene_prompt="相框")
+    r = client.post(f"/api/pages/{p['id']}/frame-fit")
+    assert r.status_code == 409 and r.json()["detail"] == "請先選好背景"
+    assert upload_bg(client, p["id"], ring_png()).status_code == 201
+    r = client.post(f"/api/pages/{p['id']}/frame-fit")
+    assert r.status_code == 409 and r.json()["detail"] == "請先選好角色動作"
+    assert client.post("/api/pages/9999/frame-fit").status_code == 404

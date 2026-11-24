@@ -399,6 +399,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pages/{page_id}/frame-fit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Frame Fit
+         * @description 舞台的「放進框裡」：用頁面選定的背景與角色動作，在預設種子點找框並算出肖像位置（保留目前的 flip）。
+         *     什麼都不存；背景上找不到框回 422。
+         */
+        post: operations["frame_fit_api_pages__page_id__frame_fit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pages/{page_id}/compose": {
         parameters: {
             query?: never;
@@ -467,6 +488,27 @@ export interface paths {
          * @description 角色動作的去背圖：裁到遮罩外接框的 RGBA PNG（alpha＝遮罩）。
          */
         get: operations["get_generation_cutout_api_generations__gen_id__cutout_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/generations/{gen_id}/frame-mask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Generation Frame Mask
+         * @description 背景上以 (x, y)（相對背景 0–1）為種子點找到的相框內部：L 模式 PNG，255＝內部，尺寸同背景。
+         *     給舞台預覽肖像裁切用；不是背景或找不到框回 404。
+         */
+        get: operations["get_generation_frame_mask_api_generations__gen_id__frame_mask_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2809,6 +2851,37 @@ export interface operations {
             };
         };
     };
+    frame_fit_api_pages__page_id__frame_fit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PagePlacement"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     confirm_compose_api_pages__page_id__compose_post: {
         parameters: {
             query?: never;
@@ -2940,6 +3013,40 @@ export interface operations {
     get_generation_cutout_api_generations__gen_id__cutout_get: {
         parameters: {
             query?: never;
+            header?: never;
+            path: {
+                gen_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_generation_frame_mask_api_generations__gen_id__frame_mask_get: {
+        parameters: {
+            query: {
+                x: number;
+                y: number;
+            };
             header?: never;
             path: {
                 gen_id: number;

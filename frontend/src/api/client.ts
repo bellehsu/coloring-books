@@ -151,3 +151,21 @@ export const api = {
     return { blob: await res.blob(), filename: filenameFrom(res.headers.get("content-disposition")) };
   },
 };
+
+/** frame-fit 在背景找不到框時的 422 訊息（後端 app/api/compose.py 的 NO_FRAME）。 */
+const NO_FRAME_MESSAGE = "這張背景找不到框，照一般擺放";
+
+/** 舞台的「放進框裡」：回算好的肖像位置（不存）；背景上找不到框回 null，其他錯誤丟 ApiError。 */
+export async function frameFit(pageId: number): Promise<Placement | null> {
+  try {
+    return await api.post<Placement>(`/pages/${pageId}/frame-fit`);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 422 && e.message === NO_FRAME_MESSAGE) return null;
+    throw e;
+  }
+}
+
+/** 背景相框內部遮罩（L 模式 PNG，255＝內部）的網址；x、y 是框內種子點（相對背景 0–1）。 */
+export function frameMaskUrl(genId: number, frame: { x: number; y: number }): string {
+  return `${BASE}/generations/${genId}/frame-mask?x=${frame.x}&y=${frame.y}`;
+}

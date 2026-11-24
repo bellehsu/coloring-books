@@ -1285,6 +1285,49 @@
         }
       }
     },
+    "/api/pages/{page_id}/frame-fit": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Frame Fit",
+        "description": "舞台的「放進框裡」：用頁面選定的背景與角色動作，在預設種子點找框並算出肖像位置（保留目前的 flip）。\n什麼都不存；背景上找不到框回 422。",
+        "operationId": "frame_fit_api_pages__page_id__frame_fit_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagePlacement"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/pages/{page_id}/compose": {
       "post": {
         "tags": [
@@ -1476,6 +1519,69 @@
             "schema": {
               "type": "integer",
               "title": "Gen Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generations/{gen_id}/frame-mask": {
+      "get": {
+        "tags": [
+          "generations"
+        ],
+        "summary": "Get Generation Frame Mask",
+        "description": "背景上以 (x, y)（相對背景 0–1）為種子點找到的相框內部：L 模式 PNG，255＝內部，尺寸同背景。\n給舞台預覽肖像裁切用；不是背景或找不到框回 404。",
+        "operationId": "get_generation_frame_mask_api_generations__gen_id__frame_mask_get",
+        "parameters": [
+          {
+            "name": "gen_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gen Id"
+            }
+          },
+          {
+            "name": "x",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "X"
+            }
+          },
+          {
+            "name": "y",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Y"
             }
           }
         ],

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api } from "./client";
+import { ApiError, api, frameFit, frameMaskUrl } from "./client";
 
 function jsonRes(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -120,5 +120,37 @@ describe("api.download", () => {
     const err = (await api.download("/x").catch((e) => e)) as ApiError;
     expect(err).toBeInstanceOf(ApiError);
     expect(err.message).toBe("沒有可匯出的頁面");
+  });
+});
+
+describe("frameFit", () => {
+  it("posts and returns the placement", async () => {
+    const pl = { cx: 0.5, cy: 0.6, height: 1.4, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true };
+    const f = vi.fn().mockResolvedValue(jsonRes(200, pl));
+    vi.stubGlobal("fetch", f);
+    expect(await frameFit(7)).toEqual(pl);
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/pages/7/frame-fit");
+    expect(init.method).toBe("POST");
+  });
+
+  it("returns null when the background has no frame", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(422, { detail: "這張背景找不到框，照一般擺放" })));
+    expect(await frameFit(7)).toBeNull();
+  });
+
+  it("throws other errors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(409, { detail: "請先選好背景" })));
+    const err = (await frameFit(7).catch((e) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(422, { detail: "別的 422" })));
+    expect(await frameFit(7).catch((e) => e)).toBeInstanceOf(ApiError);
+  });
+});
+
+describe("frameMaskUrl", () => {
+  it("builds a relative url with x and y", () => {
+    expect(frameMaskUrl(12, { x: 0.5, y: 0.55 })).toBe("/api/generations/12/frame-mask?x=0.5&y=0.55");
   });
 });
