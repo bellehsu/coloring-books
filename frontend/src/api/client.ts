@@ -169,3 +169,11 @@ export async function frameFit(pageId: number): Promise<Placement | null> {
 export function frameMaskUrl(genId: number, frame: { x: number; y: number }): string {
   return `${BASE}/generations/${genId}/frame-mask?x=${frame.x}&y=${frame.y}`;
 }
+
+/**
+ * 「清掉框外雜物」：用這頁目前選用的背景排一筆清理（算 1 次當日額度），回傳排隊中的那筆。
+ * oneclick（C）：好了一定換上去（換之前存復原快照）。不是肖像模式、沒有背景 409；次數用完 429。
+ */
+export function cleanupBackground(pageId: number, oneclick = false): Promise<Generation> {
+  return api.post<Generation>(`/pages/${pageId}/backgrounds/cleanup${oneclick ? "?oneclick=true" : ""}`);
+}

@@ -257,6 +257,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pages/{page_id}/backgrounds/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Background Cleanup
+         * @description 「清掉框外雜物」：用這頁目前選用的背景（上傳的也可以）排一筆清理，算 1 次當日額度。
+         *     沒有可用的選用背景 409；不是肖像模式（位置沒有 frame）409。好了的選用規則同新背景；
+         *     oneclick（C）：好了一定換上去（換之前存復原快照）、重新合成。
+         */
+        post: operations["create_background_cleanup_api_pages__page_id__backgrounds_cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/books/{book_id}/materials/batch": {
         parameters: {
             query?: never;
@@ -1393,6 +1415,8 @@ export interface components {
             /** Page Id */
             page_id: number | null;
             kind: components["schemas"]["GenKind"];
+            /** Source Generation Id */
+            source_generation_id: number | null;
             status: components["schemas"]["GenStatus"];
             /** Discarded */
             discarded: boolean;
@@ -1625,6 +1649,10 @@ export interface components {
             redraw_background: boolean;
             /** Redraw Pose */
             redraw_pose: boolean;
+            /** Auto Cleanup */
+            auto_cleanup: boolean;
+            /** Cleanup Prompt */
+            cleanup_prompt: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1682,6 +1710,10 @@ export interface components {
             line_detail?: components["schemas"]["LineDetail"] | null;
             /** Line Width Px */
             line_width_px?: number | null;
+            /** Auto Cleanup */
+            auto_cleanup?: boolean;
+            /** Cleanup Prompt */
+            cleanup_prompt?: string | null;
         };
         /**
          * PaperSize
@@ -1892,6 +1924,10 @@ export interface components {
             redraw_background: boolean;
             /** Redraw Pose */
             redraw_pose: boolean;
+            /** Auto Cleanup */
+            auto_cleanup: boolean;
+            /** Cleanup Prompt */
+            cleanup_prompt: string | null;
             /**
              * Created At
              * Format: date-time
@@ -2570,6 +2606,40 @@ export interface operations {
                 "application/json": components["schemas"]["BackgroundCreate"] | null;
             };
         };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_background_cleanup_api_pages__page_id__backgrounds_cleanup_post: {
+        parameters: {
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             202: {

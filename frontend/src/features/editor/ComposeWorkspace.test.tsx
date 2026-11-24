@@ -88,6 +88,11 @@ beforeEach(() => {
       }
       if (url === "/api/pages/1" && method === "PATCH") return j(mkPage(body as O));
       if (url === "/api/pages/1/backgrounds/upload") return j(mkPage({ background_generation_id: 70 }));
+      if (url === "/api/pages/1/backgrounds/cleanup") {
+        const made = gen(30 + gens.length, { status: "queued", image_url: null, queue_position: 1, source_generation_id: 3 });
+        gens = [...gens, made];
+        return j(made, 202);
+      }
       const m = url.match(/^\/api\/pages\/1\/(backgrounds|poses)$/);
       if (m) {
         const made = gen(30 + gens.length, {
@@ -513,6 +518,52 @@ describe("ComposeWorkspace", () => {
     it("手機（compact）也看得到，不用先展開", () => {
       setup({ compact: true });
       expect(within(card("圖下方的文字")).getByRole("textbox", { name: "中文字" })).toBeInTheDocument();
+    });
+  });
+
+  describe("清掉框外雜物", () => {
+    const PORTRAIT = { cx: 0.5, cy: 0.59, height: 0.42, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true };
+    const portraitPage = (o: O = {}) => mkPage({ background_generation_id: 3, placement: PORTRAIT, ...o });
+    const cleanBtn = () => within(card("背景")).getByRole("button", { name: "清掉框外雜物" });
+
+    it("肖像頁有選用的背景：按下排一筆清理（不帶 oneclick），排好之後停用", async () => {
+      gens = [gen(3)];
+      setup({ page: portraitPage(), background: gens[0] as unknown as Generation });
+      await within(card("背景")).findByRole("radio", { name: "背景第 1 張" });
+      expect(cleanBtn()).toBeEnabled();
+      expect(within(card("背景")).queryByText("有框的背景（肖像模式）才能清")).toBeNull();
+      await userEvent.click(cleanBtn());
+      await waitFor(() => expect(calledWith("POST", "/api/pages/1/backgrounds/cleanup")).toHaveLength(1));
+      // 清理排進去了（縮圖列有排隊中的一張）：按鈕停用
+      await waitFor(() => expect(cleanBtn()).toBeDisabled());
+    });
+
+    it("沒有選用的背景 → 停用", async () => {
+      setup({ page: portraitPage({ background_generation_id: null }) });
+      expect(cleanBtn()).toBeDisabled();
+    });
+
+    it("這頁的背景正在產生（或清理）→ 停用", async () => {
+      gens = [gen(3), gen(4, { status: "running", image_url: null })];
+      setup({ page: portraitPage(), background: gens[0] as unknown as Generation });
+      await within(card("背景")).findByRole("radio", { name: "背景第 1 張" });
+      await waitFor(() => expect(cleanBtn()).toBeDisabled());
+    });
+
+    it("不是肖像模式（位置沒有 frame）→ 停用，旁邊說明", async () => {
+      gens = [gen(3)];
+      setup({ page: mkPage({ background_generation_id: 3, placement: { ...PORTRAIT, frame: null } }), background: gens[0] as unknown as Generation });
+      expect(cleanBtn()).toBeDisabled();
+      expect(within(card("背景")).getByText("有框的背景（肖像模式）才能清")).toBeInTheDocument();
+    });
+
+    it("後端拒絕（409／429）→ toast 後端的訊息", async () => {
+      gens = [gen(3)];
+      failWith["POST /api/pages/1/backgrounds/cleanup"] = 429;
+      setup({ page: portraitPage(), background: gens[0] as unknown as Generation });
+      await within(card("背景")).findByRole("radio", { name: "背景第 1 張" });
+      await userEvent.click(cleanBtn());
+      await waitFor(() => expect(alertToasts()).toHaveTextContent("伺服器壞了"));
     });
   });
 });

@@ -924,3 +924,49 @@ async def test_revoked_owner_success_followup_task_not_run(env, monkeypatch):
         task = s.exec(select(PageTask).where(PageTask.page_id == pid)).one()
         assert task.status == PageTaskStatus.FAILED.value and task.error == "邀請已撤銷"
     assert ran == []
+
+
+def test_decode_request_loads_cleanup_source_image(tmp_path):
+    storage = LocalStorage(tmp_path, b"test-signing-key")
+    storage.put("books/1/generations/5.png", b"bg-png")
+    text = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="", seed=1, width=8, height=8)
+    assert decode_request(text, storage).source_image is None
+    assert decode_request(text, storage, "books/1/generations/5.png").source_image == b"bg-png"
+    with pytest.raises(StorageNotFound):
+        decode_request(text, storage, "books/1/generations/404.png")
+
+
+async def test_run_once_cleanup_loads_source_generation_image(env):
+    worker, engine, sessions, storage = env
+    src = add_gen(sessions, kind=GenKind.BACKGROUND, status=GenStatus.SUCCEEDED,
+                  image_path="books/1/generations/1.png")
+    storage.put("books/1/generations/1.png", b"orig-bg")
+    gid = add_gen(sessions, kind=GenKind.BACKGROUND, source_generation_id=src)
+    assert await worker.run_once() is True
+    assert engine.requests[0].source_image == b"orig-bg"
+    g = get(sessions, gid)
+    assert g.status == GenStatus.SUCCEEDED and g.source_generation_id == src
+    assert storage.get(g.image_path) == b"orig-bg"  # 假引擎對清理請求回傳來源圖
+
+
+async def test_run_once_cleanup_source_missing_fails_clearly(env):
+    worker, engine, sessions, storage = env
+    src = add_gen(sessions, kind=GenKind.BACKGROUND, status=GenStatus.SUCCEEDED,
+                  image_path="books/1/generations/1.png")  # 資料列有路徑但檔案不存在
+    gid = add_gen(sessions, kind=GenKind.BACKGROUND, source_generation_id=src)
+    assert await worker.run_once() is True
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED and "背景圖檔案遺失" in g.error
+    assert engine.requests == []
+
+
+async def test_run_once_cleanup_whose_source_row_is_gone_fails_instead_of_plain_background(env):
+    """清理的來源列被刪掉（ON DELETE SET NULL）：request_json 的 cleanup 旗標還在，失敗而不是當一般背景畫。"""
+    worker, engine, sessions, storage = env
+    rj = encode_request(kind=GenKind.BACKGROUND, prompt="p", negative_prompt="", seed=1, width=64, height=64,
+                        extra={"cleanup": True})
+    gid = add_gen(sessions, request_json=rj, kind=GenKind.BACKGROUND)
+    assert await worker.run_once() is True
+    g = get(sessions, gid)
+    assert g.status == GenStatus.FAILED and g.error == "要清理的背景圖檔案遺失，請重新生成背景"
+    assert engine.requests == []

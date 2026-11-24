@@ -6,6 +6,7 @@ import type { Book, Generation, OverviewPage, Page } from "@/api/client";
 import { isActive, useBook, useBookOverview, useGenerations, usePagesFollowJobs, useQA } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { errMsg } from "@/features/editing/errMsg";
+import { isCleaned } from "@/lib/cleanup";
 import { recomposeRunning, softAttention } from "@/lib/pageState";
 import type { StrokeOp } from "@/lib/strokes";
 import { useFixPages } from "./fixApi";
@@ -106,6 +107,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   const bgGen = gens.find((g) => g.id === page.background_generation_id);
   const poseGen = gens.find((g) => g.id === page.pose_generation_id);
   const bgActive = gens.some((g) => g.kind === "background" && isActive(g));
+  const bgCleaning = gens.some((g) => g.kind === "background" && isActive(g) && isCleaned(g));
   const poseActive = gens.some((g) => g.kind === "pose" && isActive(g));
   // 合成失敗（recompose_pending＋attention）不算在做：顯示原因卡與「再試一次」
   const working = recomposeRunning(page) || state === "working";
@@ -169,6 +171,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
               page={page}
               bgGen={bgGen}
               active={bgActive}
+              cleaning={bgCleaning}
               flushEdits={fix.flushEdits}
               restore={showRestore(page, "background") ? () => void fix.restore("background") : null}
               busy={busy}

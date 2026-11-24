@@ -22,6 +22,11 @@ B 的批次重畫主角的 take 另帶 review=true：換上去的同一個交易
 C 自己按的角色動作 take（沒有 review）換上去時清掉 review_pose（使用者刻意選的，同 C 點選另一個動作）。
 重畫主角一次畫多張的第 2、3 張帶 candidate=true：只當候選，好了不選用、不排流程；失敗也不動頁面
 （不設 failed，「再試一次」也不看它）。
+背景清理（「清掉框外雜物」，is_cleanup）成功時：take 同上；不帶 take 的，頁面選用的背景仍是它的來源就換上
+（使用者選的、上傳的也換，舊的留在縮圖），期間改選了別張就不動。失敗不設 failed、「再試一次」不看它。
+自動清理（auto_cleanup 頁）：AI 背景（不是清理產生的、不是上傳的）好了先不選，同一個交易排一筆清理它的
+generation（take／review 旗標照抄、帶著已預留的次數）；清好的照新背景的規則選用（take 或自動選圖），清理不會再
+觸發清理；清理失敗就改選用來源背景、照常排流程（不設 failed）。
 重新合成後，page.pending_user_strokes（C 的修改與復原／重做留下的使用者筆畫）寫進新合成圖的 user 層。
 """
 
@@ -31,17 +36,23 @@ import json
 import logging
 from typing import Callable
 
+from fastapi import HTTPException
 from sqlalchemy import case, func, insert, literal
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select, update
 
 from app.models import (
-    Book, Generation, GenKind, GenStatus, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer, utcnow,
+    Book, Generation, GenKind, GenStatus, Owner, Page, PageStatus, PageTask, PageTaskKind, PageTaskStatus, StrokeLayer,
+    utcnow,
 )
-from app.services import history
+from app.services import history, usage
 from app.services.engine import public_engine_error
-from app.services.gen_request import is_candidate, wants_review, wants_take
-from app.services.slots import SLOTS, newest_usable_ai
+from app.services.gen_request import (
+    BACKGROUND_AT_TRIGGER, CLEANUP_RESERVED, background_at_trigger, cleanup_reserved, is_auto_cleanup, is_candidate, is_cleanup,
+    wants_review, wants_take, with_flag,
+)
+from app.services.jobs import add_queued, auto_cleanup_job
+from app.services.slots import SLOTS, UPLOAD_ENGINE, newest_usable_ai
 from app.services.autofix import MAX_STROKES, MAX_TOTAL_POINTS, plan_autofix
 from app.services.lineart_render import apply_strokes
 from app.services.page_compose import (
@@ -220,11 +231,26 @@ def on_generation_succeeded(session: Session, gen_id: int) -> bool:
     """頁面的背景／角色動作生成成功：馬上自動選用（舊編輯器不用等流程就看得到），並排這頁的流程。
     C 的「換一張」（take）直接換上這張（先存復原快照）；帶 review 的（批次重畫主角）換上去時同一個交易
     標成 review_pose，沒有 review 的角色動作 take 換上去時清掉 review_pose。重畫主角的候選（candidate）
-    什麼都不選、不排。回傳有沒有排（其他種類的生成不排）。"""
+    什麼都不選、不排。auto_cleanup 頁的 AI 背景：不選，改排一筆自動清理（_queue_auto_cleanup），清好了再照
+    這裡的規則選用、排流程。回傳有沒有排頁面流程（其他種類的生成不排）。"""
     gen = session.get(Generation, gen_id)
     if gen is None or gen.page_id is None or gen.kind not in SLOTS or is_candidate(gen):
         return False
-    page_id = gen.page_id
+    if _queue_auto_cleanup(session, gen):
+        return False
+    if is_auto_cleanup(gen) and not is_usable(gen, GenKind.BACKGROUND, gen.page_id):
+        _fall_back_to_source(session, gen)  # 執行中被捨棄：清好的不能用，改用來源
+        return True
+    _select_new(session, gen)
+    enqueue_page_task(session, gen.page_id)
+    session.commit()
+    return True
+
+
+def _select_new(session: Session, gen: Generation) -> None:
+    """新產生好的背景／角色動作（或自動清理失敗時的來源背景）照新圖的規則選用：take 換上、按鈕的清理換掉
+    它的來源、其他自動選圖。commit。"""
+    gen_id, page_id = gen.id, gen.page_id
     if wants_take(gen) and is_usable(gen, gen.kind, page_id):
         try:
             if history.take_generation(session, gen):
@@ -244,35 +270,166 @@ def on_generation_succeeded(session: Session, gen_id: int) -> bool:
             session.rollback()
             log.warning("換上新圖失敗（generation %s）", gen_id, exc_info=True)
             auto_select(session, page_id)  # take 的快照已經在 take_generation 裡（失敗時一起 rollback 掉了）
-    else:
+    elif is_cleanup(gen) and not is_auto_cleanup(gen):
+        # 按鈕的背景清理（不帶 take）：選用中的背景還是它的來源才換上；期間改選了別張就不動（不走 auto_select：
+        # 清好的是最新一張 AI 圖，會蓋掉使用者剛改選、剛好又是 auto_* 的那張）
+        try:
+            _land_cleanup(session, gen)
+        except Exception:  # noqa: BLE001  換不上去：清好的那張留在縮圖，頁面照常排流程
+            session.rollback()
+            log.warning("換上清理後的背景失敗（generation %s）", gen_id, exc_info=True)
+    else:  # 自動清理（不帶 take）也在這裡：來源從沒選用過，清好的就是新背景
         auto_select(session, page_id, snapshot=True)
-    enqueue_page_task(session, page_id)
+
+
+def _queue_auto_cleanup(session: Session, gen: Generation) -> bool:
+    """auto_cleanup 頁的 AI 背景（不是清理產生的、不是上傳的）成功：不選用，同一個交易排一筆清理它的自動清理。
+    次數：背景排隊時已預留（cleanup_reserved）就把那 1 次的計數紀錄帶到清理上；沒預留（排隊後才打開自動清理）
+    就現在替同一個 usage owner（來源背景的，沒有就書的擁有者）預留 1 次，次數用完就不清（照常選用這張）。
+    預留了卻沒清（排隊後關掉了自動清理）的那 1 次退回。commit；回傳有沒有排清理。"""
+    if gen.kind != GenKind.BACKGROUND or is_cleanup(gen) or gen.engine == UPLOAD_ENGINE:
+        return False
+    page = session.get(Page, gen.page_id)
+    book = session.get(Book, gen.book_id)
+    if page is None or book is None or not page.auto_cleanup or not is_usable(gen, GenKind.BACKGROUND, page.id):
+        if _release_cleanup_reservation(session, gen):
+            session.commit()
+        return False
+    reserved = cleanup_reserved(gen)
+    counted = usage.counted(gen)
+    if reserved and counted is not None:
+        extra = usage.usage_extra(*counted)  # 背景排隊時預留的那 1 次：退回時退到原本的日期與 owner
+    else:
+        owner = session.get(Owner, counted[0] if counted is not None else book.owner_id)
+        if owner is None:
+            return False
+        try:
+            extra = usage.usage_extra(owner, usage.reserve(session, owner, 1, usage.clock()))
+        except HTTPException:  # 今天的次數用完了：不清，照常選用這張
+            session.rollback()
+            return False
+    session.refresh(page)
+    extra[BACKGROUND_AT_TRIGGER] = page.background_generation_id
+    add_queued(session, auto_cleanup_job(session, book, page, gen), extra)
+    if reserved:
+        _clear_cleanup_reserved(session, gen)
+    session.commit()
+    return True
+
+
+def _release_cleanup_reservation(session: Session, gen: Generation) -> bool:
+    """成功的背景還帶著 cleanup_reserved（不清了）：那 1 次退回、旗標改成 false。不 commit；回傳有沒有退。"""
+    if not cleanup_reserved(gen):
+        return False
+    counted = usage.counted(gen)
+    if counted is not None:
+        usage.refund(session, *counted)
+    _clear_cleanup_reserved(session, gen)
+    return True
+
+
+def _clear_cleanup_reserved(session: Session, gen: Generation) -> None:
+    """預留給自動清理的那 1 次已經帶走（或退回）：來源背景的 cleanup_reserved 改成 false。不 commit。"""
+    gen.request_json = with_flag(gen.request_json, CLEANUP_RESERVED, False)
+    session.add(gen)
+
+
+def _land_cleanup(session: Session, gen: Generation) -> bool:
+    """清理好的背景換上去：條件是頁面選用的背景仍是清理的來源（使用者選的、上傳的也換）。
+    auto_* 原本指著來源（自動選的）就改指清好的，否則不動（仍算使用者選的）。頁面有選定圖時換之前存復原快照
+    （同 auto_select）；不清「要重畫」（清理不是新的場景）。commit；回傳有沒有換。"""
+    src = gen.source_generation_id
+    page = session.get(Page, gen.page_id)
+    if src is None or page is None or not is_usable(gen, GenKind.BACKGROUND, page.id):
+        return False
+    session.refresh(page)
+    if page.background_generation_id != src:
+        return False
+    if page.selected_generation_id is not None:
+        history.push_snapshot(session, page)
+    auto = col(Page.auto_background_generation_id)
+    still_valid = (
+        select(Generation.id)
+        .where(col(Generation.id) == gen.id, col(Generation.page_id) == page.id,
+               *usable_conditions(GenKind.BACKGROUND))
+        .exists()
+    )
+    res = session.exec(
+        update(Page)
+        .where(col(Page.id) == page.id, col(Page.background_generation_id) == src, still_valid)
+        .values(**slot_change_values("background_generation_id", gen.id, new_selection=False),
+                auto_background_generation_id=case((auto == src, gen.id), else_=auto))
+    )
+    if res.rowcount != 1:
+        session.rollback()  # 同時被改了：快照也不留
+        return False
     session.commit()
     return True
 
 
 def enqueue_after_generation(session: Session, gen_id: int) -> bool:
     """on_generation_succeeded 失敗時的保底：只把頁面排進流程（流程第一步會自己補選圖）。
-    和 on_generation_succeeded 同樣只處理頁面的背景／角色動作、不含重畫主角的候選。"""
+    和 on_generation_succeeded 同樣只處理頁面的背景／角色動作、不含重畫主角的候選。
+    auto_cleanup 頁的背景排清理時出錯：不清了，預留給清理的那 1 次退回（同一個交易），再試著照新圖的規則選用它。"""
     gen = session.get(Generation, gen_id)
     if gen is None or gen.page_id is None or gen.kind not in SLOTS or is_candidate(gen):
         return False
+    released = _release_cleanup_reservation(session, gen)
     enqueue_page_task(session, gen.page_id)
     session.commit()
+    if released:
+        try:
+            _select_new(session, gen)
+        except Exception:  # noqa: BLE001  選不上：流程第一步會補選
+            session.rollback()
+            log.warning("保底選用背景失敗（generation %s）", gen_id, exc_info=True)
     return True
 
 
 def on_generation_failed(session: Session, gen_id: int) -> None:
     """頁面的背景／角色動作生成失敗：頁面 attention="failed"，說明是生成的中文錯誤訊息。
-    重畫主角的候選失敗不動頁面（頁面用的是 take 或原本的動作，好好的；候選本身照樣 FAILED、退回額度）。"""
+    重畫主角的候選失敗不動頁面（頁面用的是 take 或原本的動作，好好的；候選本身照樣 FAILED、退回額度）。
+    背景清理失敗也不設 attention：按鈕的，原本的背景維持選用，錯誤記在那筆 generation 上（縮圖照現有方式顯示）；
+    自動清理的，改用來源背景（照新圖的規則選用）並照常排頁面流程，頁面不卡住。"""
     gen = session.get(Generation, gen_id)
     if (gen is None or gen.page_id is None or gen.kind not in SLOTS or gen.status != GenStatus.FAILED
             or is_candidate(gen)):
+        return
+    if is_cleanup(gen):
+        if is_auto_cleanup(gen):
+            _fall_back_to_source(session, gen)
         return
     session.exec(
         update(Page).where(col(Page.id) == gen.page_id)
         .values(attention=ATTENTION_FAILED, attention_detail=public_engine_error(gen.error, False) or GENERATION_FAILED, updated_at=utcnow())
     )
+    session.commit()
+
+
+def on_generation_cancelled(session: Session, gen_id: int) -> bool:
+    """排隊中的生成剛被取消（取消、捨棄）之後呼叫：自動清理被取消時同失敗，改用來源背景、排頁面流程，
+    頁面才不會停在沒有背景、也沒有工作。其他的什麼都不做。回傳有沒有排流程。
+    只看狀態是不是 CANCELLED：呼叫端要確定是這次才取消的（之後再捨棄已取消的那筆不能再呼叫）。"""
+    gen = session.get(Generation, gen_id)
+    if gen is None or gen.page_id is None or gen.status != GenStatus.CANCELLED or not is_auto_cleanup(gen):
+        return False
+    _fall_back_to_source(session, gen)
+    return True
+
+
+def _fall_back_to_source(session: Session, cleanup: Generation) -> None:
+    """自動清理沒有成功（失敗、取消、捨棄）：來源背景照新圖的規則選用（不設 attention），並排頁面流程。
+    來源帶 take、但排清理之後頁面選用的背景換過了（使用者改選、上傳）：不硬換，只照自動選圖（使用者選的不動）。commit。"""
+    page_id = cleanup.page_id
+    source = session.get(Generation, cleanup.source_generation_id) if cleanup.source_generation_id else None
+    page = session.get(Page, page_id)
+    if source is not None and page is not None and source.page_id == page_id:
+        session.refresh(page)
+        if wants_take(source) and page.background_generation_id != background_at_trigger(cleanup):
+            auto_select(session, page_id, snapshot=True)
+        else:
+            _select_new(session, source)
+    enqueue_page_task(session, page_id)
     session.commit()
 
 

@@ -444,6 +444,104 @@ describe("C 處理一頁：重畫主角／AI 再畫一張（新圖好了就換�
   });
 });
 
+const PORTRAIT: NonNullable<Page["placement"]> = { cx: 0.5, cy: 0.59, height: 0.42, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true };
+
+describe("C 處理一頁：清掉框外雜物", () => {
+  const cleanBtn = () => within(row("背景")).getByRole("button", { name: "清掉框外雜物" });
+
+  it("肖像頁：在「AI 再畫一張」「↑ 上傳圖片」旁邊；按下用 oneclick 排清理，排好之後停用、說正在清", async () => {
+    page = mkPage({ placement: PORTRAIT });
+    const user = userEvent.setup();
+    setup();
+    await findRow("背景");
+    expect(cleanBtn()).toBeEnabled();
+    expect(within(row("背景")).queryByText("有框的背景（肖像模式）才能清")).toBeNull();
+    respond["POST /api/pages/5/backgrounds/cleanup?oneclick=true"] = () => {
+      const made = gen(12, "background", { status: "queued", image_url: null, source_generation_id: 10 });
+      gens = [...gens, made];
+      return json(made, 202);
+    };
+    await user.click(cleanBtn());
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/backgrounds\/cleanup/)).toHaveLength(1));
+    expect(posted(/\/backgrounds\/cleanup/)[0].url).toBe("/api/pages/5/backgrounds/cleanup?oneclick=true");
+    expect(await within(row("背景")).findByText(/^正在清掉框外雜物…/)).toBeInTheDocument();
+    expect(cleanBtn()).toBeDisabled();
+    expect(within(row("背景")).getByRole("button", { name: "AI 再畫一張" })).toBeDisabled();
+  });
+
+  it("不是肖像模式：停用，下面說明有框的背景才能清", async () => {
+    setup();
+    await findRow("背景");
+    expect(cleanBtn()).toBeDisabled();
+    expect(within(row("背景")).getByText("有框的背景（肖像模式）才能清")).toBeInTheDocument();
+  });
+
+  it("沒有背景：停用", async () => {
+    page = mkPage({ placement: PORTRAIT, background_generation_id: null });
+    setup();
+    await findRow("背景");
+    expect(cleanBtn()).toBeDisabled();
+  });
+
+  it("背景正在畫：停用", async () => {
+    page = mkPage({ placement: PORTRAIT });
+    gens = [...gens, gen(11, "background", { status: "running", image_url: null })];
+    setup();
+    expect(await within(await findRow("背景")).findByText(/^正在畫新的一張…/)).toBeInTheDocument();
+    expect(cleanBtn()).toBeDisabled();
+  });
+
+  it("後端拒絕（429 次數用完）：toast 後端的訊息", async () => {
+    page = mkPage({ placement: PORTRAIT });
+    respond["POST /api/pages/5/backgrounds/cleanup?oneclick=true"] = () => json({ detail: "今天的生成次數已用完，明天再來" }, 429);
+    const user = userEvent.setup();
+    setup();
+    await findRow("背景");
+    await user.click(cleanBtn());
+    expect(await screen.findByText("今天的生成次數已用完，明天再來")).toBeInTheDocument();
+  });
+
+  it("自動清理的頁：「AI 再畫一張」的背景好了還沒完，清理排著時仍是製作中，清好了才可以印", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    page = mkPage({ placement: PORTRAIT, auto_cleanup: true });
+    const working = (on: boolean) => {
+      overview = { ...overview, pages: overview.pages.map((p) => (p.id === 5 ? { ...p, state: on ? "working" : "ready" } : p)) };
+    };
+    respond["POST /api/pages/5/backgrounds?oneclick=true"] = () => {
+      const made = gen(11, "background", { status: "queued", image_url: null });
+      gens = [...gens, made];
+      working(true);
+      return json(made, 202);
+    };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    setup();
+    const head = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
+    await screen.findByText("可以印 ✓");
+    await user.click(within(row("背景")).getByRole("button", { name: "AI 再畫一張" }));
+    await waitFor(() => expect(within(head).getByText("製作中", { exact: true })).toBeInTheDocument());
+
+    // 背景好了：伺服器同時排了清理它的那筆（第一筆回傳的 id 已經不在做了）
+    gens = gens.map((g) => (g.id === 11 ? { ...g, status: "succeeded", image_url: "/api/generations/11/image" } : g));
+    gens = [...gens, gen(12, "background", { status: "queued", image_url: null, source_generation_id: 11 })];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    expect(await within(row("背景")).findByText(/^正在清掉框外雜物…/)).toBeInTheDocument();
+    expect(within(head).getByText("製作中", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("可以印 ✓")).toBeNull();
+
+    // 清好了、換上去、頁面做完
+    gens = gens.map((g) => (g.id === 12 ? { ...g, status: "succeeded", image_url: "/api/generations/12/image" } : g));
+    page = { ...page, background_generation_id: 12, auto_background_generation_id: 12 };
+    working(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    expect(await screen.findByText("可以印 ✓")).toBeInTheDocument();
+    expect(within(head).queryByText("製作中", { exact: true })).toBeNull();
+  });
+});
+
 describe("C 處理一頁：畫過的角色動作與重畫主角（#4B）", () => {
   /** 這頁畫過的角色動作：20（使用中）、21 失敗、22、23、24 已捨棄、26 沒有圖；背景與合成圖。 */
   function withPoses() {

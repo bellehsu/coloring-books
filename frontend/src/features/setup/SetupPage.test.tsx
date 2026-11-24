@@ -407,6 +407,40 @@ describe("③ 故事：預覽與每頁的背景", () => {
     expect(calls.filter((c) => c.url.endsWith("/placement"))).toHaveLength(0);
   });
 
+  it("套用華麗相框主題包：每頁開自動清理，第 4 頁（四葉草）帶自己的清理指示；張數連清理一起算", async () => {
+    book = bookOf({ character_generation_id: 5 });
+    setup();
+    await screen.findByText("選好了 ✓");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "套用主題包" })).getByRole("button", { name: /華麗相框/ }));
+    expect(screen.getByRole("region", { name: /會畫/ })).toHaveTextContent("會畫 36 張圖（背景 12＋動作 12＋清掉框外雜物 12）");
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    const patches = calls.filter((c) => c.method === "PATCH" && c.url.startsWith("/api/pages/"));
+    expect(patches).toHaveLength(12);
+    for (const c of patches) expect(c.body).toMatchObject({ auto_cleanup: true });
+    expect((patches[3].body as { cleanup_prompt: string }).cleanup_prompt).toMatch(/^Delete the rectangular decorative border/);
+    for (const c of [...patches.slice(0, 3), ...patches.slice(4)]) expect(c.body).toMatchObject({ cleanup_prompt: null });
+  });
+
+  it("套用華麗相框後自己改了文字：不開自動清理", async () => {
+    book = bookOf({ character_generation_id: 5 });
+    setup();
+    await screen.findByText("選好了 ✓");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "套用主題包" })).getByRole("button", { name: /華麗相框/ }));
+    const box = screen.getByLabelText("把故事貼在這裡") as HTMLTextAreaElement;
+    paste(box.value.replace("橢圓形", "大橢圓形"));
+    expect(screen.getByRole("region", { name: /會畫/ })).toHaveTextContent("會畫 24 張圖（背景 12＋動作 12）");
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    const patches = calls.filter((c) => c.method === "PATCH" && c.url.startsWith("/api/pages/"));
+    for (const c of patches) {
+      expect(c.body).not.toHaveProperty("auto_cleanup");
+      expect(c.body).not.toHaveProperty("cleanup_prompt");
+    }
+  });
+
   it("套用主題包後自己改了文字：不再套用主題包的線條設定", async () => {
     book = bookOf({ character_generation_id: 5 });
     setup();

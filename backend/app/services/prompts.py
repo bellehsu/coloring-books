@@ -122,3 +122,13 @@ def qwen_background_prompt(scene: str, variation: str | None = None) -> str:
 def pick_background_variation(rng: random.Random, exclude: str | None = None) -> str | None:
     """exclude 為同頁上一張簡潔背景用的變化語，避免再產生時構圖重複。"""
     return pick_variation(QWEN_BACKGROUND_VARIATIONS, rng, exclude)
+
+
+# --- 背景清理（qwen_edit_cleanup）：清掉肖像框外的雜物（spec 2026-11-24-background-cleanup §5.3）---
+# 頁面沒有自訂 cleanup_prompt 時用這段（英文，原樣送 Qwen）。
+GENERIC_CLEANUP_PROMPT = (
+    "Remove every object outside the ornate frame (balloons, circles, clouds, hearts, animals, ground lines). "
+    "Keep the ornate frame exactly the same: same lines, same shape, same position and size, and keep the inside of "
+    "the frame empty white. Everything outside the frame is plain pure white. Black and white line art, clean black "
+    "outlines."
+)

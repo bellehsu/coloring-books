@@ -10,15 +10,20 @@ import json
 import random
 import threading
 from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING
 
 from sqlmodel import Session, col, select, update
 
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page
 from app.services import usage
-from app.services.gen_request import CANDIDATE, REVIEW, TAKE, encode_request, is_candidate
+from app.services.gen_request import (
+    AUTO_CLEANUP, CANDIDATE, CLEANUP, CLEANUP_RESERVED, REVIEW, TAKE, encode_request, is_candidate, wants_review,
+    wants_take,
+)
 from app.services.layout import compute_layout
 from app.services.page_compose import is_usable
 from app.services.prompts import (
+    GENERIC_CLEANUP_PROMPT,
     POSE_SIZE,
     has_facing,
     pick_background_variation,
@@ -27,7 +32,9 @@ from app.services.prompts import (
     qwen_pose_prompt,
 )
 from app.services.slots import UPLOAD_ENGINE
-from app.services.worker import GenerationWorker
+
+if TYPE_CHECKING:  # 只用在型別：worker → pipeline → jobs，執行時匯入會循環
+    from app.services.worker import GenerationWorker
 
 MAX_SEED = 2**32 - 1
 
@@ -45,6 +52,16 @@ class Job:
         self.character_image = character_image
         self.variation = variation
         self.extra = extra or {}
+
+    @property
+    def cost(self) -> int:
+        """預留幾次當日額度：auto_cleanup 頁的背景連它的自動清理算 2 次。"""
+        return 2 if self.extra.get(CLEANUP_RESERVED) else 1
+
+
+def job_cost(page: Page, kind: GenKind) -> int:
+    """這頁這種素材排一筆要幾次（同 Job.cost；「開始做這本書」先算次數再組任務）。"""
+    return 2 if kind == GenKind.BACKGROUND and page.auto_cleanup else 1
 
 
 def add_queued(session: Session, job: Job, usage_extra: dict) -> Generation:
@@ -69,12 +86,12 @@ def add_queued(session: Session, job: Job, usage_extra: dict) -> Generation:
 def enqueue_jobs(
     session: Session, worker: GenerationWorker, owner: Owner, jobs: list[Job]
 ) -> list[Generation]:
-    """同一個交易：預留 len(jobs) 次當日額度（不夠就 429，什麼都不排），再新增全部任務後一起 commit。
-    沒有任務就不計數。"""
+    """同一個交易：預留這些任務的當日額度（每筆 Job.cost 次；不夠就 429，什麼都不排），再新增全部任務後
+    一起 commit。沒有任務就不計數。"""
     if not jobs:
         return []
     try:
-        day = usage.reserve(session, owner, len(jobs), usage.clock())
+        day = usage.reserve(session, owner, sum(job.cost for job in jobs), usage.clock())
         extra = usage.usage_extra(owner, day)
         gens = [add_queued(session, job, extra) for job in jobs]
         session.commit()
@@ -124,7 +141,7 @@ def _last_simple_variation(session: Session, page_id: int) -> str | None:
 
 def background_job(session: Session, book: Book, page: Page) -> Job:
     """單張與批次共用：用頁面場景描述排一筆簡潔（Qwen）背景，負向空字串，不用草圖。
-    構圖變化語排除這頁上一張簡潔背景用的。"""
+    構圖變化語排除這頁上一張簡潔背景用的。auto_cleanup 頁帶 CLEANUP_RESERVED：連自動清理預留 2 次。"""
     width, height = compute_layout(book.paper_size, book.print_mode).generation_size
     variation = pick_background_variation(
         random.Random(), exclude=_last_simple_variation(session, page.id)
@@ -141,7 +158,43 @@ def background_job(session: Session, book: Book, page: Page) -> Job:
         height=height,
         request_json="",
     )
-    return Job(gen, variation=variation, extra={"background_style": "simple"})
+    extra: dict = {"background_style": "simple"}
+    if page.auto_cleanup:
+        extra[CLEANUP_RESERVED] = True
+    return Job(gen, variation=variation, extra=extra)
+
+
+def cleanup_job(session: Session, book: Book, page: Page, source: Generation) -> Job:
+    """背景清理（「清掉框外雜物」）：用 qwen_edit_cleanup 編輯 source（這頁的背景），尺寸與它相同。
+    指令＝頁面的 cleanup_prompt，沒有就用 GENERIC。request_json 帶 cleanup 旗標（來源列被刪掉後仍認得出是清理）。"""
+    gen = Generation(
+        book_id=book.id,
+        page_id=page.id,
+        kind=GenKind.BACKGROUND,
+        user_text="",
+        prompt=page.cleanup_prompt or GENERIC_CLEANUP_PROMPT,
+        negative_prompt="",
+        seed=random.randint(0, MAX_SEED),
+        width=source.width,
+        height=source.height,
+        request_json="",
+        source_generation_id=source.id,
+    )
+    return Job(gen, extra={CLEANUP: True})
+
+
+def auto_cleanup_job(session: Session, book: Book, page: Page, source: Generation) -> Job:
+    """auto_cleanup 頁的 AI 背景好了：清理它的任務（帶 AUTO_CLEANUP）。take／review 旗標照抄來源
+    （一鍵的「AI 再畫一張」好了一定換上去，換上去的是清好的這張）；user_text 也照抄來源（清好的仍是那段
+    場景文字的圖：換上去時「要重畫」的文字保護照舊）。"""
+    job = cleanup_job(session, book, page, source)
+    job.gen.user_text = source.user_text
+    job.extra[AUTO_CLEANUP] = True
+    if wants_take(source):
+        job.extra[TAKE] = True
+    if wants_review(source):
+        job.extra[REVIEW] = True
+    return job
 
 
 def pose_job(session: Session, book: Book, page: Page, action: str, *, picked: Sequence[str | None] = ()) -> Job:

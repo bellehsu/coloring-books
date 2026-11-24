@@ -291,3 +291,48 @@ def test_caption_change_keeps_passed_status_and_selection(client, app):
     page = get_page(app, p["id"])
     assert page.status == PageStatus.PASSED and page.passed_at is not None
     assert page.selected_generation_id == ids[0]
+
+
+def test_patch_cleanup_fields(client):
+    p = new_page(client, new_book(client)["id"], scene_prompt="海邊")
+    assert p["auto_cleanup"] is False and p["cleanup_prompt"] is None
+    r = client.patch(f"/api/pages/{p['id']}", json={"auto_cleanup": True, "cleanup_prompt": "  清掉沙灘上的垃圾  "})
+    assert r.status_code == 200 and r.json()["auto_cleanup"] is True
+    assert r.json()["cleanup_prompt"] == "清掉沙灘上的垃圾"
+    r = client.patch(f"/api/pages/{p['id']}", json={"cleanup_prompt": "   "})
+    assert r.json()["cleanup_prompt"] is None and r.json()["auto_cleanup"] is True
+    assert client.patch(f"/api/pages/{p['id']}", json={"cleanup_prompt": "清" * 600}).status_code == 200
+    assert client.patch(f"/api/pages/{p['id']}", json={"cleanup_prompt": "清" * 601}).status_code == 422
+    assert client.patch(f"/api/pages/{p['id']}", json={"auto_cleanup": "yes"}).status_code == 422
+    assert client.patch(f"/api/pages/{p['id']}", json={"auto_cleanup": None}).status_code == 422
+
+
+def _cleanup_page(client):
+    p = new_page(client, new_book(client)["id"], scene_prompt="海邊")
+    r = client.patch(f"/api/pages/{p['id']}", json={"auto_cleanup": True, "cleanup_prompt": "清掉垃圾"})
+    assert r.status_code == 200
+    return p["id"]
+
+
+def test_patch_scene_change_turns_cleanup_off(client):
+    pid = _cleanup_page(client)
+    r = client.patch(f"/api/pages/{pid}", json={"scene_prompt": "公園", "action_prompt": "跑步"})
+    assert r.status_code == 200
+    assert r.json()["auto_cleanup"] is False and r.json()["cleanup_prompt"] is None
+
+
+def test_patch_same_scene_keeps_cleanup(client):
+    pid = _cleanup_page(client)
+    r = client.patch(f"/api/pages/{pid}", json={"scene_prompt": "  海邊 ", "action_prompt": "跑步"})
+    assert r.status_code == 200
+    assert r.json()["auto_cleanup"] is True and r.json()["cleanup_prompt"] == "清掉垃圾"
+
+
+def test_patch_scene_with_explicit_cleanup_keeps_explicit(client):
+    pid = _cleanup_page(client)
+    r = client.patch(f"/api/pages/{pid}", json={"scene_prompt": "公園", "auto_cleanup": True})
+    assert r.json()["auto_cleanup"] is True and r.json()["cleanup_prompt"] is None  # 沒送的 cleanup_prompt 照規則清掉
+    r = client.patch(f"/api/pages/{pid}", json={"scene_prompt": "森林", "auto_cleanup": True, "cleanup_prompt": "清掉樹枝"})
+    assert r.json()["auto_cleanup"] is True and r.json()["cleanup_prompt"] == "清掉樹枝"
+    r = client.patch(f"/api/pages/{pid}", json={"scene_prompt": "山", "cleanup_prompt": "清掉石頭"})
+    assert r.json()["auto_cleanup"] is False and r.json()["cleanup_prompt"] == "清掉石頭"

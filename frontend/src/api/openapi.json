@@ -849,6 +849,61 @@
         }
       }
     },
+    "/api/pages/{page_id}/backgrounds/cleanup": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Create Background Cleanup",
+        "description": "「清掉框外雜物」：用這頁目前選用的背景（上傳的也可以）排一筆清理，算 1 次當日額度。\n沒有可用的選用背景 409；不是肖像模式（位置沒有 frame）409。好了的選用規則同新背景；\noneclick（C）：好了一定換上去（換之前存復原快照）、重新合成。",
+        "operationId": "create_background_cleanup_api_pages__page_id__backgrounds_cleanup_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/books/{book_id}/materials/batch": {
       "post": {
         "tags": [
@@ -3843,6 +3898,17 @@
           "kind": {
             "$ref": "#/components/schemas/GenKind"
           },
+          "source_generation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Generation Id"
+          },
           "status": {
             "$ref": "#/components/schemas/GenStatus"
           },
@@ -3958,6 +4024,7 @@
           "book_id",
           "page_id",
           "kind",
+          "source_generation_id",
           "status",
           "discarded",
           "user_text",
@@ -4557,6 +4624,21 @@
             "type": "boolean",
             "title": "Redraw Pose"
           },
+          "auto_cleanup": {
+            "type": "boolean",
+            "title": "Auto Cleanup"
+          },
+          "cleanup_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleanup Prompt"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -4601,6 +4683,8 @@
           "can_redo",
           "redraw_background",
           "redraw_pose",
+          "auto_cleanup",
+          "cleanup_prompt",
           "created_at",
           "updated_at"
         ],
@@ -4742,6 +4826,22 @@
               }
             ],
             "title": "Line Width Px"
+          },
+          "auto_cleanup": {
+            "type": "boolean",
+            "title": "Auto Cleanup"
+          },
+          "cleanup_prompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 600
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleanup Prompt"
           }
         },
         "type": "object",
@@ -5373,6 +5473,21 @@
             "type": "boolean",
             "title": "Redraw Pose"
           },
+          "auto_cleanup": {
+            "type": "boolean",
+            "title": "Auto Cleanup"
+          },
+          "cleanup_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleanup Prompt"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -5432,6 +5547,8 @@
           "can_redo",
           "redraw_background",
           "redraw_pose",
+          "auto_cleanup",
+          "cleanup_prompt",
           "created_at",
           "updated_at",
           "requeued",

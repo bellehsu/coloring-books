@@ -34,6 +34,8 @@ export function mkPage(extra: Partial<Page> = {}): Page {
     can_redo: false,
     redraw_background: false,
     redraw_pose: false,
+    auto_cleanup: false,
+    cleanup_prompt: null,
     created_at: "2026-11-12T01:00:00Z",
     updated_at: "2026-11-12T01:00:00Z",
     ...extra,

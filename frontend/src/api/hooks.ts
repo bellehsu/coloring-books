@@ -6,7 +6,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { api } from "./client";
+import { api, cleanupBackground } from "./client";
 import { placementSaverFor } from "@/features/editing/placementSaver";
 import { recomposeRunning } from "@/lib/pageState";
 import type { components } from "./schema";
@@ -494,6 +494,15 @@ export function useGenerateBackground(bookId: number) {
   return useMutation({
     mutationFn: ({ pageId }: { pageId: number }) =>
       api.post<Generation>(`/pages/${pageId}/backgrounds`, {} satisfies S["BackgroundCreate"]),
+    onSuccess: () => invalidateJobs(qc, bookId),
+  });
+}
+
+/** 「清掉框外雜物」（進階編輯）：排一筆清理這頁選用背景的 → generations, queue */
+export function useCleanupBackground(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId }: { pageId: number }) => cleanupBackground(pageId),
     onSuccess: () => invalidateJobs(qc, bookId),
   });
 }

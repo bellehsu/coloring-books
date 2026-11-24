@@ -49,7 +49,7 @@ describe("按 h／H 叫出流程說明", () => {
     expect(help()).toBeNull();
   });
 
-  it("內容：三個步驟、三個 workflow、五個模型檔、關閉提示", async () => {
+  it("內容：三個步驟、四個 workflow、五個模型檔、關閉提示", async () => {
     const user = userEvent.setup();
     render(<Page />);
     await user.keyboard("h");
@@ -57,7 +57,7 @@ describe("按 h／H 叫出流程說明", () => {
     for (const step of ["① 主角參考圖", "② 畫背景與角色動作", "③ 變成著色頁"]) {
       expect(dlg).toHaveTextContent(step);
     }
-    for (const wf of ["qwen_character", "qwen_background", "qwen_edit_pose_cutout"]) {
+    for (const wf of ["qwen_character", "qwen_background", "qwen_edit_cleanup", "qwen_edit_pose_cutout"]) {
       expect(dlg).toHaveTextContent(wf);
     }
     for (const f of [

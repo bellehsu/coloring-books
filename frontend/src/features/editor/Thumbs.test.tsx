@@ -220,4 +220,13 @@ describe("Thumbs", () => {
     await screen.findByRole("radio", { name: "角色動作第 2 張" });
     for (const t of ["精準", "快速", "上傳"]) expect(screen.queryByText(t)).not.toBeInTheDocument();
   });
+
+  it("清理產生的背景（source_generation_id 有值）顯示「清過」小標，名稱也說明；排隊中的也標", async () => {
+    gens = [gen(3), gen(4, { source_generation_id: 3 }), gen(5, { status: "queued", image_url: null, source_generation_id: 4 })];
+    setup();
+    const cleaned = await screen.findByRole("radio", { name: "背景第 2 張（清過）" });
+    expect(cleaned.closest("[data-tile]")).toHaveTextContent("清過");
+    expect(screen.getByRole("radio", { name: "背景第 1 張" }).closest("[data-tile]")).not.toHaveTextContent("清過");
+    expect(screen.getByRole("button", { name: "取消背景第 3 張" }).closest("[data-tile]")).toHaveTextContent("清過");
+  });
 });

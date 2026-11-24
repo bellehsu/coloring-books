@@ -1,8 +1,10 @@
 """「開始做這本書」（Phase 13 §4.1）與 B 整本書（§4.3）的端點。
 
-- `GET /books/{id}/produce/plan`：要排幾張背景／角色動作、估計秒數、今天剩幾次、放得下幾張。
+- `GET /books/{id}/produce/plan`：要排幾張背景／角色動作、要幾次、估計秒數、今天剩幾次、放得下幾次。
+  `auto_cleanup` 頁的背景算 2 次（背景＋自動清理）；total、fits、estimate_s 都是次數。
 - `POST /books/{id}/produce`：依頁面順序、每頁先背景再角色動作，補排缺的素材。只預留今天放得下的
-  （使用者決定：放得下多少做多少，一頁的兩張放不下也先排放得下的那張），其餘頁面回 deferred_pages
+  （使用者決定：放得下多少做多少，一頁的兩張放不下也先排放得下的那張；auto_cleanup 頁的背景要 2 次都放得下
+  才排，不會只排背景不排清理，放不下就從那裡開始留到明天），其餘頁面回 deferred_pages
   （「還有 N 頁明天繼續」）。已有排隊中／執行中的同種素材就略過，所以按兩次不會重複。
   設定頁改了場景／動作而標了「要重畫」的頁，也照缺的素材排：take（好了換上去，角色動作另標 review_pose），
   排到時清掉旗標，放不下的旗標留著。
@@ -38,7 +40,9 @@ from app.api.schemas import (
 from app.api.urls import generation_image_url, lineart_url_is_current
 from app.models import Generation, GenKind, GenStatus, Owner, PageStatus, PageTask, PageTaskStatus, utcnow
 from app.services import usage
-from app.services.jobs import BATCH_LOCK, BookState, add_queued, build_job, clear_redraw_flag, has_character
+from app.services.jobs import (
+    BATCH_LOCK, BookState, add_queued, build_job, clear_redraw_flag, has_character, job_cost,
+)
 from app.services.page_state import GEN_ACTIVE, SOFT_ATTENTIONS, TASK_ACTIVE, hard_attention, page_state
 from app.services.pipeline import enqueue_page_task
 from app.services.slots import not_upload
@@ -82,12 +86,13 @@ def produce_plan(
     book = owned_book(session, owner, book_id)
     needed = _needed(session, book, BookState(session, book_id), redraw=True)
     backgrounds = sum(k == GenKind.BACKGROUND for _, k in needed)
-    total = len(needed)
+    costs = [job_cost(p, k) for p, k in needed]  # auto_cleanup 頁的背景連清理算 2 次
+    total = sum(costs)
     remaining = usage.remaining(session, owner, usage.clock())
-    fits = total if remaining is None else min(total, remaining)
+    fits = sum(costs[:usage.fitting_prefix(costs, remaining)])  # 同 produce：放不下的那筆之後都留到明天
     return ProducePlanOut(
         backgrounds=backgrounds,
-        poses=total - backgrounds,
+        poses=len(needed) - backgrounds,
         total=total,
         estimate_s=fits * SECONDS_PER_IMAGE,
         remaining=remaining,
@@ -125,7 +130,8 @@ def produce(
             granted, extra = 0, {}
             if needed:
                 try:
-                    day, granted = usage.reserve_up_to(session, owner, len(needed), usage.clock())
+                    day, granted = usage.reserve_prefix(
+                        session, owner, [job_cost(p, k) for p, k in needed], usage.clock())
                     extra = usage.usage_extra(owner, day)
                 except HTTPException:
                     if not pipeline_pages:  # 什麼都做不了：429

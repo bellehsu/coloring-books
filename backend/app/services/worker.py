@@ -28,6 +28,7 @@ from app.services.gen_request import (
     ENGINE_REQUEUES,
     ENGINE_UNAVAILABLE_SINCE,
     decode_request,
+    is_cleanup,
     is_retired,
 )
 from app.services.compose import largest_component
@@ -69,6 +70,7 @@ def _now() -> datetime:
 
 
 CHARACTER_MISSING = "角色參考圖檔案遺失，請重新選擇角色"
+SOURCE_MISSING = "要清理的背景圖檔案遺失，請重新生成背景"
 
 
 class GenerationWorker:
@@ -252,6 +254,19 @@ class GenerationWorker:
                 if res.rowcount == 1:
                     return s.get(Generation, gen_id)
 
+    def _source_key(self, gen: Generation) -> str | None:
+        """背景清理：來源 generation 的圖檔 key；不是清理回 None。來源沒有圖、或來源列已被刪掉
+        （source_generation_id 變 null、只剩 request_json 的 cleanup 旗標）就當檔案遺失：失敗，不當一般背景畫。"""
+        if not is_cleanup(gen):
+            return None
+        if gen.source_generation_id is None:
+            raise StorageNotFound("cleanup source generation deleted")
+        with self.sessions() as s:
+            src = s.get(Generation, gen.source_generation_id)
+            if src is None or not src.image_path:
+                raise StorageNotFound(f"source generation {gen.source_generation_id}")
+            return src.image_path
+
     def _finish(self, gen_id: int, **values) -> bool:
         """只更新仍為 RUNNING 的列（執行中被改成 CANCELLED 等的不覆蓋），回傳有沒有改到。
         改成 FAILED 時在同一個交易退回當天額度（只有真的改到這一列才退）。"""
@@ -276,9 +291,10 @@ class GenerationWorker:
         try:
             try:
                 # Storage 可能是遠端（R2）：讀寫放到 thread，不卡住 event loop
-                req = await asyncio.to_thread(decode_request, gen.request_json, self.storage)
+                source_key = await asyncio.to_thread(self._source_key, gen)
+                req = await asyncio.to_thread(decode_request, gen.request_json, self.storage, source_key)
             except StorageNotFound:
-                await self._fail_retrying(gen_id, CHARACTER_MISSING)
+                await self._fail_retrying(gen_id, SOURCE_MISSING if is_cleanup(gen) else CHARACTER_MISSING)
                 return True
             except ValueError as e:
                 if str(e) == RETIRED:  # 已停用的路線：只回報原因

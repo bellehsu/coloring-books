@@ -4,6 +4,7 @@
  * 預覽＝這本書現有的頁＋貼上的故事（照「貼上整本故事」的規則：第 n 段對應第 n 頁、只填空欄位、補不足的頁、
  * 有問題的段落整段不套用）。張數在前端算（頁面還沒匯入，後端的 /produce/plan 看不到）：
  * 背景＝有場景、還沒有背景、沒選上傳圖片的頁；動作＝有動作、還沒有角色動作的頁。規則同後端 _BookState.skip_reason。
+ * 自動清理的頁（auto_cleanup）的背景另外多算 1 次清理（同後端 /produce/plan 的 total）。
  * /produce/plan 只提供今天還剩幾次（remaining）與每張的秒數（estimate_s / fits）。
  */
 
@@ -11,6 +12,8 @@ import type { Generation, Page, ProducePlan } from "@/api/client";
 import { isActive } from "@/api/hooks";
 import { NO_QUOTA } from "@/lib/limits";
 import { parseStory, planImport, type ImportRow } from "@/lib/storyImport";
+import type { PackCleanup } from "@/lib/themePacks";
+import { appliesTo } from "./applyImport";
 
 /** 後端 SECONDS_PER_IMAGE（api/produce.py）：/produce/plan 沒有可以換算的數字時用。 */
 export const SECONDS_PER_IMAGE = 22;
@@ -24,6 +27,8 @@ export interface PageMaterials {
   /** 設定頁改了場景／動作：「繼續做」會重畫（後端標的旗標）。 */
   redrawBackground: boolean;
   redrawPose: boolean;
+  /** 這頁開著自動清理（新的 AI 背景好了再清掉框外雜物）。 */
+  autoCleanup?: boolean;
 }
 
 /** 「＋ 加一頁」手動加的頁（還沒建立）：接在現有頁與貼上的頁後面。 */
@@ -49,6 +54,8 @@ export interface PreviewEntry {
   captionEn: string;
   /** 已有的頁的素材；新的頁都沒有。 */
   materials: PageMaterials;
+  /** 按下開始後這頁開著自動清理（背景多算 1 次）。 */
+  autoCleanup: boolean;
 }
 
 /** 貼上的段落裡不會套用的：看不懂、或超過字數。 */
@@ -81,10 +88,11 @@ const NONE: PageMaterials = {
 };
 /** 每個已有頁面的素材狀態（gens：這本書的生成紀錄，任何種類）。 */
 export function pageMaterials(
-  pages: readonly Pick<
+  pages: readonly (Pick<
     Page,
     "id" | "background_generation_id" | "pose_generation_id" | "selected_generation_id" | "redraw_background" | "redraw_pose"
-  >[],
+  > &
+    Partial<Pick<Page, "auto_cleanup">>)[],
   gens: readonly Generation[],
 ): Map<number, PageMaterials> {
   const legacy = new Set(gens.filter((g) => g.kind === "page").map((g) => g.id));
@@ -102,17 +110,22 @@ export function pageMaterials(
       hasPose: has("pose", p.pose_generation_id),
       redrawBackground: p.redraw_background,
       redrawPose: p.redraw_pose,
+      autoCleanup: p.auto_cleanup ?? false,
     });
   }
   return out;
 }
 
-/** existing 依 position 排序後，第 n 段對應第 n 頁。 */
+/**
+ * existing 依 position 排序後，第 n 段對應第 n 頁。cleanups：主題包的每頁清理設定（同 applyImport 的
+ * ImportOptions.cleanups；只套用到會填內容的頁）。
+ */
 export function buildPreview(
   existing: readonly ExistingPage[],
   text: string,
   materials: ReadonlyMap<number, PageMaterials> = new Map(),
   drafts: readonly DraftPage[] = [],
+  cleanups?: readonly (PackCleanup | undefined)[],
 ): StoryPreview {
   const pages = [...existing].sort((a, b) => a.position - b.position || a.id - b.id);
   const parsed = parseStory(text);
@@ -124,6 +137,7 @@ export function buildPreview(
   for (let n = 1; n <= last; n++) {
     const e = pages[n - 1];
     const r = ok.get(n);
+    const m = (e && materials.get(e.id)) || NONE;
     entries.push({
       n,
       key: `p${n}`,
@@ -133,7 +147,8 @@ export function buildPreview(
       action: r?.fill.action ? r.action : (e?.action_prompt ?? ""),
       captionZh: r?.fill.captionZh ? r.captionZh : (e?.caption_zh ?? ""),
       captionEn: r?.fill.captionEn ? r.captionEn : (e?.caption_en ?? ""),
-      materials: (e && materials.get(e.id)) || NONE,
+      materials: m,
+      autoCleanup: autoCleanupAfter(r, m, cleanups?.[n - 1]),
     });
   }
 
@@ -148,6 +163,7 @@ export function buildPreview(
       captionZh: "",
       captionEn: "",
       materials: NONE,
+      autoCleanup: false,
     }),
   );
 
@@ -159,6 +175,18 @@ export function buildPreview(
   return { entries, rows, pasted: parsed.pages.length + parsed.errors.length, problems };
 }
 
+/**
+ * 匯入後這頁開不開自動清理（同 applyImport 與後端 PATCH）：會填內容的列帶了主題包的設定就用它；
+ * 沒帶設定但填了場景（改了場景文字）就關掉；其他照原本的。
+ */
+function autoCleanupAfter(r: ImportRow | undefined, m: PageMaterials, c: PackCleanup | undefined): boolean {
+  if (r && appliesTo(r)) {
+    if (c) return c.auto;
+    if (r.fill.scene && !r.create) return false;
+  }
+  return m.autoCleanup ?? false;
+}
+
 /** 這一頁按下開始後要不要畫背景（uploads：選了上傳圖片的頁的 key）。 */
 export const needsBackground = (e: PreviewEntry, uploads: ReadonlySet<string>) =>
   e.scene.trim() !== "" && (!e.materials.hasBackground || e.materials.redrawBackground) && !uploads.has(e.key);
@@ -168,6 +196,9 @@ export const needsPose = (e: PreviewEntry) =>
 export interface PlanCounts {
   backgrounds: number;
   poses: number;
+  /** 自動清理的頁的背景：每張另外清一次。 */
+  cleanups: number;
+  /** 要用幾次（背景＋動作＋清理）。 */
   total: number;
   /** 今天放得下幾張（remaining 不限時＝total）。 */
   fits: number;
@@ -182,14 +213,16 @@ export function planCounts(
   uploads: ReadonlySet<string>,
   plan?: Pick<ProducePlan, "remaining" | "estimate_s" | "fits">,
 ): PlanCounts {
-  const backgrounds = entries.filter((e) => needsBackground(e, uploads)).length;
+  const bgEntries = entries.filter((e) => needsBackground(e, uploads));
+  const backgrounds = bgEntries.length;
+  const cleanups = bgEntries.filter((e) => e.autoCleanup).length;
   const poses = entries.filter(needsPose).length;
-  const total = backgrounds + poses;
+  const total = backgrounds + poses + cleanups;
   const remaining = plan ? plan.remaining : undefined;
   const fits = remaining == null ? total : Math.min(total, remaining);
   const perImage = plan && plan.fits > 0 ? plan.estimate_s / plan.fits : SECONDS_PER_IMAGE;
   const minutes = fits > 0 ? Math.max(1, Math.ceil((fits * perImage) / 60)) : 0;
-  return { backgrounds, poses, total, fits, remaining, minutes };
+  return { backgrounds, poses, cleanups, total, fits, remaining, minutes };
 }
 
 /** 底部列的文字：標題、說明，以及今天放不下時的「今天先做 X 張，其餘明天繼續」。 */
@@ -202,7 +235,8 @@ export function planText(c: PlanCounts, ready: boolean): { heading: string; deta
       defer: null,
     };
   }
-  const heading = `${prefix}會畫 ${c.total} 張圖（背景 ${c.backgrounds}＋動作 ${c.poses}）`;
+  const parts = `背景 ${c.backgrounds}＋動作 ${c.poses}${c.cleanups > 0 ? `＋清掉框外雜物 ${c.cleanups}` : ""}`;
+  const heading = `${prefix}會畫 ${c.total} 張圖（${parts}）`;
   if (c.fits === 0) return { heading, detail: NO_QUOTA, defer: null };
   const cap = c.remaining == null ? "" : `（今天會用 ${c.fits} 次，還剩 ${c.remaining} 次）`;
   return {

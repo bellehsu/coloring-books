@@ -22,6 +22,7 @@ class GenerationRequest:
     width: int
     height: int
     character_image: bytes | None = None  # 只用於 POSE：角色參考圖的 PNG bytes（worker 從 Storage 讀出）
+    source_image: bytes | None = None  # 只用於 BACKGROUND 清理：要編輯的背景 PNG bytes（worker 從 Storage 讀出）
     variation: str | None = None  # 變化語（已併入 prompt；另記錄在 params）
 
 

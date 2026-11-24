@@ -18,13 +18,15 @@ from app.services.engine import (
 )
 from app.services.workflow_registry import ParameterError, WorkflowNotReady, WorkflowRegistry
 
-__all__ = ["RETIRED", "WORKFLOWS", "UPLOAD_SUBFOLDER", "ComfyEngine"]
+__all__ = ["RETIRED", "WORKFLOWS", "WORKFLOW_CLEANUP", "UPLOAD_SUBFOLDER", "ComfyEngine"]
 
 WORKFLOWS: dict[GenKind, str] = {
     GenKind.CHARACTER: "qwen_character",
     GenKind.BACKGROUND: "qwen_background",
     GenKind.POSE: "qwen_edit_pose_cutout",
 }
+# 背景清理：BACKGROUND 帶 source_image 時改用（不在 WORKFLOWS：它不是獨立的 GenKind）
+WORKFLOW_CLEANUP = "qwen_edit_cleanup"
 UPLOAD_SUBFOLDER = "coloring_books"
 INTERRUPT_TIMEOUT_S = 3.0
 
@@ -69,12 +71,15 @@ class ComfyEngine:
             raise EngineError(RETIRED)
         if req.kind == GenKind.POSE and req.character_image is None:
             raise EngineError("角色動作需要角色參考圖")
-        entry = self.registry.get(name)
+        cleanup = req.kind == GenKind.BACKGROUND and req.source_image is not None
+        entry = self.registry.get(WORKFLOW_CLEANUP if cleanup else name)
 
         async with self.client_factory() as client:
             values: dict = {"prompt": req.prompt, "seed": req.seed, "width": req.width, "height": req.height}
             if req.kind == GenKind.POSE:
                 values["character_image"] = await self._upload(client, req.character_image, "char")
+            if cleanup:
+                values["source_image"] = await self._upload(client, req.source_image, "src")
             built = entry.build_prompt(values)
 
             def progress(ev: ProgressEvent) -> None:

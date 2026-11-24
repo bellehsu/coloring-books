@@ -8,6 +8,7 @@
 
 「再試一次」（retry）：只處理這一頁。這頁最新一張背景／角色動作是失敗的（之後沒有成功的同一種）就重排那一種
 （同 C 的「換一張」：take，好了就換上去；算 1 次當日額度，用完 429）；沒有就重跑這頁的頁面流程（不計次數）。
+失敗的背景清理（「清掉框外雜物」）不算：原本的背景好好的，不用重畫。
 與「繼續做」共用 BATCH_LOCK，同時按兩次只排一次、只算一次。
 """
 
@@ -20,6 +21,7 @@ from app.api.pages import page_out
 from app.api.schemas import PageOut, RestoreIn, RetryOut
 from app.models import Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
 from app.services import history
+from app.services.gen_request import is_cleanup
 from app.services.jobs import BATCH_LOCK, background_job, enqueue_jobs, has_character, pose_job, take
 from app.services.pipeline import enqueue_page_task
 from app.services.slots import not_candidate
@@ -123,20 +125,26 @@ def accept(
     return page_out(session, page)
 
 
+def _newest_query(page_id: int, kind: GenKind):
+    """這頁這種素材不是候選的生成（不論狀態），由新到舊。"""
+    return (select(Generation).where(Generation.page_id == page_id, Generation.kind == kind, not_candidate())
+            .order_by(col(Generation.id).desc()))
+
+
 def _newest(session: Session, page_id: int, kind: GenKind) -> Generation | None:
     """這頁這種素材最新一張不是候選的生成（不論狀態）。"""
-    return session.exec(
-        select(Generation).where(Generation.page_id == page_id, Generation.kind == kind, not_candidate())
-        .order_by(col(Generation.id).desc())
-    ).first()
+    return session.exec(_newest_query(page_id, kind)).first()
 
 
 def _failed_kinds(session: Session, page_id: int) -> list[GenKind]:
     """這頁最新一張（依 id）是失敗的背景／角色動作種類（之後有成功的、或還在排隊／執行中就不算）。
-    重畫主角的候選不算：它失敗不用重畫，它成功也不代表失敗的 take 補好了。"""
+    重畫主角的候選不算：它失敗不用重畫，它成功也不代表失敗的 take 補好了。
+    失敗的背景清理略過（原本的背景好好的，不用重畫）；略過後再往前看，清理之前就失敗的背景照樣算。"""
     out = []
     for kind in (GenKind.BACKGROUND, GenKind.POSE):
-        newest = _newest(session, page_id, kind)
+        # 只有背景會有清理；由新到舊逐筆讀，找到第一筆就停
+        newest = next((g for g in session.exec(_newest_query(page_id, kind))
+                       if not (g.status == GenStatus.FAILED and is_cleanup(g))), None)
         if newest is not None and newest.status == GenStatus.FAILED:
             out.append(kind)
     return out

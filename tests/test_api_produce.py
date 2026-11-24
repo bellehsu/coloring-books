@@ -6,6 +6,8 @@
 - overview：每頁 working／attention／ready／todo、本輪進度、還有幾頁沒排。舊書照原樣顯示。
 """
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import col, select
@@ -540,3 +542,67 @@ def test_produce_does_not_requeue_review_pose_page(client, app):
     assert all(t.status != PageTaskStatus.QUEUED.value for t in page_tasks(app, p1["id"]))
     set_page(app, p1["id"], attention="failed", attention_detail="圖片產生失敗，請重新產生")
     assert produce(client, b["id"])["pipeline_pages"] == [p1["id"]]  # 對照：硬的請看一下照排
+
+
+# ---- 自動清理（auto_cleanup 頁的背景算 2 次）-------------------------------------------------
+
+
+def set_auto(client, page_id):
+    r = client.patch(f"/api/pages/{page_id}", json={"auto_cleanup": True})
+    assert r.status_code == 200, r.text
+
+
+def test_plan_counts_auto_cleanup_backgrounds_twice(client, app):
+    owner = login(client, app, cap=4)
+    b, (p1, p2, p3) = book_with_pages(client, app, THREE)  # 角色用掉 1 次：剩 3
+    set_auto(client, p1["id"])
+    got = plan(client, b["id"])
+    # 次數依頁序：p1 背景 2、p1 動作 1（剛好 3）、之後都放不下
+    assert got == {"backgrounds": 3, "poses": 3, "total": 7, "estimate_s": 3 * 22, "remaining": 3, "fits": 3}
+    set_auto(client, p2["id"])
+    set_cap(app, owner, 3)  # 剩 2：p1 背景＋清理剛好、p1 動作放不下
+    got = plan(client, b["id"])
+    assert got["total"] == 8 and got["fits"] == 2 and got["estimate_s"] == 2 * 22
+    set_cap(app, owner, 2)  # 剩 1：連第一張背景（2 次）都放不下
+    got = plan(client, b["id"])
+    assert got["fits"] == 0 and got["estimate_s"] == 0 and got["remaining"] == 1
+    assert used(app, owner) == 1
+
+
+def test_produce_never_splits_a_background_from_its_cleanup(client, app):
+    owner = login(client, app, cap=4)
+    b, (p1, p2, p3) = book_with_pages(client, app, THREE)  # 剩 3 次
+    set_auto(client, p2["id"])
+    out = produce(client, b["id"])
+    gens = book_gens(app, b["id"])
+    # p1 背景、p1 動作 = 2 次；p2 的背景要 2 次、只剩 1：整頁留到明天（不排背景、也不跳過去排後面的）
+    assert [(g.page_id, g.kind) for g in gens] == [(p1["id"], GenKind.BACKGROUND), (p1["id"], GenKind.POSE)]
+    assert out["deferred_pages"] == [p2["id"], p3["id"]]
+    assert used(app, owner) == 3
+
+    r = client.post(f"/api/books/{b['id']}/produce")  # 剩 1 次、第一筆就要 2 次
+    assert r.status_code == 429 and r.json()["detail"] == "今天只剩 1 次，這次需要 5 次"
+    assert len(book_gens(app, b["id"])) == 2 and used(app, owner) == 3
+
+    set_cap(app, owner, 6)  # 剩 3：p2 背景＋清理、p2 動作
+    out = produce(client, b["id"])
+    gens = book_gens(app, b["id"])
+    assert [(g.page_id, g.kind) for g in gens[2:]] == [(p2["id"], GenKind.BACKGROUND), (p2["id"], GenKind.POSE)]
+    assert json.loads(gens[2].request_json)["cleanup_reserved"] is True
+    assert "cleanup_reserved" not in json.loads(gens[0].request_json)
+    assert out["deferred_pages"] == [p3["id"]] and used(app, owner) == 6
+
+
+def test_produce_auto_page_runs_cleanup_and_finishes(client, app):
+    owner = login(client, app, cap=60)
+    b, (p1, p2) = book_with_pages(client, app, THREE[:2])
+    set_auto(client, p1["id"])
+    assert plan(client, b["id"])["total"] == 5
+    produce(client, b["id"])
+    assert used(app, owner) == 1 + 5
+    run_all(client, app)
+    assert states(client, b["id"]) == ["ready", "ready"]
+    cleaned = [g for g in book_gens(app, b["id"], GenKind.BACKGROUND) if g.source_generation_id is not None]
+    assert [g.page_id for g in cleaned] == [p1["id"]] and cleaned[0].status == GenStatus.SUCCEEDED
+    assert get_page(app, p1["id"]).background_generation_id == cleaned[0].id
+    assert used(app, owner) == 1 + 5  # 清理用的是預留的那 1 次

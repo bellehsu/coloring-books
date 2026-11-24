@@ -3,7 +3,9 @@
 import { useId, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import type { Generation, Page } from "@/api/client";
-import { useBook, useGenerateBackground, useGeneratePose, useUpdatePage, useUploadBackground } from "@/api/hooks";
+import {
+  isActive, useBook, useCleanupBackground, useGenerateBackground, useGeneratePose, useUpdatePage, useUploadBackground,
+} from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { CaptionField, captionError } from "@/components/ui/CaptionField";
 import { Icons } from "@/components/ui/Icons";
@@ -11,6 +13,7 @@ import { useToast } from "@/components/ui/Toast";
 import {
   ACTION_HINT, ACTIONS, appendPhrase, EXPRESSIONS, FACING_HINT, FACINGS, hasPhrase,
 } from "@/lib/actions";
+import { CLEANUP_LABEL, CLEANUP_NOT_PORTRAIT, isPortrait } from "@/lib/cleanup";
 import { MAX_ACTION, MAX_SCENE, normalizeCaption } from "@/lib/limits";
 import { quiet } from "@/lib/quiet";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
@@ -49,7 +52,7 @@ export interface ComposeWorkspaceProps {
 
 /**
  * 「① 構圖」的右欄：背景卡片與角色動作卡片。
- * 背景：縮圖（單選）、「換一張」（Qwen，用本頁場景文字）、「上傳背景圖」、收合的場景文字編輯。
+ * 背景：縮圖（單選）、「換一張」（Qwen，用本頁場景文字）、「上傳背景圖」、「清掉框外雜物」（肖像頁）、收合的場景文字編輯。
  * 角色動作：縮圖、「換一張」（用本頁動作文字；頁面沒寫就用最新一張的動作）、收合的動作文字編輯與常用動作。
  * 改過的文字在離開欄位或按「換一張」時存回頁面（PATCH），存好才產生。
  * compact（手機）：收合時只顯示精簡卡片，展開後是完整卡片加「收合」按鈕；收合不會丟掉改到一半的文字。
@@ -198,6 +201,8 @@ function BackgroundCard({
   const upload = useUploadBackground(bookId);
   const flight = useSingleFlight();
   const uploading = useSingleFlight();
+  const cleanup = useCleanupBackground(bookId);
+  const cleaning = useSingleFlight();
   const { list } = useThumbList(bookId, "background", page.id);
 
   const n = thumbNumber(list, background?.id);
@@ -236,6 +241,19 @@ function BackgroundCard({
   };
   const uploadBusy = uploading.busy || upload.isPending;
   const uploadDisabled = uploadBusy || !!picking;
+
+  // 清掉框外雜物：要有選用的背景、這頁沒有背景在產生（或清理）、而且是肖像模式
+  const portrait = isPortrait(page);
+  const bgBusy = list?.some(isActive) ?? false;
+  const cleanDisabled =
+    page.background_generation_id == null || bgBusy || !portrait || cleaning.busy || cleanup.isPending || uploadBusy || !!picking;
+  const clean = () =>
+    cleaning.run(() =>
+      cleanup.mutateAsync({ pageId: page.id }).then(
+        () => undefined,
+        (e: unknown) => toast.show(errMsg(e, "無法清掉框外雜物"), "error"),
+      ),
+    );
 
   if (fold.collapsed) {
     return (
@@ -281,7 +299,15 @@ function BackgroundCard({
             onChange={onFile}
           />
         </label>
+        <Button disabled={cleanDisabled} aria-describedby={portrait ? undefined : `${id}-clean`} onClick={() => void clean()}>
+          {CLEANUP_LABEL}
+        </Button>
       </div>
+      {!portrait && (
+        <p id={`${id}-clean`} className={styles.hint}>
+          {CLEANUP_NOT_PORTRAIT}
+        </p>
+      )}
       <p id={`${id}-hint`} className={styles.hint}>
         {UPLOAD_HINT}
       </p>

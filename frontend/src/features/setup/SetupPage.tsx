@@ -162,7 +162,12 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
     [pagesQ.data],
   );
   const materials = useMemo(() => pageMaterials(pages, gensQ.data ?? []), [pages, gensQ.data]);
-  const preview = useMemo(() => buildPreview(pages, text, materials, drafts), [pages, text, materials, drafts]);
+  // 主題包的設定（線條、位置、清理）只在貼上的文字沒改過時套用
+  const packOpts = pack && pack.text === text ? pack : null;
+  const preview = useMemo(
+    () => buildPreview(pages, text, materials, drafts, packOpts?.cleanups),
+    [pages, text, materials, drafts, packOpts],
+  );
   const uploadKeys = useMemo(() => new Set(uploads.keys()), [uploads]);
   const hasCharacter = b?.character_generation_id != null;
   const hasPages = preview.entries.length > 0;
@@ -219,7 +224,7 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
           updatePage: ({ pageId, ...body }) => api.patch<Page>(`/pages/${pageId}`, body),
           savePlacement: (pageId, p) => api.put<Page>(`/pages/${pageId}/placement`, p),
         },
-        pack && pack.text === text ? { lineDetail: pack.lineDetail, placements: pack.placements } : {},
+        packOpts ? { lineDetail: packOpts.lineDetail, placements: packOpts.placements, cleanups: packOpts.cleanups } : {},
       );
       // 「＋ 加一頁」的頁接在後面；建好就變成現有的頁（選好的上傳圖改用頁碼記）
       for (const e of entries) {
