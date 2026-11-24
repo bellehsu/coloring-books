@@ -178,9 +178,10 @@ const SPORTS: readonly PackPage[] = [
 /** 華麗相框：背景是古典捲草花紋外框、中間空白，主角站在框裡（使用者 2026-11-24）。 */
 const FRAME_STYLE = "，只有黑色線條、沒有塗黑的地方";
 // 驗收（2026-11-24）：框小的時候 Qwen 會在旁邊畫一堆東西 → 框要幾乎佔滿整張紙、明說沒有其他東西；
-// 「空白」會被畫成透明格子 → 說「乾淨的白色」。
+// 「空白」會被畫成透明格子 → 說「乾淨的白色」；「四周留白邊」會多畫一圈方框（使用者不要）；
+// 寫出「沒有地面、草叢或雲」反而每頁都畫出草地和雲 → 不點名要排除的東西（措辭實驗 wording_AB.png，A 版）。
 const frame = (shape: string, extra = "") =>
-  `白色背景，一個很大的${shape}古典捲草花紋外框${extra}，外框幾乎佔滿整張紙，四周只留一點白邊；` +
+  `白色背景，一個很大的${shape}古典捲草花紋外框${extra}，外框幾乎佔滿整張紙；` +
   `框裡面是乾淨的白色，什麼都沒有；除了這個外框，畫面裡沒有任何其他東西`;
 
 const FRAMES: readonly PackPage[] = [
@@ -188,11 +189,11 @@ const FRAMES: readonly PackPage[] = [
   { scene: frame("直立長方形"), action: "雙手放在背後，站得直直的，微笑", zh: "長方形", en: "Rectangle" },
   { scene: frame("圓形", "，整個圓形外框都在紙張裡面，沒有被切掉"), action: "雙手托著臉頰，開心地笑", zh: "圓形", en: "Circle" },
   { scene: frame("愛心形"), action: "雙手在胸前比出一個愛心", zh: "愛心", en: "Heart" },
-  { scene: frame("五角星星形"), action: "一手舉著一根星星魔法棒", zh: "星星", en: "Star" },
-  { scene: frame("圓形花環", "，外框上有花朵和葉子"), action: "雙手捧著一束花", zh: "花環", en: "Wreath" },
+  { scene: frame("五角星星形", "，外框本身就是一顆大星星的形狀"), action: "一手舉著一根星星魔法棒", zh: "星星", en: "Star" },
+  { scene: frame("直立橢圓形花環", "，外框上有花朵和葉子"), action: "雙手捧著一束花", zh: "花環", en: "Wreath" },
   { scene: frame("拱門形", "，上面是圓弧、兩邊是直的"), action: "張開雙手歡迎", zh: "拱門", en: "Arch" },
   { scene: frame("盾牌形"), action: "一手叉腰，一手比讚", zh: "盾牌", en: "Shield" },
-  { scene: frame("雲朵形", "，外框的外形是一朵大雲的輪廓"), action: "雙手抱著一隻泰迪熊", zh: "雲朵", en: "Cloud" },
+  { scene: frame("雲朵形", "，外框本身就是一朵大雲的形狀"), action: "雙手抱著一隻泰迪熊", zh: "雲朵", en: "Cloud" },
   { scene: frame("直立長方形", "，外框上方正中間有一個大蝴蝶結"), action: "雙手捧著一個禮物盒", zh: "蝴蝶結", en: "Bow" },
   { scene: frame("直立橢圓形", "，外框頂上有一頂皇冠"), action: "頭上戴著一頂小皇冠，雙手提起衣角行禮", zh: "皇冠", en: "Crown" },
   { scene: frame("菱形"), action: "雙腳跳起來，開心地笑", zh: "菱形", en: "Diamond" },

@@ -431,6 +431,8 @@ describe("華麗相框（使用者 2026-11-24）", () => {
       expect(p.scene).toContain("古典捲草花紋外框");
       expect(p.scene).toContain("外框幾乎佔滿整張紙"); // 框小的話 Qwen 會在旁邊畫一堆東西
       expect(p.scene).toContain("框裡面是乾淨的白色，什麼都沒有");
+      expect(p.scene).not.toContain("白邊"); // 「四周只留一點白邊」會多畫一圈方框（使用者 2026-11-24 不要）
+      for (const named of ["草叢", "沒有地面", "方形的邊框"]) expect(p.scene).not.toContain(named); // 點名排除反而會畫出來
       expect(p.scene).toContain("除了這個外框，畫面裡沒有任何其他東西");
       expect(p.scene).not.toContain("空白"); // 會被畫成透明格子
       expect(p.scene.endsWith("，只有黑色線條、沒有塗黑的地方，畫面裡沒有人")).toBe(true);
@@ -438,9 +440,11 @@ describe("華麗相框（使用者 2026-11-24）", () => {
       expect(p.action).not.toContain("像");
     }
   });
-  it("驗收後：圓形框不被切掉、雲朵是一朵雲的輪廓（不是一堆圓）", () => {
+  it("驗收後：圓形框不被切掉；星星、雲朵本身就是框（外面不再包方框）；花環是直立橢圓形", () => {
     expect(parsed.pages[2].scene).toContain("整個圓形外框都在紙張裡面，沒有被切掉");
-    expect(parsed.pages[8].scene).toContain("外框的外形是一朵大雲的輪廓");
+    expect(parsed.pages[4].scene).toContain("外框本身就是一顆大星星的形狀");
+    expect(parsed.pages[5].scene).toContain("直立橢圓形花環");
+    expect(parsed.pages[8].scene).toContain("外框本身就是一朵大雲的形狀");
   });
   it("objects in the frame aren't repeated in the action (drawn twice otherwise)", () => {
     for (const p of parsed.pages) {
