@@ -137,7 +137,7 @@ beforeEach(() => {
       if (method === "POST" && url.startsWith("/api/pages/5/poses")) return json(gen(21, "pose", { status: "queued" }), 202);
       if (method === "POST" && url.startsWith("/api/pages/5/backgrounds")) return json(gen(11, "background", { status: "queued" }), 202);
       if (method === "PUT" && url.startsWith("/api/pages/5/placement")) {
-        page = { ...page, placement: body as Placement };
+        page = { ...page, placement: { autofit: false, ...(body as Placement) } };
         return json(page);
       }
       if (method === "PATCH" && url.startsWith("/api/pages/5")) return json(page);
@@ -223,6 +223,16 @@ describe("C 處理一頁：頁首", () => {
     const head = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
     await waitFor(() => expect(within(head).getByText("製作中", { exact: true })).toBeInTheDocument());
     expect(screen.queryByText("請看一下：換了新的主角動作")).toBeNull();
+  });
+
+  it("a portrait page whose background had no frame (review_frame) shows 請看一下 in the header but stays printable", async () => {
+    page = mkPage({ status: "passed", attention: "review_frame", attention_detail: "這張背景找不到框，照一般擺放，可以再畫一張背景" });
+    overview = { ...overview, pages: overview.pages.map((p) => (p.id === 5 ? { ...p, state: "ready", review: true } : p)) };
+    setup();
+    const head = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
+    await waitFor(() => expect(within(head).getByText("請看一下", { exact: true })).toBeInTheDocument());
+    expect(within(head).queryByText("可以印 ✓", { exact: true })).toBeNull();
+    expect(screen.getByRole("button", { name: "這頁可以印了 ✓" })).toBeEnabled();
   });
 
   it("prev/next go through all pages without a filter", async () => {
@@ -338,6 +348,14 @@ describe("C 處理一頁：請看一下", () => {
     expect(screen.queryByRole("region", { name: "為什麼請你看" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "這頁可以印了 ✓" }));
     await waitFor(() => expect(posted(/\/api\/pages\/5\/accept$/)).toHaveLength(1));
+  });
+
+  it("review_frame shows the detail note (no reason card) and still offers 這頁可以印了 ✓", async () => {
+    page = mkPage({ attention: "review_frame", attention_detail: "這張背景找不到框，照一般擺放，可以再畫一張背景" });
+    setup();
+    expect(await screen.findByText("這張背景找不到框，照一般擺放，可以再畫一張背景")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "為什麼請你看" })).toBeNull();
+    expect(screen.getByRole("button", { name: "這頁可以印了 ✓" })).toBeEnabled();
   });
 
   it("no reason card when the page is fine", async () => {
@@ -995,6 +1013,36 @@ describe("C 處理一頁：位置存檔（合併、鍵盤 debounce）", () => {
     expect(puts()[0].body).toEqual(expected);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(puts()).toHaveLength(1);
+  });
+
+  it("放進框裡: frame-fit → one oneclick PUT with the fit; the server's written-back placement shows and is not re-sent", async () => {
+    realStage.on = true;
+    const fit = { cx: 0.5, cy: 0.62, height: 1.4, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true };
+    const written = { ...fit, cy: 0.64, height: 1.45 };
+    respond["POST /api/pages/5/frame-fit"] = () => json(fit);
+    respond["PUT /api/pages/5/placement?oneclick=true"] = () => {
+      const res = json({ ...page, placement: fit });
+      page = { ...page, placement: written }; // 頁面流程合成時寫回依框對齊的位置
+      return res;
+    };
+    setup();
+    fireEvent.click(await screen.findByRole("radio", { name: "彩色原圖" }));
+    setSize(await screen.findByRole("img", { name: "背景圖" }), 1000, 800);
+    setSize(screen.getByTestId("cutout"), 200, 400);
+    fireEvent.click(screen.getByRole("button", { name: "放進框裡（肖像）" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(posted(/\/api\/pages\/5\/frame-fit$/)).toHaveLength(1);
+    expect(puts()[0].body).toEqual(fit);
+    const box = () => screen.getByRole("group", { name: /角色位置/ });
+    // 寫回的位置：高 1.45 → 145%；上緣 0.64 − 0.725 → −8.5%
+    await waitFor(() => expect(box().style.height).toBe("145%"));
+    expect(box().style.top).toBe("-8.5%");
+    expect(screen.getByRole("button", { name: "放進框裡（肖像）" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("frame-mask-probe")).toHaveAttribute("src", "/api/generations/10/frame-mask?x=0.5&y=0.55");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 600));
     });
     expect(puts()).toHaveLength(1);
   });

@@ -1,6 +1,8 @@
 """頁面合成（確認合成與頁面流程共用）：以頁面目前的背景、角色動作與位置產生合成圖並設為選定圖。
 
 合成圖是一筆 `composite` generation；完全相同的既有合成圖直接選回（修線一起回來）。
+肖像（位置有 frame，放進框裡）：先在背景上找框的內圈，角色只貼在內圈裡；autofit 時位置換成算出的肖像位置
+並寫回頁面；找不到框就照一般合成（見 portrait_placement）。
 storage I/O 一律在寫入交易外（R2 的 put 可能很慢）：先以 RUNNING、沒有圖提交暫存列，交易外寫物件，
 再以條件式 UPDATE 標成成功並選用（見 store_outside_tx）。
 """
@@ -11,13 +13,16 @@ import io
 import json
 import logging
 import time
+from dataclasses import replace
 
+import numpy as np
 from PIL import Image
 from sqlalchemy import and_, case, literal, null
 from sqlmodel import Session, col, delete, select, update
 
 from app.models import Generation, GenKind, GenStatus, Page, PageStatus, utcnow
-from app.services.compose import COMPOSE_VERSION, DEGENERATE_MASK, Placement, compose, page_placement
+from app.services.compose import COMPOSE_VERSION, DEGENERATE_MASK, Placement, compose, cutout, page_placement
+from app.services.frame_fit import find_interior, fit_portrait
 from app.storage import Storage, StorageNotFound
 
 log = logging.getLogger(__name__)
@@ -189,12 +194,31 @@ def get_pil_image(storage: Storage, rel: str | None) -> Image.Image:
         return im.copy()
 
 
-def composite_params(bg_id: int, pose_id: int, placement: Placement) -> dict:
-    return {
+def composite_params(bg_id: int, pose_id: int, placement: Placement, frame_found: bool | None = None) -> dict:
+    """合成圖的 params。frame_found 只有肖像（placement.frame）才記：背景上有沒有找到框。"""
+    params = {
         "background_generation_id": bg_id,
         "pose_generation_id": pose_id,
         "placement": placement.to_dict(),
     }
+    if frame_found is not None:
+        params["frame_found"] = frame_found
+    return params
+
+
+def portrait_placement(placement: Placement, interior: np.ndarray | None,
+                       cutout_size: tuple[int, int]) -> Placement:
+    """肖像（placement.frame）這次實際合成用的位置。
+    找不到框：照存的位置一般合成，height 超過 1.0 夾到 1.0（compose_page 把夾過的高度寫回頁面，frame、autofit 留著）。
+    找到框而且 autofit：cx、cy、height 換成 fit_portrait 算出的肖像位置（四捨五入到 4 位、夾在合法範圍；
+    cutout_size 是角色去背外接框的尺寸）。其餘照存的位置。"""
+    if interior is None:
+        return replace(placement, height=min(placement.height, 1.0))
+    if not placement.autofit:
+        return placement
+    cx, cy, height = fit_portrait(interior, cutout_size)
+    return replace(placement, cx=min(1.0, max(0.0, round(cx, 4))), cy=min(1.0, max(0.0, round(cy, 4))),
+                   height=min(2.0, max(0.1, round(height, 4))))
 
 
 def find_composite(
@@ -218,6 +242,22 @@ def find_composite(
     return None
 
 
+def _load_images(storage: Storage, bg: Generation, pose: Generation) -> tuple[Image.Image, Image.Image, Image.Image]:
+    """背景、角色圖與遮罩；檔案不在、壞掉或路徑不合法丟 ComposeError(FILE_MISSING)。"""
+    try:
+        return (get_pil_image(storage, bg.image_path), get_pil_image(storage, pose.image_path),
+                get_pil_image(storage, pose.mask_path))
+    except (OSError, ValueError) as e:
+        raise ComposeError(FILE_MISSING) from e
+
+
+def _compose_error(e: ValueError) -> ComposeError:
+    """合成丟的 ValueError（遮罩是空的、與角色圖尺寸不同、太細長）→ 給使用者看的 ComposeError。"""
+    if str(e) == DEGENERATE_MASK:  # 已經說了「請重新產生角色動作」
+        return ComposeError(DEGENERATE_MASK)
+    return ComposeError(f"無法合成：{e}，請重新產生角色動作")
+
+
 def compose_page(session: Session, storage: Storage, page_id: int) -> int:
     """用頁面目前的背景、角色動作與位置（沒存過就用預設）產生合成圖並設為選定圖片，回傳它的 id。
     完全相同的既有合成圖直接選回（修線一起回來）；選定圖換了就退回草稿、清角色檢查。
@@ -234,28 +274,41 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
             if page.pose_generation_id is not None else None)
     if not is_usable(pose, GenKind.POSE, page_id):
         raise ComposeError(NEED_POSE)
-    placement = page_placement(page.placement_json)
+    stored = page_placement(page.placement_json)
     placement_json = page.placement_json
+
+    images: tuple[Image.Image, Image.Image, Image.Image] | None = None  # 背景、角色圖、遮罩（讀過就留著）
+    interior: np.ndarray | None = None
+    frame_found: bool | None = None
+    write_back: str | None = None  # 這次實際用的肖像位置（與選用新合成圖在同一個交易寫回頁面）
+    placement = stored
+    if stored.frame is not None:
+        # 肖像：先找框、決定這次的位置，才比對既有合成圖（位置一樣就直接選回）
+        images = _load_images(storage, bg, pose)
+        interior = find_interior(images[0], stored.frame)
+        frame_found = interior is not None
+        try:
+            size = cutout(images[1], images[2]).size
+        except ValueError as e:
+            raise _compose_error(e) from e
+        placement = portrait_placement(stored, interior, size)
+        # 寫回頁面：autofit 算出的肖像位置；找不到框時夾到 1.0 的高度（否則頁面與合成圖永遠對不上，
+        # 舞台畫的比列印大、一直「待更新」）。frame、autofit 都留著
+        if placement != stored and json.dumps(placement.to_dict()) != placement_json:
+            write_back = json.dumps(placement.to_dict())
 
     target = find_composite(session, storage, page_id, bg.id, pose.id, placement)
     written: str | None = None  # 這次新寫的合成圖（列還是暫存的 RUNNING）
     if target is None:
         started_at, t0 = utcnow(), time.monotonic()
+        bg_img, pose_img, mask_img = images or _load_images(storage, bg, pose)
         try:
-            bg_img = get_pil_image(storage, bg.image_path)
-            pose_img = get_pil_image(storage, pose.image_path)
-            mask_img = get_pil_image(storage, pose.mask_path)
-        except (OSError, ValueError) as e:  # 檔案不在、壞掉或路徑不合法
-            raise ComposeError(FILE_MISSING) from e
-        try:
-            out = compose(bg_img, pose_img, mask_img, placement)
-        except ValueError as e:  # 遮罩是空的、與角色圖尺寸不同、太細長
-            if str(e) == DEGENERATE_MASK:  # 已經說了「請重新產生角色動作」
-                raise ComposeError(DEGENERATE_MASK) from e
-            raise ComposeError(f"無法合成：{e}，請重新產生角色動作") from e
+            out = compose(bg_img, pose_img, mask_img, placement, interior)
+        except ValueError as e:
+            raise _compose_error(e) from e
         buf = io.BytesIO()
         out.save(buf, "PNG")
-        params = json.dumps(composite_params(bg.id, pose.id, placement), ensure_ascii=False,
+        params = json.dumps(composite_params(bg.id, pose.id, placement, frame_found), ensure_ascii=False,
                             sort_keys=True)
         target = Generation(
             book_id=page.book_id,
@@ -304,6 +357,9 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
             )
             .values(selected_generation_id=target_id, updated_at=utcnow(),
                     **({"outline_fill": True} if written is not None else {}),  # 新合成圖用單線輪廓；重用舊的不動
+                    # 肖像位置寫回頁面（autofit、找不到框時夾過的高度）：只是位置欄位（使用者的意圖沒變），
+                    # 不存復原快照、不動筆畫
+                    **({"placement_json": write_back} if write_back is not None else {}),
                     **reset_review_when(changed))
         )
         if res.rowcount == 0:

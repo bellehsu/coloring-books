@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
+import { ApiError, DEFAULT_PLACEMENT, type Placement } from "@/api/client";
 import { ComposePreview, ComposeStage, ComposeStatus, type ComposeStageProps } from "./ComposeStage";
 
 const P: Placement = { cx: 0.5, cy: 0.5, height: 0.5, flip: false };
@@ -253,6 +253,180 @@ describe("ComposeStage", () => {
     load();
     const frame = screen.getByTestId("compose-overlay").parentElement!;
     expect(frame.style.getPropertyValue("--bg-aspect")).toBe("1.25");
+  });
+});
+
+describe("ComposeStage 放進框裡（肖像）", () => {
+  const FRAME = { x: 0.5, y: 0.55 };
+  const FIT: Placement = { cx: 0.5, cy: 0.62, height: 1.4, flip: false, frame: FRAME, autofit: true };
+  const PORTRAIT: Placement = { cx: 0.5, cy: 0.6, height: 1.2, flip: false, frame: FRAME, autofit: true };
+  const NO_FRAME = "這張背景找不到框，照一般擺放";
+  const HINT = "肖像：主角自動放大，框外的部分裁掉。可以拖曳或拉圓點微調；再按一次『放進框裡』關掉。";
+  const portraitBtn = () => screen.getByRole("button", { name: "放進框裡（肖像）" });
+  const layer = () => screen.getByTestId("cutout-layer");
+  const presetButtons = () => [
+    ...within(screen.getByRole("group", { name: "位置快捷鈕" })).getAllByRole("button"),
+    ...within(screen.getByRole("group", { name: "大小快捷鈕" })).getAllByRole("button"),
+  ];
+
+  it("沒給 onFrameFit → 沒有按鈕", () => {
+    view();
+    expect(screen.queryByRole("button", { name: "放進框裡（肖像）" })).toBeNull();
+  });
+
+  it("按鈕在「水平翻轉」「重設位置」旁，沒開時 aria-pressed=false", () => {
+    view({ onFrameFit: vi.fn() });
+    expect(portraitBtn()).toHaveAttribute("aria-pressed", "false");
+    expect(portraitBtn().parentElement).toBe(screen.getByRole("button", { name: "重設位置" }).parentElement);
+  });
+
+  it("按下 → 呼叫 onFrameFit，結果交給 onChange（翻轉用舞台目前的值）；找的時候按鈕停用", async () => {
+    let resolve!: (p: Placement | null) => void;
+    const onFrameFit = vi.fn(() => new Promise<Placement | null>((r) => (resolve = r)));
+    const { onChange } = view({ onFrameFit, placement: { ...P, flip: true } });
+    fireEvent.click(portraitBtn());
+    expect(onFrameFit).toHaveBeenCalledTimes(1);
+    expect(portraitBtn()).toBeDisabled();
+    fireEvent.click(portraitBtn());
+    expect(onFrameFit).toHaveBeenCalledTimes(1);
+    await act(async () => resolve(FIT));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({ ...FIT, flip: true });
+    expect(portraitBtn()).toBeEnabled();
+  });
+
+  it("找不到框（null）→ 狀態列說明，按鈕維持沒按，不改位置", async () => {
+    const onFrameFit = vi.fn(async () => null);
+    const { onChange } = view({ onFrameFit });
+    fireEvent.click(portraitBtn());
+    await waitFor(() => expect(screen.getByTestId("portrait-status")).toHaveTextContent(NO_FRAME));
+    expect(portraitBtn()).toHaveAttribute("aria-pressed", "false");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("其他錯誤 → 狀態列顯示後端訊息（不是 ApiError 用通用說明），不改位置", async () => {
+    const onFrameFit = vi
+      .fn<() => Promise<Placement | null>>()
+      .mockRejectedValueOnce(new ApiError(409, "請先選好背景"))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const { onChange } = view({ onFrameFit });
+    fireEvent.click(portraitBtn());
+    await waitFor(() => expect(screen.getByTestId("portrait-status")).toHaveTextContent("請先選好背景"));
+    fireEvent.click(portraitBtn());
+    await waitFor(() => expect(screen.getByTestId("portrait-status")).toHaveTextContent("找框失敗，請再試一次"));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("找不到框的說明在換背景後消失", async () => {
+    const { rerender } = view({ onFrameFit: vi.fn(async () => null) });
+    fireEvent.click(portraitBtn());
+    await waitFor(() => expect(screen.getByTestId("portrait-status")).toHaveTextContent(NO_FRAME));
+    rerender({ backgroundUrl: "/bg2.png" });
+    expect(screen.getByTestId("portrait-status")).toBeEmptyDOMElement();
+  });
+
+  it("肖像開著：按鈕按下、位置／大小快捷鈕停用、說明換成肖像的說明", () => {
+    view({ onFrameFit: vi.fn(), placement: PORTRAIT, frameMaskUrl: "/mask.png" });
+    expect(portraitBtn()).toHaveAttribute("aria-pressed", "true");
+    for (const b of presetButtons()) expect(b).toBeDisabled();
+    expect(screen.getByText(HINT)).toBeInTheDocument();
+    expect(screen.queryByText(/也可以按下方的「位置」「大小」按鈕快速擺放/)).toBeNull();
+  });
+
+  it("沒開肖像：快捷鈕可用、角色圖層沒有遮罩", () => {
+    const { load } = view({ onFrameFit: vi.fn() });
+    load();
+    for (const b of presetButtons()) expect(b).toBeEnabled();
+    expect(layer()).not.toHaveAttribute("data-masked", "true");
+    expect(screen.queryByTestId("frame-mask-probe")).toBeNull();
+  });
+
+  it("肖像開著：遮罩載入後角色圖層套上 frameMaskUrl（只有去背圖在圖層裡，角色框與圓點在外面）", () => {
+    const { load } = view({ onFrameFit: vi.fn(), placement: PORTRAIT, frameMaskUrl: "/mask.png" });
+    load();
+    expect(layer()).not.toHaveAttribute("data-masked", "true"); // 遮罩還沒載入：先不裁
+    fireEvent.load(screen.getByTestId("frame-mask-probe"));
+    expect(layer()).toHaveAttribute("data-masked", "true");
+    expect(layer().style.getPropertyValue("--frame-mask")).toBe('url("/mask.png")');
+    expect(within(layer()).getByTestId("cutout")).toBeInTheDocument();
+    expect(layer()).not.toContainElement(box());
+    expect(layer()).not.toContainElement(screen.getByTestId("resize-handle"));
+    expect(screen.getByTestId("portrait-status")).toBeEmptyDOMElement();
+  });
+
+  it("遮罩載入失敗（這張背景找不到框）→ 不裁、狀態列說明，按鈕保持按下", () => {
+    const { load } = view({ onFrameFit: vi.fn(), placement: PORTRAIT, frameMaskUrl: "/mask.png" });
+    load();
+    fireEvent.error(screen.getByTestId("frame-mask-probe"));
+    expect(layer()).not.toHaveAttribute("data-masked", "true");
+    expect(screen.getByTestId("portrait-status")).toHaveTextContent(NO_FRAME);
+    expect(portraitBtn()).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("肖像開著：拖曳、拉圓點、方向鍵、＋／－ 都送 autofit: false 並保留 frame；高度可超過 1", () => {
+    const { load, onChange } = view({ onFrameFit: vi.fn(), placement: PORTRAIT });
+    load();
+    fireEvent.pointerDown(box(), { pointerId: 1, button: 0, clientX: 250, clientY: 200 });
+    fireEvent.pointerUp(box(), { pointerId: 1, clientX: 300, clientY: 200 });
+    expect(onChange).toHaveBeenLastCalledWith({ ...PORTRAIT, cx: 0.6, autofit: false });
+
+    const handle = screen.getByTestId("resize-handle");
+    fireEvent.pointerDown(handle, { pointerId: 2, button: 0, clientX: 300, clientY: 300 });
+    fireEvent.pointerUp(handle, { pointerId: 2, clientX: 300, clientY: 380 }); // 往下 0.2
+    const resized = onChange.mock.lastCall![0] as Placement;
+    expect(resized.height).toBeCloseTo(1.4);
+    expect(resized.frame).toEqual(FRAME);
+    expect(resized.autofit).toBe(false);
+
+    fireEvent.keyDown(box(), { key: "ArrowLeft" });
+    expect(onChange).toHaveBeenLastCalledWith({ ...PORTRAIT, cx: 0.49, autofit: false }, "key");
+    fireEvent.keyDown(box(), { key: "+" });
+    expect(onChange).toHaveBeenLastCalledWith({ ...PORTRAIT, height: 1.25, autofit: false }, "key");
+    fireEvent.keyDown(box(), { key: "-" });
+    expect(onChange).toHaveBeenLastCalledWith({ ...PORTRAIT, height: 1.15, autofit: false }, "key");
+  });
+
+  it("肖像開著：位置沒變（夾在邊上）的按鍵不送", () => {
+    const { load, onChange } = view({ onFrameFit: vi.fn(), placement: { ...PORTRAIT, cx: 1 } });
+    load();
+    fireEvent.keyDown(box(), { key: "ArrowRight" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("翻轉不算手動調整：肖像的 autofit 保留", () => {
+    const { onChange } = view({ onFrameFit: vi.fn(), placement: PORTRAIT });
+    fireEvent.click(screen.getByRole("button", { name: "水平翻轉" }));
+    expect(onChange).toHaveBeenCalledWith({ ...PORTRAIT, flip: true });
+  });
+
+  it("再按一次 → 回到預設位置（保留翻轉），沒有 frame／autofit，不呼叫 onFrameFit", () => {
+    const onFrameFit = vi.fn();
+    const { onChange } = view({ onFrameFit, placement: { ...PORTRAIT, flip: true } });
+    fireEvent.click(portraitBtn());
+    expect(onFrameFit).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const p = onChange.mock.calls[0][0] as Placement;
+    expect(p).toEqual({ ...DEFAULT_PLACEMENT, flip: true });
+    expect("frame" in p).toBe(false);
+    expect("autofit" in p).toBe(false);
+  });
+
+  it("肖像開著按「重設位置」→ 同樣回到預設（保留翻轉），沒有 frame／autofit", () => {
+    const { onChange } = view({ onFrameFit: vi.fn(), placement: { ...PORTRAIT, flip: true } });
+    fireEvent.click(screen.getByRole("button", { name: "重設位置" }));
+    const p = onChange.mock.calls[0][0] as Placement;
+    expect(p).toEqual({ ...DEFAULT_PLACEMENT, flip: true });
+    expect("frame" in p).toBe(false);
+    expect("autofit" in p).toBe(false);
+  });
+
+  it("伺服器寫回對齊後的位置（props 換了）→ 舞台跟著新的位置", () => {
+    const { load, rerender } = view({ onFrameFit: vi.fn(), placement: FIT });
+    load();
+    rerender({ placement: { ...FIT, cy: 0.7, height: 1.5 } });
+    // 背景 1000×800：高 1.5 → 1200 px、寬 600 px；中心 (500, 560) → top (560 − 600)/800
+    expect(box().style.top).toBe("-5%");
+    expect(box().style.height).toBe("150%");
   });
 });
 

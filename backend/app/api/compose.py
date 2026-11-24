@@ -42,7 +42,8 @@ from app.api.schemas import (
 )
 from app.models import Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services import history
-from app.services.compose import page_placement
+from app.services.compose import Placement, cutout, page_placement
+from app.services.frame_fit import DEFAULT_SEED, find_interior
 from app.services.gen_request import encode_request
 from app.services.jobs import (
     BATCH_LOCK,
@@ -57,8 +58,14 @@ from app.services.jobs import (
 )
 from app.services.layout import compute_layout
 from app.services.page_compose import (
+    NEED_BACKGROUND,
+    NEED_POSE,
     ComposeError,
+    _compose_error,
+    _load_images,
     compose_page,
+    is_usable,
+    portrait_placement,
     slot_change_values,
     store_outside_tx,
     usable_conditions,
@@ -344,6 +351,43 @@ def save_placement(
     session.add(page)
     session.commit()
     return page_out(session, page)
+
+
+NO_FRAME = "這張背景找不到框，照一般擺放"
+
+
+@router.post("/pages/{page_id}/frame-fit", response_model=PagePlacement)
+def frame_fit(
+    page_id: int,
+    session: Session = Depends(get_session),
+    storage: Storage = Depends(get_storage),
+    owner: Owner = Depends(current_owner),
+) -> PagePlacement:
+    """舞台的「放進框裡」：用頁面選定的背景與角色動作，在預設種子點找框並算出肖像位置（保留目前的 flip）。
+    什麼都不存；背景上找不到框回 422。"""
+    page = owned_page(session, owner, page_id)
+    bg = session.get(Generation, page.background_generation_id) if page.background_generation_id else None
+    if not is_usable(bg, GenKind.BACKGROUND, page_id):
+        raise HTTPException(409, NEED_BACKGROUND)
+    pose = session.get(Generation, page.pose_generation_id) if page.pose_generation_id else None
+    if not is_usable(pose, GenKind.POSE, page_id):
+        raise HTTPException(409, NEED_POSE)
+    try:
+        bg_img, pose_img, mask_img = _load_images(storage, bg, pose)
+        size = cutout(pose_img, mask_img).size
+    except ComposeError as e:
+        raise HTTPException(409, e.message) from e
+    except ValueError as e:
+        raise HTTPException(409, _compose_error(e).message) from e
+    interior = find_interior(bg_img, DEFAULT_SEED)
+    if interior is None:
+        raise HTTPException(422, NO_FRAME)
+    # 與合成同一套：fit_portrait 的結果四捨五入並夾在合法範圍（預覽與實際合成一致、不會讓驗證失敗）
+    base = Placement(cx=0.5, cy=0.5, height=1.0, flip=page_placement(page.placement_json).flip,
+                     frame=DEFAULT_SEED, autofit=True)
+    fitted = portrait_placement(base, interior, size)
+    return PagePlacement(cx=fitted.cx, cy=fitted.cy, height=fitted.height, flip=fitted.flip,
+                         frame={"x": DEFAULT_SEED[0], "y": DEFAULT_SEED[1]}, autofit=True)
 
 
 @router.post("/pages/{page_id}/compose", response_model=PageOut)

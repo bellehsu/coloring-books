@@ -101,11 +101,8 @@ export async function composePage(
   if (compose) await ok(await request.post(`/api/pages/${pageId}/compose`));
 }
 
-/**
- * width×height 的 8-bit 灰階 PNG：淺灰底，x＝10%、50%、90% 各一條 8 px 黑色直線。
- * 當成上傳的背景圖（寬圖裁成頁面比例後只剩中間那條）。
- */
-export function grayPng(width: number, height: number): Buffer {
+/** 8-bit 灰階 PNG 編碼：rows[y] 是第 y 列的像素（0＝黑、255＝白）。 */
+function encodeGrayPng(width: number, rows: Buffer[]): Buffer {
   const chunk = (type: string, data: Buffer) => {
     const len = Buffer.alloc(4);
     len.writeUInt32BE(data.length);
@@ -116,21 +113,49 @@ export function grayPng(width: number, height: number): Buffer {
   };
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
+  ihdr.writeUInt32BE(rows.length, 4);
   ihdr[8] = 8; // 8-bit
   ihdr[9] = 0; // 灰階
-  const row = Buffer.alloc(width + 1, 230);
-  row[0] = 0; // filter: none
-  for (const f of [0.1, 0.5, 0.9]) {
-    const x = Math.round(width * f);
-    row.fill(0, 1 + x - 4, 1 + x + 4);
-  }
+  // 每列前面一個 filter byte（0＝none）
+  const raw = Buffer.concat(rows.map((r) => Buffer.concat([Buffer.from([0]), r])));
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk("IHDR", ihdr),
-    chunk("IDAT", deflateSync(Buffer.concat(Array.from({ length: height }, () => row)))),
+    chunk("IDAT", deflateSync(raw)),
     chunk("IEND", Buffer.alloc(0)),
   ]);
+}
+
+/**
+ * width×height 的 8-bit 灰階 PNG：淺灰底，x＝10%、50%、90% 各一條 8 px 黑色直線。
+ * 當成上傳的背景圖（寬圖裁成頁面比例後只剩中間那條）。
+ */
+export function grayPng(width: number, height: number): Buffer {
+  const row = Buffer.alloc(width, 230);
+  for (const f of [0.1, 0.5, 0.9]) {
+    const x = Math.round(width * f);
+    row.fill(0, x - 4, x + 4);
+  }
+  return encodeGrayPng(width, Array.from({ length: height }, () => row));
+}
+
+/**
+ * width×height 的「相框」背景：白底，一個 16 px 黑色長方形框（x 15%–85%、y 12%–90%），框內是空的。
+ * 預設種子點 (0.5, 0.55) 落在框裡，後端找得到內圈（放進框裡）。
+ */
+export function framePng(width: number, height: number): Buffer {
+  const t = 16;
+  const [x0, x1] = [Math.round(width * 0.15), Math.round(width * 0.85)];
+  const [y0, y1] = [Math.round(height * 0.12), Math.round(height * 0.9)];
+  const plain = Buffer.alloc(width, 250);
+  const edge = Buffer.alloc(width, 250).fill(0, x0, x1);
+  const sides = Buffer.alloc(width, 250).fill(0, x0, x0 + t).fill(0, x1 - t, x1);
+  return encodeGrayPng(
+    width,
+    Array.from({ length: height }, (_, y) =>
+      y < y0 || y >= y1 ? plain : y < y0 + t || y >= y1 - t ? edge : sides,
+    ),
+  );
 }
 
 /** 上傳一張背景圖（POST /pages/{id}/backgrounds/upload），回傳更新後的頁。 */

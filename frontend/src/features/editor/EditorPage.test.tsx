@@ -57,6 +57,8 @@ vi.mock("@/features/editing/ComposeStage", async (orig) => {
         data-bg={p.backgroundUrl ?? ""}
         data-cutout={p.cutoutUrl ?? ""}
         data-placement={JSON.stringify(p.placement)}
+        data-mask={p.frameMaskUrl ?? ""}
+        data-can-frame={String(p.onFrameFit != null)}
       >
         <button type="button" onClick={() => p.onChange({ ...p.placement, cx: 0.25 })}>
           stub-move
@@ -66,6 +68,9 @@ vi.mock("@/features/editing/ComposeStage", async (orig) => {
         </button>
         <button type="button" onClick={() => p.onChange({ ...p.placement, flip: !p.placement.flip })}>
           stub-flip
+        </button>
+        <button type="button" onClick={() => void p.onFrameFit?.().then((fit) => fit && p.onChange(fit))}>
+          stub-frame-fit
         </button>
         {p.status}
       </div>
@@ -272,12 +277,18 @@ beforeEach(() => {
         pages = pages.map((p) => (p.id === Number(m![1]) ? { ...p, placement: body } : p));
         return j(pages.find((p) => p.id === Number(m![1])));
       }
+      m = url.match(/^\/api\/pages\/(\d+)\/frame-fit$/);
+      if (m) return j(FRAME_FIT);
       m = url.match(/^\/api\/pages\/(\d+)\/compose$/);
       if (m) {
         const made = mkGen(50 + gens.length, { kind: "composite", page_id: Number(m[1]) });
         gens = [...gens, made];
+        // 同後端：肖像＋autofit 合成時把依框對齊的位置寫回頁面（frame／autofit 保留）
+        const fitted = (pl: O | null) => (pl?.frame && pl.autofit ? { ...pl, ...FRAME_WRITE_BACK } : pl);
         pages = pages.map((p) =>
-          p.id === Number(m![1]) ? { ...p, selected_generation_id: made.id, compose_pending: false } : p,
+          p.id === Number(m![1])
+            ? { ...p, selected_generation_id: made.id, compose_pending: false, placement: fitted(p.placement as O | null) }
+            : p,
         );
         edits = []; // 新的合成圖還沒有補過的線
         return j(pages.find((p) => p.id === Number(m![1])));
@@ -357,6 +368,10 @@ const lineTab = () => screen.getByRole("tab", { name: /② 補線/ });
 const bgCard = () => screen.getByRole("region", { name: "背景" });
 const poseCard = () => screen.getByRole("region", { name: "角色動作" });
 /** 有背景＋角色動作（含去背圖）的頁。 */
+/** 假後端的 frame-fit 結果，與合成時寫回的對齊位置（故意不同，才看得出畫面用的是伺服器寫回的值）。 */
+const FRAME_FIT = { cx: 0.5, cy: 0.62, height: 1.4, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true };
+const FRAME_WRITE_BACK = { cy: 0.64, height: 1.45 };
+
 const composedReady = (id = 1, bg = 3, pose = 4) => {
   const o = { background_generation_id: bg, pose_generation_id: pose };
   const g = [
@@ -925,6 +940,31 @@ describe("EditorPage", () => {
     });
     await screen.findByTestId("compose-stage");
     await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+  });
+
+  it("放進框裡：frame-fit → 存位置一次 → 自動合成；合成寫回的對齊位置出現在舞台，不再重送；遮罩用選用背景與種子點", async () => {
+    const { o, g } = composedReady();
+    pages[0] = mkPage(1, { ...o, selected_generation_id: 50 });
+    gens = [...g, mkGen(50, { kind: "composite" })];
+    setup();
+    const stage = await screen.findByTestId("compose-stage");
+    expect(stage).toHaveAttribute("data-can-frame", "true");
+    expect(stage).toHaveAttribute("data-mask", "");
+    await userEvent.click(within(stage).getByRole("button", { name: "stub-frame-fit" }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/frame-fit")).toHaveLength(1));
+    await waitFor(() => expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(1));
+    expect(calledWith("PUT", "/api/pages/1/placement")[0].body).toEqual(FRAME_FIT);
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByTestId("compose-stage").getAttribute("data-placement")!)).toEqual({
+        ...FRAME_FIT,
+        ...FRAME_WRITE_BACK,
+      }),
+    );
+    expect(screen.getByTestId("compose-stage")).toHaveAttribute("data-mask", "/api/generations/3/frame-mask?x=0.5&y=0.55");
+    await act(() => new Promise((r) => setTimeout(r, 900)));
+    expect(calledWith("PUT", "/api/pages/1/placement")).toHaveLength(1);
+    expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1);
   });
 
   it("構圖：位置從伺服器的草稿開始；翻轉 → PUT placement → 自動合成", async () => {

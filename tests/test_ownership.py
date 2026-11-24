@@ -158,6 +158,8 @@ def _url(path, ids):
 
 
 def _call(client, method, url):
+    if url.endswith("/frame-mask"):  # x、y 是必填的 query
+        url += "?x=0.5&y=0.55"
     if method in ("POST", "PUT", "PATCH"):
         return client.request(method, url, json={}, follow_redirects=False)
     return client.request(method, url, follow_redirects=False)

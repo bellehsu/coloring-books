@@ -6,7 +6,7 @@ import type { Book, Generation, OverviewPage, Page } from "@/api/client";
 import { isActive, useBook, useBookOverview, useGenerations, usePagesFollowJobs, useQA } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { errMsg } from "@/features/editing/errMsg";
-import { recomposeRunning } from "@/lib/pageState";
+import { recomposeRunning, softAttention } from "@/lib/pageState";
 import type { StrokeOp } from "@/lib/strokes";
 import { useFixPages } from "./fixApi";
 import { FixHeader } from "./FixHeader";
@@ -149,7 +149,7 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
 
         <div className={styles.side}>
           {page.attention === "failed" && <ReasonCard detail={page.attention_detail} busy={busy} saving={textSaving} onRetry={() => void fix.retry()} />}
-          {page.attention === "review_pose" && !working && <p className={styles.rowWarn}>{page.attention_detail}</p>}
+          {softAttention(page) && !working && <p className={styles.rowWarn}>{page.attention_detail}</p>}
           <ul className={styles.items} aria-label="這一頁的東西">
             <PoseRow
               bookId={bookId}

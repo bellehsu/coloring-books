@@ -282,3 +282,46 @@ def test_engine_error_text_hidden_from_non_admin(client, app, engine):
     assert q["last_error"] == fixed
     assert client.get(f"/api/generations/{g['id']}").json()["error"] == fixed
     assert "127.0.0.1" not in client.get(f"/api/books/{b['id']}/generations").text
+
+
+# ---- frame-mask：背景相框內部遮罩 ----
+
+def _frame_mask_world(client, app):
+    from tests.test_page_compose import portrait_page, ring_png
+    page = portrait_page(client, app, ring_png())
+    return page["background_generation_id"], page["pose_generation_id"]
+
+
+def test_frame_mask_png_matches_background(client, app):
+    import io
+
+    from PIL import Image
+
+    from tests.test_api_compose import gen_row
+    bg, _ = _frame_mask_world(client, app)
+    r = client.get(f"/api/generations/{bg}/frame-mask", params={"x": 0.5, "y": 0.55})
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert r.headers["cache-control"] == "private, max-age=3600"
+    with Image.open(io.BytesIO(r.content)) as m, Image.open(
+            io.BytesIO(app.state.storage.get(gen_row(app, bg).image_path))) as b:
+        assert m.mode == "L" and m.size == b.size
+        assert m.getpixel((m.width // 2, int(m.height * 0.55))) == 255
+        assert m.getpixel((0, 0)) == 0
+
+
+def test_frame_mask_404s_and_422(client, app):
+    bg, pose = _frame_mask_world(client, app)
+    q = {"x": 0.5, "y": 0.55}
+    assert client.get(f"/api/generations/{pose}/frame-mask", params=q).status_code == 404  # 不是背景
+    assert client.get("/api/generations/9999/frame-mask", params=q).status_code == 404
+    for bad in ({}, {"x": 0.5}, {"x": 1.5, "y": 0.5}, {"x": 0.5, "y": -0.1}, {"x": "a", "y": 0.5}):
+        assert client.get(f"/api/generations/{bg}/frame-mask", params=bad).status_code == 422, bad
+
+
+def test_frame_mask_404_when_no_frame(client, app):
+    from tests.test_api_compose import png_bytes
+    from tests.test_page_compose import portrait_page
+    page = portrait_page(client, app, png_bytes(color="white"))
+    r = client.get(f"/api/generations/{page['background_generation_id']}/frame-mask",
+                   params={"x": 0.5, "y": 0.55})
+    assert r.status_code == 404

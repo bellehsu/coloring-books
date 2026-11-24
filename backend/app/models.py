@@ -173,7 +173,7 @@ class Page(SQLModel, table=True):
     lineart_key: str | None = None
     lineart_path: str | None = None
     qa_json: str | None = None
-    # Phase 13：需要使用者看一下（"failed"、"review_pose"）與它的中文說明；None＝不需要
+    # Phase 13：需要使用者看一下（"failed"、"review_pose"、"review_frame"）與它的中文說明；None＝不需要
     attention: str | None = None
     attention_detail: str | None = None
     # 頁面流程自動選的背景／角色動作（「還原成自動畫的那張」用）；使用者自己選的仍在 background／pose_generation_id

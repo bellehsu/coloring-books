@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from "react";
-import { DEFAULT_PLACEMENT, type Generation, type Page, type Placement, type QA } from "@/api/client";
+import { DEFAULT_PLACEMENT, frameFit, frameMaskUrl, type Generation, type Page, type Placement, type QA } from "@/api/client";
 import { Button } from "@/components/ui/Button";
 import { Segmented } from "@/components/ui/Segmented";
 import { ComposeStage } from "@/features/editing/ComposeStage";
@@ -169,13 +169,17 @@ function ColorPreview({
   if (page.background_generation_id != null && page.pose_generation_id != null) {
     const bgUrl = bgGen?.image_url ?? `/api/generations/${page.background_generation_id}/image`;
     const cutUrl = poseGen ? poseGen.cutout_url : `/api/generations/${page.pose_generation_id}/cutout`;
+    // 存好前用 draft；存好後（draft 清掉）用伺服器的，肖像合成時後端寫回的對齊位置才看得到、不會被舊值重送
+    const placement = draft ?? (page.placement as Placement | null) ?? DEFAULT_PLACEMENT;
     return (
       <div className={styles.colorWrap}>
         <ComposeStage
           backgroundUrl={bgUrl}
           cutoutUrl={cutUrl}
-          placement={draft ?? (page.placement as Placement | null) ?? DEFAULT_PLACEMENT}
+          placement={placement}
           onChange={onChange}
+          onFrameFit={() => frameFit(page.id)}
+          frameMaskUrl={placement.frame ? frameMaskUrl(page.background_generation_id, placement.frame) : null}
         />
       </div>
     );

@@ -7,6 +7,8 @@ import { DEFAULT_PLACEMENT, type Placement } from "@/api/client";
  */
 export const PLACEMENT_MIN_HEIGHT = 0.1;
 export const PLACEMENT_MAX_HEIGHT = 1;
+/** 放進框裡（有 frame）時高度可到 2（肖像可以比背景還高，裁到框內）。 */
+export const PLACEMENT_MAX_HEIGHT_PORTRAIT = 2;
 
 const round4 = (v: number) => Math.round(v * 10000) / 10000;
 const clamp = (v: number, lo: number, hi: number, fallback: number) =>
@@ -14,12 +16,22 @@ const clamp = (v: number, lo: number, hi: number, fallback: number) =>
 
 /** 夾到合法範圍，四捨五入到小數 4 位（後端比對既有合成圖用的精度）；非有限數字用預設值。 */
 export function clampPlacement(p: Placement): Placement {
-  return {
+  const out: Placement = {
     cx: clamp(p.cx, 0, 1, DEFAULT_PLACEMENT.cx),
     cy: clamp(p.cy, 0, 1, DEFAULT_PLACEMENT.cy),
-    height: clamp(p.height, PLACEMENT_MIN_HEIGHT, PLACEMENT_MAX_HEIGHT, DEFAULT_PLACEMENT.height),
+    height: clamp(
+      p.height,
+      PLACEMENT_MIN_HEIGHT,
+      p.frame ? PLACEMENT_MAX_HEIGHT_PORTRAIT : PLACEMENT_MAX_HEIGHT,
+      DEFAULT_PLACEMENT.height,
+    ),
     flip: p.flip,
   };
+  // 沒有肖像欄位時不加鍵，結果與以前完全相同
+  if (p.frame) out.frame = { x: clamp(p.frame.x, 0, 1, 0.5), y: clamp(p.frame.y, 0, 1, 0.5) };
+  else if (p.frame === null) out.frame = null;
+  if (p.autofit !== undefined) out.autofit = p.autofit;
+  return out;
 }
 
 /** 移動（相對背景寬／高）。 */
@@ -51,6 +63,7 @@ export function placementBox(
  * 拖右下角把手：左上角固定、等比縮放。
  * k＝角色框寬（相對舞台寬）／高（相對舞台高）＝ poseAspect × 舞台高 ／ 舞台寬。
  * 水平與垂直拉動各換算成一個新高度，取較大者（把手跟著拉得比較多的方向）。
+ * 高度上限同 clampPlacement：肖像（有 frame）到 2，否則 1。
  */
 export function cornerResize(start: Placement, k: number, dxRel: number, dyRel: number): Placement {
   const w = start.height * k;
@@ -58,7 +71,8 @@ export function cornerResize(start: Placement, k: number, dxRel: number, dyRel: 
   const top = start.cy - start.height / 2;
   const fromY = start.height + dyRel;
   const fromX = (w + dxRel) / k;
-  const h = Math.min(PLACEMENT_MAX_HEIGHT, Math.max(PLACEMENT_MIN_HEIGHT, Math.max(fromX, fromY)));
+  const max = start.frame ? PLACEMENT_MAX_HEIGHT_PORTRAIT : PLACEMENT_MAX_HEIGHT;
+  const h = Math.min(max, Math.max(PLACEMENT_MIN_HEIGHT, Math.max(fromX, fromY)));
   return clampPlacement({ ...start, height: h, cx: left + (h * k) / 2, cy: top + h / 2 });
 }
 

@@ -648,15 +648,30 @@ def test_placement_roundtrip_and_validation(client, app):
     body = {"cx": 0.25, "cy": 0.7, "height": 0.5, "flip": True}
     r = client.put(url, json=body)
     assert r.status_code == 200, r.text
-    assert r.json()["placement"] == body
+    assert r.json()["placement"] == {**body, "frame": None, "autofit": False}
     assert r.json()["status"] == "passed"  # 位置草稿不改狀態
     for bad in ({**body, "cx": 1.5}, {**body, "cy": -0.1}, {**body, "height": 0.05},
                 {**body, "height": 1.1}, {"cx": 0.5, "cy": 0.5}, {**body, "cx": "NaN"},
                 {**body, "flip": "maybe"}):
         assert client.put(url, json=bad).status_code == 422, bad
     page = get_page(app, p["id"])
-    assert json.loads(page.placement_json) == body and page.status == PageStatus.PASSED
+    assert json.loads(page.placement_json) == body and page.status == PageStatus.PASSED  # 沒有肖像欄位＝舊 JSON
     assert client.put("/api/pages/999/placement", json=body).status_code == 404
+
+
+def test_placement_frame_and_autofit_roundtrip(client, app):
+    b, p, _ = legacy_page(client, app)
+    make_passed(app, p["id"])
+    url = f"/api/pages/{p['id']}/placement"
+    body = {"cx": 0.5, "cy": 0.5, "height": 1.6, "flip": False, "frame": {"x": 0.4, "y": 0.6}, "autofit": True}
+    r = client.put(url, json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["placement"] == body
+    assert json.loads(get_page(app, p["id"]).placement_json) == body
+    assert client.put(url, json={**body, "frame": None}).status_code == 422  # 沒有框，高度不能超過 1
+    assert client.put(url, json={**body, "height": 2.1}).status_code == 422
+    assert client.put(url, json={**body, "frame": {"x": 1.5, "y": 0.5}}).status_code == 422
+    assert client.put(url, json={**body, "autofit": "yes"}).status_code == 422
 
 
 # ---- 確認合成 ------------------------------------------------------------------

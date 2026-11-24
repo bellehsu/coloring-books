@@ -21,7 +21,7 @@ describe("THEME_PACKS", () => {
   const parsed = parseStory(pack.text);
 
   it("has the vehicles pack", () => {
-    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world", "taiwan", "holidays", "zoo", "sports"]);
+    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world", "taiwan", "holidays", "zoo", "sports", "frames"]);
     expect(pack.title).toBe("交通工具");
     expect(pack.description).not.toBe("");
   });
@@ -256,8 +256,8 @@ describe("theme pack taiwan", () => {
 });
 
 describe("fewer small regions (user 2026-11-19)", () => {
-  it("every pack makes pages with simple line detail", () => {
-    for (const pack of THEME_PACKS) expect(pack.lineDetail).toBe("simple");
+  it("every pack makes pages with simple line detail (except 華麗相框: medium, user 2026-11-24)", () => {
+    for (const pack of THEME_PACKS.filter((x) => x.id !== "frames")) expect(pack.lineDetail).toBe("simple");
   });
   it("landmark packs ask for simple backgrounds with big shapes", () => {
     for (const id of ["world", "taiwan", "holidays", "zoo", "sports"]) {
@@ -399,6 +399,78 @@ describe("驗收後修正（使用者 2026-11-19）", () => {
     }
   });
   it("其他主題包不帶位置", () => {
-    for (const p of THEME_PACKS.filter((x) => x.id !== "zoo")) expect(p.placements).toBeUndefined();
+    for (const p of THEME_PACKS.filter((x) => x.id !== "zoo" && x.id !== "frames")) expect(p.placements).toBeUndefined();
+  });
+});
+
+describe("華麗相框（使用者 2026-11-24）", () => {
+  const pack = THEME_PACKS.find((p) => p.id === "frames");
+  const parsed = parseStory(pack?.text ?? "");
+  const SHAPES = ["橢圓", "長方形", "圓形", "四葉草", "六角形", "花環", "拱門", "盾牌", "方形", "蝴蝶結", "皇冠", "菱形"];
+  it("is the 華麗相框 pack with 12 pages and shape captions", () => {
+    expect(pack?.title).toBe("華麗相框");
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.pages.map((p) => [p.captionZh, p.captionEn])).toEqual([
+      ["橢圓形", "Oval"],
+      ["長方形", "Rectangle"],
+      ["圓形", "Circle"],
+      ["四葉草", "Four-Leaf Clover"],
+      ["六角形", "Hexagon"],
+      ["花環", "Wreath"],
+      ["拱門", "Arch"],
+      ["盾牌", "Shield"],
+      ["圓角方形", "Rounded Square"],
+      ["蝴蝶結", "Bow"],
+      ["皇冠", "Crown"],
+      ["菱形", "Diamond"],
+    ]);
+  });
+  it("every scene is an empty ornate frame of its shape, lines only, no people", () => {
+    for (const [i, p] of parsed.pages.entries()) {
+      expect(p.scene).toContain(SHAPES[i]);
+      expect(p.scene).toContain("古典捲草花紋外框");
+      expect(p.scene).toContain("外框幾乎佔滿整張紙"); // 框小的話 Qwen 會在旁邊畫一堆東西
+      expect(p.scene).toContain("框裡面是乾淨的白色，什麼都沒有");
+      expect(p.scene).not.toContain("白邊"); // 「四周只留一點白邊」會多畫一圈方框（使用者 2026-11-24 不要）
+      for (const named of ["草叢", "沒有地面", "方形的邊框"]) expect(p.scene).not.toContain(named); // 點名排除反而會畫出來
+      expect(p.scene).toContain("除了這個外框，畫面裡沒有任何其他東西");
+      expect(p.scene).not.toContain("空白"); // 會被畫成透明格子
+      expect(p.scene.endsWith("，只有黑色線條、沒有塗黑的地方，畫面裡沒有人")).toBe(true);
+      expect(p.scene).not.toContain("像"); // 比喻會被照字面畫出來
+      expect(p.action).not.toContain("像");
+    }
+  });
+  it("驗收後：圓形框不被切掉；v2 的四葉草、六角形、圓角方形措辭；花環是直立橢圓形", () => {
+    expect(parsed.pages[2].scene).toContain("整個圓形外框都在紙張裡面，沒有被切掉");
+    expect(parsed.pages[3].scene).toContain("空心四葉草形");
+    expect(parsed.pages[3].scene).toContain("四葉草裡面是乾淨的白色");
+    expect(parsed.pages[4].scene).toContain("最上面和最下面是尖角，左右兩邊是直的，總共六條邊");
+    expect(parsed.pages[5].scene).toContain("直立橢圓形花環");
+    expect(parsed.pages[8].scene).toContain("直立方形");
+    expect(parsed.pages[8].scene).toContain("四個角是圓角");
+  });
+  it("v2 actions for the crown and diamond pages", () => {
+    expect(parsed.pages[10].action).toBe("頭上戴著一頂小皇冠，雙手合在胸前微笑");
+    expect(parsed.pages[11].action).toBe("一手比 V，開心地笑");
+  });
+  it("description names the portrait", () => {
+    expect(pack?.description).toBe("12 種形狀的古典花紋相框，主角是框裡的半身肖像，每頁有中英文字");
+  });
+  it("objects in the frame aren't repeated in the action (drawn twice otherwise)", () => {
+    for (const p of parsed.pages) {
+      expect(p.action).not.toContain("框");
+      expect(p.action).not.toContain("蝴蝶結");
+    }
+  });
+  it("is within limits", () => {
+    for (const p of parsed.pages) {
+      expect(countChars(p.scene)).toBeLessThanOrEqual(MAX_SCENE);
+      expect(countChars(p.action)).toBeLessThanOrEqual(MAX_ACTION);
+    }
+  });
+  it("medium detail; character small and raised into the frame", () => {
+    expect(pack?.lineDetail).toBe("standard");
+    expect(pack?.placements).toHaveLength(12);
+    for (const pl of pack?.placements ?? []) expect(pl).toEqual({ cx: 0.5, cy: 0.59, height: 0.42, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true });
   });
 });
