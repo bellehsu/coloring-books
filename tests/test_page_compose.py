@@ -182,7 +182,7 @@ def test_frame_fit_returns_placement_and_saves_nothing(client, app):
     _, (cx, cy, height) = expected_fit(app, page)
     body = r.json()
     assert body["frame"] == SEED and body["autofit"] is True and body["flip"] is True
-    assert (body["cx"], body["cy"], body["height"]) == pytest.approx((cx, cy, height))
+    assert (body["cx"], body["cy"], body["height"]) == pytest.approx((cx, cy, height), abs=1e-4)
     assert get_page(app, pid).placement_json == before  # 什麼都沒存
     assert composites(app, pid) == []
 
@@ -203,3 +203,19 @@ def test_frame_fit_needs_background_and_pose(client, app):
     r = client.post(f"/api/pages/{p['id']}/frame-fit")
     assert r.status_code == 409 and r.json()["detail"] == "請先選好角色動作"
     assert client.post("/api/pages/9999/frame-fit").status_code == 404
+
+
+@pytest.mark.parametrize("raw,want", [
+    ((0.5123456, 0.4987654, 0.05), (0.5123, 0.4988, 0.1)),  # 很小的框：高度夾到 0.1
+    ((1.2, -0.1, 2.7), (1.0, 0.0, 2.0)),  # 很大的框：夾在合法範圍，不是 500
+])
+def test_frame_fit_rounds_and_clamps_like_compose(client, app, monkeypatch, raw, want):
+    from app.api import compose as api_compose
+    from app.services import page_compose
+    page = portrait_page(client, app, ring_png())
+    monkeypatch.setattr(page_compose, "fit_portrait", lambda interior, size: raw)
+    assert api_compose.portrait_placement is page_compose.portrait_placement
+    r = client.post(f"/api/pages/{page['id']}/frame-fit")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert (b["cx"], b["cy"], b["height"]) == want

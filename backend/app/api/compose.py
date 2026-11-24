@@ -42,8 +42,8 @@ from app.api.schemas import (
 )
 from app.models import Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services import history
-from app.services.compose import cutout, page_placement
-from app.services.frame_fit import DEFAULT_SEED, find_interior, fit_portrait
+from app.services.compose import Placement, cutout, page_placement
+from app.services.frame_fit import DEFAULT_SEED, find_interior
 from app.services.gen_request import encode_request
 from app.services.jobs import (
     BATCH_LOCK,
@@ -65,6 +65,7 @@ from app.services.page_compose import (
     _load_images,
     compose_page,
     is_usable,
+    portrait_placement,
     slot_change_values,
     store_outside_tx,
     usable_conditions,
@@ -381,8 +382,11 @@ def frame_fit(
     interior = find_interior(bg_img, DEFAULT_SEED)
     if interior is None:
         raise HTTPException(422, NO_FRAME)
-    cx, cy, height = fit_portrait(interior, size)
-    return PagePlacement(cx=cx, cy=cy, height=height, flip=page_placement(page.placement_json).flip,
+    # 與合成同一套：fit_portrait 的結果四捨五入並夾在合法範圍（預覽與實際合成一致、不會讓驗證失敗）
+    base = Placement(cx=0.5, cy=0.5, height=1.0, flip=page_placement(page.placement_json).flip,
+                     frame=DEFAULT_SEED, autofit=True)
+    fitted = portrait_placement(base, interior, size)
+    return PagePlacement(cx=fitted.cx, cy=fitted.cy, height=fitted.height, flip=fitted.flip,
                          frame={"x": DEFAULT_SEED[0], "y": DEFAULT_SEED[1]}, autofit=True)
 
 
