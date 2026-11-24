@@ -70,12 +70,12 @@ const POSE_NODES: [string, string?][][] = [
   [["VAEDecode"], ["RemoveBackground"], ["MaskToImage"], ["SaveImage", "遮罩"]],
 ];
 
-/** 「現在的畫圖流程」說明：三個 ComfyUI workflow（都是 Qwen-Image-Edit-2511）＋後端的合成、線稿、補線、加字。 */
+/** 「現在的畫圖流程」說明：四個 ComfyUI workflow（都是 Qwen-Image-Edit-2511）＋後端的合成、線稿、補線、加字。 */
 export function FlowHelp() {
   return (
     <div className={styles.root}>
       <p className={styles.lead}>
-        三個 ComfyUI workflow 都用同一顆模型 Qwen-Image-Edit-2511；畫好彩圖之後，合成、線稿、補線、加字都在後端做（不用 AI 模型）。
+        四個 ComfyUI workflow 都用同一顆模型 Qwen-Image-Edit-2511；畫好彩圖之後，合成、線稿、補線、加字都在後端做（不用 AI 模型）。
       </p>
       <ul className={styles.legend} aria-label="顏色說明">
         {(Object.keys(KIND_LABEL) as Kind[]).map((k) => (
@@ -125,6 +125,13 @@ export function FlowHelp() {
               steps={[
                 { kind: "in", title: "上傳自己的背景" },
                 { kind: "out", title: "背景彩圖" },
+              ]}
+            />
+            <Flow
+              steps={[
+                { kind: "in", title: "背景彩圖", note: ["肖像模式（有框）才有", "按「清掉框外雜物」，或主題包設定自動清"] },
+                { kind: "comfy", title: "qwen_edit_cleanup", note: ["拿背景「編輯」：框外的東西擦掉", "框保持原樣"] },
+                { kind: "out", title: "清過的背景", note: ["縮圖標「清過」"] },
               ]}
             />
             <Flow
@@ -184,7 +191,7 @@ export function FlowHelp() {
               </p>
             ))}
             <p className={styles.fine}>
-              另外兩個 workflow 一樣，只是沒有 LoadImage、參考方式、去背節點。固定值：4 步、cfg 1.0、euler／simple、shift 3.1。
+              qwen_edit_cleanup 一樣，只是 LoadImage 載入要清的背景、沒有去背節點；另外兩個沒有 LoadImage、參考方式、去背節點。固定值：4 步、cfg 1.0、euler／simple、shift 3.1。
             </p>
             <p className={styles.fine}>
               workflow 檔在 <code>comfy_workflows/&lt;名稱&gt;/workflow_api.json</code>，可以直接拖進 ComfyUI 看。

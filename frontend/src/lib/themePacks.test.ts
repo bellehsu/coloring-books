@@ -473,4 +473,20 @@ describe("華麗相框（使用者 2026-11-24）", () => {
     expect(pack?.placements).toHaveLength(12);
     for (const pl of pack?.placements ?? []) expect(pl).toEqual({ cx: 0.5, cy: 0.59, height: 0.42, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true });
   });
+  it("cleans every background automatically; the clover page has its own prompt (spec 2026-11-24 §5.6)", () => {
+    const CLOVER =
+      "Delete the rectangular decorative border that runs along the four edges of the picture, including its corner ornaments. " +
+      "Only the four-leaf clover shaped frame in the middle remains, unchanged. The rest of the page is plain pure white. Black and white line art.";
+    expect(pack?.cleanups).toHaveLength(12);
+    for (const c of pack?.cleanups ?? []) expect(c.auto).toBe(true);
+    expect(parsed.pages[3].captionZh).toBe("四葉草");
+    expect(pack?.cleanups?.[3]).toEqual({ auto: true, prompt: CLOVER });
+    expect(countChars(CLOVER)).toBeLessThanOrEqual(600);
+    pack?.cleanups?.forEach((c, i) => {
+      if (i !== 3) expect(c).toEqual({ auto: true });
+    });
+  });
+  it("other packs don't clean", () => {
+    for (const p of THEME_PACKS.filter((x) => x.id !== "frames")) expect(p.cleanups).toBeUndefined();
+  });
 });

@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { errMsg } from "@/features/editing/errMsg";
 import { usePageText } from "@/features/editing/usePageText";
+import { CLEANUP_LABEL, CLEANUP_NOT_PORTRAIT, isPortrait } from "@/lib/cleanup";
 import { MAX_SCENE } from "@/lib/limits";
 import { UPLOAD_ACCEPT } from "@/lib/upload";
-import { useRegenerate, useUploadBackgroundC } from "../fixApi";
+import { useCleanupC, useRegenerate, useUploadBackgroundC } from "../fixApi";
 import { showRestore } from "../fixState";
 import { quiet } from "@/lib/quiet";
 import styles from "../FixPage.module.css";
@@ -17,6 +18,7 @@ export function BackgroundRow({
   page,
   bgGen,
   active,
+  cleaning,
   flushEdits,
   restore,
   busy,
@@ -26,7 +28,10 @@ export function BackgroundRow({
   bookId: number;
   page: Page;
   bgGen: Generation | undefined;
+  /** 這頁有背景在畫（或在清）。 */
   active: boolean;
+  /** 在做的是清理（「清掉框外雜物」，含自動清理）。 */
+  cleaning: boolean;
   flushEdits: () => Promise<void>;
   restore: (() => void) | null;
   busy: boolean;
@@ -37,6 +42,7 @@ export function BackgroundRow({
   const toast = useToast();
   const regen = useRegenerate(bookId, page.id);
   const upload = useUploadBackgroundC(bookId, page.id);
+  const cleanup = useCleanupC(bookId, page.id);
   const [uploading, setUploading] = useState(false);
   const [open, setOpen] = useState(false);
   const savePage = useSavePage(bookId, page.id);
@@ -51,6 +57,10 @@ export function BackgroundRow({
     }
     await flushEdits();
     await regen.mutateAsync({ kind: "background" }).catch((e: unknown) => toast.show(errMsg(e, "無法再畫一張背景"), "error"));
+  };
+  const clean = async () => {
+    await flushEdits();
+    await cleanup.mutateAsync().catch((e: unknown) => toast.show(errMsg(e, "無法清掉框外雜物"), "error"));
   };
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -70,7 +80,9 @@ export function BackgroundRow({
   };
 
   const source = active
-    ? "正在畫新的一張…"
+    ? cleaning
+      ? "正在清掉框外雜物…"
+      : "正在畫新的一張…"
     : uploading
       ? "上傳中…"
       : page.background_generation_id == null
@@ -83,6 +95,8 @@ export function BackgroundRow({
   const uploaded = !active && !uploading && bgGen?.source === "upload";
   const sub = sceneText && !uploaded ? `${source}・場景：${sceneText}` : source;
   const uploadOff = uploading || busy;
+  const portrait = isPortrait(page);
+  const cleanOff = active || busy || uploading || regen.isPending || cleanup.isPending || page.background_generation_id == null || !portrait;
   return (
     <Row
       title="背景"
@@ -91,19 +105,27 @@ export function BackgroundRow({
       restore={restore}
       actions={
         <>
-          <Button disabled={active || regen.isPending || busy} onClick={() => void again()}>
+          <Button disabled={active || regen.isPending || cleanup.isPending || busy} onClick={() => void again()}>
             AI 再畫一張
           </Button>
           <label className={styles.upload} data-disabled={uploadOff}>
             <span aria-hidden="true">↑</span> 上傳圖片
             <input type="file" accept={UPLOAD_ACCEPT} className={styles.file} disabled={uploadOff} onChange={onFile} />
           </label>
+          <Button disabled={cleanOff} aria-describedby={portrait ? undefined : `${id}-clean`} onClick={() => void clean()}>
+            {CLEANUP_LABEL}
+          </Button>
           <Button aria-expanded={open} aria-controls={`${id}-panel`} onClick={() => setOpen(!open)}>
             改場景
           </Button>
         </>
       }
     >
+      {!portrait && (
+        <p id={`${id}-clean`} className={styles.rowNote}>
+          {CLEANUP_NOT_PORTRAIT}
+        </p>
+      )}
       {open && (
         <div id={`${id}-panel`} className={styles.panel}>
           <label htmlFor={`${id}-scene`} className={styles.panelLabel}>

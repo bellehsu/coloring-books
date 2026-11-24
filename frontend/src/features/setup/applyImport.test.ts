@@ -76,4 +76,22 @@ describe("applyImport（貼上整本故事的匯入規則）", () => {
     expect(savePlacement).toHaveBeenCalledWith(31, P(0.26));
     expect(savePlacement.mock.calls.some(([id]) => id === 12)).toBe(false);
   });
+
+  it("主題包帶清理設定：建立的頁和填了內容的現有頁存 auto_cleanup／cleanup_prompt（和場景同一個 PATCH）；沒填內容的頁不動", async () => {
+    const existing = [pg(11, 0, "", ""), pg(12, 1, "舊場景", "舊動作")];
+    await applyImport(rowsFor(TEXT_OK, existing), existing, { createPage, updatePage }, {
+      cleanups: [{ auto: true }, { auto: true }, { auto: true, prompt: "Only the clover." }],
+    });
+    expect(updatePage).toHaveBeenCalledWith({
+      pageId: 11, scene_prompt: "森林", action_prompt: "跑步", auto_cleanup: true, cleanup_prompt: null,
+    });
+    expect(updatePage).toHaveBeenCalledWith({ pageId: 31, auto_cleanup: true, cleanup_prompt: "Only the clover." });
+    expect(updatePage.mock.calls.some(([b]) => b.pageId === 12)).toBe(false);
+  });
+
+  it("清理設定比頁數短：沒有設定的頁不送清理欄位", async () => {
+    await applyImport(rowsFor(TEXT_OK, []), [], { createPage, updatePage }, { cleanups: [{ auto: true }] });
+    expect(updatePage).toHaveBeenCalledTimes(1);
+    expect(updatePage).toHaveBeenCalledWith({ pageId: 31, auto_cleanup: true, cleanup_prompt: null });
+  });
 });

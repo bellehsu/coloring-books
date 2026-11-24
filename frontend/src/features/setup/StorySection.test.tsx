@@ -110,6 +110,7 @@ describe("StorySection edit existing pages", () => {
     captionZh: "你好",
     captionEn: "Hi",
     materials: mats(),
+    autoCleanup: false,
     ...o,
   });
   function mount(e: PreviewEntry, onSavePage = vi.fn(async () => {})) {

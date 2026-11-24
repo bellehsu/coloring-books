@@ -6,6 +6,7 @@ import { useCancelGeneration, useGenerations, useUpdateGeneration } from "@/api/
 import { Icons } from "@/components/ui/Icons";
 import { useToast } from "@/components/ui/Toast";
 import { errMsg } from "@/features/editing/errMsg";
+import { CLEANED_BADGE, isCleaned } from "@/lib/cleanup";
 import styles from "./Thumbs.module.css";
 
 /** 有縮圖列的種類。合成圖（composite）沒有：只能經由合成產生，不可 /select。 */
@@ -44,7 +45,7 @@ export interface ThumbsProps {
 /**
  * 構圖卡片裡的縮圖列（單選）：這頁這個種類的 generations，舊的在前。
  * 成功的是選項（方向鍵移動焦點、Enter／空白鍵選用；選用中其他張 aria-disabled）；排隊中／生成中顯示進度與取消 ×；
- * 沒在用的（含失敗、已取消）可以捨棄 ×。使用中的不能捨棄（後端 409）。上傳的背景有「上傳」標記。
+ * 沒在用的（含失敗、已取消）可以捨棄 ×。使用中的不能捨棄（後端 409）。上傳的背景有「上傳」標記，清理產生的有「清過」。
  */
 export function Thumbs({ bookId, kind, pageId, selectedId, onPick, picking }: ThumbsProps) {
   const toast = useToast();
@@ -94,6 +95,7 @@ export function Thumbs({ bookId, kind, pageId, selectedId, onPick, picking }: Th
         const label = `${t.noun}第 ${i + 1} 張`;
         const on = g.id === selectedId;
         const upload = g.source === "upload";
+        const cleaned = isCleaned(g);
         const pending = g.status === "queued" || g.status === "running";
         const ok = g.status === "succeeded" && !!g.image_url;
         const k = pickable.indexOf(g);
@@ -108,7 +110,7 @@ export function Thumbs({ bookId, kind, pageId, selectedId, onPick, picking }: Th
                 type="button"
                 role="radio"
                 aria-checked={on}
-                aria-label={upload ? `${label}（上傳的圖片）` : label}
+                aria-label={upload ? `${label}（上傳的圖片）` : cleaned ? `${label}（${CLEANED_BADGE}）` : label}
                 tabIndex={g.id === tabStop ? 0 : -1}
                 className={styles.pick}
                 // 不用 disabled：用鍵盤選用時焦點會因按鈕停用而掉到 body
@@ -124,9 +126,9 @@ export function Thumbs({ bookId, kind, pageId, selectedId, onPick, picking }: Th
             ) : (
               <Placeholder g={g} aspect={aspect} />
             )}
-            {upload && (
+            {(upload || cleaned) && (
               <span className={styles.badge} aria-hidden="true">
-                上傳
+                {upload ? "上傳" : CLEANED_BADGE}
               </span>
             )}
             {pending ? (

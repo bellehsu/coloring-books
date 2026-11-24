@@ -154,3 +154,25 @@ describe("redraw flags", () => {
     expect(planCounts(entries, new Set())).toMatchObject({ backgrounds: 1, poses: 1, total: 2 });
   });
 });
+
+describe("自動清理（背景＋清掉框外雜物，算 2 次）", () => {
+  it("主題包的清理設定：要畫背景的頁多算一次清理；標題列出清掉框外雜物", () => {
+    const entries = buildPreview([], STORY, new Map(), [], [{ auto: true }, { auto: false }, { auto: true }]).entries;
+    expect(entries.map((e) => e.autoCleanup)).toEqual([true, false, true]);
+    const c = planCounts(entries, new Set(["p3"]), { remaining: 60, estimate_s: 0, fits: 0 });
+    expect(c).toMatchObject({ backgrounds: 2, poses: 3, cleanups: 1, total: 6, fits: 6 });
+    expect(planText(c, false).heading).toBe("會畫 6 張圖（背景 2＋動作 3＋清掉框外雜物 1）");
+  });
+
+  it("已經開著自動清理的現有頁也算；貼上的場景填進空的場景會關掉它（後端規則），主題包明確帶的優先", () => {
+    const pages = [page(11, 0, "", "x", { auto_cleanup: true }), page(12, 1, "海邊", "", { auto_cleanup: true })];
+    const m = pageMaterials(pages, []);
+    expect(m.get(11)).toMatchObject({ autoCleanup: true });
+    const pasted = buildPreview(pages, STORY, m).entries;
+    expect(pasted.map((e) => e.autoCleanup)).toEqual([false, true, false]);
+    expect(buildPreview(pages, STORY, m, [], [{ auto: true }]).entries[0].autoCleanup).toBe(true);
+    const none = buildPreview(pages, "", m).entries;
+    expect(planCounts(none, new Set())).toMatchObject({ backgrounds: 1, cleanups: 1, total: 3 });
+  });
+});
+

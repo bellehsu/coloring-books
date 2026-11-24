@@ -5,6 +5,12 @@ import { withSide, withSize } from "./placement";
 
 export type LineDetail = "simple" | "standard" | "detailed";
 
+/** 一頁的背景清理設定：auto＝新的 AI 背景好了自動清掉框外雜物；prompt＝自訂清理指示（沒有＝後端的預設）。 */
+export interface PackCleanup {
+  auto: boolean;
+  prompt?: string;
+}
+
 export interface ThemePack {
   id: string;
   title: string;
@@ -14,6 +20,8 @@ export interface ThemePack {
   lineDetail: LineDetail;
   /** 每頁主角的位置（依頁序）；沒有＝預設置中。套用時存成各頁的位置，之後在編輯頁可以改。 */
   placements?: Placement[];
+  /** 每頁的背景清理設定（依頁序）；沒有＝不清。套用時和位置一樣存到各頁（auto_cleanup、cleanup_prompt）。 */
+  cleanups?: PackCleanup[];
 }
 
 interface PackPage {
@@ -203,6 +211,14 @@ const FRAMES: readonly PackPage[] = [
 /** 華麗相框的主角位置：半身肖像放進框裡，frame 是框的中心，autofit 讓後端依框自動縮放。 */
 const FRAME_PLACEMENT: Placement = { cx: 0.5, cy: 0.59, height: 0.42, flip: false, frame: { x: 0.5, y: 0.55 }, autofit: true };
 
+/** 四葉草頁的清理指示（spec 2026-11-24 §5.3）：四葉草框外常多一圈長方形花邊，要整圈拿掉。 */
+const CLOVER_CLEANUP =
+  "Delete the rectangular decorative border that runs along the four edges of the picture, including its corner ornaments. " +
+  "Only the four-leaf clover shaped frame in the middle remains, unchanged. The rest of the page is plain pure white. Black and white line art.";
+
+/** 華麗相框每頁都自動清掉框外雜物；第 4 頁（四葉草）用自己的指示，其他用後端的預設。 */
+const FRAME_CLEANUPS: PackCleanup[] = FRAMES.map((p) => (p.zh === "四葉草" ? { auto: true, prompt: CLOVER_CLEANUP } : { auto: true }));
+
 export const THEME_PACKS: ThemePack[] = [
   {
     id: "vehicles",
@@ -270,5 +286,6 @@ export const THEME_PACKS: ThemePack[] = [
     // 使用者 2026-11-24：複雜度中等
     lineDetail: "standard",
     placements: FRAMES.map(() => FRAME_PLACEMENT),
+    cleanups: FRAME_CLEANUPS,
   },
 ];

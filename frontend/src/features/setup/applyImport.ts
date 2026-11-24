@@ -5,7 +5,7 @@
 
 import type { Placement } from "@/api/client";
 import type { ImportRow } from "@/lib/storyImport";
-import type { LineDetail } from "@/lib/themePacks";
+import type { LineDetail, PackCleanup } from "@/lib/themePacks";
 
 export interface PagePatch {
   pageId: number;
@@ -14,6 +14,8 @@ export interface PagePatch {
   caption_zh?: string;
   caption_en?: string;
   line_detail?: LineDetail;
+  auto_cleanup?: boolean;
+  cleanup_prompt?: string | null;
 }
 
 export interface ImportOptions {
@@ -21,6 +23,9 @@ export interface ImportOptions {
   lineDetail?: LineDetail;
   /** 主題包的每頁主角位置（第 n 頁在 n-1）：建立的頁與填了內容的頁存成位置草稿。 */
   placements?: readonly (Placement | undefined)[];
+  /** 主題包的每頁背景清理設定（第 n 頁在 n-1）：建立的頁與填了內容的頁存 auto_cleanup、cleanup_prompt
+   * （和場景同一個 PATCH：後端改場景會關掉自動清理，同一個請求明確帶的值優先）。 */
+  cleanups?: readonly (PackCleanup | undefined)[];
 }
 
 export interface ImportCalls {
@@ -31,6 +36,15 @@ export interface ImportCalls {
 }
 
 const cells = (r: ImportRow) => +r.fill.scene + +r.fill.action + +r.fill.captionZh + +r.fill.captionEn;
+
+/** 這一列會套用到頁面（建立新頁，或現有頁有空欄位可以填）：線條多寡、位置、清理設定也只套用到這些頁。 */
+export const appliesTo = (r: ImportRow) => r.problems.length === 0 && (r.create || cells(r) > 0);
+
+/** 第 n 頁要送的清理欄位（沒有設定就不送）。 */
+function cleanupFields(cleanups: ImportOptions["cleanups"], n: number): Pick<PagePatch, "auto_cleanup" | "cleanup_prompt"> {
+  const c = cleanups?.[n - 1];
+  return c ? { auto_cleanup: c.auto, cleanup_prompt: c.prompt ?? null } : {};
+}
 
 /**
  * existing：已依 position 排序的現有頁面。依序建立、再補文字；回傳匯入後每一頁的 id（依頁序，第 n 頁在 n-1）。
@@ -57,19 +71,21 @@ export async function applyImport(
     const r = byN.get(n);
     const made = await calls.createPage({ scene_prompt: r?.scene ?? "", action_prompt: r?.action ?? "" });
     ids.push(made.id);
-    if (r && (r.fill.captionZh || r.fill.captionEn || opts.lineDetail)) {
+    const cleanup = cleanupFields(opts.cleanups, n);
+    if (r && (r.fill.captionZh || r.fill.captionEn || opts.lineDetail || "auto_cleanup" in cleanup)) {
       await calls.updatePage({
         pageId: made.id,
         ...(r.fill.captionZh ? { caption_zh: r.captionZh } : {}),
         ...(r.fill.captionEn ? { caption_en: r.captionEn } : {}),
         ...detail,
+        ...cleanup,
       });
     }
     if (r) await place(made.id, n);
   }
   // 2. 現有頁只填空欄位
   for (const r of ok) {
-    if (r.create || cells(r) === 0) continue;
+    if (r.create || !appliesTo(r)) continue;
     await calls.updatePage({
       pageId: existing[r.n - 1].id,
       ...(r.fill.scene ? { scene_prompt: r.scene } : {}),
@@ -77,6 +93,7 @@ export async function applyImport(
       ...(r.fill.captionZh ? { caption_zh: r.captionZh } : {}),
       ...(r.fill.captionEn ? { caption_en: r.captionEn } : {}),
       ...detail,
+      ...cleanupFields(opts.cleanups, r.n),
     });
     await place(existing[r.n - 1].id, r.n);
   }

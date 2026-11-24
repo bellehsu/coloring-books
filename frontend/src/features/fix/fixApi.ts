@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { api, type Generation, type Page, type Placement } from "@/api/client";
+import { api, cleanupBackground, type Generation, type Page, type Placement } from "@/api/client";
 import { pagesQueryOptions, qk } from "@/api/hooks";
 import type { components } from "@/api/schema";
 import { recomposeRunning } from "@/lib/pageState";
@@ -132,6 +132,18 @@ export function useRegenerate(bookId: number, pageId: number) {
       v.kind === "background"
         ? api.post<Generation>(`/pages/${pageId}/backgrounds${C}`, {} satisfies S["BackgroundCreate"])
         : api.post<Generation>(`/pages/${pageId}/poses${C}`, { action: v.action, count: v.count ?? 1 } satisfies S["PoseCreate"]),
+    onSuccess: () => refreshFix(qc, bookId, pageId),
+  });
+}
+
+/**
+ * 「清掉框外雜物」：用這頁選用的背景排一筆清理；帶 oneclick，好了一定換上去（並存復原快照）、重新合成。
+ * 「製作中」跟著頁面（總覽與這頁的生成），不是跟著這筆回傳的 id。
+ */
+export function useCleanupC(bookId: number, pageId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => cleanupBackground(pageId, true),
     onSuccess: () => refreshFix(qc, bookId, pageId),
   });
 }
