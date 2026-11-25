@@ -21,7 +21,7 @@ describe("THEME_PACKS", () => {
   const parsed = parseStory(pack.text);
 
   it("has the vehicles pack", () => {
-    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world", "taiwan", "holidays", "zoo", "sports", "frames"]);
+    expect(THEME_PACKS.map((p) => p.id)).toEqual(["vehicles", "jobs", "hygiene", "world", "taiwan", "holidays", "zoo", "sports", "frames", "dinosaurs", "ocean", "safety"]);
     expect(pack.title).toBe("交通工具");
     expect(pack.description).not.toBe("");
   });
@@ -399,7 +399,7 @@ describe("驗收後修正（使用者 2026-11-19）", () => {
     }
   });
   it("其他主題包不帶位置", () => {
-    for (const p of THEME_PACKS.filter((x) => x.id !== "zoo" && x.id !== "frames")) expect(p.placements).toBeUndefined();
+    for (const p of THEME_PACKS.filter((x) => !["zoo", "frames", "dinosaurs", "ocean"].includes(x.id))) expect(p.placements).toBeUndefined();
   });
 });
 
@@ -488,5 +488,83 @@ describe("華麗相框（使用者 2026-11-24）", () => {
   });
   it("other packs don't clean", () => {
     for (const p of THEME_PACKS.filter((x) => x.id !== "frames")) expect(p.cleanups).toBeUndefined();
+  });
+});
+
+/** 恐龍、海洋動物、交通安全（使用者 2026-11-25 確認清單，各 12 頁）。 */
+describe("恐龍、海洋動物、交通安全（使用者 2026-11-25）", () => {
+  const get = (id: string) => THEME_PACKS.find((p) => p.id === id);
+  const pages = (id: string) => parseStory(get(id)?.text ?? "").pages;
+  const DINOS: [string, string][] = [
+    ["暴龍", "T-Rex"], ["三角龍", "Triceratops"], ["劍龍", "Stegosaurus"], ["腕龍", "Brachiosaurus"],
+    ["翼龍", "Pterosaur"], ["甲龍", "Ankylosaurus"], ["迅猛龍", "Velociraptor"], ["棘龍", "Spinosaurus"],
+    ["副櫛龍", "Parasaurolophus"], ["厚頭龍", "Pachycephalosaurus"], ["蛇頸龍", "Plesiosaur"], ["恐龍蛋", "Dinosaur Eggs"],
+  ];
+  const OCEAN: [string, string][] = [
+    ["鯨魚", "Whale"], ["海豚", "Dolphin"], ["章魚", "Octopus"], ["海龜", "Sea Turtle"], ["鯊魚", "Shark"], ["小丑魚", "Clownfish"],
+    ["水母", "Jellyfish"], ["海星", "Starfish"], ["螃蟹", "Crab"], ["海馬", "Seahorse"], ["魟魚", "Stingray"], ["海獅", "Sea Lion"],
+  ];
+  const SAFETY: [string, string][] = [
+    ["走斑馬線", "Use the Crosswalk"], ["看紅綠燈", "Watch the Traffic Light"], ["左右看", "Look Both Ways"],
+    ["走人行道", "Walk on the Sidewalk"], ["繫安全帶", "Buckle Up"], ["戴安全帽", "Wear a Helmet"],
+    ["穿反光背心", "Wear a Reflective Vest"], ["排隊等公車", "Wait in Line"], ["坐好扶好", "Sit Still on the Bus"],
+    ["帶手電筒", "Carry a Flashlight"], ["平交道停看聽", "Stop at the Rail Crossing"], ["在公園玩", "Play in the Park"],
+  ];
+  it.each([
+    ["dinosaurs", "恐龍", DINOS],
+    ["ocean", "海洋動物", OCEAN],
+    ["safety", "交通安全", SAFETY],
+  ] as const)("%s: title, 12 pages, captions, limits, simple lines", (id, title, captions) => {
+    const pack = get(id)!;
+    expect(pack.title).toBe(title);
+    expect(pack.lineDetail).toBe("simple");
+    const parsed = parseStory(pack.text);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.pages.map((p) => [p.captionZh, p.captionEn])).toEqual(captions);
+    for (const p of parsed.pages) {
+      expect(p.scene).toContain("背景簡單、大塊的形狀、細節少");
+      expect(p.scene.endsWith("，畫面裡沒有人")).toBe(true);
+      expect(p.scene).not.toContain("像");
+      expect(p.action).not.toContain("像");
+      expect(countChars(p.scene)).toBeLessThanOrEqual(MAX_SCENE);
+      expect(countChars(p.action)).toBeLessThanOrEqual(MAX_ACTION);
+      expect(countChars(p.captionZh ?? "")).toBeLessThanOrEqual(MAX_CAPTION_ZH);
+      expect(countChars(p.captionEn ?? "")).toBeLessThanOrEqual(MAX_CAPTION_EN);
+    }
+  });
+  it.each(["dinosaurs", "ocean"])("%s: animal on the right/left, alternating; actions never name an animal; character small on the other side", (id) => {
+    const names = (id === "dinosaurs" ? DINOS : OCEAN).map(([zh]) => zh);
+    for (const [i, p] of pages(id).entries()) {
+      expect(p.scene).toContain(i % 2 === 0 ? "畫面右邊" : "畫面左邊");
+      for (const n of [...names, "恐龍", "龍"]) expect(p.action).not.toContain(n);
+    }
+    const pl = get(id)!.placements!;
+    expect(pl).toHaveLength(12);
+    for (const [i, x] of pl.entries()) {
+      expect(x.height).toBe(0.42);
+      expect(x.cx).toBe(i % 2 === 0 ? 0.26 : 0.74);
+    }
+  });
+  it("恐龍：每頁場景提到自己的恐龍（恐龍蛋頁是巢和蛋）；翼龍的天空不畫星星和雲", () => {
+    for (const [i, p] of pages("dinosaurs").entries()) expect(p.scene).toContain(i === 11 ? "蛋" : DINOS[i][0]);
+    expect(pages("dinosaurs")[4].scene).toContain("沒有星星和雲");
+    expect(pages("dinosaurs")[11].action).not.toContain("蛋"); // 蛋只在背景（寫在兩邊會畫兩次）
+  });
+  it("海洋動物：海底不畫泡泡（線稿會變成細碎點點）；每頁場景提到自己的動物", () => {
+    for (const [i, p] of pages("ocean").entries()) {
+      expect(p.scene).not.toContain("泡泡");
+      expect(p.scene).toContain(OCEAN[i][0]);
+    }
+  });
+  it("交通安全：背景沒有車、沒有人；車輛只在動作；晚上沒有星星和雲；不提警察", () => {
+    const ps = pages("safety");
+    for (const p of ps) {
+      expect(p.scene).toContain("沒有任何車輛");
+      expect(p.scene).not.toContain("警察");
+    }
+    expect(ps[5].action).toContain("騎腳踏車");
+    expect(ps[8].action).toContain("公車座位");
+    expect(ps[9].scene).toContain("沒有星星和雲");
+    expect(get("safety")!.placements).toBeUndefined();
   });
 });

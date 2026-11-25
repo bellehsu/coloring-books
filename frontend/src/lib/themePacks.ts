@@ -219,6 +219,58 @@ const CLOVER_CLEANUP =
 /** 華麗相框每頁都自動清掉框外雜物；第 4 頁（四葉草）用自己的指示，其他用後端的預設。 */
 const FRAME_CLEANUPS: PackCleanup[] = FRAMES.map((p) => (p.zh === "四葉草" ? { auto: true, prompt: CLOVER_CLEANUP } : { auto: true }));
 
+/** 恐龍（使用者 2026-11-25）：恐龍在背景、左右輪流；動作不提恐龍（否則手上會再畫一隻）。 */
+const DINOS: readonly PackPage[] = [
+  { scene: "史前時代的森林，畫面右邊有一隻大大的暴龍張大嘴巴，後面有大樹", action: "戴著探險帽，雙手拿著望遠鏡在看", zh: "暴龍", en: "T-Rex" },
+  { scene: "史前時代的草原，畫面左邊有一隻三角龍低頭吃草", action: "一手拿著一把葉子往前伸", zh: "三角龍", en: "Triceratops" },
+  { scene: "史前時代的森林，畫面右邊有一隻背上有一排骨板的劍龍", action: "揹著背包，一手揮手", zh: "劍龍", en: "Stegosaurus" },
+  { scene: "史前時代的森林，畫面左邊有一隻脖子很長的腕龍在吃高高的樹葉", action: "抬頭往上看，一手指著上面", zh: "腕龍", en: "Brachiosaurus" },
+  { scene: "史前時代的山谷，畫面右邊的天空有一隻張開翅膀的翼龍在飛，遠處有山，沒有星星和雲", action: "雙手張開，假裝在飛", zh: "翼龍", en: "Pterosaur" },
+  { scene: "史前時代的草地，畫面左邊有一隻尾巴末端有骨錘的甲龍", action: "蹲下來，好奇地看", zh: "甲龍", en: "Ankylosaurus" },
+  { scene: "史前時代的森林，畫面右邊有一隻小小的迅猛龍在奔跑", action: "往前跑步", zh: "迅猛龍", en: "Velociraptor" },
+  { scene: "史前時代的河邊，畫面左邊的河裡有一隻背上有大帆的棘龍", action: "雙手拿著一根釣竿", zh: "棘龍", en: "Spinosaurus" },
+  { scene: "史前時代的森林，畫面右邊有一隻頭上有長長頭冠的副櫛龍", action: "雙手摀著耳朵，開心地笑", zh: "副櫛龍", en: "Parasaurolophus" },
+  { scene: "史前時代的草地，畫面左邊有一隻頭頂圓圓厚厚的厚頭龍", action: "雙手抱著一顆大球", zh: "厚頭龍", en: "Pachycephalosaurus" },
+  { scene: "史前時代的湖邊，畫面右邊的湖裡有一隻探出長脖子的蛇頸龍", action: "坐在小船上，雙手划槳", zh: "蛇頸龍", en: "Plesiosaur" },
+  { scene: "史前時代的草地，畫面左邊的草叢裡有一個大大的巢，裡面有幾顆大大的蛋", action: "一根手指放在嘴巴前面，小聲說噓", zh: "恐龍蛋", en: "Dinosaur Eggs" },
+];
+
+/** 海洋動物（使用者 2026-11-25）：海底場景、動物左右輪流；不畫泡泡（線稿會變成細碎點點）。 */
+const OCEAN: readonly PackPage[] = [
+  { scene: "海底，有海草和大石頭，畫面右邊有一隻大大的鯨魚", action: "戴著潛水面鏡，一手揮手", zh: "鯨魚", en: "Whale" },
+  { scene: "海底，有海草和大石頭，畫面左邊有一隻海豚往上游", action: "雙手往前划水", zh: "海豚", en: "Dolphin" },
+  { scene: "海底，有海草，畫面右邊的大石頭上有一隻章魚", action: "一手拿著一個小網子", zh: "章魚", en: "Octopus" },
+  { scene: "海底，有海草和大石頭，畫面左邊有一隻大大的海龜在游", action: "雙手張開，在水裡游泳", zh: "海龜", en: "Sea Turtle" },
+  { scene: "海底，有海草和大石頭，畫面右邊遠處有一隻鯊魚", action: "雙手拿著望遠鏡在看", zh: "鯊魚", en: "Shark" },
+  { scene: "海底，畫面左邊有一大叢海葵，海葵裡有幾隻小丑魚", action: "蹲下來，好奇地看", zh: "小丑魚", en: "Clownfish" },
+  { scene: "海底，有海草，畫面右邊有幾隻水母飄著", action: "一手指著上面，開心地笑", zh: "水母", en: "Jellyfish" },
+  { scene: "海底的沙地，有海草，畫面左邊的沙地上有幾隻大大的海星", action: "一手拿著一把小鏟子", zh: "海星", en: "Starfish" },
+  { scene: "海底的沙地，有海草，畫面右邊的沙地上有一隻舉著大鉗子的螃蟹", action: "雙手摀著嘴巴偷笑", zh: "螃蟹", en: "Crab" },
+  { scene: "海底，畫面左邊的海草旁有兩隻海馬", action: "一手拿著放大鏡在看", zh: "海馬", en: "Seahorse" },
+  { scene: "海底的沙地，畫面右邊有一隻扁扁的魟魚在沙地上方游", action: "揹著潛水氧氣瓶，一手揮手", zh: "魟魚", en: "Stingray" },
+  { scene: "海邊，畫面左邊的大石頭上有一隻海獅，後面是海", action: "雙手拍手", zh: "海獅", en: "Sea Lion" },
+];
+
+/** 交通安全（使用者 2026-11-25）：背景沒有車也沒有人，車輛寫在動作（主角坐在上面）；黑白看不出紅綠燈亮哪個，合成一頁。 */
+const SAFETY: readonly PackPage[] = [
+  { scene: "城市的馬路，路面上有一條大大的斑馬線", action: "舉起一隻手，往前走", zh: "走斑馬線", en: "Use the Crosswalk" },
+  { scene: "城市的路口，路邊有一個大大的紅綠燈", action: "停下來，一手指著前面", zh: "看紅綠燈", en: "Watch the Traffic Light" },
+  { scene: "安靜的十字路口，路邊有大樹", action: "站著轉頭看旁邊, facing toward the left side of the picture", zh: "左右看", en: "Look Both Ways" },
+  { scene: "人行道，旁邊有大樹和路燈", action: "揹著書包走路", zh: "走人行道", en: "Walk on the Sidewalk" },
+  { scene: "停車場的空地，旁邊有大樹", action: "坐在兒童安全座椅上，雙手拉著安全帶", zh: "繫安全帶", en: "Buckle Up" },
+  { scene: "公園裡的腳踏車道，旁邊有大樹", action: "戴著安全帽，騎腳踏車", zh: "戴安全帽", en: "Wear a Helmet" },
+  { scene: "傍晚的路邊，有路燈和大樹", action: "穿著亮亮的反光背心，一手揮手", zh: "穿反光背心", en: "Wear a Reflective Vest" },
+  { scene: "公車站，有站牌和候車亭", action: "揹著書包，站好排隊", zh: "排隊等公車", en: "Wait in Line" },
+  { scene: "公車站旁邊，有站牌和大樹", action: "坐在公車座位上，雙手放在腿上", zh: "坐好扶好", en: "Sit Still on the Bus" },
+  { scene: "晚上的小路，路邊有路燈，沒有星星和雲", action: "一手拿著手電筒往前照", zh: "帶手電筒", en: "Carry a Flashlight" },
+  { scene: "平交道，柵欄放下來，旁邊有一個警示牌", action: "停下來，雙手放在身體兩旁等待", zh: "平交道停看聽", en: "Stop at the Rail Crossing" },
+  { scene: "公園的大草地，旁邊有大樹", action: "雙手抱著一顆球", zh: "在公園玩", en: "Play in the Park" },
+];
+
+/** 動物在畫面右邊（單數頁）就把主角放左邊，反之放右邊，主角小一點（同動物園）。 */
+const oppositeSmall = (pages: readonly PackPage[]) =>
+  pages.map((_, i) => withSide(withSize(DEFAULT_PLACEMENT, "small"), i % 2 === 0 ? "left" : "right"));
+
 export const THEME_PACKS: ThemePack[] = [
   {
     id: "vehicles",
@@ -287,5 +339,28 @@ export const THEME_PACKS: ThemePack[] = [
     lineDetail: "standard",
     placements: FRAMES.map(() => FRAME_PLACEMENT),
     cleanups: FRAME_CLEANUPS,
+  },
+  {
+    id: "dinosaurs",
+    title: "恐龍",
+    description: "12 種恐龍：暴龍、三角龍、劍龍……主角在旁邊探險，每頁有中英文字",
+    text: packText(DINOS, SIMPLE_BG + NO_PEOPLE),
+    lineDetail: "simple",
+    placements: oppositeSmall(DINOS),
+  },
+  {
+    id: "ocean",
+    title: "海洋動物",
+    description: "12 種海洋動物：鯨魚、海豚、章魚、海龜……主角在海底潛水，每頁有中英文字",
+    text: packText(OCEAN, SIMPLE_BG + NO_PEOPLE),
+    lineDetail: "simple",
+    placements: oppositeSmall(OCEAN),
+  },
+  {
+    id: "safety",
+    title: "交通安全",
+    description: "12 個交通安全好習慣：走斑馬線、看紅綠燈、繫安全帶……每頁有中英文字",
+    text: packText(SAFETY, NO_VEHICLES + SIMPLE_BG + NO_PEOPLE),
+    lineDetail: "simple",
   },
 ];
