@@ -545,9 +545,13 @@ describe("恐龍、海洋動物、交通安全（使用者 2026-11-25）", () =>
       expect(x.cx).toBe(i % 2 === 0 ? 0.26 : 0.74);
     }
   });
-  it("恐龍：每頁場景提到自己的恐龍（恐龍蛋頁是巢和蛋）；翼龍的天空不畫星星和雲", () => {
+  it("恐龍：每頁場景提到自己的恐龍（恐龍蛋頁是巢和蛋）；GPU 驗收畫錯的字不再出現", () => {
     for (const [i, p] of pages("dinosaurs").entries()) expect(p.scene).toContain(i === 11 ? "蛋" : DINOS[i][0]);
-    expect(pages("dinosaurs")[4].scene).toContain("沒有星星和雲");
+    // 2026-11-26 驗收：白天寫「沒有星星和雲」反而畫出星星和雲；「大帆」畫成帆船；「圓圓」＋拿球畫出一顆大圓球
+    expect(pages("dinosaurs")[4].scene).not.toContain("星星");
+    expect(pages("dinosaurs")[7].scene).not.toContain("帆");
+    expect(pages("dinosaurs")[9].scene).not.toContain("圓");
+    expect(pages("dinosaurs")[9].action).not.toContain("球");
     expect(pages("dinosaurs")[11].action).not.toContain("蛋"); // 蛋只在背景（寫在兩邊會畫兩次）
   });
   it("海洋動物：海底不畫泡泡（線稿會變成細碎點點）；每頁場景提到自己的動物", () => {
