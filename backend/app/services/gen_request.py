@@ -17,6 +17,10 @@ request_json 不只是來源紀錄：核心欄位（kind、prompt、seed…）�
   失敗、被取消或捨棄時改選用來源背景、照常排頁面流程（services/pipeline.py、services/slots.py 讀）。
   `background_at_trigger`（BACKGROUND_AT_TRIGGER）記下排清理時頁面選用的背景：之後選用的背景換過了，
   退回來源時就不照 take 硬換（services/pipeline.py 讀）。
+- `set_character`（SET_CHARACTER）：切換主角（POST /pages/{id}/character）要重畫的背景，值是 true／false：
+  好了換上去（一定帶 TAKE）的同一個交易把頁面的 include_character 改成這個值；失敗、取消時頁面不動。
+  自動清理照抄來源的值（清好的換上時才改）（api/compose.py 寫；services/pipeline.py、services/jobs.py 讀；
+  api/pages.py 用它算 PageOut.character_pending）。
 - `usage_day`／`usage_owner`／`usage_refunded`：當日額度的計數與退回依據（services/usage.py 寫、
   `refund_generations` 改寫）；遺失它們就不會退、或重複退。
 - `engine_requeues`／`engine_unavailable_since`：引擎連不上時放回佇列的計數（只有 worker 寫，
@@ -41,11 +45,12 @@ CLEANUP = "cleanup"  # request_json 的旗標：背景清理（「清掉框外�
 CLEANUP_RESERVED = "cleanup_reserved"  # request_json 的旗標：背景已替它的自動清理多預留 1 次
 AUTO_CLEANUP = "auto_cleanup"  # request_json 的旗標：自動清理（不是按鈕）
 BACKGROUND_AT_TRIGGER = "background_at_trigger"  # request_json：自動清理排隊時頁面選用的背景 id（可為 null）
+SET_CHARACTER = "set_character"  # request_json：切換主角的背景，換上時把 include_character 改成這個值（true／false）
 USAGE_DAY = "usage_day"
 USAGE_OWNER = "usage_owner"
 USAGE_REFUNDED = "usage_refunded"
 
-# request_json 的核心欄位（extra 不能蓋掉）。TAKE、CANDIDATE、REVIEW、CLEANUP*、AUTO_CLEANUP 與 USAGE_* 是排隊時由 extra 帶入的控制欄位，不在此列
+# request_json 的核心欄位（extra 不能蓋掉）。TAKE、CANDIDATE、REVIEW、CLEANUP*、AUTO_CLEANUP、SET_CHARACTER 與 USAGE_* 是排隊時由 extra 帶入的控制欄位，不在此列
 _CORE_KEYS = frozenset({"kind", "prompt", "negative_prompt", "seed", "width", "height", "character_image",
                         "variation", ENGINE_REQUEUES, ENGINE_UNAVAILABLE_SINCE})
 
@@ -123,6 +128,15 @@ def is_auto_cleanup(gen: Generation) -> bool:
 
 def cleanup_reserved(gen: Generation) -> bool:
     return _flag(gen, CLEANUP_RESERVED)
+
+
+def set_character_of(gen: Generation) -> bool | None:
+    """切換主角的背景要把 include_character 改成什麼；不是切換的（沒有這個鍵、不是布林、壞掉的 JSON）回 None。"""
+    try:
+        v = json.loads(gen.request_json or "{}").get(SET_CHARACTER)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return v if isinstance(v, bool) else None
 
 
 def background_at_trigger(gen: Generation) -> int | None:

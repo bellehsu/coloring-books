@@ -6,7 +6,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { api, cleanupBackground } from "./client";
+import { api, cleanupBackground, setCharacter } from "./client";
 import { placementSaverFor } from "@/features/editing/placementSaver";
 import { recomposeRunning } from "@/lib/pageState";
 import type { components } from "./schema";
@@ -504,6 +504,15 @@ export function useCleanupBackground(bookId: number) {
   return useMutation({
     mutationFn: ({ pageId }: { pageId: number }) => cleanupBackground(pageId),
     onSuccess: () => invalidateJobs(qc, bookId),
+  });
+}
+
+/** 切換這頁放不放主角（進階編輯）：頁面、背景生成與佇列都可能變 */
+export function useSetCharacter(bookId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId, body }: { pageId: number; body: S["CharacterToggle"] }) => setCharacter(pageId, body),
+    onSuccess: (_d, v) => Promise.all([invalidatePage(qc, bookId, v.pageId), invalidateJobs(qc, bookId)]),
   });
 }
 

@@ -19,7 +19,7 @@ from app.services.compose import cutout
 from app.services.frame_fit import find_interior, fit_portrait
 from tests.fake_engine import FakeEngine
 from tests.test_api_compose import composites, confirm, gen_pose, gen_row, picked, png_bytes, upload_bg
-from tests.test_api_lineart import A5_HOME, color_png, get_page
+from tests.test_api_lineart import A5_HOME, color_png, get_page, set_page
 from tests.test_api_pages import book_with_character, new_page
 
 SEED = {"x": 0.5, "y": 0.55}
@@ -236,3 +236,60 @@ def test_frame_fit_rounds_and_clamps_like_compose(client, app, monkeypatch, raw,
     assert r.status_code == 200, r.text
     b = r.json()
     assert (b["cx"], b["cy"], b["height"]) == want
+
+
+# ---- 不放主角：只用背景合成 -------------------------------------------------------------
+
+
+def compose_direct(app, page_id) -> int:
+    from app.services.page_compose import compose_page
+    with app.state.sessions() as s:
+        return compose_page(s, app.state.storage, page_id)
+
+
+def test_compose_background_only(client, app):
+    from app.services.compose import DEFAULT_PLACEMENT
+    from app.services.page_compose import composite_params
+    page = portrait_page(client, app, png_bytes((832, 1216), "green"))
+    pid = page["id"]
+    assert page["pose_generation_id"] is not None  # 有角色動作也要被忽略
+    set_page(app, pid, include_character=False)
+    gid = compose_direct(app, pid)
+    bg = image(app, page["background_generation_id"])
+    out = image(app, gid)
+    assert out.size == bg.size and out.mode == "RGB"
+    assert np.array_equal(np.asarray(out), np.asarray(bg))
+    assert params(app, gid)["pose_generation_id"] is None
+    assert get_page(app, pid).selected_generation_id == gid
+    assert composite_params(1, None, DEFAULT_PLACEMENT)["pose_generation_id"] is None
+    # 再呼叫一次：重用同一筆
+    assert compose_direct(app, pid) == gid
+    assert len(composites(app, pid)) == 1
+
+
+def test_compose_background_only_skips_frame_branch(client, app):
+    page = portrait_page(client, app, ring_png())
+    pid = page["id"]
+    put_placement(client, pid, cx=0.5, cy=0.66, height=0.6, frame=SEED, autofit=True)
+    set_page(app, pid, include_character=False)
+    gid = compose_direct(app, pid)
+    assert np.array_equal(np.asarray(image(app, gid)), np.asarray(image(app, page["background_generation_id"])))
+    assert "frame_found" not in params(app, gid)
+
+
+def test_compose_include_changed_midway_is_stale(client, app, monkeypatch):
+    from app.services import page_compose
+    page = portrait_page(client, app, png_bytes((832, 1216), "green"))
+    pid = page["id"]
+    set_page(app, pid, include_character=False)
+    real = page_compose.find_composite
+
+    def flip(*a, **kw):  # 合成中途另一個請求把頁面改回放主角
+        set_page(app, pid, include_character=True)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(page_compose, "find_composite", flip)
+    with pytest.raises(page_compose.ComposeError) as e:
+        compose_direct(app, pid)
+    assert e.value.message == page_compose.INPUTS_CHANGED
+    assert composites(app, pid) == []

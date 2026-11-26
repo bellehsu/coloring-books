@@ -477,3 +477,29 @@ def test_landed_text_is_none_when_generation_vanished(client, app):
 
     with Session(app.state.db) as s:
         assert _landed_text(s, 987654321) is None
+
+
+# ---- include_character（不放主角）：改了要重畫背景 -----------------------------------------
+
+
+def test_patch_from_setup_marks_redraw(client, app):
+    _, _, (p1, p2, _) = ready_book(client, app)
+    # 沒帶 from_setup：改了不標
+    patch(client, p2["id"], {"include_character": False})
+    assert flags(app, p2["id"]) == (False, False)
+    # 值沒變：不標
+    setup_edit(client, p2["id"], include_character=False)
+    assert flags(app, p2["id"]) == (False, False)
+    # 有 AI 背景、值變了：標
+    out = setup_edit(client, p1["id"], include_character=False)
+    assert out["include_character"] is False and out["redraw_background"] is True
+    assert flags(app, p1["id"]) == (True, False)
+
+
+def test_patch_from_setup_include_character_on_uploaded_background_no_mark(client, app):
+    login(client, app)
+    _, (p1,) = book_with_pages(client, app, [("公園", "揮手")])
+    assert upload_bg(client, p1["id"], color_png()).status_code == 201
+    out = setup_edit(client, p1["id"], include_character=False)
+    assert out["include_character"] is False
+    assert flags(app, p1["id"]) == (False, False)

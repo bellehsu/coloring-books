@@ -170,6 +170,15 @@ export function frameMaskUrl(genId: number, frame: { x: number; y: number }): st
   return `${BASE}/generations/${genId}/frame-mask?x=${frame.x}&y=${frame.y}`;
 }
 
+/** 切換這頁放不放主角（spec §5.3）；oneclick（C）：先存復原快照。回傳更新後的頁面（202 表示背景排隊中）。 */
+export function setCharacter(
+  pageId: number,
+  body: S["CharacterToggle"],
+  oneclick = false,
+): Promise<Page> {
+  return api.post<Page>(`/pages/${pageId}/character${oneclick ? "?oneclick=true" : ""}`, body);
+}
+
 /**
  * 「清掉框外雜物」：用這頁目前選用的背景排一筆清理（算 1 次當日額度），回傳排隊中的那筆。
  * oneclick（C）：好了一定換上去（換之前存復原快照）。不是肖像模式、沒有背景 409；次數用完 429。

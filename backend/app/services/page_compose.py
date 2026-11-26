@@ -17,7 +17,7 @@ from dataclasses import replace
 
 import numpy as np
 from PIL import Image
-from sqlalchemy import and_, case, literal, null
+from sqlalchemy import and_, case, literal, null, true
 from sqlmodel import Session, col, delete, select, update
 
 from app.models import Generation, GenKind, GenStatus, Page, PageStatus, utcnow
@@ -33,9 +33,10 @@ FILE_MISSING = "圖片檔案遺失，請重新產生"
 INPUTS_CHANGED = "背景、角色動作或位置剛被更改，請重新確認合成"
 
 
-def composite_matches(gen: Generation, bg_id: int, pose_id: int, placement: Placement) -> bool:
+def composite_matches(gen: Generation, bg_id: int, pose_id: int | None, placement: Placement) -> bool:
     """gen（合成圖 generation）是否正是以這組背景＋角色動作＋位置（Placement.key()）
-    用目前版本（COMPOSE_VERSION）的演算法合成的。只看紀錄，不檢查檔案或狀態。"""
+    用目前版本（COMPOSE_VERSION）的演算法合成的。只看紀錄，不檢查檔案或狀態。
+    pose_id 是 None＝不放主角的頁（只有背景）。"""
     if gen.kind != GenKind.COMPOSITE or gen.workflow_version != COMPOSE_VERSION:
         return False
     try:
@@ -194,8 +195,8 @@ def get_pil_image(storage: Storage, rel: str | None) -> Image.Image:
         return im.copy()
 
 
-def composite_params(bg_id: int, pose_id: int, placement: Placement, frame_found: bool | None = None) -> dict:
-    """合成圖的 params。frame_found 只有肖像（placement.frame）才記：背景上有沒有找到框。"""
+def composite_params(bg_id: int, pose_id: int | None, placement: Placement, frame_found: bool | None = None) -> dict:
+    """合成圖的 params（pose_id 是 None＝不放主角，圖就是背景）。frame_found 只有肖像（placement.frame）才記：背景上有沒有找到框。"""
     params = {
         "background_generation_id": bg_id,
         "pose_generation_id": pose_id,
@@ -222,7 +223,7 @@ def portrait_placement(placement: Placement, interior: np.ndarray | None,
 
 
 def find_composite(
-    session: Session, storage: Storage, page_id: int, bg_id: int, pose_id: int, placement: Placement
+    session: Session, storage: Storage, page_id: int, bg_id: int, pose_id: int | None, placement: Placement
 ) -> Generation | None:
     """同背景＋角色動作＋位置（Placement.key()）、同合成版本且物件還在的既有合成圖。
     只對符合條件的候選呼叫 storage.exists()（合成是 POST，不在每次顯示時走）。"""
@@ -270,10 +271,13 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
           if page.background_generation_id is not None else None)
     if not is_usable(bg, GenKind.BACKGROUND, page_id):
         raise ComposeError(NEED_BACKGROUND)
-    pose = (session.get(Generation, page.pose_generation_id)
-            if page.pose_generation_id is not None else None)
-    if not is_usable(pose, GenKind.POSE, page_id):
-        raise ComposeError(NEED_POSE)
+    include = page.include_character  # 不放主角的頁只用背景，忽略角色動作
+    pose = None
+    if include:
+        pose = (session.get(Generation, page.pose_generation_id)
+                if page.pose_generation_id is not None else None)
+        if not is_usable(pose, GenKind.POSE, page_id):
+            raise ComposeError(NEED_POSE)
     stored = page_placement(page.placement_json)
     placement_json = page.placement_json
 
@@ -282,7 +286,7 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
     frame_found: bool | None = None
     write_back: str | None = None  # 這次實際用的肖像位置（與選用新合成圖在同一個交易寫回頁面）
     placement = stored
-    if stored.frame is not None:
+    if include and stored.frame is not None:
         # 肖像：先找框、決定這次的位置，才比對既有合成圖（位置一樣就直接選回）
         images = _load_images(storage, bg, pose)
         interior = find_interior(images[0], stored.frame)
@@ -297,18 +301,24 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
         if placement != stored and json.dumps(placement.to_dict()) != placement_json:
             write_back = json.dumps(placement.to_dict())
 
-    target = find_composite(session, storage, page_id, bg.id, pose.id, placement)
+    target = find_composite(session, storage, page_id, bg.id, pose.id if pose else None, placement)
     written: str | None = None  # 這次新寫的合成圖（列還是暫存的 RUNNING）
     if target is None:
         started_at, t0 = utcnow(), time.monotonic()
-        bg_img, pose_img, mask_img = images or _load_images(storage, bg, pose)
-        try:
-            out = compose(bg_img, pose_img, mask_img, placement, interior)
-        except ValueError as e:
-            raise _compose_error(e) from e
+        if pose is None:  # 不放主角：合成圖就是背景原圖
+            try:
+                out = get_pil_image(storage, bg.image_path).convert("RGB")
+            except (OSError, ValueError) as e:
+                raise ComposeError(FILE_MISSING) from e
+        else:
+            bg_img, pose_img, mask_img = images or _load_images(storage, bg, pose)
+            try:
+                out = compose(bg_img, pose_img, mask_img, placement, interior)
+            except ValueError as e:
+                raise _compose_error(e) from e
         buf = io.BytesIO()
         out.save(buf, "PNG")
-        params = json.dumps(composite_params(bg.id, pose.id, placement, frame_found), ensure_ascii=False,
+        params = json.dumps(composite_params(bg.id, pose.id if pose else None, placement, frame_found), ensure_ascii=False,
                             sort_keys=True)
         target = Generation(
             book_id=page.book_id,
@@ -351,7 +361,8 @@ def compose_page(session: Session, storage: Storage, page_id: int) -> int:
             .where(
                 col(Page.id) == page_id,
                 col(Page.background_generation_id) == bg.id,
-                col(Page.pose_generation_id) == pose.id,
+                col(Page.include_character) == include,  # 中途被切換就不要用舊的輸入蓋掉
+                (col(Page.pose_generation_id) == pose.id) if pose is not None else true(),
                 col(Page.placement_json).is_not_distinct_from(placement_json),
                 target_valid,
             )

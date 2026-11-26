@@ -162,6 +162,8 @@ class Page(SQLModel, table=True):
     # 背景清理（2026-11-24）：新背景生成後自動再跑一次「清掉框外雜物」；改場景文字就關掉（見 api/pages.patch_page）
     auto_cleanup: bool = Field(default=False, sa_column_kwargs={"server_default": false()})
     cleanup_prompt: str | None = None  # 使用者自訂的清理指示；None＝用預設
+    # 不放主角（2026-11-26）：False＝這頁只有背景、不生成角色動作、合成時不放角色
+    include_character: bool = Field(default=True, sa_column_kwargs={"server_default": true()})
     selected_generation_id: int | None = None
     background_generation_id: int | None = None
     pose_generation_id: int | None = None

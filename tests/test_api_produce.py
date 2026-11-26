@@ -606,3 +606,95 @@ def test_produce_auto_page_runs_cleanup_and_finishes(client, app):
     assert [g.page_id for g in cleaned] == [p1["id"]] and cleaned[0].status == GenStatus.SUCCEEDED
     assert get_page(app, p1["id"]).background_generation_id == cleaned[0].id
     assert used(app, owner) == 1 + 5  # 清理用的是預留的那 1 次
+
+
+# ---- 不放主角的頁（spec 2026-11-26-no-character-pages §5.1、§5.3）-------------------------
+
+NC_SCENE = "海邊，畫面右邊有一座小小的燈塔"
+
+
+def _bg_job(app, book_id, page_id, **kw):
+    from app.services.jobs import background_job
+    with app.state.sessions() as s:
+        return background_job(s, s.get(Book, book_id), s.get(Page, page_id), **kw)
+
+
+def test_background_job_no_character(client, app):
+    login(client, app, "管理者", is_admin=True)
+    from app.services.prompts import QWEN_BACKGROUND_CENTER_VARIATIONS, QWEN_BACKGROUND_VARIATIONS
+    b, (p,) = book_with_pages(client, app, [(NC_SCENE, "揮手")])
+    set_page(app, p["id"], include_character=False)
+    for _ in range(10):
+        job = _bg_job(app, b["id"], p["id"])
+        assert "畫面中間" in job.gen.prompt and "畫得很大" in job.gen.prompt
+        assert job.variation in QWEN_BACKGROUND_CENTER_VARIATIONS
+        assert job.gen.user_text == NC_SCENE  # 原文：「要重畫」的文字保護拿它比對
+    set_page(app, p["id"], include_character=True)
+    for _ in range(10):
+        job = _bg_job(app, b["id"], p["id"])
+        assert "畫得很大" not in job.gen.prompt
+        assert job.variation in QWEN_BACKGROUND_VARIATIONS
+        assert job.gen.user_text == NC_SCENE
+    # override 優先於頁面值
+    assert "畫得很大" in _bg_job(app, b["id"], p["id"], include_character=False).gen.prompt
+    set_page(app, p["id"], include_character=False)
+    assert "畫得很大" not in _bg_job(app, b["id"], p["id"], include_character=True).gen.prompt
+
+
+def test_redraw_uses_rewritten_scene(client, app):
+    login(client, app, "管理者", is_admin=True)
+    b, (p,) = book_with_pages(client, app, [("公園", "揮手")])
+    produce(client, b["id"])
+    run_all(client, app)
+    set_page(app, p["id"], include_character=False, scene_prompt=NC_SCENE, redraw_background=True)
+    produce(client, b["id"])
+    gens = book_gens(app, b["id"], GenKind.BACKGROUND)
+    assert len(gens) == 2
+    assert "畫得很大" in gens[-1].prompt and gens[-1].user_text == NC_SCENE
+
+
+def test_produce_skips_pose_for_no_character(client, app):
+    from app.services.jobs import NO_CHARACTER_SKIP, BookState
+    login(client, app, "管理者", is_admin=True)
+    b, (p1, p2, p3) = book_with_pages(client, app, THREE)
+    set_page(app, p2["id"], include_character=False)
+    got = plan(client, b["id"])
+    assert (got["backgrounds"], got["poses"], got["total"], got["fits"], got["estimate_s"]) == (3, 2, 5, 5, 5 * 22)
+    with app.state.sessions() as s:
+        reasons = {(p.id, k): r for p, k, r in BookState(s, b["id"]).plan(True)}
+    assert reasons[(p2["id"], GenKind.POSE)] == NO_CHARACTER_SKIP == "這頁不放主角"
+    assert reasons[(p2["id"], GenKind.BACKGROUND)] is None
+    produce(client, b["id"])
+    kinds = [(g.page_id, g.kind) for g in book_gens(app, b["id"])]
+    assert sum(k == GenKind.BACKGROUND for _, k in kinds) == 3
+    assert [pid for pid, k in kinds if k == GenKind.POSE] == [p1["id"], p3["id"]]
+
+
+def test_produce_unchanged_when_all_include(client, app):
+    login(client, app, "管理者", is_admin=True)
+    b, _ = book_with_pages(client, app, THREE)
+    got = plan(client, b["id"])
+    assert (got["backgrounds"], got["poses"], got["total"]) == (3, 3, 6)
+    produce(client, b["id"])
+    assert len(book_gens(app, b["id"])) == 6
+
+
+def test_redraw_count_ignores_pose_flag_on_no_character(client, app):
+    login(client, app, "管理者", is_admin=True)
+    b, (p1, p2) = book_with_pages(client, app, [("公園", "揮手"), ("海邊", "跳")])
+    set_page(app, p1["id"], include_character=False, redraw_pose=True)
+    set_page(app, p2["id"], redraw_pose=True)
+    assert overview(client, b["id"])["redraw_count"] == 1
+
+
+def test_no_character_page_is_done_with_background_only(client, app):
+    login(client, app, "管理者", is_admin=True)
+    b, (p1,) = book_with_pages(client, app, [("公園", "揮手")])
+    set_page(app, p1["id"], include_character=False)
+    from app.services.jobs import BookState
+    produce(client, b["id"])
+    run_all(client, app)
+    with app.state.sessions() as s:
+        st = BookState(s, b["id"])
+        assert st.has_both_images(st.pages[0])
+    assert book_gens(app, b["id"], GenKind.POSE) == []

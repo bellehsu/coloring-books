@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { api, cleanupBackground, type Generation, type Page, type Placement } from "@/api/client";
+import { api, cleanupBackground, setCharacter, type Generation, type Page, type Placement } from "@/api/client";
 import { pagesQueryOptions, qk } from "@/api/hooks";
 import type { components } from "@/api/schema";
 import { recomposeRunning } from "@/lib/pageState";
@@ -135,6 +135,10 @@ export function useRegenerate(bookId: number, pageId: number) {
     onSuccess: () => refreshFix(qc, bookId, pageId),
   });
 }
+
+/** 「放主角」勾選：先存復原快照；回傳的頁面先寫進快取（「切換中…」立刻出現）。 */
+export const useSetCharacter = (bookId: number, pageId: number) =>
+  usePageMutation<S["CharacterToggle"]>(bookId, pageId, (body) => setCharacter(pageId, body, true));
 
 /**
  * 「清掉框外雜物」：用這頁選用的背景排一筆清理；帶 oneclick，好了一定換上去（並存復原快照）、重新合成。

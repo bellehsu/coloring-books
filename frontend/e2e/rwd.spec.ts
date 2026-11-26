@@ -119,6 +119,8 @@ for (const vp of VIEWPORTS) {
       }
 
       // 舞台仍可拖曳：往右拖 5%（舞台寬）→ 存位置
+      // 手機上展開／收合卡片後頁面可能還捲在下面（角色在畫面上方之外），先捲回來再量位置
+      await character.scrollIntoViewIfNeeded();
       const box = (await character.boundingBox())!;
       const [sx, sy] = [box.x + box.width / 2, box.y + box.height / 2];
       const placed = page.waitForRequest((r) => /\/api\/pages\/\d+\/placement$/.test(r.url()) && r.method() === "PUT");

@@ -772,3 +772,31 @@ def test_orm_new_page_defaults(tmp_path):
         s.commit()
         s.refresh(p)
         assert p.outline_fill is True and p.redraw_background is False and p.redraw_pose is False
+
+
+def test_0017_include_character_defaults_true(tmp_path):
+    eng = make_engine(tmp_path / "a.db")
+    command.upgrade(alembic_config(eng), "0016")
+    with eng.begin() as c:
+        c.exec_driver_sql("INSERT INTO owner (name, token_hash, is_admin, daily_generation_cap, created_at) "
+                          "VALUES ('o', 'h', 0, 60, '2026-11-11 00:00:00')")
+        c.exec_driver_sql(
+            "INSERT INTO book (owner_id, title, paper_size, print_mode, created_at, updated_at) "
+            "VALUES (1, 'x', 'A4', 'HOME', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+        c.exec_driver_sql(
+            "INSERT INTO page (book_id, position, scene_prompt, action_prompt, status, line_detail, "
+            "line_width_px, qa_note, created_at, updated_at) VALUES (1, 0, 's', 'a', 'DRAFT', 'STANDARD', 11, "
+            "'', '2026-11-11 00:00:00', '2026-11-11 00:00:00')"
+        )
+    command.upgrade(alembic_config(eng), "0017")
+    with eng.connect() as c:
+        assert _cols(c, "page")["include_character"]["nullable"] is False
+        assert c.exec_driver_sql("SELECT include_character FROM page").scalar() == 1
+        assert "AUTOINCREMENT" in table_sql(c, "page")
+    command.downgrade(alembic_config(eng), "0016")
+    with eng.connect() as c:
+        assert "include_character" not in _cols(c, "page")
+        assert "AUTOINCREMENT" in table_sql(c, "page")
+        assert c.exec_driver_sql("PRAGMA integrity_check").scalar() == "ok"
+    command.upgrade(alembic_config(eng), "head")

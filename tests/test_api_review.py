@@ -161,3 +161,11 @@ def test_force_reason_too_long_422(client, app):
     assert r.status_code == 422
     r = client.post(f"/api/pages/{p['id']}/pass", json={"force_reason": "x" * 500})
     assert r.status_code == 200
+
+
+def test_pass_without_character_check(client, app):
+    _, p, _ = selected_page(client, app)
+    set_page(app, p["id"], include_character=False)
+    r = client.post(f"/api/pages/{p['id']}/pass", json={})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "passed"

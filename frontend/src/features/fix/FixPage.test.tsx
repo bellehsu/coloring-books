@@ -1322,3 +1322,34 @@ describe("C 處理一頁：線稿 QA 載入失敗", () => {
     expect(calls.filter((c) => c.url === "/api/pages/5/qa")).toHaveLength(2);
   });
 });
+
+describe("C 處理一頁：放主角", () => {
+  it("不放主角的頁不顯示角色動作列，改顯示「這頁不放主角」", async () => {
+    page = mkPage({ include_character: false });
+    setup();
+    expect(await screen.findByRole("checkbox", { name: "放主角" })).not.toBeChecked();
+    expect(screen.queryByRole("listitem", { name: "角色動作" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重畫主角" })).toBeNull();
+    expect(screen.getByText("這頁不放主角")).toBeInTheDocument();
+  });
+
+  it("勾回送 oneclick", async () => {
+    page = mkPage({ include_character: false });
+    respond["POST /api/pages/5/character?oneclick=true"] = () => json(mkPage({ include_character: false, character_pending: true }), 202);
+    const user = userEvent.setup();
+    setup();
+    await user.click(await screen.findByRole("checkbox", { name: "放主角" }));
+    await user.click(await screen.findByRole("button", { name: /重畫背景（恐龍移到旁邊）/ }));
+    await waitFor(() => expect(posted(/\/api\/pages\/5\/character\?oneclick=true$/)).toHaveLength(1));
+    expect(posted(/\/character/)[0].body).toEqual({ include: true, redraw_background: true });
+  });
+
+  it("取消勾選送 include=false，失敗時 toast", async () => {
+    respond["POST /api/pages/5/character?oneclick=true"] = () => json({ detail: "相框頁要放主角" }, 409);
+    const user = userEvent.setup();
+    setup();
+    await user.click(await screen.findByRole("checkbox", { name: "放主角" }));
+    await waitFor(() => expect(posted(/\/character/)[0].body).toEqual({ include: false, redraw_background: true }));
+    expect(await screen.findByText("相框頁要放主角")).toBeInTheDocument();
+  });
+});

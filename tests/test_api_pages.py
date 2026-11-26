@@ -336,3 +336,17 @@ def test_patch_scene_with_explicit_cleanup_keeps_explicit(client):
     assert r.json()["auto_cleanup"] is True and r.json()["cleanup_prompt"] == "清掉樹枝"
     r = client.patch(f"/api/pages/{pid}", json={"scene_prompt": "山", "cleanup_prompt": "清掉石頭"})
     assert r.json()["auto_cleanup"] is False and r.json()["cleanup_prompt"] == "清掉石頭"
+
+
+def test_patch_include_character(client):
+    b = new_book(client)
+    p = new_page(client, b["id"])
+    assert p["include_character"] is True
+    r = client.patch(f"/api/pages/{p['id']}", json={"include_character": False})
+    assert r.status_code == 200 and r.json()["include_character"] is False
+    r = client.patch(f"/api/pages/{p['id']}", json={"caption_zh": "字"})  # 不帶：不變
+    assert r.status_code == 200 and r.json()["include_character"] is False
+    assert client.patch(f"/api/pages/{p['id']}", json={"include_character": None}).status_code == 422
+    assert client.patch(f"/api/pages/{p['id']}", json={"include_character": "no"}).status_code == 422
+    r = client.patch(f"/api/pages/{p['id']}", json={"include_character": True})
+    assert r.json()["include_character"] is True

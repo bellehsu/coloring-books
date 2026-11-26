@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/Toast";
 import { AI_PROMPT } from "./aiPrompt";
+import { noCharacterScene } from "@/lib/noCharacterScene";
 import { StorySection } from "./StorySection";
 import type { PageMaterials, PreviewEntry, StoryPreview } from "./storyPreview";
 
@@ -111,6 +112,8 @@ describe("StorySection edit existing pages", () => {
     captionEn: "Hi",
     materials: mats(),
     autoCleanup: false,
+    includeCharacter: true,
+    characterLocked: false,
     ...o,
   });
   function mount(e: PreviewEntry, onSavePage = vi.fn(async () => {})) {
@@ -211,5 +214,100 @@ describe("StorySection edit existing pages", () => {
   it("new pages and drafts have no 編輯", () => {
     mount(entry({ pageId: null }));
     expect(screen.queryByRole("button", { name: "編輯" })).toBeNull();
+  });
+});
+
+describe("StorySection 不放主角", () => {
+  const entry = (n: number, o: Partial<PreviewEntry> = {}): PreviewEntry => ({
+    n,
+    key: `p${n}`,
+    draft: null,
+    pageId: null,
+    scene: "恐龍站在畫面右邊，小小的",
+    action: "揮手",
+    captionZh: "",
+    captionEn: "",
+    materials: {
+      hasBackground: false,
+      backgroundUploaded: false,
+      hasPose: false,
+      redrawBackground: false,
+      redrawPose: false,
+    },
+    autoCleanup: false,
+    includeCharacter: true,
+    characterLocked: false,
+    ...o,
+  });
+  function mount(entries: PreviewEntry[], uploads = new Map<string, File>()) {
+    const onCharacter = vi.fn();
+    const onCharacterAll = vi.fn();
+    render(
+      <ToastProvider>
+        <StorySection
+          preview={{ entries, rows: [], pasted: 0, problems: [] }}
+          text=""
+          onText={vi.fn()}
+          uploads={uploads}
+          onUpload={vi.fn()}
+          onAddPage={vi.fn()}
+          onDraftChange={vi.fn()}
+          onDraftRemove={vi.fn()}
+          onSavePage={vi.fn()}
+          onCharacter={onCharacter}
+          onCharacterAll={onCharacterAll}
+          existing={0}
+          disabled={false}
+        />
+      </ToastProvider>,
+    );
+    return { onCharacter, onCharacterAll };
+  }
+  const master = () => screen.getAllByRole("checkbox", { name: "不放主角" })[0];
+  const rowBox = (n: number) =>
+    within(screen.getByRole("listitem", { name: `第 ${n} 頁` })).getByRole("checkbox", { name: "不放主角" });
+
+  it("總開關勾起來每頁都勾（沒鎖的頁）", async () => {
+    const { onCharacterAll } = mount([entry(1), entry(2)]);
+    await userEvent.click(master());
+    expect(onCharacterAll).toHaveBeenCalledWith(true);
+  });
+
+  it("全部都勾：總開關是勾選；取消回報 false", async () => {
+    const { onCharacterAll } = mount([entry(1, { includeCharacter: false }), entry(2, { includeCharacter: false })]);
+    expect(master()).toBeChecked();
+    await userEvent.click(master());
+    expect(onCharacterAll).toHaveBeenCalledWith(false);
+  });
+
+  it("個別取消後總開關是部分（indeterminate）", () => {
+    mount([entry(1, { includeCharacter: false }), entry(2)]);
+    expect(master()).not.toBeChecked();
+    expect((master() as HTMLInputElement).indeterminate).toBe(true);
+  });
+
+  it("每列勾選回報這一頁", async () => {
+    const { onCharacter } = mount([entry(1), entry(2)]);
+    await userEvent.click(rowBox(2));
+    expect(onCharacter).toHaveBeenCalledWith("p2", false);
+  });
+
+  it("會畫成跟著場景文字更新：勾了才顯示；上傳背景的列不顯示", () => {
+    mount(
+      [entry(1, { includeCharacter: false }), entry(2), entry(3, { includeCharacter: false })],
+      new Map([["p3", new File(["x"], "bg.png", { type: "image/png" })]]),
+    );
+    expect(within(screen.getByRole("listitem", { name: "第 1 頁" })).getByText(`會畫成：${noCharacterScene("恐龍站在畫面右邊，小小的")}`)).toBeInTheDocument();
+    expect(within(screen.getByRole("listitem", { name: "第 2 頁" })).queryByText(/會畫成/)).toBeNull();
+    expect(within(screen.getByRole("listitem", { name: "第 3 頁" })).queryByText(/會畫成/)).toBeNull();
+  });
+
+  it("相框頁勾選框停用並說明；總開關只看沒鎖的頁", () => {
+    mount([entry(1, { characterLocked: true }), entry(2, { includeCharacter: false })]);
+    expect(rowBox(1)).toBeDisabled();
+    expect(rowBox(1)).not.toBeChecked();
+    expect(screen.getByText("相框頁要放主角")).toBeInTheDocument();
+    expect(master()).toBeChecked();
+    expect((master() as HTMLInputElement).indeterminate).toBe(false);
   });
 });

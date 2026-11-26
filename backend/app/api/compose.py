@@ -13,7 +13,7 @@ import json
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 from sqlalchemy import case
 from sqlmodel import Session, col, select, update
 
@@ -32,6 +32,7 @@ from app.api.schemas import (
     BatchMaterialsIn,
     BatchMaterialsOut,
     BatchSkip,
+    CharacterToggle,
     GenerationOut,
     PageOut,
     PagePlacement,
@@ -44,9 +45,10 @@ from app.models import Generation, GenKind, GenStatus, Owner, Page, utcnow
 from app.services import history
 from app.services.compose import Placement, cutout, page_placement
 from app.services.frame_fit import DEFAULT_SEED, find_interior
-from app.services.gen_request import encode_request
+from app.services.gen_request import SET_CHARACTER, encode_request, is_cleanup
 from app.services.jobs import (
     BATCH_LOCK,
+    NO_CHARACTER_SKIP,
     BookState,
     Job,
     background_job,
@@ -54,6 +56,8 @@ from app.services.jobs import (
     cleanup_job,
     enqueue_jobs,
     has_character,
+    pending_toggles,
+    pose_job,
     redraw_jobs,
     take,
 )
@@ -73,7 +77,8 @@ from app.services.page_compose import (
 )
 from app.services.page_state import ATTENTION_REVIEW_POSE
 from app.services.pipeline import enqueue_page_task
-from app.services.slots import UPLOAD_ENGINE
+from app.services.slots import UPLOAD_ENGINE, newest_usable_ai
+from app.services.usage import refund_generations
 from app.services.uploads import cover_crop, mark_stored, read_upload
 from app.services.worker import GenerationWorker
 from app.storage import Storage
@@ -128,6 +133,130 @@ def create_background_cleanup(
         raise HTTPException(409, NOT_PORTRAIT)
     gens = enqueue_jobs(session, worker, owner, [take(cleanup_job(session, book, page, bg), oneclick)])
     return GenerationOut.for_worker(gens[0], worker)
+
+
+FRAME_NEEDS_CHARACTER = "相框頁要放主角"
+UPLOAD_NOT_REDRAWN = "上傳的背景不會重畫"
+TOGGLE_PENDING = "這頁正在切換主角，請等一下"
+LEGACY_NO_TOGGLE = "舊版做的頁不能切換主角，請先用新的流程重做這頁"
+NO_SCENE_TO_REDRAW = "這頁沒有場景描述，不能重畫背景"
+NO_ACTION_FOR_POSE = "這頁沒有動作描述，請先寫好主角在做什麼"
+TOGGLE_CHANGED = "這一頁剛被另一個畫面更動，請重新整理後再試"
+
+
+@router.post("/pages/{page_id}/character", response_model=PageOut,
+             responses={202: {"model": PageOut, "description": "排了生成工作"}})
+def toggle_character(
+    page_id: int,
+    body: CharacterToggle,
+    response: Response,
+    oneclick: bool = OneClick,
+    session: Session = Depends(get_session),
+    worker: GenerationWorker = Depends(get_worker),
+    owner: Owner = Depends(current_owner),
+) -> PageOut:
+    """已做好的頁切換主角（spec 2026-11-26-no-character-pages §5.3）。有排生成工作回 202，否則 200。
+
+    - 要重畫背景（關掉主角、或加回主角＋redraw_background，而且選用的背景是 AI 畫的）：排一筆背景（照切換後的
+      include_character 組 prompt），帶 TAKE＋SET_CHARACTER；include_character 等新背景換上時才改（同一個交易，
+      換上前存復原快照），失敗或取消時頁面維持原狀。加回主角而沒有可用的角色動作：再排一個（take）。
+    - 不用重畫（上傳的背景、沒有背景、redraw_background=false）：立即改、存復原快照、排頁面流程；加回主角而沒有可用的
+      角色動作就改排一個角色動作（take），好了換上再合成。
+    - 一鍵處理頁與進階編輯一樣一定換上（oneclick 只為了與其他端點一致，行為相同）。
+    - 409：關掉主角而位置有 frame（肖像模式）、上傳的背景要重畫、舊流程的頁、要重畫但沒有場景描述、
+      這頁切換用的背景已經在畫（或背景畫好了、自動清理還在排）。次數不夠 429，什麼都不排、欄位不動。
+    - 切換用的背景還在排隊時再切換：同一個交易取消那筆（退回次數）再照新的請求做；新的請求與目前的值相同就只取消。"""
+    del oneclick  # 一定換上：見上
+    page = owned_page(session, owner, page_id)
+    book = owned_book(session, owner, page.book_id)
+    with BATCH_LOCK:  # 兩個分頁同時切換不會各排一筆
+        session.refresh(page)
+        pending = pending_toggles(session, [page_id])
+        if any(g.status == GenStatus.RUNNING or is_cleanup(g) for g in pending):
+            raise HTTPException(409, TOGGLE_PENDING)
+        include, current = body.include, page.include_character
+        changing = include != current
+        if not changing and not pending:
+            return page_out(session, page)
+        if changing:
+            if not include and page_placement(page.placement_json).frame is not None:
+                raise HTTPException(409, FRAME_NEEDS_CHARACTER)
+            selected = session.get(Generation, page.selected_generation_id) if page.selected_generation_id else None
+            if selected is not None and selected.kind == GenKind.PAGE:
+                raise HTTPException(409, LEGACY_NO_TOGGLE)
+        bg = session.get(Generation, page.background_generation_id) if page.background_generation_id else None
+        has_bg = is_usable(bg, GenKind.BACKGROUND, page_id)
+        uploaded = has_bg and bg.engine == UPLOAD_ENGINE
+        if changing and include and body.redraw_background and uploaded:
+            raise HTTPException(409, UPLOAD_NOT_REDRAWN)
+        redraw = changing and has_bg and not uploaded and body.redraw_background
+        if redraw and not page.scene_prompt.strip():
+            raise HTTPException(409, NO_SCENE_TO_REDRAW)
+        need_pose = changing and include and not _has_usable_pose(session, page)
+        if need_pose and not has_character(session, book):
+            raise HTTPException(409, "請先設定角色")
+        if need_pose and not page.action_prompt.strip():
+            raise HTTPException(409, NO_ACTION_FOR_POSE)
+
+        jobs: list[Job] = []
+        if redraw:
+            job = take(background_job(session, book, page, include_character=include), True)
+            job.extra[SET_CHARACTER] = include
+            jobs.append(job)
+        if need_pose:
+            jobs.append(take(pose_job(session, book, page, page.action_prompt), True))
+        try:
+            _cancel_toggles(session, [g.id for g in pending])
+            if changing and not redraw:
+                _switch_now(session, page, include, compose=not need_pose)
+        except Exception:
+            session.rollback()
+            raise
+        if jobs:
+            enqueue_jobs(session, worker, owner, jobs)  # 同一個交易：次數不夠 429，取消與立即改也一起 rollback
+            response.status_code = 202
+        else:
+            session.commit()
+            worker.notify()
+    session.refresh(page)
+    return page_out(session, page)
+
+
+def _has_usable_pose(session: Session, page: Page) -> bool:
+    """選用的角色動作能用，或有能讓頁面流程自動選上的 AI 角色動作。"""
+    pose = session.get(Generation, page.pose_generation_id) if page.pose_generation_id else None
+    return is_usable(pose, GenKind.POSE, page.id) or newest_usable_ai(session, page.id, GenKind.POSE) is not None
+
+
+def _cancel_toggles(session: Session, gen_ids: list[int]) -> None:
+    """取消排隊中的切換用背景並退回次數（同取消端點；不 commit）。有一筆已經開始畫了：409。"""
+    if not gen_ids:
+        return
+    res = session.exec(
+        update(Generation)
+        .where(col(Generation.id).in_(gen_ids), col(Generation.status) == GenStatus.QUEUED)
+        .values(status=GenStatus.CANCELLED, finished_at=utcnow())
+    )
+    if res.rowcount != len(gen_ids):  # worker 剛認領走
+        raise HTTPException(409, TOGGLE_PENDING)
+    refund_generations(session, gen_ids)
+
+
+def _switch_now(session: Session, page: Page, include: bool, *, compose: bool) -> None:
+    """保留背景的切換：存復原快照、立即改 include_character；compose 時排頁面流程重新合成（合成得出來才清掉筆畫，
+    同 take_generation）。條件式 UPDATE：同時被改了 409。不 commit。"""
+    history.push_snapshot(session, page)
+    res = session.exec(
+        update(Page).where(col(Page.id) == page.id, col(Page.include_character) == (not include))
+        .values(include_character=include, updated_at=utcnow())
+    )
+    if res.rowcount != 1:
+        raise HTTPException(409, TOGGLE_CHANGED)
+    session.refresh(page)
+    if compose:
+        if history.has_both_slots(page):
+            history.set_pending_strokes(session, page.id, history.CLEARED)
+        enqueue_page_task(session, page.id)
 
 
 @router.post("/books/{book_id}/materials/batch", status_code=202, response_model=BatchMaterialsOut)
@@ -208,6 +337,10 @@ def redraw_poses(
         skipped: list[BatchSkip] = []
         for pid in ids:
             page = pages[pid]
+            if not page.include_character:  # 不放主角的頁不畫角色動作、不算次數
+                skipped.append(BatchSkip(kind="pose", page_id=page.id, position=page.position,
+                                         reason=NO_CHARACTER_SKIP))
+                continue
             if not page.action_prompt.strip():
                 skipped.append(BatchSkip(kind="pose", page_id=page.id, position=page.position, reason="沒有動作描述"))
                 continue

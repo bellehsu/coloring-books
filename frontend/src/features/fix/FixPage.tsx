@@ -9,7 +9,9 @@ import { errMsg } from "@/features/editing/errMsg";
 import { isCleaned } from "@/lib/cleanup";
 import { recomposeRunning, softAttention } from "@/lib/pageState";
 import type { StrokeOp } from "@/lib/strokes";
-import { useFixPages } from "./fixApi";
+import { CharacterToggle, type CharacterBody } from "@/features/editing/CharacterToggle";
+import { useToast } from "@/components/ui/Toast";
+import { useFixPages, useSetCharacter } from "./fixApi";
 import { FixHeader } from "./FixHeader";
 import type { FixFilter } from "@/lib/fixHref";
 import { neighbours, pageState, penBlocked, showRestore } from "./fixState";
@@ -112,6 +114,17 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   // 合成失敗（recompose_pending＋attention）不算在做：顯示原因卡與「再試一次」
   const working = recomposeRunning(page) || state === "working";
 
+  const toast = useToast();
+  const setCharacter = useSetCharacter(bookId, pageId);
+  const toggleCharacter = async (body: CharacterBody) => {
+    try {
+      await fix.flushEdits();
+      await setCharacter.mutateAsync(body);
+    } catch (e) {
+      toast.show(errMsg(e, "無法切換主角"), "error");
+    }
+  };
+
   return (
     <main className={styles.main}>
       <FixHeader
@@ -153,19 +166,30 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
           {page.attention === "failed" && <ReasonCard detail={page.attention_detail} busy={busy} saving={textSaving} onRetry={() => void fix.retry()} />}
           {softAttention(page) && !working && <p className={styles.rowWarn}>{page.attention_detail}</p>}
           <ul className={styles.items} aria-label="這一頁的東西">
-            <PoseRow
-              bookId={bookId}
-              page={page}
-              gens={gens}
-              hasCharacter={book.character_generation_id != null}
-              active={poseActive}
-              flushEdits={fix.flushEdits}
-              selectPose={fix.selectPose}
-              restore={showRestore(page, "pose") ? () => void fix.restore("pose") : null}
-              busy={busy}
-              textKey={fix.historyEpoch}
-              trackSave={fix.trackSave}
-            />
+            <li className={styles.row}>
+              <CharacterToggle
+                page={page}
+                backgroundUploaded={bgGen?.source === "upload"}
+                busy={busy || setCharacter.isPending}
+                onToggle={toggleCharacter}
+              />
+              {!page.include_character && <p className={styles.rowNote}>這頁不放主角</p>}
+            </li>
+            {page.include_character && (
+              <PoseRow
+                bookId={bookId}
+                page={page}
+                gens={gens}
+                hasCharacter={book.character_generation_id != null}
+                active={poseActive}
+                flushEdits={fix.flushEdits}
+                selectPose={fix.selectPose}
+                restore={showRestore(page, "pose") ? () => void fix.restore("pose") : null}
+                busy={busy}
+                textKey={fix.historyEpoch}
+                trackSave={fix.trackSave}
+              />
+            )}
             <BackgroundRow
               bookId={bookId}
               page={page}

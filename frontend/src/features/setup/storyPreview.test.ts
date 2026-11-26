@@ -176,3 +176,30 @@ describe("自動清理（背景＋清掉框外雜物，算 2 次）", () => {
   });
 });
 
+
+describe("不放主角", () => {
+  it("不放主角的頁不算動作次數（poses、total）；背景照算", () => {
+    const e = buildPreview([], STORY, new Map(), [], undefined, { noCharacter: new Map([["p2", true]]) }).entries;
+    expect(e.map((x) => x.includeCharacter)).toEqual([true, false, true]);
+    expect(planCounts(e, new Set())).toMatchObject({ backgrounds: 3, poses: 2, total: 5 });
+  });
+
+  it("既有頁的初值取 include_character；使用者勾的優先", () => {
+    const ex = [{ ...page(11, 0, "a", "b"), include_character: false }, page(12, 1, "c", "d")];
+    expect(buildPreview(ex, "").entries.map((x) => x.includeCharacter)).toEqual([false, true]);
+    const flipped = buildPreview(ex, "", new Map(), [], undefined, { noCharacter: new Map([["p1", false], ["p2", true]]) });
+    expect(flipped.entries.map((x) => x.includeCharacter)).toEqual([true, false]);
+  });
+
+  it("相框頁（既有頁的 placement.frame 或主題包位置的 frame）鎖住、一定放主角", () => {
+    const frame = { cx: 0.5, cy: 0.5, height: 0.5, flip: false, frame: { shape: "oval" } } as never;
+    const ex = [{ ...page(11, 0, "a", "b"), include_character: false, placement: frame }];
+    const [a] = buildPreview(ex, "").entries;
+    expect(a).toMatchObject({ characterLocked: true, includeCharacter: true });
+    const [b] = buildPreview([], STORY, new Map(), [], undefined, {
+      noCharacter: new Map([["p1", true]]),
+      placements: [frame],
+    }).entries;
+    expect(b).toMatchObject({ characterLocked: true, includeCharacter: true });
+  });
+});

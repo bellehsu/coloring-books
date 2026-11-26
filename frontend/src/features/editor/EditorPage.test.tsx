@@ -922,6 +922,14 @@ describe("EditorPage", () => {
     expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1);
   });
 
+  it("不放主角、只有背景（沒有角色動作）：打開就自動合成", async () => {
+    pages[0] = mkPage(1, { background_generation_id: 3, include_character: false, compose_pending: true });
+    gens = [mkGen(3, { kind: "background" })];
+    setup();
+    await screen.findByRole("img", { name: "背景圖" });
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/compose")).toHaveLength(1), { timeout: 2000 });
+  });
+
   it("只有背景時角色動作自動選用送達 → 自動合成", async () => {
     pages[0] = mkPage(1, { background_generation_id: 3 });
     gens = [

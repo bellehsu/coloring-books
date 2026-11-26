@@ -71,6 +71,8 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
   /** 選了上傳背景的頁（PreviewEntry.key → 檔案）：按「開始做這本書」才上傳。 */
   const [uploads, setUploads] = useState<ReadonlyMap<string, File>>(new Map());
   const [drafts, setDrafts] = useState<DraftPage[]>([]);
+  /** 使用者勾的「不放主角」（PreviewEntry.key → 不放主角？）；沒有的頁用頁面原本的設定。 */
+  const [noCharacter, setNoCharacter] = useState<ReadonlyMap<string, boolean>>(new Map());
   const [phase, setPhase] = useState<Phase | null>(null);
 
   const b = book.data;
@@ -165,8 +167,8 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
   // 主題包的設定（線條、位置、清理）只在貼上的文字沒改過時套用
   const packOpts = pack && pack.text === text ? pack : null;
   const preview = useMemo(
-    () => buildPreview(pages, text, materials, drafts, packOpts?.cleanups),
-    [pages, text, materials, drafts, packOpts],
+    () => buildPreview(pages, text, materials, drafts, packOpts?.cleanups, { noCharacter, placements: packOpts?.placements }),
+    [pages, text, materials, drafts, packOpts, noCharacter],
   );
   const uploadKeys = useMemo(() => new Set(uploads.keys()), [uploads]);
   const hasCharacter = b?.character_generation_id != null;
@@ -185,6 +187,14 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
       return next;
     });
 
+  const setCharacter = (key: string, include: boolean) => setNoCharacter((m) => new Map(m).set(key, !include));
+  const setAllCharacter = (none: boolean) =>
+    setNoCharacter((m) => {
+      const next = new Map(m);
+      for (const e of preview.entries) if (!e.characterLocked) next.set(e.key, none);
+      return next;
+    });
+
   const draftKey = useRef(0);
   const addDraft = () => setDrafts((d) => [...d, { key: ++draftKey.current, scene: "", action: "" }]);
   const changeDraft = (key: number, patch: Partial<Pick<DraftPage, "scene" | "action">>) =>
@@ -192,6 +202,11 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
   const removeDraft = (key: number) => {
     setDrafts((d) => d.filter((x) => x.key !== key));
     setUpload(`d${key}`, null);
+    setNoCharacter((m) => {
+      const next = new Map(m);
+      next.delete(`d${key}`);
+      return next;
+    });
   };
 
   // 開始之後離開這頁（例如按「← 我的書櫃」）：伺服器的工作照做，但不要再把人拉到 B
@@ -224,14 +239,31 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
           updatePage: ({ pageId, ...body }) => api.patch<Page>(`/pages/${pageId}`, body),
           savePlacement: (pageId, p) => api.put<Page>(`/pages/${pageId}/placement`, p),
         },
-        packOpts ? { lineDetail: packOpts.lineDetail, placements: packOpts.placements, cleanups: packOpts.cleanups } : {},
+        {
+          ...(packOpts ? { lineDetail: packOpts.lineDetail, placements: packOpts.placements, cleanups: packOpts.cleanups } : {}),
+          // 這次建立的頁：不放主角的才送（既有頁走下面的 from_setup PATCH）
+          includeCharacter: (n) => (n > pages.length && entries[n - 1]?.includeCharacter === false ? false : undefined),
+        },
       );
+      // 既有的頁：放不放主角和原本不同才送（from_setup：後端才會標重畫背景）
+      for (const e of entries) {
+        const page = e.draft == null ? pages.find((p) => p.id === e.pageId) : undefined;
+        if (page && page.include_character !== e.includeCharacter) {
+          await updatePage.mutateAsync({ pageId: page.id, include_character: e.includeCharacter });
+        }
+      }
       // 「＋ 加一頁」的頁接在後面；建好就變成現有的頁（選好的上傳圖改用頁碼記）
       for (const e of entries) {
         if (e.draft == null) continue;
         const made = await api.post<Page>(`/books/${bookId}/pages`, { scene_prompt: e.scene, action_prompt: e.action });
         ids[e.n - 1] = made.id;
+        if (!e.includeCharacter) await api.patch<Page>(`/pages/${made.id}`, { include_character: false });
         const key = e.draft;
+        setNoCharacter((m) => {
+          const next = new Map(m);
+          next.delete(e.key);
+          return next;
+        });
         setDrafts((d) => d.filter((x) => x.key !== key));
         setUploads((m) => {
           const file = m.get(e.key);
@@ -381,6 +413,8 @@ export function SetupPage({ bookId: routeId }: { bookId: number | null }) {
         onAddPage={addDraft}
         onDraftChange={changeDraft}
         onDraftRemove={removeDraft}
+        onCharacter={setCharacter}
+        onCharacterAll={setAllCharacter}
         onSavePage={async (pageId, patch) => {
           await updatePage.mutateAsync({ pageId, ...patch });
         }}

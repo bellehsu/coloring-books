@@ -12,7 +12,9 @@ import { placementSaverFor } from "@/features/editing/placementSaver";
 import { createAutoCompose } from "./autoCompose";
 import styles from "./EditorPage.module.css";
 
-export const hasBoth = (p: Page) => p.background_generation_id != null && p.pose_generation_id != null;
+/** 合成得出來：有背景，且（不放主角，或有角色動作）。 */
+export const hasBoth = (p: Page) =>
+  p.background_generation_id != null && (p.include_character === false || p.pose_generation_id != null);
 
 interface AutoComposeDeps {
   compose: (pageId: number) => Promise<void>;
@@ -152,7 +154,7 @@ export function useEditorAutoCompose({
     current.compose_pending &&
     !current.recompose_pending &&
     genOf(current.background_generation_id)?.image_url &&
-    genOf(current.pose_generation_id)?.cutout_url &&
+    (current.include_character === false || genOf(current.pose_generation_id)?.cutout_url) &&
     (current.selected_generation_id == null || curSel?.kind === "composite")
       ? `${current.id}:${current.background_generation_id}:${current.pose_generation_id}:${current.selected_generation_id}`
       : null;

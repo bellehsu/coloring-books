@@ -673,7 +673,7 @@
           "pages"
         ],
         "summary": "Update Page",
-        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。\nfrom_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而\n頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標（改成空白也清掉那一格的旗標：\n沒有東西可以畫）；沒帶 from_setup 時不標；與 oneclick 一起帶是 400。",
+        "description": "oneclick（C 的改動作文字、改字、要印哪幾行）：動作文字、圖下方的字或要印哪幾行變了就先存復原快照；\n線條設定變了，流程做的頁排流程重跑（不退回草稿）。\nfrom_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而\n頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標（改成空白也清掉那一格的旗標：\n沒有東西可以畫）；沒帶 from_setup 時不標；與 oneclick 一起帶是 400。\ninclude_character 變了而頁面有背景、但最後沒標「要重畫」（上傳的背景、沒帶 from_setup）：排頁面流程重新合成\n（不放主角＝只用背景）。已經做好的頁要重畫背景的切換用 POST /pages/{id}/character。",
         "operationId": "update_page_api_pages__page_id__patch",
         "parameters": [
           {
@@ -887,6 +887,81 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GenerationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages/{page_id}/character": {
+      "post": {
+        "tags": [
+          "compose"
+        ],
+        "summary": "Toggle Character",
+        "description": "已做好的頁切換主角（spec 2026-11-26-no-character-pages §5.3）。有排生成工作回 202，否則 200。\n\n- 要重畫背景（關掉主角、或加回主角＋redraw_background，而且選用的背景是 AI 畫的）：排一筆背景（照切換後的\n  include_character 組 prompt），帶 TAKE＋SET_CHARACTER；include_character 等新背景換上時才改（同一個交易，\n  換上前存復原快照），失敗或取消時頁面維持原狀。加回主角而沒有可用的角色動作：再排一個（take）。\n- 不用重畫（上傳的背景、沒有背景、redraw_background=false）：立即改、存復原快照、排頁面流程；加回主角而沒有可用的\n  角色動作就改排一個角色動作（take），好了換上再合成。\n- 一鍵處理頁與進階編輯一樣一定換上（oneclick 只為了與其他端點一致，行為相同）。\n- 409：關掉主角而位置有 frame（肖像模式）、上傳的背景要重畫、舊流程的頁、要重畫但沒有場景描述、\n  這頁切換用的背景已經在畫（或背景畫好了、自動清理還在排）。次數不夠 429，什麼都不排、欄位不動。\n- 切換用的背景還在排隊時再切換：同一個交易取消那筆（退回次數）再照新的請求做；新的請求與目前的值相同就只取消。",
+        "operationId": "toggle_character_api_pages__page_id__character_post",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Id"
+            }
+          },
+          {
+            "name": "oneclick",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "C 處理一頁：先存復原快照、排頁面流程",
+              "default": false,
+              "title": "Oneclick"
+            },
+            "description": "C 處理一頁：先存復原快照、排頁面流程"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterToggle"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "排了生成工作",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut"
                 }
               }
             }
@@ -3761,6 +3836,25 @@
         ],
         "title": "CharacterSelect"
       },
+      "CharacterToggle": {
+        "properties": {
+          "include": {
+            "type": "boolean",
+            "title": "Include"
+          },
+          "redraw_background": {
+            "type": "boolean",
+            "title": "Redraw Background",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "include"
+        ],
+        "title": "CharacterToggle",
+        "description": "已做好的頁切換主角（POST /pages/{id}/character）：include＝放不放主角；\nredraw_background（加回主角時的小選擇）：true＝用原文重畫背景（預設），false＝保留背景、主角之後自己調位置。"
+      },
       "EditsIn": {
         "properties": {
           "generation_id": {
@@ -4639,6 +4733,14 @@
             ],
             "title": "Cleanup Prompt"
           },
+          "include_character": {
+            "type": "boolean",
+            "title": "Include Character"
+          },
+          "character_pending": {
+            "type": "boolean",
+            "title": "Character Pending"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -4685,6 +4787,8 @@
           "redraw_pose",
           "auto_cleanup",
           "cleanup_prompt",
+          "include_character",
+          "character_pending",
           "created_at",
           "updated_at"
         ],
@@ -4842,6 +4946,10 @@
               }
             ],
             "title": "Cleanup Prompt"
+          },
+          "include_character": {
+            "type": "boolean",
+            "title": "Include Character"
           }
         },
         "type": "object",
@@ -5488,6 +5596,14 @@
             ],
             "title": "Cleanup Prompt"
           },
+          "include_character": {
+            "type": "boolean",
+            "title": "Include Character"
+          },
+          "character_pending": {
+            "type": "boolean",
+            "title": "Character Pending"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -5549,6 +5665,8 @@
           "redraw_pose",
           "auto_cleanup",
           "cleanup_prompt",
+          "include_character",
+          "character_pending",
           "created_at",
           "updated_at",
           "requeued",

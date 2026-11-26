@@ -8,7 +8,7 @@
  * /produce/plan 只提供今天還剩幾次（remaining）與每張的秒數（estimate_s / fits）。
  */
 
-import type { Generation, Page, ProducePlan } from "@/api/client";
+import type { Generation, Page, Placement, ProducePlan } from "@/api/client";
 import { isActive } from "@/api/hooks";
 import { NO_QUOTA } from "@/lib/limits";
 import { parseStory, planImport, type ImportRow } from "@/lib/storyImport";
@@ -56,6 +56,10 @@ export interface PreviewEntry {
   materials: PageMaterials;
   /** 按下開始後這頁開著自動清理（背景多算 1 次）。 */
   autoCleanup: boolean;
+  /** 這頁放不放主角（false＝「不放主角」：不畫角色動作、背景照改寫後的場景畫）。 */
+  includeCharacter: boolean;
+  /** 相框頁（主題包位置有 frame）：一定要放主角，勾選框停用。 */
+  characterLocked: boolean;
 }
 
 /** 貼上的段落裡不會套用的：看不懂、或超過字數。 */
@@ -77,7 +81,8 @@ export interface StoryPreview {
 export type ExistingPage = Pick<
   Page,
   "id" | "position" | "scene_prompt" | "action_prompt" | "caption_zh" | "caption_en"
->;
+> &
+  Partial<Pick<Page, "include_character" | "placement">>;
 
 const NONE: PageMaterials = {
   hasBackground: false,
@@ -116,6 +121,12 @@ export function pageMaterials(
   return out;
 }
 
+/** 「不放主角」的狀態：noCharacter＝使用者勾的（entry.key → 不放主角？，沒有的用頁面原本的值）；placements＝主題包的位置（有 frame＝相框頁）。 */
+export interface CharacterOptions {
+  noCharacter?: ReadonlyMap<string, boolean>;
+  placements?: readonly (Placement | undefined)[];
+}
+
 /**
  * existing 依 position 排序後，第 n 段對應第 n 頁。cleanups：主題包的每頁清理設定（同 applyImport 的
  * ImportOptions.cleanups；只套用到會填內容的頁）。
@@ -126,6 +137,7 @@ export function buildPreview(
   materials: ReadonlyMap<number, PageMaterials> = new Map(),
   drafts: readonly DraftPage[] = [],
   cleanups?: readonly (PackCleanup | undefined)[],
+  character: CharacterOptions = {},
 ): StoryPreview {
   const pages = [...existing].sort((a, b) => a.position - b.position || a.id - b.id);
   const parsed = parseStory(text);
@@ -138,9 +150,11 @@ export function buildPreview(
     const e = pages[n - 1];
     const r = ok.get(n);
     const m = (e && materials.get(e.id)) || NONE;
+    const locked = (e ? e.placement?.frame : character.placements?.[n - 1]?.frame) != null;
+    const key = `p${n}`;
     entries.push({
       n,
-      key: `p${n}`,
+      key,
       draft: null,
       pageId: e?.id ?? null,
       scene: r?.fill.scene ? r.scene : (e?.scene_prompt ?? ""),
@@ -149,6 +163,8 @@ export function buildPreview(
       captionEn: r?.fill.captionEn ? r.captionEn : (e?.caption_en ?? ""),
       materials: m,
       autoCleanup: autoCleanupAfter(r, m, cleanups?.[n - 1]),
+      includeCharacter: locked || !(character.noCharacter?.get(key) ?? e?.include_character === false),
+      characterLocked: locked,
     });
   }
 
@@ -164,6 +180,8 @@ export function buildPreview(
       captionEn: "",
       materials: NONE,
       autoCleanup: false,
+      includeCharacter: !(character.noCharacter?.get(`d${d.key}`) ?? false),
+      characterLocked: false,
     }),
   );
 
@@ -191,7 +209,7 @@ function autoCleanupAfter(r: ImportRow | undefined, m: PageMaterials, c: PackCle
 export const needsBackground = (e: PreviewEntry, uploads: ReadonlySet<string>) =>
   e.scene.trim() !== "" && (!e.materials.hasBackground || e.materials.redrawBackground) && !uploads.has(e.key);
 export const needsPose = (e: PreviewEntry) =>
-  e.action.trim() !== "" && (!e.materials.hasPose || e.materials.redrawPose);
+  e.includeCharacter && e.action.trim() !== "" && (!e.materials.hasPose || e.materials.redrawPose);
 
 export interface PlanCounts {
   backgrounds: number;

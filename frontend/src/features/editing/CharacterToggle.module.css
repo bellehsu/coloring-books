@@ -1,0 +1,7 @@
+.box { display: flex; flex-direction: column; gap: 4px; }
+.label { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.note { margin: 0; font-size: 0.875rem; opacity: 0.75; }
+.note:empty { display: none; }
+.choices { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+.choice { display: flex; justify-content: space-between; gap: 12px; text-align: left; }
+.cost { opacity: 0.8; white-space: nowrap; }

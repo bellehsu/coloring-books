@@ -16,6 +16,8 @@ export interface PagePatch {
   line_detail?: LineDetail;
   auto_cleanup?: boolean;
   cleanup_prompt?: string | null;
+  /** 只在建立的新頁送（既有頁的改動走設定頁的 from_setup PATCH，後端才會標重畫背景）。 */
+  include_character?: boolean;
 }
 
 export interface ImportOptions {
@@ -26,6 +28,8 @@ export interface ImportOptions {
   /** 主題包的每頁背景清理設定（第 n 頁在 n-1）：建立的頁與填了內容的頁存 auto_cleanup、cleanup_prompt
    * （和場景同一個 PATCH：後端改場景會關掉自動清理，同一個請求明確帶的值優先）。 */
   cleanups?: readonly (PackCleanup | undefined)[];
+  /** 第 n 頁要不要放主角；只對這次建立的頁生效。undefined＝不送（預設放主角）。 */
+  includeCharacter?: (n: number) => boolean | undefined;
 }
 
 export interface ImportCalls {
@@ -72,13 +76,15 @@ export async function applyImport(
     const made = await calls.createPage({ scene_prompt: r?.scene ?? "", action_prompt: r?.action ?? "" });
     ids.push(made.id);
     const cleanup = cleanupFields(opts.cleanups, n);
-    if (r && (r.fill.captionZh || r.fill.captionEn || opts.lineDetail || "auto_cleanup" in cleanup)) {
+    const include = opts.includeCharacter?.(n);
+    if ((r && (r.fill.captionZh || r.fill.captionEn || opts.lineDetail || "auto_cleanup" in cleanup)) || include !== undefined) {
       await calls.updatePage({
         pageId: made.id,
-        ...(r.fill.captionZh ? { caption_zh: r.captionZh } : {}),
-        ...(r.fill.captionEn ? { caption_en: r.captionEn } : {}),
-        ...detail,
-        ...cleanup,
+        ...(r?.fill.captionZh ? { caption_zh: r.captionZh } : {}),
+        ...(r?.fill.captionEn ? { caption_en: r.captionEn } : {}),
+        ...(r ? detail : {}),
+        ...(r ? cleanup : {}),
+        ...(include !== undefined ? { include_character: include } : {}),
       });
     }
     if (r) await place(made.id, n);

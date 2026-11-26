@@ -573,3 +573,30 @@
   width: 100%;
   resize: vertical;
 }
+
+/* ③ 故事：不放主角（總開關在標題列下一行，每列在背景切換右邊） */
+.noChar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.noChar input {
+  /* 觸控目標至少 44 px 高；瀏覽器把勾選框畫在中間，外觀仍是一個方框 */
+  width: 24px;
+  height: 44px;
+  margin: 0;
+  accent-color: var(--ink);
+}
+.noChar input:disabled {
+  cursor: not-allowed;
+}
+.noCharCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}

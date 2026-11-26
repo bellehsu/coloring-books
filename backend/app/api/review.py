@@ -1,7 +1,7 @@
 """角色檢查與頁面通過／取消通過。一本書由一個人做 QA。"""
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case, literal
+from sqlalchemy import case, literal, true
 from sqlmodel import Session, col, update
 
 from app.api.deps import current_owner, get_session, get_storage, owned_page
@@ -56,7 +56,7 @@ def pass_page(
     gid = page.selected_generation_id
     if gid is None:
         raise HTTPException(409, NO_SELECTION)
-    if page.character_check != CharacterCheck.CONSISTENT:
+    if page.include_character and page.character_check != CharacterCheck.CONSISTENT:  # 不放主角：沒有角色可檢查
         raise HTTPException(409, CHARACTER_NOT_CONFIRMED)
     try:
         lin = ensure_page_lineart(session, storage, page_id)
@@ -73,7 +73,7 @@ def pass_page(
             col(Page.id) == page_id,
             col(Page.selected_generation_id) == gid,
             col(Page.lineart_key) == lin.key,
-            col(Page.character_check) == CharacterCheck.CONSISTENT,
+            (col(Page.character_check) == CharacterCheck.CONSISTENT) if page.include_character else true(),
         )
         .values(
             status=PageStatus.PASSED,
