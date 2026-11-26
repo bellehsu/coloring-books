@@ -586,8 +586,10 @@
   white-space: nowrap;
 }
 .noChar input {
-  width: 20px;
-  height: 20px;
+  /* 觸控目標至少 44 px 高；瀏覽器把勾選框畫在中間，外觀仍是一個方框 */
+  width: 24px;
+  height: 44px;
+  margin: 0;
   accent-color: var(--ink);
 }
 .noChar input:disabled {
