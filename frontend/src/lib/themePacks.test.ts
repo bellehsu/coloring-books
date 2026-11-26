@@ -573,6 +573,7 @@ describe("恐龍、海洋動物、交通安全（使用者 2026-11-25）", () =>
     expect(ps[6].scene).toContain("車廂裡面");
     expect(ps[8].scene).toContain("車廂裡面");
     expect(ps[5].action).toContain("騎腳踏車");
+    expect(ps[6].action).not.toContain("腿上"); // 正面坐著雙手放在腿上畫出 4 隻腳
     expect(get("safety")!.placements).toBeUndefined();
   });
 });
