@@ -232,6 +232,8 @@ export interface paths {
          *     from_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而
          *     頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標（改成空白也清掉那一格的旗標：
          *     沒有東西可以畫）；沒帶 from_setup 時不標；與 oneclick 一起帶是 400。
+         *     include_character 變了而頁面有背景、但最後沒標「要重畫」（上傳的背景、沒帶 from_setup）：排頁面流程重新合成
+         *     （不放主角＝只用背景）。已經做好的頁要重畫背景的切換用 POST /pages/{id}/character。
          */
         patch: operations["update_page_api_pages__page_id__patch"];
         trace?: never;
@@ -273,6 +275,36 @@ export interface paths {
          *     oneclick（C）：好了一定換上去（換之前存復原快照）、重新合成。
          */
         post: operations["create_background_cleanup_api_pages__page_id__backgrounds_cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pages/{page_id}/character": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Toggle Character
+         * @description 已做好的頁切換主角（spec 2026-11-26-no-character-pages §5.3）。有排生成工作回 202，否則 200。
+         *
+         *     - 要重畫背景（關掉主角、或加回主角＋redraw_background，而且選用的背景是 AI 畫的）：排一筆背景（照切換後的
+         *       include_character 組 prompt），帶 TAKE＋SET_CHARACTER；include_character 等新背景換上時才改（同一個交易，
+         *       換上前存復原快照），失敗或取消時頁面維持原狀。加回主角而沒有可用的角色動作：再排一個（take）。
+         *     - 不用重畫（上傳的背景、沒有背景、redraw_background=false）：立即改、存復原快照、排頁面流程；加回主角而沒有可用的
+         *       角色動作就改排一個角色動作（take），好了換上再合成。
+         *     - 一鍵處理頁與進階編輯一樣一定換上（oneclick 只為了與其他端點一致，行為相同）。
+         *     - 409：關掉主角而位置有 frame（肖像模式）、上傳的背景要重畫、舊流程的頁、要重畫但沒有場景描述、
+         *       這頁切換用的背景已經在畫（或背景畫好了、自動清理還在排）。次數不夠 429，什麼都不排、欄位不動。
+         *     - 切換用的背景還在排隊時再切換：同一個交易取消那筆（退回次數）再照新的請求做；新的請求與目前的值相同就只取消。
+         */
+        post: operations["toggle_character_api_pages__page_id__character_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1367,6 +1399,20 @@ export interface components {
              */
             confirm_change: boolean;
         };
+        /**
+         * CharacterToggle
+         * @description 已做好的頁切換主角（POST /pages/{id}/character）：include＝放不放主角；
+         *     redraw_background（加回主角時的小選擇）：true＝用原文重畫背景（預設），false＝保留背景、主角之後自己調位置。
+         */
+        CharacterToggle: {
+            /** Include */
+            include: boolean;
+            /**
+             * Redraw Background
+             * @default true
+             */
+            redraw_background: boolean;
+        };
         /** EditsIn */
         EditsIn: {
             /** Generation Id */
@@ -1653,6 +1699,10 @@ export interface components {
             auto_cleanup: boolean;
             /** Cleanup Prompt */
             cleanup_prompt: string | null;
+            /** Include Character */
+            include_character: boolean;
+            /** Character Pending */
+            character_pending: boolean;
             /**
              * Created At
              * Format: date-time
@@ -1714,6 +1764,8 @@ export interface components {
             auto_cleanup?: boolean;
             /** Cleanup Prompt */
             cleanup_prompt?: string | null;
+            /** Include Character */
+            include_character?: boolean;
         };
         /**
          * PaperSize
@@ -1928,6 +1980,10 @@ export interface components {
             auto_cleanup: boolean;
             /** Cleanup Prompt */
             cleanup_prompt: string | null;
+            /** Include Character */
+            include_character: boolean;
+            /** Character Pending */
+            character_pending: boolean;
             /**
              * Created At
              * Format: date-time
@@ -2648,6 +2704,53 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenerationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    toggle_character_api_pages__page_id__character_post: {
+        parameters: {
+            query?: {
+                /** @description C 處理一頁：先存復原快照、排頁面流程 */
+                oneclick?: boolean;
+            };
+            header?: never;
+            path: {
+                page_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CharacterToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
+                };
+            };
+            /** @description 排了生成工作 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOut"];
                 };
             };
             /** @description Validation Error */

@@ -346,17 +346,20 @@ def has_both_slots(page: Page) -> bool:
     return all(getattr(page, field) is not None for field, _auto in SLOTS.values())
 
 
-def can_compose_after(page: Page, kind: GenKind) -> bool:
+def can_compose_after(page: Page, kind: GenKind, include_character: bool | None = None) -> bool:
     """把 kind 那一格換成新圖之後，背景與角色動作是不是都有（另一格已經選好）。
-    不放主角的頁：有背景就合成得出來（換角色動作不影響合成）。"""
-    if not page.include_character:
+    不放主角的頁：有背景就合成得出來（換角色動作不影響合成）。include_character 給了就照它算（切換主角換上後的值）。"""
+    include = page.include_character if include_character is None else include_character
+    if not include:
         return kind == GenKind.BACKGROUND or page.background_generation_id is not None
     return all(getattr(page, field) is not None for k, (field, _auto) in SLOTS.items() if k != kind)
 
 
-def take_generation(session: Session, gen: Generation) -> bool:
+def take_generation(session: Session, gen: Generation, *, include_character: bool | None = None) -> bool:
     """C 的「換一張／AI 再畫一張」產生好了：先存快照，換上這張並記成 auto_*（使用者之前選的也換掉：
-    這就是他要的新圖），筆畫清掉（重新合成）。不 commit；回傳有沒有換，換不上去丟 HistoryError。"""
+    這就是他要的新圖），筆畫清掉（重新合成）。include_character（切換主角的背景，見 gen_request.SET_CHARACTER）：
+    同一個交易把頁面的 include_character 改成它（快照存的是改之前的狀態，復原回得去）。
+    不 commit；回傳有沒有換，換不上去丟 HistoryError。"""
     page = session.get(Page, gen.page_id)
     if page is None:
         return False
@@ -365,8 +368,11 @@ def take_generation(session: Session, gen: Generation) -> bool:
     if getattr(page, field) == gen.id:
         return False
     push_snapshot(session, page)
-    if can_compose_after(page, gen.kind):  # 少了另一張就合成不了：標成等著重新合成會讓 C 一直顯示「製作中」
+    # 少了另一張就合成不了：標成等著重新合成會讓 C 一直顯示「製作中」
+    if can_compose_after(page, gen.kind, include_character):
         set_pending_strokes(session, page.id, CLEARED)
     if not set_slot(session, page.id, gen.kind, gen.id, auto=True, landed_text=gen.user_text):
         raise HistoryError("新的圖已不能用")  # 呼叫端 rollback（快照也不留）
+    if include_character is not None and include_character != page.include_character:
+        session.exec(update(Page).where(col(Page.id) == page.id).values(include_character=include_character))
     return True

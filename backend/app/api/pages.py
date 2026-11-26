@@ -16,6 +16,7 @@ from app.models import (
     StrokeLayer, utcnow,
 )
 from app.services import history
+from app.services.jobs import pending_toggles
 from app.services.pipeline import enqueue_page_task
 from app.services.compose import page_placement
 from app.services.layout import compute_layout
@@ -64,6 +65,7 @@ def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
                                                 col(LineartEdit.strokes_json) != "[]")
     ).all()) if gen_ids else set()
     flags = history.history_flags(session, pages)
+    toggling = {g.page_id for g in pending_toggles(session, [p.id for p in pages])}
     layouts = {bid: compute_layout(b.paper_size, b.print_mode) for bid, b in books.items()}
     out = []
     for page in pages:
@@ -75,7 +77,8 @@ def page_outs(session: Session, pages: list[Page]) -> list[PageOut]:
             has_user = history.user_strokes_json(session, page) != history.CLEARED
         else:
             has_user = page.selected_generation_id in with_user
-        extra = {"can_undo": can_undo, "can_redo": can_redo, "has_user_strokes": has_user}
+        extra = {"can_undo": can_undo, "can_redo": can_redo, "has_user_strokes": has_user,
+                 "character_pending": page.id in toggling}
         if gen is None:
             out.append(PageOut.from_page(page, compose_pending=pending, **extra))
             continue
@@ -179,7 +182,9 @@ def update_page(
     線條設定變了，流程做的頁排流程重跑（不退回草稿）。
     from_setup（設定頁的「編輯」）：場景變了而頁面有 AI 背景（上傳的不算）→ redraw_background；動作變了而
     頁面有角色動作 → redraw_pose，等「繼續做」重畫。改成空白、圖下方的字不標（改成空白也清掉那一格的旗標：
-    沒有東西可以畫）；沒帶 from_setup 時不標；與 oneclick 一起帶是 400。"""
+    沒有東西可以畫）；沒帶 from_setup 時不標；與 oneclick 一起帶是 400。
+    include_character 變了而頁面有背景、但最後沒標「要重畫」（上傳的背景、沒帶 from_setup）：排頁面流程重新合成
+    （不放主角＝只用背景）。已經做好的頁要重畫背景的切換用 POST /pages/{id}/character。"""
     if from_setup and oneclick:
         raise HTTPException(400, "參數衝突")
     page = owned_page(session, owner, page_id)
@@ -223,7 +228,11 @@ def update_page(
         page.cleanup_prompt = body.cleanup_prompt
     if body.action_prompt is not None:
         page.action_prompt = body.action_prompt
+    recompose = False
     if body.include_character is not None:
+        # 已有背景但不重畫（上傳的、沒帶 from_setup）：排頁面流程，用現有的背景（加回主角時連角色動作）重新合成
+        recompose = (body.include_character != page.include_character
+                     and page.background_generation_id is not None and not page.redraw_background)
         page.include_character = body.include_character
     # 頁面文字：用 model_fields_set 區分「沒送」與「送 null／空字串＝清除」；不動生成紀錄、線稿與 QA 狀態
     if "caption_zh" in body.model_fields_set:
@@ -243,6 +252,11 @@ def update_page(
         page.line_width_px = body.line_width_px
         lines_changed = True
     rerun = False
+    if recompose:
+        if history.has_both_slots(page):  # 重新合成清掉筆畫（oneclick 的快照裡留著）；合成不出來就不標
+            page.pending_user_strokes = history.CLEARED
+        enqueue_page_task(session, page_id)
+        rerun = True
     if lines_changed and oneclick and _on_pipeline(session, page):
         enqueue_page_task(session, page_id)  # 流程重算補線，跑完仍可以印
         rerun = True

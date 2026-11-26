@@ -17,8 +17,8 @@ from sqlmodel import Session, col, select, update
 from app.models import Book, Generation, GenKind, GenStatus, Owner, Page
 from app.services import usage
 from app.services.gen_request import (
-    AUTO_CLEANUP, CANDIDATE, CLEANUP, CLEANUP_RESERVED, REVIEW, TAKE, encode_request, is_candidate, wants_review,
-    wants_take,
+    AUTO_CLEANUP, CANDIDATE, CLEANUP, CLEANUP_RESERVED, REVIEW, SET_CHARACTER, TAKE, encode_request, is_candidate,
+    set_character_of, wants_review, wants_take,
 )
 from app.services.layout import compute_layout
 from app.services.no_character import no_character_scene
@@ -197,9 +197,9 @@ def cleanup_job(session: Session, book: Book, page: Page, source: Generation) ->
 
 
 def auto_cleanup_job(session: Session, book: Book, page: Page, source: Generation) -> Job:
-    """auto_cleanup 頁的 AI 背景好了：清理它的任務（帶 AUTO_CLEANUP）。take／review 旗標照抄來源
-    （一鍵的「AI 再畫一張」好了一定換上去，換上去的是清好的這張）；user_text 也照抄來源（清好的仍是那段
-    場景文字的圖：換上去時「要重畫」的文字保護照舊）。"""
+    """auto_cleanup 頁的 AI 背景好了：清理它的任務（帶 AUTO_CLEANUP）。take／review／set_character 照抄來源
+    （一鍵的「AI 再畫一張」好了一定換上去，換上去的是清好的這張；切換主角的背景，清好的換上時才改 include_character）；
+    user_text 也照抄來源（清好的仍是那段場景文字的圖：換上去時「要重畫」的文字保護照舊）。"""
     job = cleanup_job(session, book, page, source)
     job.gen.user_text = source.user_text
     job.extra[AUTO_CLEANUP] = True
@@ -207,6 +207,9 @@ def auto_cleanup_job(session: Session, book: Book, page: Page, source: Generatio
         job.extra[TAKE] = True
     if wants_review(source):
         job.extra[REVIEW] = True
+    target = set_character_of(source)
+    if target is not None:
+        job.extra[SET_CHARACTER] = target
     return job
 
 
@@ -235,6 +238,20 @@ def pose_job(session: Session, book: Book, page: Page, action: str, *, picked: S
         request_json="",
     )
     return Job(gen, character_image=char.image_path, variation=variation, extra={"pose_mode": "precise"})
+
+
+def pending_toggles(session: Session, page_ids: Sequence[int]) -> list[Generation]:
+    """這些頁切換主角的背景（request_json 帶 set_character；含它的自動清理）還在排隊／執行的，依 id 由舊到新。"""
+    if not page_ids:
+        return []
+    gens = session.exec(
+        select(Generation).where(
+            col(Generation.page_id).in_(list(page_ids)),
+            col(Generation.kind) == GenKind.BACKGROUND,
+            col(Generation.status).in_([GenStatus.QUEUED, GenStatus.RUNNING]),
+        ).order_by(col(Generation.id))
+    ).all()
+    return [g for g in gens if set_character_of(g) is not None]
 
 
 def take(job: Job, oneclick: bool) -> Job:

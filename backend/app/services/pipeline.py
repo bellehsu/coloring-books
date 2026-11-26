@@ -20,6 +20,8 @@ C 處理一頁的「換一張／AI 再畫一張」（request_json 的 take=true�
 也換掉（使用者要的就是這張新圖），換之前存一份復原快照（services/history.take_generation）。
 B 的批次重畫主角的 take 另帶 review=true：換上去的同一個交易把頁面標成 review_pose（第 5 步會保留它）；
 C 自己按的角色動作 take（沒有 review）換上去時清掉 review_pose（使用者刻意選的，同 C 點選另一個動作）。
+切換主角（POST /pages/{id}/character）的背景另帶 set_character=true／false：take 換上去的同一個交易把頁面的
+include_character 改成這個值（換不上去就整個 rollback、頁面維持原狀，也不退回自動選圖）。
 重畫主角一次畫多張的第 2、3 張帶 candidate=true：只當候選，好了不選用、不排流程；失敗也不動頁面
 （不設 failed，「再試一次」也不看它）。
 背景清理（「清掉框外雜物」，is_cleanup）成功時：take 同上；不帶 take 的，頁面選用的背景仍是它的來源就換上
@@ -49,7 +51,7 @@ from app.services import history, usage
 from app.services.engine import public_engine_error
 from app.services.gen_request import (
     BACKGROUND_AT_TRIGGER, CLEANUP_RESERVED, background_at_trigger, cleanup_reserved, is_auto_cleanup, is_candidate, is_cleanup,
-    wants_review, wants_take, with_flag,
+    set_character_of, wants_review, wants_take, with_flag,
 )
 from app.services.jobs import add_queued, auto_cleanup_job
 from app.services.slots import SLOTS, UPLOAD_ENGINE, newest_usable_ai
@@ -252,8 +254,8 @@ def _select_new(session: Session, gen: Generation) -> None:
     它的來源、其他自動選圖。commit。"""
     gen_id, page_id = gen.id, gen.page_id
     if wants_take(gen) and is_usable(gen, gen.kind, page_id):
-        try:
-            if history.take_generation(session, gen):
+        try:  # 切換主角的背景：換上的同一個交易改 include_character（換不上 rollback 時也不改）
+            if history.take_generation(session, gen, include_character=set_character_of(gen)):
                 if wants_review(gen):
                     session.exec(
                         update(Page).where(col(Page.id) == page_id)
@@ -269,7 +271,8 @@ def _select_new(session: Session, gen: Generation) -> None:
         except Exception:  # noqa: BLE001  換不上去（例如同時被改）：退回一般的自動選圖
             session.rollback()
             log.warning("換上新圖失敗（generation %s）", gen_id, exc_info=True)
-            auto_select(session, page_id)  # take 的快照已經在 take_generation 裡（失敗時一起 rollback 掉了）
+            if set_character_of(gen) is None:  # 切換主角的背景換不上就維持原狀（不單獨選上改寫過的背景）
+                auto_select(session, page_id)  # take 的快照已經在 take_generation 裡（失敗時一起 rollback 掉了）
     elif is_cleanup(gen) and not is_auto_cleanup(gen):
         # 按鈕的背景清理（不帶 take）：選用中的背景還是它的來源才換上；期間改選了別張就不動（不走 auto_select：
         # 清好的是最新一張 AI 圖，會蓋掉使用者剛改選、剛好又是 auto_* 的那張）
@@ -426,7 +429,8 @@ def _fall_back_to_source(session: Session, cleanup: Generation) -> None:
     if source is not None and page is not None and source.page_id == page_id:
         session.refresh(page)
         if wants_take(source) and page.background_generation_id != background_at_trigger(cleanup):
-            auto_select(session, page_id, snapshot=True)
+            if set_character_of(source) is None:  # 切換主角的背景不單獨選上（頁面維持換過的背景）
+                auto_select(session, page_id, snapshot=True)
         else:
             _select_new(session, source)
     enqueue_page_task(session, page_id)

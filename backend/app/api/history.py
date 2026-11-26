@@ -21,8 +21,8 @@ from app.api.pages import page_out
 from app.api.schemas import PageOut, RestoreIn, RetryOut
 from app.models import Generation, GenKind, GenStatus, Owner, Page, PageStatus, utcnow
 from app.services import history
-from app.services.gen_request import is_cleanup
-from app.services.jobs import BATCH_LOCK, background_job, enqueue_jobs, has_character, pose_job, take
+from app.services.gen_request import SET_CHARACTER, is_cleanup, set_character_of
+from app.services.jobs import BATCH_LOCK, Job, background_job, enqueue_jobs, has_character, pose_job, take
 from app.services.pipeline import enqueue_page_task
 from app.services.slots import not_candidate
 from app.services.worker import GenerationWorker
@@ -150,6 +150,19 @@ def _failed_kinds(session: Session, page_id: int) -> list[GenKind]:
     return out
 
 
+def _retry_background(session: Session, book, page: Page) -> Job:
+    """重排失敗的背景（take）。失敗的是切換主角的背景（set_character）而頁面還沒切過去：照那次切換再畫一次，
+    好了換上時才改 include_character（同 POST /pages/{id}/character）。"""
+    failed = next((g for g in session.exec(_newest_query(page.id, GenKind.BACKGROUND))
+                   if not (g.status == GenStatus.FAILED and is_cleanup(g))), None)
+    target = set_character_of(failed) if failed is not None else None
+    if target is None or target == page.include_character:
+        return take(background_job(session, book, page), True)
+    job = take(background_job(session, book, page, include_character=target), True)
+    job.extra[SET_CHARACTER] = target
+    return job
+
+
 @router.post("/pages/{page_id}/retry", response_model=RetryOut)
 def retry(
     page_id: int,
@@ -172,7 +185,7 @@ def retry(
             jobs = []
             for kind in kinds:
                 if kind == GenKind.BACKGROUND:
-                    jobs.append(take(background_job(session, book, page), True))
+                    jobs.append(_retry_background(session, book, page))
                 else:
                     failed = _newest(session, page_id, kind)
                     action = (failed.user_text if failed else "") or page.action_prompt
@@ -181,7 +194,7 @@ def retry(
             session.refresh(page)
             return RetryOut(**page_out(session, page).model_dump(),
                             requeued=[k.value for k in kinds], pipeline=False)
-        if page.background_generation_id is None or page.pose_generation_id is None:
+        if not history.has_both_slots(page):  # 不放主角的頁只要有背景
             raise HTTPException(409, MISSING_IMAGES)
         try:
             enqueue_page_task(session, page_id)

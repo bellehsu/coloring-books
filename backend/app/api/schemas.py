@@ -278,6 +278,14 @@ class SelectGeneration(BaseModel):
     generation_id: DbId
 
 
+class CharacterToggle(BaseModel):
+    """已做好的頁切換主角（POST /pages/{id}/character）：include＝放不放主角；
+    redraw_background（加回主角時的小選擇）：true＝用原文重畫背景（預設），false＝保留背景、主角之後自己調位置。"""
+
+    include: StrictBool
+    redraw_background: StrictBool = True
+
+
 class PoseCreate(BaseModel):
     action: ActionStr  # 動作文字（不帶場景描述）
     count: int = Field(1, ge=1, le=3)  # C 的「一次畫 N 張」：第 1 張照 oneclick 換上去，其餘是候選
@@ -361,6 +369,8 @@ class PageOut(BaseModel):
     auto_cleanup: bool  # 新背景生成後自動清掉框外雜物
     cleanup_prompt: str | None  # 自訂清理指示；None＝預設
     include_character: bool  # False＝不放主角的頁
+    # 這頁有切換主角的背景（request_json 帶 set_character）在排隊／執行：勾選框顯示「切換中…」並停用
+    character_pending: bool
     created_at: datetime
     updated_at: datetime
 
@@ -375,6 +385,7 @@ class PageOut(BaseModel):
         has_user_strokes: bool = False,
         can_undo: bool = False,
         can_redo: bool = False,
+        character_pending: bool = False,
     ) -> "PageOut":
         """current_lineart_key：依目前選圖／參數／修改圖層算出的 key（pages.page_outs 會給）。
         沒給時退回頁面上快取的 key，needs_fix 直接看 qa_json。"""
@@ -421,6 +432,7 @@ class PageOut(BaseModel):
             auto_cleanup=page.auto_cleanup,
             cleanup_prompt=page.cleanup_prompt,
             include_character=page.include_character,
+            character_pending=character_pending,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )
