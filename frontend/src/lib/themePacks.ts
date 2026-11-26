@@ -230,7 +230,7 @@ const DINOS: readonly PackPage[] = [
   { scene: "史前時代的森林，畫面右邊有一隻小小的迅猛龍在奔跑", action: "往前跑步", zh: "迅猛龍", en: "Velociraptor" },
   { scene: "史前時代的河邊，畫面左邊的河裡有一隻嘴巴長長的棘龍，背上有一排很高、連成一片的骨刺", action: "雙手拿著一根釣竿", zh: "棘龍", en: "Spinosaurus" },
   { scene: "史前時代的森林，畫面右邊有一隻頭上有長長頭冠的副櫛龍", action: "雙手摀著耳朵，開心地笑", zh: "副櫛龍", en: "Parasaurolophus" },
-  { scene: "史前時代的草地，畫面左邊有一隻厚頭龍（Pachycephalosaurus），用兩隻腳站著，頭頂高高隆起", action: "雙手扠腰，抬頭看", zh: "厚頭龍", en: "Pachycephalosaurus" },
+  { scene: "史前時代的草地，畫面左邊有一隻用兩隻腳站著、大拇指尖尖的禽龍", action: "雙手扠腰，抬頭看", zh: "禽龍", en: "Iguanodon" },
   { scene: "史前時代的湖邊，畫面右邊的湖裡有一隻探出長脖子的蛇頸龍", action: "坐在小船上，雙手划槳", zh: "蛇頸龍", en: "Plesiosaur" },
   { scene: "史前時代的草地，畫面左邊的草叢裡有一個大大的巢，裡面有幾顆大大的蛋", action: "一根手指放在嘴巴前面，小聲說噓", zh: "恐龍蛋", en: "Dinosaur Eggs" },
 ];

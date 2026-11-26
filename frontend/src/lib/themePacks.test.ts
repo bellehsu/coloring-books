@@ -498,7 +498,7 @@ describe("恐龍、海洋動物、交通安全（使用者 2026-11-25）", () =>
   const DINOS: [string, string][] = [
     ["暴龍", "T-Rex"], ["三角龍", "Triceratops"], ["劍龍", "Stegosaurus"], ["腕龍", "Brachiosaurus"],
     ["翼龍", "Pterosaur"], ["甲龍", "Ankylosaurus"], ["迅猛龍", "Velociraptor"], ["棘龍", "Spinosaurus"],
-    ["副櫛龍", "Parasaurolophus"], ["厚頭龍", "Pachycephalosaurus"], ["蛇頸龍", "Plesiosaur"], ["恐龍蛋", "Dinosaur Eggs"],
+    ["副櫛龍", "Parasaurolophus"], ["禽龍", "Iguanodon"], ["蛇頸龍", "Plesiosaur"], ["恐龍蛋", "Dinosaur Eggs"],
   ];
   const OCEAN: [string, string][] = [
     ["鯨魚", "Whale"], ["海豚", "Dolphin"], ["章魚", "Octopus"], ["海龜", "Sea Turtle"], ["鯊魚", "Shark"], ["小丑魚", "Clownfish"],
@@ -547,7 +547,7 @@ describe("恐龍、海洋動物、交通安全（使用者 2026-11-25）", () =>
   });
   it("恐龍：每頁場景提到自己的恐龍（恐龍蛋頁是巢和蛋）；GPU 驗收畫錯的字不再出現", () => {
     for (const [i, p] of pages("dinosaurs").entries()) expect(p.scene).toContain(i === 11 ? "蛋" : DINOS[i][0]);
-    // 2026-11-26 驗收：白天寫「沒有星星和雲」反而畫出星星和雲；「大帆」畫成帆船；「圓圓」＋拿球畫出一顆大圓球
+    // 2026-11-26 驗收：白天寫「沒有星星和雲」反而畫出星星和雲；「大帆」畫成帆船；「圓圓」＋拿球畫出一顆大圓球；模型畫不出厚頭龍，換成禽龍
     expect(pages("dinosaurs")[4].scene).not.toContain("星星");
     expect(pages("dinosaurs")[7].scene).not.toContain("帆");
     expect(pages("dinosaurs")[9].scene).not.toContain("圓");
