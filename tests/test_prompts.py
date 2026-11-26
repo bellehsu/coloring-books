@@ -237,3 +237,20 @@ def test_outline_phrase_is_the_only_outline_wording():
     assert OUTLINE_PHRASE == "clean medium-weight black outlines"
     for t in (QWEN_CHARACTER_TEMPLATE, QWEN_POSE_TEMPLATE, QWEN_BACKGROUND_TEMPLATE):
         assert t.count(OUTLINE_PHRASE) == 1 and "thick" not in t
+
+
+def test_center_variations():
+    rng = random.Random(3)
+    assert len(prompts.QWEN_BACKGROUND_CENTER_VARIATIONS) >= 2
+    seen = set()
+    last = None
+    for _ in range(20):
+        v = prompts.pick_background_variation(rng, last, center=True)
+        assert v in prompts.QWEN_BACKGROUND_CENTER_VARIATIONS
+        assert v != last
+        seen.add(v)
+        last = v
+    assert len(seen) >= 2
+    # center=False 不變：只從原本那組挑
+    for _ in range(20):
+        assert prompts.pick_background_variation(rng) in prompts.QWEN_BACKGROUND_VARIATIONS

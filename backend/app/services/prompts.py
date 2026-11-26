@@ -114,14 +114,24 @@ QWEN_BACKGROUND_VARIATIONS: tuple[str, ...] = (
 )
 
 
+# 不放主角的頁只用「在中間」類（和「畫面中間、畫大」的改寫文字不打架；spec 2026-11-26-no-character-pages §5.3）。
+QWEN_BACKGROUND_CENTER_VARIATIONS: tuple[str, ...] = (
+    "The main object is in the middle, large and close up",
+    "The main objects are in the middle, seen from a low angle",
+)
+
+
 def qwen_background_prompt(scene: str, variation: str | None = None) -> str:
     var = f"{variation.strip()}. " if variation and variation.strip() else ""
     return QWEN_BACKGROUND_TEMPLATE.format(scene=scene.strip(), variation=var)
 
 
-def pick_background_variation(rng: random.Random, exclude: str | None = None) -> str | None:
-    """exclude 為同頁上一張簡潔背景用的變化語，避免再產生時構圖重複。"""
-    return pick_variation(QWEN_BACKGROUND_VARIATIONS, rng, exclude)
+def pick_background_variation(
+    rng: random.Random, exclude: str | None = None, *, center: bool = False
+) -> str | None:
+    """exclude 為同頁上一張簡潔背景用的變化語，避免再產生時構圖重複。center=True（不放主角的頁）只挑「在中間」類。"""
+    options = QWEN_BACKGROUND_CENTER_VARIATIONS if center else QWEN_BACKGROUND_VARIATIONS
+    return pick_variation(options, rng, exclude)
 
 
 # --- 背景清理（qwen_edit_cleanup）：清掉肖像框外的雜物（spec 2026-11-24-background-cleanup §5.3）---
