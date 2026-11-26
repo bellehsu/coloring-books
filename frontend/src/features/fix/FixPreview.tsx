@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from "react";
 import { DEFAULT_PLACEMENT, frameFit, frameMaskUrl, type Generation, type Page, type Placement, type QA } from "@/api/client";
 import { Button } from "@/components/ui/Button";
 import { Segmented } from "@/components/ui/Segmented";
-import { ComposeStage } from "@/features/editing/ComposeStage";
+import { ComposePreview, ComposeStage } from "@/features/editing/ComposeStage";
 import { LineFixStage } from "@/features/editing/LineFixStage";
 import type { StrokeOp } from "@/lib/strokes";
 import { printUrl } from "./fixState";
@@ -166,6 +166,15 @@ function ColorPreview({
   draft: Placement | null;
   onChange: (p: Placement, via?: "key") => void;
 }) {
+  if (!page.include_character && page.background_generation_id != null) {
+    // 不放主角：舞台只畫背景
+    const bgUrl = bgGen?.image_url ?? `/api/generations/${page.background_generation_id}/image`;
+    return (
+      <div className={styles.colorWrap}>
+        <ComposePreview backgroundUrl={bgUrl} aspect={bgGen ? bgGen.width / bgGen.height : 0.71} message="這頁不放主角" />
+      </div>
+    );
+  }
   if (page.background_generation_id != null && page.pose_generation_id != null) {
     const bgUrl = bgGen?.image_url ?? `/api/generations/${page.background_generation_id}/image`;
     const cutUrl = poseGen ? poseGen.cutout_url : `/api/generations/${page.pose_generation_id}/cutout`;

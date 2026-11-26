@@ -566,4 +566,18 @@ describe("ComposeWorkspace", () => {
       await waitFor(() => expect(alertToasts()).toHaveTextContent("伺服器壞了"));
     });
   });
+
+  it("不放主角時隱藏動作控制，勾回送 /character（不帶 oneclick）", async () => {
+    calls.length = 0;
+    setup({ page: mkPage({ include_character: false }) });
+    const pose = card("角色動作");
+    expect(within(pose).getByRole("checkbox", { name: "放主角" })).not.toBeChecked();
+    expect(within(pose).getByText("這頁不放主角")).toBeInTheDocument();
+    expect(within(pose).queryByRole("button", { name: "換一張角色動作" })).toBeNull();
+    expect(within(pose).queryByText(/動作：/)).toBeNull();
+    await userEvent.click(within(pose).getByRole("checkbox", { name: "放主角" }));
+    await userEvent.click(await screen.findByRole("button", { name: /保留背景，主角我自己調位置/ }));
+    await waitFor(() => expect(calledWith("POST", "/api/pages/1/character")).toHaveLength(1));
+    expect(calledWith("POST", "/api/pages/1/character")[0].body).toEqual({ include: true, redraw_background: false });
+  });
 });

@@ -4,7 +4,7 @@ import { useId, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import type { Generation, Page } from "@/api/client";
 import {
-  isActive, useBook, useCleanupBackground, useGenerateBackground, useGeneratePose, useUpdatePage, useUploadBackground,
+  isActive, useBook, useCleanupBackground, useGenerateBackground, useGeneratePose, useSetCharacter, useUpdatePage, useUploadBackground,
 } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { CaptionField, captionError } from "@/components/ui/CaptionField";
@@ -19,6 +19,7 @@ import { quiet } from "@/lib/quiet";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import { useSingleFlight } from "@/lib/useSingleFlight";
 import { errMsg } from "@/features/editing/errMsg";
+import { CharacterToggle, type CharacterBody } from "@/features/editing/CharacterToggle";
 import { thumbNumber, Thumbs, useThumbList } from "./Thumbs";
 import { ExclusiveChips } from "@/features/editing/ExclusiveChips";
 import chips from "@/features/editing/chips.module.css";
@@ -342,7 +343,7 @@ function BackgroundCard({
   );
 }
 
-function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeWorkspaceProps) {
+function PoseCard({ bookId, page, background, pose, onPickPose, picking, compact }: ComposeWorkspaceProps) {
   const id = useId();
   const fold = useCollapse(compact);
   const toast = useToast();
@@ -356,6 +357,13 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
   const generate = useGeneratePose(bookId);
   const flight = useSingleFlight();
   const trimmed = action.value.trim();
+  const setChar = useSetCharacter(bookId);
+  const toggleCharacter = (body: CharacterBody) =>
+    setChar.mutateAsync({ pageId: page.id, body }).then(
+      () => {},
+      (e: unknown) => toast.show(errMsg(e, "無法切換主角"), "error"),
+    );
+  const include = page.include_character !== false;
 
   const n = thumbNumber(list, pose?.id);
   const info = !pose ? "還沒選" : n != null ? `第 ${n} 張` : "";
@@ -394,20 +402,27 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
         <span className={styles.info}>{info}</span>
         {compact && <CollapseButton title="角色動作" onCollapse={fold.collapse} buttonRef={fold.focusTarget} />}
       </div>
-      <Thumbs bookId={bookId} kind="pose" pageId={page.id} selectedId={page.pose_generation_id} onPick={onPickPose} picking={picking} />
-      <Button
+      <CharacterToggle
+        page={page}
+        backgroundUploaded={background?.source === "upload"}
+        busy={setChar.isPending || !!picking}
+        onToggle={toggleCharacter}
+      />
+      {!include && <p className={styles.hint}>這頁不放主角</p>}
+      {include && <Thumbs bookId={bookId} kind="pose" pageId={page.id} selectedId={page.pose_generation_id} onPick={onPickPose} picking={picking} />}
+      {include && <Button
         aria-label="換一張角色動作"
         disabled={!hasCharacter || !trimmed || flight.busy || generate.isPending}
         onClick={() => void regenerate()}
       >
         換一張
-      </Button>
-      {book && !hasCharacter && (
+      </Button>}
+      {include && book && !hasCharacter && (
         <span className={styles.hint}>
           <Link href={`/books/${bookId}/setup`}>先設定角色</Link>
         </span>
       )}
-      <details className={styles.details}>
+      {include && <details className={styles.details}>
         <summary className={styles.summary}>
           <Icons.chevron size={14} className={styles.chev} />
           <span className={styles.summaryText}>
@@ -465,7 +480,7 @@ function PoseCard({ bookId, page, pose, onPickPose, picking, compact }: ComposeW
           />
           <p className={styles.hint}>改動作文字後按「換一張」。</p>
         </div>
-      </details>
+      </details>}
     </section>
   );
 }

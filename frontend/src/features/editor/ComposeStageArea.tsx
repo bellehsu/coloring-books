@@ -62,6 +62,16 @@ export function ComposeStageArea({
   const hasPose = page.pose_generation_id != null;
   const busyKind = (kind: Generation["kind"]) => gens.some((g) => g.kind === kind && isActive(g));
 
+  if (page.include_character === false && hasBg) {
+    // 不放主角：舞台只畫背景
+    return (
+      <ComposePreview
+        backgroundUrl={backgroundGen?.image_url}
+        aspect={generationSize[0] / generationSize[1]}
+        message="這頁不放主角"
+      />
+    );
+  }
   if (!hasBg && !hasPose) {
     return (
       <p className={stageStyles.stageMsg}>
