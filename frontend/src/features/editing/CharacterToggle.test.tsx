@@ -56,6 +56,18 @@ describe("CharacterToggle", () => {
     expect(screen.getByText("相框頁要放主角")).toBeInTheDocument();
   });
 
+  it("沒放主角的相框頁：勾選框可用、可以加回來，不顯示相框說明", async () => {
+    const onToggle = setup({
+      page: { include_character: false, placement: { cx: 0.5, cy: 0.5, scale: 1, flip: false, frame: { x: 1, y: 1 } } as never },
+    });
+    const box = screen.getByRole("checkbox", { name: "放主角" });
+    expect(box).toBeEnabled();
+    expect(screen.queryByText("相框頁要放主角")).toBeNull();
+    await userEvent.click(box);
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /保留背景/ }));
+    expect(onToggle).toHaveBeenCalledWith({ include: true, redraw_background: false });
+  });
+
   it("切換中停用並顯示「切換中…」", () => {
     setup({ page: { character_pending: true } });
     expect(screen.getByRole("checkbox", { name: "放主角" })).toBeDisabled();

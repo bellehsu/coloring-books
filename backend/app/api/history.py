@@ -141,7 +141,10 @@ def _failed_kinds(session: Session, page_id: int) -> list[GenKind]:
     重畫主角的候選不算：它失敗不用重畫，它成功也不代表失敗的 take 補好了。
     失敗的背景清理略過（原本的背景好好的，不用重畫）；略過後再往前看，清理之前就失敗的背景照樣算。"""
     out = []
+    include = session.exec(select(Page.include_character).where(Page.id == page_id)).first()
     for kind in (GenKind.BACKGROUND, GenKind.POSE):
+        if kind == GenKind.POSE and include is False:
+            continue  # 不放主角的頁不用角色動作，失敗的也不重畫
         # 只有背景會有清理；由新到舊逐筆讀，找到第一筆就停
         newest = next((g for g in session.exec(_newest_query(page_id, kind))
                        if not (g.status == GenStatus.FAILED and is_cleanup(g))), None)

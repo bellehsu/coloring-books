@@ -639,3 +639,56 @@ def test_set_character_flag_roundtrip():
     assert set_character_of(G(request_json="{}")) is None
     assert set_character_of(G(request_json="not json")) is None
     assert set_character_of(G(request_json='{"set_character": 1}')) is None
+
+
+# ---- 最終 review 修正 ----------------------------------------------------------------
+
+
+def test_oneclick_strokes_on_bg_only_page_stay_passed_and_queue(client, app):
+    """不放主角、沒有角色動作的頁：C 的畫筆照樣算頁面流程做的頁，不退回草稿、排流程補線。"""
+    b, pid, bg = bg_only_page(client, app)
+    stroke = {"op": "draw", "width_px": 12, "points": [[0.2, 0.5], [0.8, 0.5]]}
+    gid = get_page(app, pid).selected_generation_id
+    r = client.put(f"/api/pages/{pid}/lineart/edits", params=C, json={"generation_id": gid, "strokes": [stroke]})
+    assert r.status_code == 200, r.text
+    assert get_page(app, pid).status == PageStatus.PASSED
+    assert queued(app, pid)
+
+
+def test_on_pipeline_is_include_aware(client, app):
+    from app.models import Page
+    from app.services.page_lineart import on_pipeline
+
+    b, pid, bg = bg_only_page(client, app)
+    with app.state.sessions() as s:
+        page = s.get(Page, pid)
+        gen = s.get(Generation, page.selected_generation_id)
+        assert on_pipeline(page, gen) is True
+        page.include_character = True  # 要放主角的頁沒有角色動作：不算
+        assert on_pipeline(page, gen) is False
+
+
+def test_pose_landing_on_no_character_page_keeps_strokes():
+    from app.models import Page
+    from app.services.history import can_compose_after
+
+    page = Page(book_id=1, background_generation_id=5, include_character=False)
+    assert can_compose_after(page, GenKind.POSE) is False
+    assert can_compose_after(page, GenKind.BACKGROUND) is True
+    page.include_character = True
+    page.pose_generation_id = 6
+    assert can_compose_after(page, GenKind.POSE) is True
+
+
+def test_retry_does_not_requeue_pose_on_no_character_page(client, app):
+    from app.api.history import _failed_kinds
+
+    b, pid, bg = bg_only_page(client, app)
+    with app.state.sessions() as s:
+        s.add(Generation(book_id=b["id"], page_id=pid, kind=GenKind.POSE, status=GenStatus.FAILED, user_text="p",
+                         prompt="p", negative_prompt="", seed=1, width=8, height=8, request_json="{}"))
+        s.commit()
+        assert GenKind.POSE not in _failed_kinds(s, pid)
+    set_page(app, pid, include_character=True)
+    with app.state.sessions() as s:
+        assert GenKind.POSE in _failed_kinds(s, pid)

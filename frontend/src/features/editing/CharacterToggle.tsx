@@ -29,7 +29,9 @@ export function CharacterToggle({
   const [asking, setAsking] = useState(false);
   const frame = page.placement?.frame != null;
   const switching = page.character_pending;
-  const disabled = busy || switching || frame;
+  // 後端只禁止相框頁「關掉」主角；沒放主角的相框頁可以加回來
+  const frameLocked = frame && page.include_character;
+  const disabled = busy || switching || frameLocked;
   // 有可用的角色動作：重畫背景只要 1 次（只畫背景），保留背景 0 次
   const hasPose = page.pose_generation_id != null;
 
@@ -54,7 +56,7 @@ export function CharacterToggle({
         <span>放主角</span>
       </label>
       <p id={`${id}-note`} className={styles.note}>
-        {frame ? "相框頁要放主角" : switching ? "切換中…" : ""}
+        {frameLocked ? "相框頁要放主角" : switching ? "切換中…" : ""}
       </p>
       <Dialog open={asking} onClose={() => setAsking(false)} title="把主角加回來">
         <Choices>

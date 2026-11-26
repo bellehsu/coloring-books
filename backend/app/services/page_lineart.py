@@ -187,8 +187,9 @@ def _load(storage: Storage, gen: Generation):
 
 
 def on_pipeline(page: Page, gen: Generation) -> bool:
-    """頁面流程處理得了的頁：選了背景與角色動作、選定圖是合成圖（舊流程的整頁圖不算）。"""
-    return (page.background_generation_id is not None and page.pose_generation_id is not None
+    """頁面流程處理得了的頁：選了背景與角色動作（不放主角的頁只要背景）、選定圖是合成圖（舊流程的整頁圖不算）。"""
+    return (page.background_generation_id is not None
+            and (not page.include_character or page.pose_generation_id is not None)
             and gen.kind == GenKind.COMPOSITE)
 
 

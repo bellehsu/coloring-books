@@ -117,8 +117,12 @@ function FixBody({ bookId, book, page, filter, gens, overviewPages }: BodyProps)
   const toast = useToast();
   const setCharacter = useSetCharacter(bookId, pageId);
   const toggleCharacter = async (body: CharacterBody) => {
-    await fix.flushEdits();
-    await setCharacter.mutateAsync(body).catch((e: unknown) => toast.show(errMsg(e, "無法切換主角"), "error"));
+    try {
+      await fix.flushEdits();
+      await setCharacter.mutateAsync(body);
+    } catch (e) {
+      toast.show(errMsg(e, "無法切換主角"), "error");
+    }
   };
 
   return (

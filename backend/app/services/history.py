@@ -351,7 +351,7 @@ def can_compose_after(page: Page, kind: GenKind, include_character: bool | None 
     不放主角的頁：有背景就合成得出來（換角色動作不影響合成）。include_character 給了就照它算（切換主角換上後的值）。"""
     include = page.include_character if include_character is None else include_character
     if not include:
-        return kind == GenKind.BACKGROUND or page.background_generation_id is not None
+        return kind == GenKind.BACKGROUND  # 角色動作換上不影響合成，使用者的筆畫不清掉
     return all(getattr(page, field) is not None for k, (field, _auto) in SLOTS.items() if k != kind)
 
 
