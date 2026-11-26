@@ -340,12 +340,17 @@ def restore(session: Session, page: Page, item: str) -> bool:
 
 
 def has_both_slots(page: Page) -> bool:
-    """背景與角色動作都選好了：頁面流程才合成得出來（等著重新合成才有意義）。"""
+    """背景與角色動作都選好了：頁面流程才合成得出來（等著重新合成才有意義）。不放主角的頁只要有背景。"""
+    if not page.include_character:
+        return page.background_generation_id is not None
     return all(getattr(page, field) is not None for field, _auto in SLOTS.values())
 
 
 def can_compose_after(page: Page, kind: GenKind) -> bool:
-    """把 kind 那一格換成新圖之後，背景與角色動作是不是都有（另一格已經選好）。"""
+    """把 kind 那一格換成新圖之後，背景與角色動作是不是都有（另一格已經選好）。
+    不放主角的頁：有背景就合成得出來（換角色動作不影響合成）。"""
+    if not page.include_character:
+        return kind == GenKind.BACKGROUND or page.background_generation_id is not None
     return all(getattr(page, field) is not None for k, (field, _auto) in SLOTS.items() if k != kind)
 
 

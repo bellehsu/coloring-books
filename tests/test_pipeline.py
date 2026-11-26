@@ -852,3 +852,47 @@ def test_pipeline_flags_review_frame(client, app):
     pg = get_page(app, pid)
     assert pg.status == PageStatus.PASSED and pg.attention is None and pg.attention_detail is None
     assert json.loads(pg.placement_json)["height"] > 1.0  # autofit 寫回了框的肖像位置
+
+
+# ---- 不放主角 ----------------------------------------------------------------------
+
+
+def test_pipeline_passes_without_pose(client, app):
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    set_page(app, pid, include_character=False)
+    drain(client, app)
+    pg = get_page(app, pid)
+    assert pg.status == PageStatus.PASSED and pg.lineart_key
+    assert pg.attention != pipeline.ATTENTION_REVIEW_POSE
+    assert pg.pose_generation_id is None
+    assert len(composites(app, pid)) == 1
+    assert run_pipeline(app, pid) == pipeline.PASSED
+
+
+def test_pipeline_include_true_still_waits(client, app):
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    set_page(app, pid, include_character=True)
+    assert run_pipeline(app, pid) == pipeline.WAITING
+    assert composites(app, pid) == []
+
+
+def test_toggle_back_recomposes_with_pose(client, app):
+    b, p = book_page(client, app)
+    pid = p["id"]
+    gen_background(client, app, pid)
+    set_page(app, pid, include_character=False)
+    drain(client, app)
+    only_bg = get_page(app, pid).selected_generation_id
+    gen_pose(client, app, pid)
+    set_page(app, pid, include_character=True)
+    drain(client, app)
+    run_pipeline(app, pid)
+    pg = get_page(app, pid)
+    assert pg.selected_generation_id != only_bg and pg.pose_generation_id is not None
+    comps = {c.id: c for c in composites(app, pid)}
+    assert json.loads(comps[pg.selected_generation_id].params_json)["pose_generation_id"] == pg.pose_generation_id
+    assert pg.status == PageStatus.PASSED

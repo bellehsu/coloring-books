@@ -578,7 +578,7 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
     if page is None:
         raise _PageGone()
     session.refresh(page)
-    if page.background_generation_id is None or page.pose_generation_id is None:
+    if page.background_generation_id is None or (page.include_character and page.pose_generation_id is None):
         return WAITING
     # 2. 合成（沿用相同的既有合成圖）
     try:
@@ -614,6 +614,8 @@ def _attempt(session: Session, storage: Storage, page_id: int) -> str:
     already = col(Page.status) == PageStatus.PASSED
     if _frame_missing(session, gid):
         attention, detail = ATTENTION_REVIEW_FRAME, REVIEW_FRAME_DETAIL
+    elif not page.include_character:  # 不放主角：沒有角色動作可看（review_pose 作廢）
+        attention, detail = None, None
     else:
         review = col(Page.attention) == ATTENTION_REVIEW_POSE
         attention = case((review, ATTENTION_REVIEW_POSE), else_=None)

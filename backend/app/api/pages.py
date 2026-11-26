@@ -34,8 +34,10 @@ def compose_pending(page: Page, selected: Generation | None) -> bool:
     """選好了背景與角色動作，但選定圖不是用目前背景＋角色動作＋位置（與合成版本）合成的那張。
     缺背景或角色動作（例如舊流程頁面）時為 False。比對規則與確認合成時沿用既有合成圖相同。"""
     bg_id, pose_id = page.background_generation_id, page.pose_generation_id
-    if bg_id is None or pose_id is None:
+    if bg_id is None or (page.include_character and pose_id is None):
         return False
+    if not page.include_character:
+        pose_id = None  # 不放主角：合成圖只看背景
     try:
         placement = page_placement(page.placement_json)
     except (ValueError, TypeError):
