@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { copyText } from "@/lib/copyText";
 import { errMsg } from "@/features/editing/errMsg";
 import { MAX_ACTION, MAX_CAPTION_EN, MAX_CAPTION_ZH, MAX_SCENE } from "@/lib/limits";
+import { noCharacterScene } from "@/lib/noCharacterScene";
 import { UPLOAD_ACCEPT, UPLOAD_HINT } from "@/lib/upload";
 import { AI_PROMPT } from "./aiPrompt";
 import type { DraftPage, PreviewEntry, StoryPreview } from "./storyPreview";
@@ -30,6 +31,10 @@ export interface StorySectionProps {
   onDraftRemove: (key: number) => void;
   /** 已有的頁按「儲存」：只送改過的欄位；失敗要 reject（列留在編輯狀態）。 */
   onSavePage: (pageId: number, patch: SetupPagePatch) => Promise<void>;
+  /** 這一頁放不放主角（勾「不放主角」＝false）。 */
+  onCharacter?: (key: string, include: boolean) => void;
+  /** 總開關：true＝每一頁（沒鎖的）都不放主角。 */
+  onCharacterAll?: (noCharacter: boolean) => void;
   /** 這本書已經有幾頁。 */
   existing: number;
   disabled: boolean;
@@ -50,12 +55,23 @@ export function StorySection({
   onDraftChange,
   onDraftRemove,
   onSavePage,
+  onCharacter,
+  onCharacterAll,
   existing,
   disabled,
 }: StorySectionProps) {
   const toast = useToast();
   const [packOpen, setPackOpen] = useState(false);
   const { entries, problems, pasted } = preview;
+  // 總開關：只看沒鎖的頁（相框頁一定放主角）
+  const unlocked = entries.filter((e) => !e.characterLocked);
+  const noneCount = unlocked.filter((e) => !e.includeCharacter).length;
+  const allNone = unlocked.length > 0 && noneCount === unlocked.length;
+  const mixed = noneCount > 0 && !allNone;
+  const masterRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (masterRef.current) masterRef.current.indeterminate = mixed;
+  }, [mixed]);
 
   const [promptOpen, setPromptOpen] = useState(false);
   const prompt = AI_PROMPT(pasted || existing || 10);
@@ -89,6 +105,18 @@ export function StorySection({
           </Button>
         </div>
       </div>
+      {entries.length > 0 && (
+        <label className={styles.noChar}>
+          <input
+            ref={masterRef}
+            type="checkbox"
+            checked={allNone}
+            disabled={disabled || unlocked.length === 0}
+            onChange={(ev) => onCharacterAll?.(ev.target.checked)}
+          />
+          不放主角
+        </label>
+      )}
       <label className={styles.field}>
         <span className={styles.label}>把故事貼在這裡</span>
         <textarea
@@ -117,6 +145,7 @@ export function StorySection({
               onDraftChange={(patch) => e.draft != null && onDraftChange(e.draft, patch)}
               onDraftRemove={() => e.draft != null && onDraftRemove(e.draft)}
               onSavePage={onSavePage}
+              onCharacter={(include) => onCharacter?.(e.key, include)}
             />
           ))}
         </ol>
@@ -163,8 +192,10 @@ function StoryPreviewRow({
   onDraftChange,
   onDraftRemove,
   onSavePage,
+  onCharacter,
 }: {
   entry: PreviewEntry;
+  onCharacter: (include: boolean) => void;
   file: File | null;
   disabled: boolean;
   onFile: (f: File | null) => void;
@@ -296,6 +327,9 @@ function StoryPreviewRow({
             {scene}・{action}
           </span>
         )}
+        {!e.includeCharacter && !uploadOn && e.scene.trim() !== "" && (
+          <span className={styles.hint}>會畫成：{noCharacterScene(e.scene)}</span>
+        )}
         {(e.materials.redrawBackground || e.materials.redrawPose || e.captionZh || e.captionEn || e.materials.hasPose || (e.materials.hasBackground && !uploadOn)) && (
           <span className={styles.chips}>
             {(e.materials.redrawBackground || e.materials.redrawPose) && <span className={styles.chip}>要重畫</span>}
@@ -343,6 +377,23 @@ function StoryPreviewRow({
             }}
           />
         </div>
+        <span className={styles.noCharCell}>
+          <label className={styles.noChar}>
+            <input
+              type="checkbox"
+              checked={!e.includeCharacter}
+              disabled={disabled || e.characterLocked}
+              aria-describedby={e.characterLocked ? `frame-note-${e.key}` : undefined}
+              onChange={(ev) => onCharacter(!ev.target.checked)}
+            />
+            不放主角
+          </label>
+          {e.characterLocked && (
+            <span id={`frame-note-${e.key}`} className={styles.hint}>
+              相框頁要放主角
+            </span>
+          )}
+        </span>
         {existingPage && !editing && (
           <Button disabled={disabled} onClick={startEdit}>
             編輯

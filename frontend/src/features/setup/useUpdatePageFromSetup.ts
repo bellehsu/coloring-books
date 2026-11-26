@@ -7,6 +7,8 @@ export interface SetupPagePatch {
   action_prompt?: string;
   caption_zh?: string;
   caption_en?: string;
+  /** 不放主角（false）：後端有 AI 背景的頁標「要重畫背景」，上傳背景的頁重新合成。 */
+  include_character?: boolean;
 }
 
 /**

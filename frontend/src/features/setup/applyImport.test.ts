@@ -94,4 +94,19 @@ describe("applyImport（貼上整本故事的匯入規則）", () => {
     expect(updatePage).toHaveBeenCalledTimes(1);
     expect(updatePage).toHaveBeenCalledWith({ pageId: 31, auto_cleanup: true, cleanup_prompt: null });
   });
+
+  it("不放主角：只有建立的頁送 include_character；既有頁不送（走 from_setup PATCH）", async () => {
+    const existing = [pg(11, 0, "", "")];
+    await applyImport(rowsFor(TEXT_OK, existing), existing, { createPage, updatePage }, { includeCharacter: (n) => (n === 1 || n === 3 ? false : undefined) });
+    expect(updatePage).toHaveBeenCalledWith({ pageId: 32, include_character: false }); // 第 3 頁（新）
+    for (const [arg] of updatePage.mock.calls) {
+      if (arg.pageId === 11) expect(arg).not.toHaveProperty("include_character");
+    }
+    expect(updatePage.mock.calls.filter(([a]) => a.pageId === 31 && "include_character" in a)).toHaveLength(0);
+  });
+
+  it("沒給 includeCharacter（或回 undefined）：不多送請求", async () => {
+    await applyImport(rowsFor(TEXT_OK, []), [], { createPage, updatePage }, { includeCharacter: () => undefined });
+    expect(updatePage).not.toHaveBeenCalled();
+  });
 });

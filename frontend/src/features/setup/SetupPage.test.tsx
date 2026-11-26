@@ -685,6 +685,41 @@ describe("fix round 1", () => {
     await waitFor(() => expect(startButton()).toBeEnabled());
   });
 
+  it("套用恐龍包、勾不放主角、開始做 → 每頁 PATCH include_character=false；張數不算動作", async () => {
+    book = bookOf({ character_generation_id: 5 });
+    setup();
+    await screen.findByText("選好了 ✓");
+    await userEvent.click(screen.getByRole("button", { name: "套用主題包" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "套用主題包" })).getByRole("button", { name: /恐龍/ }));
+    const rows = screen.getAllByRole("listitem").filter((li) => /^第 \d+ 頁$/.test(li.getAttribute("aria-label") ?? ""));
+    await userEvent.click(screen.getAllByRole("checkbox", { name: "不放主角" })[0]);
+    for (const r of rows) expect(within(r).getByRole("checkbox", { name: "不放主角" })).toBeChecked();
+    expect(screen.getByRole("region", { name: /會畫/ })).toHaveTextContent(new RegExp(`動作 0`));
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    const patches = calls.filter((c) => c.method === "PATCH" && c.url.startsWith("/api/pages/") && !c.url.includes("from_setup"));
+    expect(patches.filter((c) => (c.body as J).include_character === false)).toHaveLength(rows.length);
+  });
+
+  it("總開關套用到既有頁：既有頁 PATCH 帶 from_setup=true，沒變的頁不送", async () => {
+    book = bookOf({ character_generation_id: 5 });
+    pages = [
+      pageOf(101, 0, { scene_prompt: "公園", action_prompt: "跳", include_character: true }),
+      pageOf(102, 1, { scene_prompt: "海邊", action_prompt: "游", include_character: false }),
+    ];
+    setup();
+    const row2 = await screen.findByRole("listitem", { name: "第 2 頁" });
+    expect(within(row2).getByRole("checkbox", { name: "不放主角" })).toBeChecked(); // 既有頁的初值
+    await userEvent.click(screen.getAllByRole("checkbox", { name: "不放主角" })[0]);
+    await userEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/books/1"));
+    const setupPatches = calls.filter((c) => c.method === "PATCH" && c.url.includes("from_setup=true"));
+    expect(setupPatches.map((c) => [c.url, c.body])).toEqual([["/api/pages/101?from_setup=true", { include_character: false }]]);
+    // 純 PATCH（沒有 from_setup）不能帶 include_character：後端會單獨重新合成舊背景
+    for (const c of calls.filter((c) => c.method === "PATCH" && !c.url.includes("from_setup")))
+      expect(c.body).not.toHaveProperty("include_character");
+  });
+
   it("＋ 加一頁：多一頁空白頁可以填；接在貼上的頁後面，開始時建立", async () => {
     setup();
     await screen.findByText("選好了 ✓");
