@@ -69,10 +69,10 @@ def _tasks(session: Session, page_ids: list[int], started: datetime | None) -> l
 
 
 def _redraw_count(pages, has_char: bool) -> int:
-    """標了「要重畫」而且畫得出來的頁：場景／動作不是空白（角色動作還要有角色）；同 BookState.skip_reason。"""
+    """標了「要重畫」而且畫得出來的頁：場景／動作不是空白（角色動作還要有角色、而且這頁放主角）；同 BookState.skip_reason。"""
     return sum(
         (p.redraw_background and bool(p.scene_prompt.strip()))
-        or (p.redraw_pose and bool(p.action_prompt.strip()) and has_char)
+        or (p.include_character and p.redraw_pose and bool(p.action_prompt.strip()) and has_char)
         for p in pages
     )
 

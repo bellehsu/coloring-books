@@ -1476,3 +1476,18 @@ def test_oneclick_background_pick_keeps_review_pose(client, app):
     pg = get_page(app, pid)
     assert pg.background_generation_id == bg1 and pg.status == PageStatus.PASSED
     assert pg.attention == "review_pose" and pg.attention_detail == "請看一下：換了新的主角動作"
+
+
+def test_batch_materials_skips_pose_for_no_character(client, app):
+    from tests.test_api_lineart import set_page
+    b, _ = book_with_character(client, app, **A5_HOME)
+    p1 = new_page(client, b["id"], scene_prompt="公園", action_prompt="揮手")
+    p2 = new_page(client, b["id"], scene_prompt="海邊", action_prompt="跑步")
+    set_page(app, p2["id"], include_character=False)
+    out = client.post(f"/api/books/{b['id']}/materials/batch")
+    assert out.status_code == 202, out.text
+    got = out.json()
+    assert [g["page_id"] for g in got["queued"] if g["kind"] == "pose"] == [p1["id"]]
+    assert [g["page_id"] for g in got["queued"] if g["kind"] == "background"] == [p1["id"], p2["id"]]
+    assert any(s["page_id"] == p2["id"] and s["kind"] == "pose" and s["reason"] == "這頁不放主角"
+               for s in got["skipped"])

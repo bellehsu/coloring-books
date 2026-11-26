@@ -21,6 +21,7 @@ from app.services.gen_request import (
     wants_take,
 )
 from app.services.layout import compute_layout
+from app.services.no_character import no_character_scene
 from app.services.page_compose import is_usable
 from app.services.prompts import (
     GENERIC_CLEANUP_PROMPT,
@@ -57,6 +58,9 @@ class Job:
     def cost(self) -> int:
         """預留幾次當日額度：auto_cleanup 頁的背景連它的自動清理算 2 次。"""
         return 2 if self.extra.get(CLEANUP_RESERVED) else 1
+
+
+NO_CHARACTER_SKIP = "這頁不放主角"  # 批次／「開始做這本書」略過不放主角頁的角色動作時的原因
 
 
 def job_cost(page: Page, kind: GenKind) -> int:
@@ -139,19 +143,28 @@ def _last_simple_variation(session: Session, page_id: int) -> str | None:
     return found[0] if found else None
 
 
-def background_job(session: Session, book: Book, page: Page) -> Job:
+def background_job(
+    session: Session, book: Book, page: Page, *, include_character: bool | None = None
+) -> Job:
     """單張與批次共用：用頁面場景描述排一筆簡潔（Qwen）背景，負向空字串，不用草圖。
-    構圖變化語排除這頁上一張簡潔背景用的。auto_cleanup 頁帶 CLEANUP_RESERVED：連自動清理預留 2 次。"""
+    構圖變化語排除這頁上一張簡潔背景用的。auto_cleanup 頁帶 CLEANUP_RESERVED：連自動清理預留 2 次。
+    不放主角的頁（include_character 為 None 時看頁面的值；切換端點用 False/True 覆寫畫「切換後」的背景）：
+    prompt 用改寫成「畫面中間、畫很大」的場景、變化語只挑「在中間」類；user_text 仍是原文。"""
     width, height = compute_layout(book.paper_size, book.print_mode).generation_size
-    variation = pick_background_variation(
-        random.Random(), exclude=_last_simple_variation(session, page.id)
-    )
+    with_char = page.include_character if include_character is None else include_character
+    exclude = _last_simple_variation(session, page.id)
+    scene = page.scene_prompt
+    if with_char:
+        variation = pick_background_variation(random.Random(), exclude=exclude)
+    else:
+        variation = pick_background_variation(random.Random(), exclude=exclude, center=True)
+        scene = no_character_scene(scene)
     gen = Generation(
         book_id=book.id,
         page_id=page.id,
         kind=GenKind.BACKGROUND,
         user_text=page.scene_prompt,
-        prompt=qwen_background_prompt(page.scene_prompt, variation),
+        prompt=qwen_background_prompt(scene, variation),
         negative_prompt="",
         seed=random.randint(0, MAX_SEED),
         width=width,
@@ -346,7 +359,8 @@ class BookState:
             reason = ("改用上傳圖片" if page.id in upload_pages
                       else self.skip_reason(page, GenKind.BACKGROUND, redraw=redraw))
             out.append((page, GenKind.BACKGROUND, reason))
-            reason = self.skip_reason(page, GenKind.POSE, redraw=redraw)
+            reason = (NO_CHARACTER_SKIP if not page.include_character
+                      else self.skip_reason(page, GenKind.POSE, redraw=redraw))
             if reason is None and not has_character:
                 reason = "請先設定角色"
             out.append((page, GenKind.POSE, reason))
@@ -354,11 +368,13 @@ class BookState:
 
     def has_both_images(self, page: Page) -> bool:
         """背景與角色動作都有（已選，或有可用的成功生成讓頁面流程自動選）；舊流程整頁圖的頁面不算。
-        上傳的與重畫主角的候選不是自動選圖的候選，不算。"""
+        上傳的與重畫主角的候選不是自動選圖的候選，不算。不放主角的頁只看背景。"""
         if page.selected_generation_id in self.legacy_selected:
             return False
-        for kind, slot in ((GenKind.BACKGROUND, page.background_generation_id),
-                           (GenKind.POSE, page.pose_generation_id)):
+        slots = [(GenKind.BACKGROUND, page.background_generation_id)]
+        if page.include_character:
+            slots.append((GenKind.POSE, page.pose_generation_id))
+        for kind, slot in slots:
             if slot is None and not any(is_usable(g, kind, page.id) and g.engine != UPLOAD_ENGINE
                                         and not is_candidate(g)
                                         for g in self.gens[kind].get(page.id, [])):  # 同自動選圖的候選
