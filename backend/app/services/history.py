@@ -1,7 +1,8 @@
 """C 處理一頁的復原／重做（Phase 13 §4.4）與「還原成自動畫的那張」。
 
 快照（page_history.snapshot_json）：背景、角色動作、位置、動作文字、圖下方的字與要印哪幾行，
-以及使用者筆畫（user 層）本身。Phase 13b 之前的快照沒有「要印哪幾行」：套用時當成兩行都印。
+以及使用者筆畫（user 層）本身。Phase 13b 之前的快照沒有「要印哪幾行」：套用時當成兩行都印；
+不放主角之前的快照沒有 include_character：套用時當成放主角。
 
 **紀錄與游標。** 每頁的快照依 seq 排成一列，page.history_cursor 是「目前狀態」對應的 seq：
 - None＝在最新狀態（目前狀態還沒存成快照），沒有可重做的；
@@ -82,6 +83,7 @@ def snapshot_of(session: Session, page: Page) -> dict:
         "caption_en": page.caption_en,
         "caption_show_zh": page.caption_show_zh,
         "caption_show_en": page.caption_show_en,
+        "include_character": page.include_character,
         "user_strokes": json.loads(user_strokes_json(session, page)),
     }
 
@@ -260,7 +262,11 @@ def apply_snapshot(session: Session, page: Page, snap: dict) -> bool:
     placement = snap.get("placement")
     if placement != _placement(page):
         recompose = True
+    include = bool(snap.get("include_character", True))  # 舊快照沒有這個鍵：當成放主角
+    if include != page.include_character:
+        recompose = True
     session.exec(update(Page).where(col(Page.id) == pid).values(
+        include_character=include,
         placement_json=None if placement is None else json.dumps(placement),
         action_prompt=snap.get("action_prompt") or "",
         caption_zh=snap.get("caption_zh"),

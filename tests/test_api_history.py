@@ -897,3 +897,25 @@ def test_accept_clears_review_pose(client, app):
     assert out["attention"] is None and out["attention_detail"] is None and out["status"] == "passed"
     pg = get_page(app, pid)
     assert pg.attention is None and pg.attention_detail is None
+
+
+def test_snapshot_round_trips_include_character(client, app):
+    b, page, bg, pose = ready(client, app)
+    pid = page["id"]
+    assert page["include_character"] is True
+    r = client.patch(f"/api/pages/{pid}", params=C, json={"include_character": False})
+    assert r.status_code == 200 and r.json()["include_character"] is False
+    assert r.json()["can_undo"] is True  # oneclick 改了：先存快照
+    assert json.loads(history_rows(app, pid)[-1].snapshot_json)["include_character"] is True
+    assert undo(client, pid)["include_character"] is True
+    assert redo(client, pid)["include_character"] is False
+    # 舊格式快照（沒有這個鍵）套用後為 true
+    with app.state.sessions() as s:
+        row = history_rows(app, pid)[0]
+        snap = json.loads(row.snapshot_json)
+        del snap["include_character"]
+        db_row = s.get(PageHistory, row.id)
+        db_row.snapshot_json = json.dumps(snap)
+        s.add(db_row)
+        s.commit()
+    assert undo(client, pid)["include_character"] is True

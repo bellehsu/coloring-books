@@ -195,12 +195,18 @@ def update_page(
         if (body.action_prompt and body.action_prompt != page.action_prompt
                 and page.pose_generation_id is not None):
             page.redraw_pose = True
+        if (body.include_character is not None and body.include_character != page.include_character
+                and page.background_generation_id is not None):  # 主角有沒有放變了：AI 背景要重畫（上傳的不動）
+            bg = session.get(Generation, page.background_generation_id)
+            if bg is not None and bg.engine != UPLOAD_ENGINE:
+                page.redraw_background = True
     if oneclick and (
         (body.action_prompt is not None and body.action_prompt != page.action_prompt)
         or ("caption_zh" in fields and body.caption_zh != page.caption_zh)
         or ("caption_en" in fields and body.caption_en != page.caption_en)
         or (body.caption_show_zh is not None and body.caption_show_zh != page.caption_show_zh)
         or (body.caption_show_en is not None and body.caption_show_en != page.caption_show_en)
+        or (body.include_character is not None and body.include_character != page.include_character)
     ):
         history.push_snapshot(session, page)
         session.refresh(page)
@@ -215,6 +221,8 @@ def update_page(
         page.cleanup_prompt = body.cleanup_prompt
     if body.action_prompt is not None:
         page.action_prompt = body.action_prompt
+    if body.include_character is not None:
+        page.include_character = body.include_character
     # 頁面文字：用 model_fields_set 區分「沒送」與「送 null／空字串＝清除」；不動生成紀錄、線稿與 QA 狀態
     if "caption_zh" in body.model_fields_set:
         page.caption_zh = body.caption_zh

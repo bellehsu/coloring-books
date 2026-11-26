@@ -260,6 +260,7 @@ class PageUpdate(BaseModel):
     # 背景清理：未送＝不動（改場景文字時會一起關掉，除非同一個請求明確帶了）；cleanup_prompt ""、空白、null＝清除
     auto_cleanup: StrictBool = None  # type: ignore[assignment]
     cleanup_prompt: CleanupPromptStr = None
+    include_character: StrictBool = None  # type: ignore[assignment]  # 未送＝不動；null 也是 422
 
 
 class CaptionDisplay(BaseModel):
@@ -359,6 +360,7 @@ class PageOut(BaseModel):
     redraw_pose: bool
     auto_cleanup: bool  # 新背景生成後自動清掉框外雜物
     cleanup_prompt: str | None  # 自訂清理指示；None＝預設
+    include_character: bool  # False＝不放主角的頁
     created_at: datetime
     updated_at: datetime
 
@@ -418,6 +420,7 @@ class PageOut(BaseModel):
             redraw_pose=page.redraw_pose,
             auto_cleanup=page.auto_cleanup,
             cleanup_prompt=page.cleanup_prompt,
+            include_character=page.include_character,
             created_at=page.created_at,
             updated_at=page.updated_at,
         )
