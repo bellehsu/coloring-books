@@ -507,8 +507,8 @@ describe("恐龍、海洋動物、交通安全（使用者 2026-11-25）", () =>
   const SAFETY: [string, string][] = [
     ["走斑馬線", "Use the Crosswalk"], ["看紅綠燈", "Watch the Traffic Light"], ["左右看", "Look Both Ways"],
     ["走人行道", "Walk on the Sidewalk"], ["繫安全帶", "Buckle Up"], ["戴安全帽", "Wear a Helmet"],
-    ["穿反光背心", "Wear a Reflective Vest"], ["排隊等公車", "Wait in Line"], ["坐好扶好", "Sit Still on the Bus"],
-    ["帶手電筒", "Carry a Flashlight"], ["平交道停看聽", "Stop at the Rail Crossing"], ["在公園玩", "Play in the Park"],
+    ["頭手不伸出車窗", "Keep Arms Inside"], ["等公車", "Wait for the Bus"], ["坐好扶好", "Sit Still on the Bus"],
+    ["從人行道那邊下車", "Get Out on the Curb Side"], ["平交道停看聽", "Stop at the Rail Crossing"], ["走路不滑手機", "No Phone While Walking"],
   ];
   it.each([
     ["dinosaurs", "恐龍", DINOS],
@@ -560,15 +560,19 @@ describe("恐龍、海洋動物、交通安全（使用者 2026-11-25）", () =>
       expect(p.scene).toContain(OCEAN[i][0]);
     }
   });
-  it("交通安全：背景沒有車、沒有人；車輛只在動作；晚上沒有星星和雲；不提警察", () => {
+  it("交通安全：室外頁背景沒有車；車裡和下車的頁可以有車；背景沒有人；不提警察、不揹書包（2026-11-26 驗收）", () => {
     const ps = pages("safety");
-    for (const p of ps) {
-      expect(p.scene).toContain("沒有任何車輛");
+    const withCar = new Set([4, 6, 8, 9]); // 繫安全帶、頭手不伸出車窗、坐好扶好（車廂裡面）、從人行道那邊下車
+    for (const [i, p] of ps.entries()) {
+      expect(p.scene.includes("沒有任何車輛")).toBe(!withCar.has(i));
       expect(p.scene).not.toContain("警察");
+      expect(p.scene).not.toContain("星星"); // 寫「沒有星星」反而畫出星星
+      expect(p.action).not.toContain("書包"); // 書包會被畫成抱在胸前
     }
+    expect(ps[4].scene).toContain("車廂裡面");
+    expect(ps[6].scene).toContain("車廂裡面");
+    expect(ps[8].scene).toContain("車廂裡面");
     expect(ps[5].action).toContain("騎腳踏車");
-    expect(ps[8].action).toContain("公車座位");
-    expect(ps[9].scene).toContain("沒有星星和雲");
     expect(get("safety")!.placements).toBeUndefined();
   });
 });
