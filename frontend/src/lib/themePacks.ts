@@ -254,14 +254,14 @@ const OCEAN: readonly PackPage[] = [
 /** 交通安全（使用者 2026-11-25）：背景沒有車也沒有人，車輛寫在動作（主角坐在上面）；黑白看不出紅綠燈亮哪個，合成一頁。 */
 const SAFETY: readonly PackPage[] = [
   // 2026-11-26 驗收：背景不能有車／人跟「坐在車裡」「排隊」的頁互相矛盾 → 只在室外頁加 NO_VEHICLES，車裡的頁寫車廂裡面；
-  // 書包會被畫成抱在胸前（拿掉）；夜空寫「沒有星星和雲」反而畫出星星（換主題）。使用者選的新主題：頭手不伸出車窗、從人行道那邊下車、走路不滑手機。
+  // 書包會被畫成抱在胸前（拿掉）；正面坐著「雙手放在腿上」畫出 4 隻腳；第 5、7 頁都坐車裡太像 → 第 7 頁換成「離大車遠一點」（卡車在背景，3/3）；動作寫「站在人行道上」會多畫一塊地磚；夜空寫「沒有星星和雲」反而畫出星星（換主題）。使用者選的新主題：離大車遠一點、從人行道那邊下車、走路不滑手機。
   { scene: "安靜的住宅區馬路，路面上有一條大大的斑馬線，路邊有矮房子和大樹" + NO_VEHICLES, action: "舉起一隻手，往前走", zh: "走斑馬線", en: "Use the Crosswalk" },
   { scene: "城市的路口，路邊有一個大大的紅綠燈" + NO_VEHICLES, action: "停下來，一手指著前面", zh: "看紅綠燈", en: "Watch the Traffic Light" },
   { scene: "安靜的十字路口，路邊有大樹" + NO_VEHICLES, action: "站著轉頭看旁邊, facing toward the left side of the picture", zh: "左右看", en: "Look Both Ways" },
   { scene: "馬路旁邊的人行道，人行道鋪著一格一格的地磚，旁邊有大樹和路燈" + NO_VEHICLES, action: "往前走路，一手揮手", zh: "走人行道", en: "Walk on the Sidewalk" },
   { scene: "汽車後座的車廂裡面，旁邊有車窗", action: "坐在兒童安全座椅上，雙手拉著安全帶", zh: "繫安全帶", en: "Buckle Up" },
   { scene: "公園裡的腳踏車道，旁邊有大樹" + NO_VEHICLES, action: "戴著安全帽，騎腳踏車", zh: "戴安全帽", en: "Wear a Helmet" },
-  { scene: "汽車後座的車廂裡面，旁邊有一扇關著的車窗", action: "坐在兒童安全座椅上，雙手放在腿上", zh: "頭手不伸出車窗", en: "Keep Arms Inside" },
+  { scene: "路口有一輛大卡車正在轉彎，旁邊是寬寬的人行道", action: "站著，雙手放在身體兩旁等待", zh: "離大車遠一點", en: "Stay Away from Big Trucks" },
   { scene: "公車站，有站牌和候車亭" + NO_VEHICLES, action: "站在站牌旁邊，雙手放在身體兩旁等待", zh: "等公車", en: "Wait for the Bus" },
   { scene: "公車車廂裡面，有窗戶和扶手拉環", action: "坐在公車座位上，雙手放在腿上", zh: "坐好扶好", en: "Sit Still on the Bus" },
   { scene: "路邊停著一輛汽車，後車門打開，車子旁邊是人行道", action: "往前走路", zh: "從人行道那邊下車", en: "Get Out on the Curb Side" },
